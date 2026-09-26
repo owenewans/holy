@@ -1,0 +1,34 @@
+.TH HOLY.CONF 5 "September 2026" "Holy" "File Formats"
+.SH NAME
+holy.conf \- Holy source configuration format
+.SH STATUS
+This page describes the implemented syntax checker. Source activation,
+dependency resolution and installation are not implemented in this repository.
+.SH SYNOPSIS
+.B holypkg config check FILE
+.SH DESCRIPTION
+Each record contains a key and whitespace-separated arguments. Double quotes
+retain spaces. A hash sign at the start of a token begins a comment outside
+quotes. Escapes are backslash-quote, double-backslash, backslash-n, backslash-t,
+backslash-r and backslash-x followed by two hexadecimal digits. NUL is rejected.
+The parser does not run shell expansion.
+.PP
+Sections are [general], [resolver], [source NAME] and [rule NAME].
+Include takes one path relative to the containing file. Repeated scalar keys
+within a section are errors with both source locations. The source repo and
+resolver prefer keys are lists and can repeat. Recursive includes are rejected.
+The checker validates lexical and structural syntax; it does not yet validate
+URL credentials, source relationships or references. It validates key names,
+argument counts, and the scripts, trust, ask-sources and prefer values. The
+alias local is reserved and cannot name a source.
+.SH EXAMPLE
+.nf
+[general]
+arch x86_64
+scripts ask
+[source arch]
+type pacman
+repo core "https://mirror.example/arch/$repo/os/$arch"
+.fi
+.SH FILES
+/etc/holy.conf is the proposed system path. The checker takes an explicit file.

@@ -1,0 +1,159 @@
+#define _POSIX_C_SOURCE 200809L
+#include "package.h"
+#include "config.h"
+
+#include <archive.h>
+#include <archive_entry.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define META_LIMIT (1024u * 1024u)
+
+static const char *const fields[] = {
+    "format", "name", "version", "release", "os", "arch", "libc"
+};
+
+static int safe_value(const char *s)
+{
+    const unsigned char *p = (const unsigned char *)s;
+    if (!*p) return 0;
+    while (*p) {
+        if (*p < 32 || *p == 127) return 0;
+        ++p;
+    }
+    return 1;
+}
+
+static int meta_line(char *line, size_t len, const char *path, size_t number,
+                     char **values, char **error)
+{
+    char **v = NULL;
+    size_t count = 0, i;
+    if (memchr(line, '\0', len)) {
+        fprintf(stderr, "%s: HOLY/meta:%zu: NUL byte\n", path, number);
+        return 0;
+    }
+    if (!holy_lex(line, len, &v, &count, path, number, error)) {
+        fprintf(stderr, "%s\n", *error ? *error : "out of memory");
+        holy_tokens_free(v, count);
+        return 0;
+    }
+    if (!count) { holy_tokens_free(v, count); return 1; }
+    if (count != 2 || !safe_value(v[0]) || !safe_value(v[1])) {
+        fprintf(stderr, "%s: HOLY/meta:%zu: invalid field\n", path, number);
+        holy_tokens_free(v, count);
+        return 0;
+    }
+    for (i = 0; i < sizeof fields / sizeof *fields; ++i) {
+        if (strcmp(fields[i], v[0])) continue;
+        if (values[i]) {
+            fprintf(stderr, "%s: HOLY/meta:%zu: duplicate %s\n", path, number, v[0]);
+            holy_tokens_free(v, count);
+            return 0;
+        }
+        values[i] = v[1];
+        v[1] = NULL;
+        break;
+    }
+    holy_tokens_free(v, count);
+    return 1;
+}
+
+static int read_meta(const char *path, const char *data, size_t length)
+{
+    size_t i, start = 0, line = 1;
+    char *values[sizeof fields / sizeof *fields] = {0};
+    char *error = NULL;
+    int ok = 1;
+    for (i = 0; i <= length; ++i) {
+        if (i != length && data[i] != '\n') continue;
+        if (!meta_line((char *)data + start, i - start, path, line++, values, &error)) {
+            ok = 0;
+            break;
+        }
+        start = i + 1;
+    }
+    if (ok) for (i = 0; i < sizeof fields / sizeof *fields; ++i) {
+        if (!values[i]) {
+            fprintf(stderr, "%s: HOLY/meta: missing %s\n", path, fields[i]);
+            ok = 0;
+        }
+    }
+    if (ok && strcmp(values[0], "holy-package-1")) {
+        fprintf(stderr, "%s: unsupported format %s\n", path, values[0]);
+        ok = 0;
+    }
+    if (ok) for (i = 0; i < sizeof fields / sizeof *fields; ++i)
+        printf("%s %s\n", fields[i], values[i]);
+    for (i = 0; i < sizeof fields / sizeof *fields; ++i) free(values[i]);
+    free(error);
+    return ok;
+}
+
+int holy_package_info(const char *path)
+{
+    static const unsigned char magic[] = {0x04, 0x22, 0x4d, 0x18};
+    unsigned char head[4];
+    char buffer[8192], *meta = NULL;
+    struct archive *a = NULL;
+    struct archive_entry *entry;
+    FILE *fp;
+    size_t meta_size = 0;
+    int status, seen = 0, ok = 0;
+    fp = fopen(path, "rb");
+    if (!fp) { perror(path); return 0; }
+    if (fread(head, 1, sizeof head, fp) != sizeof head ||
+        memcmp(head, magic, sizeof head)) {
+        fprintf(stderr, "%s: expected LZ4 frame\n", path);
+        goto done;
+    }
+    if (fseek(fp, 0, SEEK_SET)) goto done;
+    a = archive_read_new();
+    if (!a || archive_read_support_filter_lz4(a) != ARCHIVE_OK ||
+        archive_read_support_format_tar(a) != ARCHIVE_OK ||
+        archive_read_open_FILE(a, fp) != ARCHIVE_OK) {
+        fprintf(stderr, "%s: archive open: %s\n", path,
+                a ? archive_error_string(a) : "out of memory");
+        goto done;
+    }
+    while ((status = archive_read_next_header(a, &entry)) == ARCHIVE_OK) {
+        const char *name = archive_entry_pathname(entry);
+        int is_meta = name && !strcmp(name, "HOLY/meta");
+        la_ssize_t got;
+        if (is_meta && (seen++ || archive_entry_filetype(entry) != AE_IFREG ||
+                        archive_entry_size(entry) < 0 ||
+                        archive_entry_size(entry) > META_LIMIT)) {
+            fprintf(stderr, "%s: invalid or repeated HOLY/meta\n", path);
+            goto done;
+        }
+        while ((got = archive_read_data(a, buffer, sizeof buffer)) > 0) {
+            if (is_meta) {
+                if ((size_t)got > META_LIMIT - meta_size) {
+                    fprintf(stderr, "%s: oversized HOLY/meta\n", path);
+                    goto done;
+                }
+                {
+                    char *next = realloc(meta, meta_size + (size_t)got + 1);
+                    if (!next) { fprintf(stderr, "%s: out of memory\n", path); goto done; }
+                    meta = next;
+                }
+                memcpy(meta + meta_size, buffer, (size_t)got);
+                meta_size += (size_t)got;
+                meta[meta_size] = '\0';
+            }
+        }
+        if (got < 0) { fprintf(stderr, "%s: archive data: %s\n", path, archive_error_string(a)); goto done; }
+    }
+    if (status != ARCHIVE_EOF) {
+        fprintf(stderr, "%s: archive header: %s\n", path, archive_error_string(a));
+        goto done;
+    }
+    if (!seen) { fprintf(stderr, "%s: missing HOLY/meta\n", path); goto done; }
+    ok = read_meta(path, meta ? meta : "", meta_size);
+done:
+    if (a) archive_read_free(a);
+    fclose(fp);
+    free(meta);
+    return ok;
+}

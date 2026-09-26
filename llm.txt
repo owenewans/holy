@@ -1,0 +1,73 @@
+holy.conf.5 source=holy version=development sha256=e0ed633d939965a06bb29520c0dd43953d7377ab391c20e45bb3e0e6c3296202
+HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
+
+NAME
+     holy.conf - Holy source configuration format
+
+STATUS
+     This  page describes the implemented syntax checker. Source activation, de-
+     pendency resolution and installation are not implemented  in  this	 reposi-
+     tory.
+
+SYNOPSIS
+     holypkg config check FILE
+
+DESCRIPTION
+     Each  record  contains  a	key  and  whitespace-separated arguments. Double
+     quotes retain spaces. A hash sign at the start of a token begins a	 comment
+     outside quotes. Escapes are backslash-quote, double-backslash, backslash-n,
+     backslash-t,  backslash-r	and backslash-x followed by two hexadecimal dig-
+     its. NUL is rejected.  The parser does not run shell expansion.
+
+     Sections are [general], [resolver], [source NAME] and [rule NAME].	 Include
+     takes one path relative to the containing file. Repeated scalar keys within
+     a section are errors with both source locations. The source  repo	and  re-
+     solver  prefer  keys  are	lists and can repeat. Recursive includes are re-
+     jected.  The checker validates lexical and structural syntax; it  does  not
+     yet  validate URL credentials, source relationships or references. It vali-
+     dates key names, argument counts, and the scripts, trust,	ask-sources  and
+     prefer values. The alias local is reserved and cannot name a source.
+
+EXAMPLE
+     [general]
+     arch x86_64
+     scripts ask
+     [source arch]
+     type pacman
+     repo core "https://mirror.example/arch/$repo/os/$arch"
+
+FILES
+     /etc/holy.conf  is	 the proposed system path. The checker takes an explicit
+     file.
+
+Holy				 September 2026			    HOLY.CONF(5)
+holypkg.8 source=holy version=development sha256=cf00a0140ea427ff83056ae73e1611a4f5d001c256055cbc2a83d575b1bd8659
+HOLYPKG(8)		      System Administration		      HOLYPKG(8)
+
+NAME
+     holypkg - Holy package tooling (configuration checker prototype)
+
+SYNOPSIS
+     holypkg config check FILE
+     holypkg info local:FILE
+
+DESCRIPTION
+     Checks syntax, includes, sections and duplicate scalar keys of a configura-
+     tion  file	 without  changing  the system. No package installation, import,
+     fetch, resolution or indexing command is available yet. This executable  is
+     independent of the separate owenewans/holypkg project.
+
+     The  info	command reads an LZ4-frame-compressed tar archive and prints the
+     seven required fields from HOLY/meta. It reads  archive  data  without  ex-
+     tracting  or  executing it. It checks for repeated metadata and unsupported
+     format versions.  It does not validate the payload manifest, hashes, signa-
+     tures or installability.
+
+EXIT STATUS
+     0 indicates a valid file under the implemented checks; 2 indicates	 invalid
+     arguments or invalid configuration. Diagnostics go to standard error.
+
+SEE ALSO
+     holy.conf(5)
+
+Holy				 September 2026			      HOLYPKG(8)

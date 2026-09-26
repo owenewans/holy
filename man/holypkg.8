@@ -1,0 +1,22 @@
+.TH HOLYPKG 8 "September 2026" "Holy" "System Administration"
+.SH NAME
+holypkg \- Holy package tooling (configuration checker prototype)
+.SH SYNOPSIS
+.B holypkg config check FILE
+.br
+.B holypkg info local:FILE
+.SH DESCRIPTION
+Checks syntax, includes, sections and duplicate scalar keys of a configuration
+file without changing the system. No package installation, import, fetch,
+resolution or indexing command is available yet. This executable is independent
+of the separate owenewans/holypkg project.
+.PP
+The info command reads an LZ4-frame-compressed tar archive and prints the seven
+required fields from HOLY/meta. It reads archive data without extracting or
+executing it. It checks for repeated metadata and unsupported format versions.
+It does not validate the payload manifest, hashes, signatures or installability.
+.SH EXIT STATUS
+0 indicates a valid file under the implemented checks; 2 indicates invalid
+arguments or invalid configuration. Diagnostics go to standard error.
+.SH SEE ALSO
+.BR holy.conf (5)
