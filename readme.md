@@ -1,24 +1,37 @@
-# Holy
+<div align="center">
 
-<div align="center"><img src="https://count.owenewans.org/owenewans/holy?theme=moebooru-h&amp;notitle" alt="Holy views"></div>
+# holy
 
-Holy is a planned independent Linux distribution. This repository starts with
-the C99 configuration parser and read-only local package inspector/verifier.
-The verifier handles regular files, symlinks, directories and direct hardlinks.
-Local fetch copies objects by SHA-256 without installing them.
-Local extract handles regular files, directories and safe links in a new output directory.
-Local check compares a package payload against a chosen root without changing it.
-Local scan reads ELF payload facts and rejects known arch/libc tag mismatches.
-Local requirements inspection validates a typed `HOLY/deps` subset without resolving providers.
-Local preview checks payload path conflicts in a target root without changing it.
-Local repository indexing writes an unsigned prototype catalog from verified `.holy` files.
-Holy does not contain a bootable distribution yet.
+independent linux distribution in development.
 
-Run `make` to build `holypkg` and `make check` to test it. `make install`
-installs the binary, man pages and generated `llm.txt`. Read
-`man/holy.conf.5`, `man/holy-package.5` and `man/holypkg.8` for the implemented
-interface. Builds require libarchive, libelf and OpenSSL; fixtures also require tar,
-lz4, sha256sum, setfattr, setfacl, objcopy, as and ld. Package installation, ISO images and runtime acceptance
-tests remain unimplemented.
+<a href="https://count.owenewans.org/owenewans/holy?theme=moebooru-h&amp;notitle"><img src="https://count.owenewans.org/owenewans/holy?theme=moebooru-h&amp;notitle" alt="repository views"></a>
 
-The similarly named `owenewans/holypkg` repository is a separate project.
+`c` `linux` `distribution`
+
+</div>
+
+## build
+
+Requires libarchive, libelf and OpenSSL:
+
+```sh
+make
+make check
+```
+
+`make install` installs the current `holypkg` prototype, man pages and generated
+`llm.txt`. Fixtures also need tar, lz4, sha256sum, GCC, setfattr, setfacl,
+objcopy, as and ld.
+
+## status
+
+The C99 prototype verifies local `.holy` archives, inspects ELF and typed
+requirements, checks files and previews root path conflicts without installing.
+It can build, seal, search and fetch an unsigned local repository catalog.
+Installed-state transactions, a bootable image and QEMU acceptance are pending.
+The [Slackware holypkg](https://github.com/owenewans/holypkg) is a separate project.
+
+## documentation
+
+Read [holypkg(8)](man/holypkg.8), [holy-package(5)](man/holy-package.5) and
+[holy.conf(5)](man/holy.conf.5) for the implemented interface.
