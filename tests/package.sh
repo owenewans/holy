@@ -57,6 +57,17 @@ grep -qx 'needed usr/bin/probe libc.so.6' "$tmp/out"
 grep -q '^version usr/bin/probe libc.so.6 GLIBC_.* required$' "$tmp/out"
 grep -qx 'scanned 2 ELF files' "$tmp/out"
 test -z "$(find "$tmp" -maxdepth 1 -name 'holy-scan-*' -print)"
+cp -a "$tmp/elf-payload" "$tmp/plugin-only"
+rm "$tmp/plugin-only/DATA/usr/bin/probe"
+grep -v '^file usr/bin/probe ' "$tmp/elf-payload/HOLY/files" > "$tmp/plugin-only/HOLY/files"
+for tag in nolibc musl; do
+    sed "s/^libc glibc$/libc $tag/" "$tmp/elf-payload/HOLY/meta" > "$tmp/plugin-only/HOLY/meta"
+    tar -cf "$tmp/plugin-only.tar" -C "$tmp/plugin-only" HOLY DATA
+    lz4 -q -f "$tmp/plugin-only.tar" "$tmp/plugin-only.holy"
+    "$bin" verify "local:$tmp/plugin-only.holy" > "$tmp/out"
+    if "$bin" scan "local:$tmp/plugin-only.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+    grep -q 'ELF requires libc.so.6 but package libc differs' "$tmp/err"
+done
 cp "$tmp/elf-payload/HOLY/meta" "$tmp/elf-meta"
 for mismatch in arch libc noarch; do
     case "$mismatch" in
@@ -69,7 +80,11 @@ for mismatch in arch libc noarch; do
     lz4 -q -f "$tmp/elf-mismatch.tar" "$tmp/elf-mismatch.holy"
     "$bin" verify "local:$tmp/elf-mismatch.holy" > "$tmp/out"
     if "$bin" scan "local:$tmp/elf-mismatch.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
-    grep -q 'ELF arch/libc mismatch' "$tmp/err"
+    if test "$mismatch" = libc; then
+        grep -q 'libc differs\|arch/libc mismatch' "$tmp/err"
+    else
+        grep -q 'ELF arch/libc mismatch' "$tmp/err"
+    fi
 done
 cp "$tmp/elf-meta" "$tmp/elf-payload/HOLY/meta"
 printf '\177ELFbroken\n' > "$tmp/elf-payload/DATA/usr/bin/probe"

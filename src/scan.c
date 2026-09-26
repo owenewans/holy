@@ -89,6 +89,17 @@ int holy_scan_local_with_output(const char *path, int emit)
             holy_elf_free(&info);
             goto done;
         }
+        {
+            size_t i;
+            for (i = 0; i < info.needed_count; ++i)
+                if (!strcmp(info.needed[i], "libc.so.6") &&
+                    strcmp(libc, "glibc")) {
+                    fprintf(stderr, "holypkg: ELF requires libc.so.6 but package libc differs: %s\n",
+                            name);
+                    holy_elf_free(&info);
+                    goto done;
+                }
+        }
         if (emit) {
             size_t i;
             fputs("elf ", stdout);

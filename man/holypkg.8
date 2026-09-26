@@ -107,6 +107,7 @@ each file's class, machine, runtime hint and ISA using the same reader. It does
 not execute payloads. It rejects a machine mismatch with the package arch,
 including ELF in noarch, and a recognized glibc/musl interpreter that disagrees
 with the libc tag. A missing or unrecognized interpreter remains unknown;
+an exact DT_NEEDED libc.so.6 on a plugin also rejects a non-glibc package tag.
 scan does not infer nolibc, prove plugin requirements or resolve dependencies.
 For each ELF it also prints SONAME, DT_NEEDED, GNU version needs with weak or
 required status, and version definitions, when present. These file-scoped
