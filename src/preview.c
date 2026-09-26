@@ -72,6 +72,7 @@ int holy_preview_local(const char *package, const char *root_path)
     struct action *actions = NULL;
     char *snapshot = holy_stage_local(package, "holy-preview");
     size_t count = 0, i, conflicts = 0, requirements = 0, elf_needed = 0;
+    size_t script_interpreters = 0;
     int root = -1, status, rc = 2;
     if (!snapshot || !holy_verify_with_output(snapshot, 0) ||
         !holy_extract_preflight(snapshot) ||
@@ -116,18 +117,37 @@ int holy_preview_local(const char *package, const char *root_path)
         actions[count].state = state;
         ++count;
         if (state == 2) ++conflicts;
+        if (archive_entry_filetype(entry) == AE_IFREG &&
+            !archive_entry_hardlink(entry) &&
+            (archive_entry_perm(entry) & 0111) &&
+            archive_entry_size(entry) >= 2) {
+            char prefix[2];
+            size_t used = 0;
+            while (used < sizeof prefix) {
+                la_ssize_t got = archive_read_data(archive, prefix + used,
+                                                  sizeof prefix - used);
+                if (got <= 0) goto done;
+                used += (size_t)got;
+            }
+            if (!memcmp(prefix, "#!", sizeof prefix)) {
+                if (script_interpreters == (size_t)-1) goto done;
+                ++script_interpreters;
+            }
+        }
         if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
     }
     if (status != ARCHIVE_EOF) goto done;
-    printf("preview artifact=%s paths=%zu conflicts=%zu requirements=%zu elf-needed=%zu\n",
-           identity.digest, count, conflicts, requirements, elf_needed);
+    printf("preview artifact=%s paths=%zu conflicts=%zu requirements=%zu elf-needed=%zu script-interpreters=%zu\n",
+           identity.digest, count, conflicts, requirements, elf_needed,
+           script_interpreters);
     for (i = 0; i < count; ++i) {
         printf("%s ", actions[i].state == 0 ? "new" :
                        actions[i].state == 1 ? "existing-dir" : "conflict");
         print_path(actions[i].path);
         putchar('\n');
     }
-    rc = conflicts ? 4 : (requirements || elf_needed) ? 3 : 0;
+    rc = conflicts ? 4 :
+         (requirements || elf_needed || script_interpreters) ? 3 : 0;
 done:
     if (rc == 2) fprintf(stderr, "holypkg: cannot preview package\n");
     if (archive) archive_read_free(archive);

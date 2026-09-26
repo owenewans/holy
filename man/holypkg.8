@@ -143,7 +143,10 @@ directory descriptor. It reports new paths, existing directories and
 conflicts without writing to the root. Parsed HOLY/deps requirements count
 as decisions still needed. It counts observed DT_NEEDED edges separately,
 including ones omitted from HOLY/deps; it does not deduplicate or select
-providers. Either count requires resolution. Preview refuses nonempty
+providers. It also counts executable payload files beginning with #! as
+unresolved script-interpreter edges. It does not parse env indirection or
+verify that an interpreter exists. Any of these counts requires resolution.
+Preview refuses nonempty
 HOLY/hooks and privileged payload modes. A zero-conflict preview is not an
 installable plan: it has no installed database generation, dependency
 resolution, ownership decisions, transaction journal or apply command.
