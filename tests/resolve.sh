@@ -55,6 +55,25 @@ grep -Fqx "{\"schema\":\"holy-local-solve-1\",\"type\":\"summary\",\"count\":2,\
 grep -qx "generation $generation" "$tmp/out"
 if "$bin" repo solve "$tmp/repo" absent --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"unavailable-artifact"}' "$tmp/out"
+mkdir "$tmp/repo-choice"
+cp "$tmp/root-1.holy" "$tmp/b-1.holy" "$tmp/b-2.holy" "$tmp/repo-choice/"
+"$bin" repo index "$tmp/repo-choice" > "$tmp/out"
+"$bin" repo seal "$tmp/repo-choice" > "$tmp/out"
+choice_generation=$(sha256sum "$tmp/repo-choice/index")
+choice_generation=${choice_generation%% *}
+b2_hash=$(sha256sum "$tmp/b-2.holy")
+b2_hash=${b2_hash%% *}
+if "$bin" repo solve "$tmp/repo-choice" root --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"decision-required"}' "$tmp/out"
+"$bin" repo solve "$tmp/repo-choice" root --choose "b-1=$b2_hash" --json > "$tmp/out"
+grep -Fqx "{\"schema\":\"holy-local-solve-1\",\"type\":\"selected\",\"sha256\":\"$b2_hash\"}" "$tmp/out"
+grep -Fqx "{\"schema\":\"holy-local-solve-1\",\"type\":\"summary\",\"count\":2,\"generation\":\"$choice_generation\"}" "$tmp/out"
+if grep -Fq "\"sha256\":\"$b_hash\"" "$tmp/out"; then exit 1; fi
+if "$bin" repo solve "$tmp/repo-choice" root --choose "b-1=$root_hash" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"decision-required"}' "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
+if "$bin" repo solve "$tmp/repo-choice" root --choose broken --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"invalid-query"}' "$tmp/out"
 printf 'corrupt\n' > "$tmp/repo/unused-1.holy"
 if "$bin" repo solve "$tmp/repo" root --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"invalid-catalog"}' "$tmp/out"

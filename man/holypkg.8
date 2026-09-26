@@ -52,6 +52,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg repo solve DIRECTORY NAME [--json]
 .br
+.B holypkg repo solve DIRECTORY NAME --choose REQUIREMENT_ID=SHA256 [--json]
+.br
 .B holypkg repo providers DIRECTORY KIND NAME
 .br
 .B holypkg repo providers DIRECTORY KIND NAME --json
@@ -141,6 +143,9 @@ generation returns invalid-catalog without partial results. --json uses the
 same holy-local-solve-1 events as solve. This command reads all archive
 payloads per query; it does not import remote sources, install packages or
 interpret typed HOLY/provides aliases as dependency providers.
+The --choose form applies the same one-operation, direct-root requirement
+selection after validating the sealed index and matching the selected digest
+to an artifact in that generation. It does not write a saved rule.
 On success, the text output ends with the sealed index SHA-256 generation;
 the --json summary includes the same digest. A later index generation requires
 a new query before treating the result as current. The digest binds the local

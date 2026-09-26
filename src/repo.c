@@ -378,7 +378,8 @@ static int list(const char *directory, const char *query,
                  const char *forced_index, int lock, int emit,
                  const char *fetch_digest, const char *output,
                  const char *provider_kind, const char *provider_name,
-                 const char *solve_name, int solve_json, int *solve_rc)
+                 const char *solve_name, const char *solve_choice,
+                 int solve_json, int *solve_rc)
 {
     struct object *objects = NULL;
     char **candidate_snapshots = NULL;
@@ -547,7 +548,8 @@ static int list(const char *directory, const char *query,
             paths[0] = candidate_snapshots[root];
             for (i = 0; i < count; ++i)
                 if (i != root) paths[next++] = candidate_snapshots[i];
-            *solve_rc = holy_resolve_local(paths, count, solve_json, expected, NULL);
+            *solve_rc = holy_resolve_local(paths, count, solve_json, expected,
+                                           solve_choice);
             free(paths);
         }
     }
@@ -597,7 +599,7 @@ done:
 
 int holy_repo_list(const char *directory)
 {
-    return list(directory, NULL, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, 0, NULL);
+    return list(directory, NULL, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL);
 }
 
 int holy_repo_search(const char *directory, const char *query)
@@ -606,7 +608,7 @@ int holy_repo_search(const char *directory, const char *query)
         fprintf(stderr, "holypkg: package name required\n");
         return 0;
     }
-    return list(directory, query, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, 0, NULL);
+    return list(directory, query, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL);
 }
 
 int holy_repo_providers(const char *directory, const char *kind,
@@ -618,10 +620,11 @@ int holy_repo_providers(const char *directory, const char *kind,
         return 0;
     }
     return list(directory, NULL, NULL, 1, json ? 2 : 1,
-                NULL, NULL, kind, name, NULL, 0, NULL);
+                NULL, NULL, kind, name, NULL, NULL, 0, NULL);
 }
 
-int holy_repo_solve(const char *directory, const char *name, int json)
+int holy_repo_solve(const char *directory, const char *name,
+                    const char *choice, int json)
 {
     int result = 6;
     if (!name || !*name) {
@@ -630,7 +633,7 @@ int holy_repo_solve(const char *directory, const char *name, int json)
         return 2;
     }
     if (!list(directory, NULL, NULL, 1, 0, NULL, NULL,
-              NULL, NULL, name, json, &result)) {
+              NULL, NULL, name, choice, json, &result)) {
         if (json) puts("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"invalid-catalog\"}");
         return 6;
     }
@@ -644,7 +647,7 @@ int holy_repo_fetch(const char *directory, const char *digest, const char *outpu
     for (i = 0; i < 64; ++i)
         if (!((digest[i] >= '0' && digest[i] <= '9') ||
               (digest[i] >= 'a' && digest[i] <= 'f'))) goto invalid;
-    return list(directory, NULL, NULL, 1, 0, digest, output, NULL, NULL, NULL, 0, NULL);
+    return list(directory, NULL, NULL, 1, 0, digest, output, NULL, NULL, NULL, NULL, 0, NULL);
 invalid:
     fprintf(stderr, "holypkg: expected a lowercase SHA-256 digest\n");
     return 0;
@@ -692,7 +695,7 @@ int holy_repo_seal(const char *directory)
     output = -1;
     close(input);
     input = -1;
-    if (!list(directory, NULL, temporary, 0, 0, NULL, NULL, NULL, NULL, NULL, 0, NULL)) goto done;
+    if (!list(directory, NULL, temporary, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL)) goto done;
     input = openat(dir, temporary, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (input < 0) goto done;
     snapshot = holy_stage_fd(input, "holy-seal");

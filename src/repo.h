@@ -9,7 +9,8 @@ int holy_repo_seal(const char *directory);
 int holy_repo_providers(const char *directory, const char *kind,
                         const char *name, int json);
 /* returns shell-style status; validates a sealed local catalog before solve. */
-int holy_repo_solve(const char *directory, const char *name, int json);
+int holy_repo_solve(const char *directory, const char *name,
+                    const char *choice, int json);
 int holy_repo_fetch(const char *directory, const char *digest, const char *output);
 
 #endif
