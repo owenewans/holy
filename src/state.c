@@ -239,7 +239,9 @@ static int journal_exists(int dir)
     return present;
 }
 
-static int journal_valid(int dir, unsigned long long generation)
+static int journal_valid(int dir, unsigned long long generation,
+                         unsigned long long *original,
+                         char artifact[65], char plan_digest[65])
 {
     int transactions = child_dir(dir, "transactions", 0), fd = -1, result = -1;
     struct stat st;
@@ -275,6 +277,9 @@ static int journal_valid(int dir, unsigned long long generation)
     memcpy(plan, buffer + length + 70, 64);
     plan[64] = '\0';
     if (!valid_digest(digest) || !valid_digest(plan)) goto done;
+    if (original) *original = recorded;
+    if (artifact) memcpy(artifact, digest, 65);
+    if (plan_digest) memcpy(plan_digest, plan, 65);
     result = 1;
 done:
     if (fd >= 0) close(fd);
@@ -393,7 +398,7 @@ int holy_state_status(const char *root_path, int json)
     if (dir < 0) goto done;
     if (flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation)) goto done;
-    pending = journal_valid(dir, generation);
+    pending = journal_valid(dir, generation, NULL, NULL, NULL);
     if (pending < 0) goto done;
     if (pending) {
         if (json) printf("{\"schema\":\"holy-db-status-1\",\"type\":\"incomplete\",\"generation\":%llu}\n", generation);
@@ -516,7 +521,7 @@ int holy_state_recover(const char *root_path)
     int has_pending = 0, result = 1;
     if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation)) goto done;
-    result = journal_valid(dir, generation);
+    result = journal_valid(dir, generation, NULL, NULL, NULL);
     if (result < 0) { result = 1; goto done; }
     if (result) {
         fprintf(stderr, "holypkg: incomplete file transaction requires manual inspection\n");
@@ -992,6 +997,44 @@ done:
                         journaled ? "; inspect incomplete transaction" : "");
     if (temp >= 0) close(temp);
     if (temp_name[0] && dir >= 0) unlinkat(dir, temp_name, 0);
+    if (snapshot) { unlink(snapshot); free(snapshot); }
+    if (installed >= 0) close(installed);
+    if (transactions >= 0) close(transactions);
+    if (dir >= 0) close(dir);
+    if (root >= 0) close(root);
+    return result;
+}
+
+int holy_state_abort_empty(const char *root_path)
+{
+    unsigned long long generation, recorded;
+    char digest[65], plan[65], reserved[65], approved[65];
+    struct stat st, root_st;
+    char *snapshot = NULL;
+    int root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int dir = root < 0 ? -1 : state_dir_at(root, 0);
+    int transactions = -1, installed = -1, result = 1;
+    if (dir < 0 || fstat(root, &root_st) || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+        !empty_child(dir, "index") || !read_generation(dir, &generation)) goto done;
+    result = journal_valid(dir, generation, &recorded, digest, plan);
+    if (result < 0) { result = 1; goto done; }
+    if (!result) { result = 5; goto done; }
+    result = 5;
+    if (recorded != generation || !installed_valid(dir)) goto done;
+    transactions = child_dir(dir, "transactions", 0);
+    installed = child_dir(dir, "installed", 0);
+    if (transactions < 0 || installed < 0 ||
+        read_reservation(transactions, "pending", generation, reserved, approved) != 1 ||
+        strcmp(reserved, digest) || strcmp(approved, plan) ||
+        !fstatat(installed, digest, &st, AT_SYMLINK_NOFOLLOW) || errno != ENOENT) goto done;
+    snapshot = holy_cache_snapshot(digest, root_path);
+    if (!snapshot || !holy_install_preflight(snapshot, root) ||
+        !same_root(root_path, &root_st)) goto done;
+    if (unlinkat(transactions, "journal", 0) || fsync(transactions)) goto done;
+    printf("aborted empty apply %s; approval retained\n", digest);
+    result = 0;
+done:
+    if (result) fprintf(stderr, "holypkg: cannot abort incomplete transaction without manual review\n");
     if (snapshot) { unlink(snapshot); free(snapshot); }
     if (installed >= 0) close(installed);
     if (transactions >= 0) close(transactions);

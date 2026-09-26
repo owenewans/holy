@@ -56,6 +56,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db recover --root DIRECTORY
 .br
+.B holypkg db recover --abort-empty --root DIRECTORY
+.br
 .B holypkg db preflight --root DIRECTORY
 .br
 .B holypkg db preflight --root DIRECTORY --json
@@ -132,8 +134,12 @@ and the next database generation after copying payload files. The installed
 record contains meta, files, deps, origin and state; local delivery has no
 trusted source-id. Apply does not run package hooks or configure services.
 An I/O failure after journal publication leaves an incomplete transaction
-for manual inspection; db status returns 5 and db recover does not retry file
-mutations. A regular successful return requires both the installed record and
+for inspection; db status returns 5 and db recover does not retry file
+mutations. db recover --abort-empty can clear an incomplete journal only at
+its original generation, with the same approved artifact and no installed
+instance or payload files. It retains approval for a later apply or cancel.
+Otherwise the operator must inspect the rootfs and journal manually.
+A regular successful return requires both the installed record and
 generation publication. General ownership replacement, file removal and
 automatic rollback are not implemented. The command is not an installer for
 arbitrary .holy packages.
@@ -401,8 +407,9 @@ instead be removed while leaving its prepared predecessor intact. Recover
 preserves pending and returns 5. With no pending it returns 0 after removing
 the orphan. Unknown entries, stale generations, unrelated inodes and malformed
 records fail without deletion. For an incomplete file transaction, recover
-returns 5 and requires manual inspection. It does not replay hooks or undo
-installed files.
+returns 5 unless --abort-empty proves that none of its payload files or
+installed instance has appeared. It does not replay hooks or undo installed
+files.
 .PP
 Database preflight holds a shared database lock, validates the one pending
 reservation, reads a verified private snapshot of its cached artifact and runs

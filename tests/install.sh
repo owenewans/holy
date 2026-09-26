@@ -103,4 +103,14 @@ grep -qx 'incomplete transaction; inspect journal' "$tmp/out"
 if "$bin" db recover --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
 test ! -e "$tmp/failure/usr/bin/data"
 chmod 0755 "$tmp/failure/usr/bin"
+printf 'user\n' > "$tmp/failure/usr/bin/data"
+if "$bin" db recover --abort-empty --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
+test -f "$tmp/failure/var/lib/holypkg/transactions/journal"
+grep -qx user "$tmp/failure/usr/bin/data"
+rm "$tmp/failure/usr/bin/data"
+"$bin" db recover --abort-empty --root "$tmp/failure" > "$tmp/out"
+grep -qx "aborted empty apply $digest; approval retained" "$tmp/out"
+test ! -e "$tmp/failure/var/lib/holypkg/transactions/journal"
+"$bin" db apply --root "$tmp/failure" > "$tmp/out"
+grep -qx "installed $digest generation 1 paths 3" "$tmp/out"
 printf 'install payload fixtures passed\n'

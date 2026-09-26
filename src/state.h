@@ -21,5 +21,7 @@ int holy_state_approve(const char *hash, const char *root_path);
 int holy_state_recheck(const char *root_path);
 /* narrow, journaled installation of one approved data-only artifact. */
 int holy_state_apply(const char *root_path);
+/* clear a journal only when no payload or installed instance was written. */
+int holy_state_abort_empty(const char *root_path);
 
 #endif
