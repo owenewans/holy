@@ -114,9 +114,10 @@ chmod "$(stat -c %a "$tmp/payload/DATA/usr")" "$tmp/unpacked/DATA/usr"
 chmod "$(stat -c %a "$tmp/payload/DATA/usr/bin")" "$tmp/unpacked/DATA/usr/bin"
 "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" > "$tmp/out"
 grep -qx 'checked 3 payload objects' "$tmp/out"
-"$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" --json > "$tmp/out"
+TMPDIR="$tmp" "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" --json > "$tmp/out"
 test "$(wc -l < "$tmp/out")" -eq 1
 grep -qx '{"schema":"holy-check-1","status":"pass","coverage":"local-payload","checked":3}' "$tmp/out"
+test -z "$(find "$tmp" -maxdepth 1 -name 'holy-check-*' -print)"
 mkdir "$tmp/empty-root"
 if "$bin" check "local:$tmp/package.holy" --root "$tmp/empty-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test "$(wc -l < "$tmp/out")" -eq 4
@@ -231,8 +232,9 @@ tar -cf "$tmp/missing-member.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/missing-member.tar" "$tmp/missing-member.holy"
 if "$bin" info "local:$tmp/missing-member.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'missing HOLY/origin' "$tmp/err"
-if "$bin" check "local:$tmp/missing-member.holy" --root "$tmp/unpacked/DATA" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+if TMPDIR="$tmp" "$bin" check "local:$tmp/missing-member.holy" --root "$tmp/unpacked/DATA" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -qx '{"schema":"holy-check-1","code":"invalid-package","severity":"error","status":"unknown"}' "$tmp/out"
+test -z "$(find "$tmp" -maxdepth 1 -name 'holy-check-*' -print)"
 : > "$tmp/payload/HOLY/origin"
 tar -cf "$tmp/duplicate-member.tar" -C "$tmp/payload" HOLY DATA
 tar -rf "$tmp/duplicate-member.tar" -C "$tmp/payload" HOLY/origin

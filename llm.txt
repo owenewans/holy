@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=b6abb20547ac04a8b87fe0e5b788fffcfa0975b6e05adc5c633f43317eefb5b0
+holypkg.8 source=holy version=development sha256=59b8c4e5e0ca0a4e3967c23e41e7f654d4c9b5096b1b302fc2144507e23ec134
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -108,48 +108,49 @@ DESCRIPTION
      RECTORY is created, partial output remains for inspection.	 This command is
      not a system installation or a root transaction.
 
-     The  local check command first verifies the package, then compares its DATA
-     members with a supplied filesystem root. It  follows  directory  components
-     through  directory	 descriptors  without  following  symlinks.  It compares
-     types, mode, numeric UID/GID, file size and SHA-256,  symlink  targets  and
-     hardlink  inode  identity. It reports each changed path. Check does not run
-     package code, download files or modify the root. It does not consult an in-
-     stalled database, model ELF loaders, check unknown runtime dependencies  or
-     prove a stable snapshot if the package or root changes during checking.
+     The  local	 check	command	 copies the regular input to a private temporary
+     file, verifies that copy, then compares its DATA members  with  a	supplied
+     filesystem root. It follows directory components through directory descrip-
+     tors  without following symlinks. It compares types, mode, numeric UID/GID,
+     file size and SHA-256, symlink targets and hardlink inode identity. It  re-
+     ports each changed path. Check does not run package code, download files or
+     modify the root. It does not consult an installed database, model ELF load-
+     ers,  check  unknown runtime dependencies or prove a stable snapshot if the
+     root changes during checking.
 
      With --json, check prints one JSON object per finding and a final pass/fail
      summary on stdout. The schema is holy-check-1; changed-payload and missing-
-     payload  are  stable  finding  codes. Input or operational failures use in-
-     valid-package or check-error and status unknown. Paths  use  byte	escapes.
+     payload are stable finding codes. Input or	 operational  failures	use  in-
+     valid-package  or	check-error  and status unknown. Paths use byte escapes.
      Other commands do not yet implement --json.
 
-     The  developer-facing  elf	 command reads a regular ELF through libelf/GElf
-     without executing it or invoking ldd. It prints ELF  class,  numeric  e_ma-
-     chine  and e_type, a recognized machine (x86, x86_64 or x32), the PT_INTERP
-     path, and a libc runtime hint only for  recognized	 glibc	or  musl  inter-
-     preters.  It  reads PT_DYNAMIC to list DT_NEEDED, SONAME, RPATH and RUNPATH
-     even without section headers. GNU DT_VERNEED records list provider	 SONAME,
+     The developer-facing elf command reads a regular  ELF  through  libelf/GElf
+     without  executing	 it  or invoking ldd. It prints ELF class, numeric e_ma-
+     chine and e_type, a recognized machine (x86, x86_64 or x32), the  PT_INTERP
+     path,  and	 a  libc  runtime  hint only for recognized glibc or musl inter-
+     preters. It reads PT_DYNAMIC to list DT_NEEDED, SONAME, RPATH  and	 RUNPATH
+     even  without section headers. GNU DT_VERNEED records list provider SONAME,
      version and weak flag. GNU DT_VERDEF records list version-definition names;
-     these  records  do	 not prove that a specific symbol satisfies a consumer's
-     versioned reference.  GNU	x86  ISA-needed	 properties  in	 PT_NOTE  report
-     x86-64-baseline/v2/v3/v4  when  present;  absent or unrecognized properties
-     report unknown. No PT_INTERP yields unknown runtime. It  does  not	 inspect
-     exported  symbol versions or plugin loading; its output is not a dependency
+     these records do not prove that a specific symbol	satisfies  a  consumer's
+     versioned	reference.  GNU	 x86  ISA-needed  properties  in  PT_NOTE report
+     x86-64-baseline/v2/v3/v4 when present; absent  or	unrecognized  properties
+     report  unknown.  No  PT_INTERP yields unknown runtime. It does not inspect
+     exported symbol versions or plugin loading; its output is not a  dependency
      resolution or package ABI verdict.
 
      The local scan command stages a regular .holy input in a private file, ver-
-     ifies that copy, then copies ELF payload files to unnamed temporary  files.
-     It	 reports each file's class, machine, runtime hint and ISA using the same
-     reader. It does not execute payloads. It rejects a	 machine  mismatch  with
-     the  package arch, including ELF in noarch, and a recognized glibc/musl in-
-     terpreter that disagrees with the libc tag. A missing or  unrecognized  in-
-     terpreter	remains	 unknown;  scan	 does not infer nolibc, prove plugin re-
+     ifies  that copy, then copies ELF payload files to unnamed temporary files.
+     It reports each file's class, machine, runtime hint and ISA using the  same
+     reader.  It  does	not execute payloads. It rejects a machine mismatch with
+     the package arch, including ELF in noarch, and a recognized glibc/musl  in-
+     terpreter	that  disagrees with the libc tag. A missing or unrecognized in-
+     terpreter remains unknown; scan does not infer  nolibc,  prove  plugin  re-
      quirements or resolve dependencies.
 
 EXIT STATUS
-     0 indicates success under the implemented checks; 1 indicates a failed  lo-
-     cal  fetch,  extraction or check; 2 indicates invalid arguments, configura-
-     tion or package inspection. Diagnostics go to standard error except  --json
+     0	indicates success under the implemented checks; 1 indicates a failed lo-
+     cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
+     tion  or package inspection. Diagnostics go to standard error except --json
      check events, which go to standard output.
 
 SEE ALSO

@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "check.h"
 #include "package.h"
+#include "stage.h"
 #include "verify.h"
 
 #include <archive.h>
@@ -165,10 +166,13 @@ int holy_check_local(const char *package, const char *root_path, int json)
 {
     struct archive *a = NULL;
     struct archive_entry *entry;
+    char *snapshot = holy_stage_local(package, "holy-check");
     int root = -1, status, ok = 0, completed = 0;
     size_t checked = 0, findings = 0;
-    if (!holy_verify_with_output(package, 0)) {
+    if (!snapshot) fprintf(stderr, "holypkg: could not stage regular local input\n");
+    if (!snapshot || !holy_verify_with_output(snapshot, 0)) {
         if (json) puts("{\"schema\":\"holy-check-1\",\"code\":\"invalid-package\",\"severity\":\"error\",\"status\":\"unknown\"}");
+        if (snapshot) { unlink(snapshot); free(snapshot); }
         return 0;
     }
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
@@ -176,7 +180,7 @@ int holy_check_local(const char *package, const char *root_path, int json)
     a = archive_read_new();
     if (!a || archive_read_support_filter_lz4(a) != ARCHIVE_OK ||
         archive_read_support_format_tar(a) != ARCHIVE_OK ||
-        archive_read_open_filename(a, package, 8192) != ARCHIVE_OK) goto done;
+        archive_read_open_filename(a, snapshot, 8192) != ARCHIVE_OK) goto done;
     while ((status = archive_read_next_header(a, &entry)) == ARCHIVE_OK) {
         const char *path = archive_entry_pathname(entry);
         const char *name;
@@ -248,5 +252,7 @@ done:
         puts("{\"schema\":\"holy-check-1\",\"code\":\"check-error\",\"severity\":\"error\",\"status\":\"unknown\"}");
     if (a) archive_read_free(a);
     if (root >= 0) close(root);
+    unlink(snapshot);
+    free(snapshot);
     return ok;
 }
