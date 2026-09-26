@@ -132,7 +132,8 @@ done:
     return missing;
 }
 
-int holy_resolve_local(const char *const *paths, size_t count, int json)
+int holy_resolve_local(const char *const *paths, size_t count, int json,
+                       const char *generation)
 {
     struct local_item *local = NULL;
     struct holy_solver_item *items = NULL;
@@ -191,7 +192,11 @@ int holy_resolve_local(const char *const *paths, size_t count, int json)
             else printf("selected %s\n", local[i].identity.digest);
             ++selected_count;
         }
-        if (json) printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"summary\",\"count\":%zu}\n", selected_count);
+        if (json) {
+            printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"summary\",\"count\":%zu", selected_count);
+            if (generation) printf(",\"generation\":\"%s\"", generation);
+            puts("}");
+        } else if (generation) printf("generation %s\n", generation);
         result = 0;
     } else if (solved == 3) result = 3;
     else if (solved == 2) {

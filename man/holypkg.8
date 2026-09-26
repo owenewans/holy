@@ -133,6 +133,10 @@ generation returns invalid-catalog without partial results. --json uses the
 same holy-local-solve-1 events as solve. This command reads all archive
 payloads per query; it does not import remote sources, install packages or
 interpret typed HOLY/provides aliases as dependency providers.
+On success, the text output ends with the sealed index SHA-256 generation;
+the --json summary includes the same digest. A later index generation requires
+a new query before treating the result as current. The digest binds the local
+index bytes, not an authenticated publisher or a future installed plan.
 .PP
 The provides command stages and verifies a native archive, then reads
 HOLY/provides as typed claims. Each supported line has seven tokens:

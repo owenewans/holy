@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=22f2b68c49a0764d566f20243cd01b55fbdeda833621666bfc6fb19cc5e0000b
+holypkg.8 source=holy version=development sha256=aef085a4800a6b927bdbc4d6e86053ccbf8b5e65aee068cdaa31284229ba26dd
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -158,7 +158,11 @@ DESCRIPTION
      generation returns invalid-catalog without partial results. --json uses the
      same holy-local-solve-1 events as solve. This  command  reads  all	 archive
      payloads  per query; it does not import remote sources, install packages or
-     interpret typed HOLY/provides aliases as dependency providers.
+     interpret typed HOLY/provides aliases as dependency providers.  On success,
+     the text output ends with the sealed index SHA-256 generation;  the  --json
+     summary  includes	the same digest. A later index generation requires a new
+     query before treating the result as current. The digest binds the local in-
+     dex bytes, not an authenticated publisher or a future installed plan.
 
      The provides command stages and  verifies	a  native  archive,  then  reads
      HOLY/provides as typed claims. Each supported line has seven tokens:

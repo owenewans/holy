@@ -92,7 +92,7 @@ int main(int argc, char **argv)
             }
             paths[i - 2] = argv[i] + 6;
         }
-        result = holy_resolve_local(paths, (size_t)last - 2, json);
+        result = holy_resolve_local(paths, (size_t)last - 2, json, NULL);
         free(paths);
         return result;
     }

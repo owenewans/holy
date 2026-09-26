@@ -45,10 +45,14 @@ cp "$tmp/root-1.holy" "$tmp/b-1.holy" "$tmp/unused-1.holy" "$tmp/repo/"
 if "$bin" repo solve "$tmp/repo" root --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"invalid-catalog"}' "$tmp/out"
 "$bin" repo seal "$tmp/repo" > "$tmp/out"
+generation=$(sha256sum "$tmp/repo/index")
+generation=${generation%% *}
 "$bin" repo solve "$tmp/repo" root --json > "$tmp/out"
 grep -Fqx "{\"schema\":\"holy-local-solve-1\",\"type\":\"selected\",\"sha256\":\"$root_hash\"}" "$tmp/out"
 grep -Fqx "{\"schema\":\"holy-local-solve-1\",\"type\":\"selected\",\"sha256\":\"$b_hash\"}" "$tmp/out"
-grep -Fqx '{"schema":"holy-local-solve-1","type":"summary","count":2}' "$tmp/out"
+grep -Fqx "{\"schema\":\"holy-local-solve-1\",\"type\":\"summary\",\"count\":2,\"generation\":\"$generation\"}" "$tmp/out"
+"$bin" repo solve "$tmp/repo" root > "$tmp/out"
+grep -qx "generation $generation" "$tmp/out"
 if "$bin" repo solve "$tmp/repo" absent --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"unavailable-artifact"}' "$tmp/out"
 printf 'corrupt\n' > "$tmp/repo/unused-1.holy"
