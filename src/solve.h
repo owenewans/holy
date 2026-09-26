@@ -14,6 +14,8 @@ struct holy_solver_item {
     size_t provides_count;
     const struct holy_solver_requirement *requires;
     size_t requires_count;
+    const char *const *conflicts;
+    size_t conflicts_count;
 };
 
 /* exact, already-normalized capability identities only; no version comparison.

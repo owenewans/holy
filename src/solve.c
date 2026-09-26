@@ -25,7 +25,8 @@ int holy_solve_exact(const struct holy_solver_item *items, size_t count,
     for (i = 0; i < count; ++i) {
         if (!items[i].id || !*items[i].id ||
             (items[i].provides_count && !items[i].provides) ||
-            (items[i].requires_count && !items[i].requires)) return 0;
+            (items[i].requires_count && !items[i].requires) ||
+            (items[i].conflicts_count && !items[i].conflicts)) return 0;
         for (j = 0; j < i; ++j)
             if (!strcmp(items[i].id, items[j].id)) return 0;
     }
@@ -64,6 +65,13 @@ int holy_solve_exact(const struct holy_solver_item *items, size_t count,
                 if (!dep) goto done;
             }
             s->requires = repo_addid_dep(repo, s->requires, dep, 0);
+        }
+        for (j = 0; j < items[i].conflicts_count; ++j) {
+            Id dep;
+            if (!items[i].conflicts[j] || !*items[i].conflicts[j]) goto done;
+            dep = pool_str2id(pool, items[i].conflicts[j], 1);
+            if (!dep) goto done;
+            s->conflicts = repo_addid_dep(repo, s->conflicts, dep, 0);
         }
     }
     if (!requested) goto done;
