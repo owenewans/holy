@@ -30,6 +30,10 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg cache verify SHA256 --root DIRECTORY
 .br
+.B holypkg db init --root DIRECTORY
+.br
+.B holypkg db status --root DIRECTORY
+.br
 .B holypkg repo index DIRECTORY
 .br
 .B holypkg repo list DIRECTORY
@@ -186,6 +190,15 @@ target-root directory chain, stages a private snapshot and checks the digest,
 payload, known ELF ABI facts and supported requirements. It reports the
 verified name, arch and libc. It does not mutate the cache or prove that
 other package dependencies can be satisfied.
+.PP
+Database init creates an empty ROOT/var/lib/holypkg with installed,
+transactions and index directories, and a generation file containing 0.
+It locks the database directory for this operation and uses a synced temporary
+file plus link for exclusive generation creation; repeating init retains the
+existing generation. Status holds a shared lock while validating the same
+layout and reading the generation. Both commands reject symlinked,
+group-writable or world-writable ancestor directories inside the target root.
+Init does not register packages, create a transaction journal or install files.
 .PP
 The repository index command validates regular .holy files in DIRECTORY and
 writes an unsigned, lexicographically ordered index through an atomic rename.
