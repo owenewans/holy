@@ -26,6 +26,26 @@ static int safe_value(const char *s)
     return 1;
 }
 
+static int safe_archive_path(const char *name)
+{
+    const char *part, *end;
+    size_t n;
+    if (!name || !*name || name[0] == '/' ||
+        (strcmp(name, "HOLY") && strcmp(name, "DATA") &&
+         strncmp(name, "HOLY/", 5) && strncmp(name, "DATA/", 5))) return 0;
+    part = name;
+    while (*part) {
+        end = strchr(part, '/');
+        n = end ? (size_t)(end - part) : strlen(part);
+        if (!n || (n == 1 && part[0] == '.') ||
+            (n == 2 && part[0] == '.' && part[1] == '.')) return 0;
+        if (!end) break;
+        part = end + 1;
+        if (!*part) return 1;
+    }
+    return 1;
+}
+
 static int meta_line(char *line, size_t len, const char *path, size_t number,
                      char **values, char **error)
 {
@@ -146,6 +166,10 @@ int holy_package_info(const char *path)
         const char *name = archive_entry_pathname(entry);
         int is_meta = name && !strcmp(name, "HOLY/meta");
         la_ssize_t got;
+        if (!safe_archive_path(name)) {
+            fprintf(stderr, "%s: unsafe or unexpected archive path\n", path);
+            goto done;
+        }
         if (is_meta && (seen++ || archive_entry_filetype(entry) != AE_IFREG ||
                         archive_entry_size(entry) < 0 ||
                         archive_entry_size(entry) > META_LIMIT)) {

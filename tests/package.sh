@@ -38,4 +38,9 @@ tar -cf "$tmp/payload.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q -f "$tmp/payload.tar" "$tmp/feature.holy"
 if "$bin" info "local:$tmp/feature.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'unsupported feature' "$tmp/err"
+tar -cf "$tmp/traversal.tar" --transform='s@^DATA/usr/bin/hello$@DATA/../../escape@' \
+    -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/traversal.tar" "$tmp/traversal.holy"
+if "$bin" info "local:$tmp/traversal.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'unsafe or unexpected archive path' "$tmp/err"
 printf 'package fixtures passed\n'

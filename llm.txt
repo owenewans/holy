@@ -42,7 +42,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=5875ae82f2b87db71f0e949a401459ea045a74e212843b1baebc8db94feee628
+holypkg.8 source=holy version=development sha256=a259575634fcbdb73e65c5f138b327b430a120ff13e1fda5723c0e166881e1da
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -62,11 +62,12 @@ DESCRIPTION
      seven required fields from HOLY/meta. It reads  archive  data  without  ex-
      tracting  or  executing it. It checks for repeated metadata and unsupported
      format versions.  It prints the SHA-256 digest of the  input  archive.   It
-     does  not validate the payload manifest, hashes, signatures or installabil-
+     rejects  archive entries outside HOLY and DATA, including dot segments.  It
+     does not validate the payload manifest, hashes, signatures or  installabil-
      ity.
 
 EXIT STATUS
-     0 indicates a valid file under the implemented checks; 2 indicates	 invalid
+     0	indicates a valid file under the implemented checks; 2 indicates invalid
      arguments or invalid configuration. Diagnostics go to standard error.
 
 SEE ALSO

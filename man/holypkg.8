@@ -15,6 +15,7 @@ The info command reads an LZ4-frame-compressed tar archive and prints the seven
 required fields from HOLY/meta. It reads archive data without extracting or
 executing it. It checks for repeated metadata and unsupported format versions.
 It prints the SHA-256 digest of the input archive.
+It rejects archive entries outside HOLY and DATA, including dot segments.
 It does not validate the payload manifest, hashes, signatures or installability.
 .SH EXIT STATUS
 0 indicates a valid file under the implemented checks; 2 indicates invalid
