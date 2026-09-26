@@ -4,6 +4,7 @@
 
 #include <archive.h>
 #include <archive_entry.h>
+#include <openssl/evp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -42,6 +43,11 @@ static int meta_line(char *line, size_t len, const char *path, size_t number,
     if (!count) { holy_tokens_free(v, count); return 1; }
     if (count != 2 || !safe_value(v[0]) || !safe_value(v[1])) {
         fprintf(stderr, "%s: HOLY/meta:%zu: invalid field\n", path, number);
+        holy_tokens_free(v, count);
+        return 0;
+    }
+    if (!strcmp(v[0], "requires-feature")) {
+        fprintf(stderr, "%s: HOLY/meta:%zu: unsupported feature\n", path, number);
         holy_tokens_free(v, count);
         return 0;
     }
@@ -98,8 +104,11 @@ int holy_package_info(const char *path)
     char buffer[8192], *meta = NULL;
     struct archive *a = NULL;
     struct archive_entry *entry;
+    EVP_MD_CTX *digest_ctx = NULL;
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_size = 0;
     FILE *fp;
-    size_t meta_size = 0;
+    size_t meta_size = 0, n, i;
     int status, seen = 0, ok = 0;
     fp = fopen(path, "rb");
     if (!fp) { perror(path); return 0; }
@@ -108,7 +117,23 @@ int holy_package_info(const char *path)
         fprintf(stderr, "%s: expected LZ4 frame\n", path);
         goto done;
     }
+    digest_ctx = EVP_MD_CTX_new();
+    if (!digest_ctx || EVP_DigestInit_ex(digest_ctx, EVP_sha256(), NULL) != 1) {
+        fprintf(stderr, "%s: SHA-256 initialization failed\n", path);
+        goto done;
+    }
     if (fseek(fp, 0, SEEK_SET)) goto done;
+    while ((n = fread(buffer, 1, sizeof buffer, fp)) > 0)
+        if (EVP_DigestUpdate(digest_ctx, buffer, n) != 1) goto done;
+    if (ferror(fp) || EVP_DigestFinal_ex(digest_ctx, digest, &digest_size) != 1 ||
+        digest_size != 32) {
+        fprintf(stderr, "%s: SHA-256 read failed\n", path);
+        goto done;
+    }
+    if (fseek(fp, 0, SEEK_SET)) {
+        fprintf(stderr, "%s: rewind failed\n", path);
+        goto done;
+    }
     a = archive_read_new();
     if (!a || archive_read_support_filter_lz4(a) != ARCHIVE_OK ||
         archive_read_support_format_tar(a) != ARCHIVE_OK ||
@@ -151,9 +176,15 @@ int holy_package_info(const char *path)
     }
     if (!seen) { fprintf(stderr, "%s: missing HOLY/meta\n", path); goto done; }
     ok = read_meta(path, meta ? meta : "", meta_size);
+    if (ok) {
+        fputs("sha256 ", stdout);
+        for (i = 0; i < digest_size; ++i) printf("%02x", digest[i]);
+        putchar('\n');
+    }
 done:
     if (a) archive_read_free(a);
     fclose(fp);
     free(meta);
+    EVP_MD_CTX_free(digest_ctx);
     return ok;
 }

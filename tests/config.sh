@@ -55,4 +55,7 @@ grep -q 'expects 2 argument' "$tmp/err"
 printf '[general]\nscripts unsafe\n' > "$tmp/value"
 if "$bin" config check "$tmp/value" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'invalid scripts value' "$tmp/err"
+printf '[general]\narch \377\n' > "$tmp/encoding"
+if "$bin" config check "$tmp/encoding" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'invalid UTF-8' "$tmp/err"
 printf 'config fixtures passed\n'

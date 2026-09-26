@@ -1,4 +1,4 @@
-holy.conf.5 source=holy version=development sha256=e0ed633d939965a06bb29520c0dd43953d7377ab391c20e45bb3e0e6c3296202
+holy.conf.5 source=holy version=development sha256=8238a4ed12298535d15be116515cdb3df7a5d03e621dd828cf78dbf5d14165c5
 HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
 
 NAME
@@ -13,11 +13,12 @@ SYNOPSIS
      holypkg config check FILE
 
 DESCRIPTION
-     Each  record  contains  a	key  and  whitespace-separated arguments. Double
-     quotes retain spaces. A hash sign at the start of a token begins a	 comment
-     outside quotes. Escapes are backslash-quote, double-backslash, backslash-n,
-     backslash-t,  backslash-r	and backslash-x followed by two hexadecimal dig-
-     its. NUL is rejected.  The parser does not run shell expansion.
+     Input  must  be  UTF-8. Each record contains a key and whitespace-separated
+     arguments. Double quotes retain spaces. A hash sign at the start of a token
+     begins a comment outside quotes. Escapes are backslash-quote,  double-back-
+     slash,  backslash-n,  backslash-t,	 backslash-r and backslash-x followed by
+     two hexadecimal digits. NUL is rejected.  The parser does not run shell ex-
+     pansion.
 
      Sections are [general], [resolver], [source NAME] and [rule NAME].	 Include
      takes one path relative to the containing file. Repeated scalar keys within
@@ -41,7 +42,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=cf00a0140ea427ff83056ae73e1611a4f5d001c256055cbc2a83d575b1bd8659
+holypkg.8 source=holy version=development sha256=5875ae82f2b87db71f0e949a401459ea045a74e212843b1baebc8db94feee628
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -60,8 +61,9 @@ DESCRIPTION
      The  info	command reads an LZ4-frame-compressed tar archive and prints the
      seven required fields from HOLY/meta. It reads  archive  data  without  ex-
      tracting  or  executing it. It checks for repeated metadata and unsupported
-     format versions.  It does not validate the payload manifest, hashes, signa-
-     tures or installability.
+     format versions.  It prints the SHA-256 digest of the  input  archive.   It
+     does  not validate the payload manifest, hashes, signatures or installabil-
+     ity.
 
 EXIT STATUS
      0 indicates a valid file under the implemented checks; 2 indicates	 invalid

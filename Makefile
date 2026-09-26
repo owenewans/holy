@@ -2,7 +2,7 @@ CC ?= cc
 CPPFLAGS ?=
 CFLAGS ?= -O2
 LDFLAGS ?=
-LDLIBS ?= -larchive
+LDLIBS ?= -larchive -lcrypto
 PREFIX ?= /usr
 DESTDIR ?=
 

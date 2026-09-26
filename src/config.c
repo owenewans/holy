@@ -71,11 +71,36 @@ static int hex(char c)
     return -1;
 }
 
+static int utf8(const unsigned char *s, size_t n)
+{
+    size_t i = 0, j, count;
+    unsigned int code, minimum;
+    while (i < n) {
+        unsigned char c = s[i++];
+        if (c < 0x80) continue;
+        if (c >= 0xc2 && c <= 0xdf) { count = 1; code = c & 31; minimum = 0x80; }
+        else if (c >= 0xe0 && c <= 0xef) { count = 2; code = c & 15; minimum = 0x800; }
+        else if (c >= 0xf0 && c <= 0xf4) { count = 3; code = c & 7; minimum = 0x10000; }
+        else return 0;
+        if (count > n - i) return 0;
+        for (j = 0; j < count; ++j) {
+            c = s[i++];
+            if ((c & 0xc0) != 0x80) return 0;
+            code = (code << 6) | (c & 63);
+        }
+        if (code < minimum || code > 0x10ffff ||
+            (code >= 0xd800 && code <= 0xdfff)) return 0;
+    }
+    return 1;
+}
+
 int holy_lex(const char *s, size_t length, char ***out, size_t *count,
              const char *file, size_t line, char **error)
 {
     size_t i = 0, used = 0, cap = 0;
     char **v = NULL;
+    if (!utf8((const unsigned char *)s, length))
+        return fail(error, file, line, "invalid UTF-8");
     while (i < length) {
         char *word = NULL;
         size_t len = 0, size = 0;
