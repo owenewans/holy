@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=fe8c9d9823d171fd6899e81db3d373abd813c8546aa4c77bcf825cb499bfa632
+holypkg.8 source=holy version=development sha256=094629e3015faaab7cadb9037acad2ef707bbfb1f6af5d59fe5a74480a82d36f
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -125,15 +125,16 @@ DESCRIPTION
      without executing it or invoking ldd. It prints ELF class, a recognized ma-
      chine  (x86,  x86_64  or  x32), the PT_INTERP path, and a libc runtime hint
      only for recognized glibc or musl interpreters. It reads PT_DYNAMIC to list
-     DT_NEEDED, SONAME, RPATH and  RUNPATH  even  without  section  headers.  No
-     PT_INTERP yields unknown runtime. It does not inspect symbol versions, plu-
-     gins or ISA notes yet; its output is not a dependency resolution or package
-     ABI verdict.
+     DT_NEEDED, SONAME, RPATH and RUNPATH  even	 without  section  headers.  GNU
+     DT_VERNEED	 records  list provider SONAME, version and weak flag. No PT_IN-
+     TERP yields unknown runtime. It does not inspect exported symbol  versions,
+     plugin  loading or ISA notes yet; its output is not a dependency resolution
+     or package ABI verdict.
 
 EXIT STATUS
-     0	indicates success under the implemented checks; 1 indicates a failed lo-
-     cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
-     tion  or package inspection. Diagnostics go to standard error except --json
+     0 indicates success under the implemented checks; 1 indicates a failed  lo-
+     cal  fetch,  extraction or check; 2 indicates invalid arguments, configura-
+     tion or package inspection. Diagnostics go to standard error except  --json
      check events, which go to standard output.
 
 SEE ALSO

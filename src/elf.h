@@ -4,6 +4,12 @@
 #include <stdint.h>
 #include <stddef.h>
 
+struct holy_elf_version {
+    char *provider;
+    char *name;
+    int weak;
+};
+
 struct holy_elf_info {
     int elf_class;
     uint16_t machine;
@@ -14,6 +20,8 @@ struct holy_elf_info {
     char *soname;
     char *rpath;
     char *runpath;
+    struct holy_elf_version *versions;
+    size_t version_count;
 };
 
 /* returns 0 on parsed ELF, 1 on non-ELF, 2 on malformed/unsupported ELF.

@@ -44,15 +44,109 @@ static char *dynamic_string(const char *table, size_t length, uint64_t offset,
     return copy;
 }
 
+static int map_virtual(Elf *elf, size_t count, uint64_t address,
+                       uint64_t minimum, uint64_t file_size,
+                       uint64_t *offset, uint64_t *available)
+{
+    size_t i;
+    for (i = 0; i < count; ++i) {
+        GElf_Phdr load;
+        uint64_t delta, start, length;
+        if (!gelf_getphdr(elf, (int)i, &load)) return 0;
+        if (load.p_type != PT_LOAD || address < load.p_vaddr) continue;
+        delta = address - load.p_vaddr;
+        if (delta > load.p_filesz || minimum > load.p_filesz - delta ||
+            load.p_offset > file_size || delta > file_size - load.p_offset)
+            continue;
+        start = load.p_offset + delta;
+        length = load.p_filesz - delta;
+        if (length > file_size - start) length = file_size - start;
+        if (minimum > length) continue;
+        *offset = start;
+        *available = length;
+        return 1;
+    }
+    return 0;
+}
+
+static int version_needs(Elf *elf, uint64_t offset, uint64_t available,
+                         uint64_t count, const char *strings,
+                         size_t string_length, struct holy_elf_info *info)
+{
+    Elf_Data *data;
+    size_t min_need = gelf_fsize(elf, ELF_T_VNEED, 1, EV_CURRENT);
+    size_t min_aux = gelf_fsize(elf, ELF_T_VNAUX, 1, EV_CURRENT);
+    uint64_t cursor = 0, i;
+    if (available > 16 * 1024 * 1024) available = 16 * 1024 * 1024;
+    if (!min_need || !min_aux || !count || available < min_aux ||
+        count > available / min_need) return 0;
+    data = elf_getdata_rawchunk(elf, (off_t)offset, (size_t)available, ELF_T_VNEED);
+    if (!data) return 0;
+    for (i = 0; i < count; ++i) {
+        GElf_Verneed need;
+        uint64_t aux_cursor, j;
+        char *provider;
+        if (cursor > available - min_need || cursor > INT_MAX ||
+            !gelf_getverneed(data, (int)cursor, &need) || need.vn_version != 1 ||
+            !need.vn_cnt || need.vn_cnt > available / min_aux ||
+            !need.vn_aux || need.vn_aux > available - cursor) return 0;
+        provider = dynamic_string(strings, string_length, need.vn_file, 0);
+        if (!provider) return 0;
+        aux_cursor = cursor + need.vn_aux;
+        for (j = 0; j < need.vn_cnt; ++j) {
+            GElf_Vernaux aux;
+            struct holy_elf_version *next;
+            char *name, *source;
+            if (aux_cursor > available - min_aux || aux_cursor > INT_MAX ||
+                !gelf_getvernaux(data, (int)aux_cursor, &aux)) {
+                free(provider);
+                return 0;
+            }
+            name = dynamic_string(strings, string_length, aux.vna_name, 0);
+            source = strdup(provider);
+            if (!name || !source ||
+                info->version_count == (size_t)-1 / sizeof *info->versions) {
+                free(name);
+                free(source);
+                free(provider);
+                return 0;
+            }
+            next = realloc(info->versions,
+                           (info->version_count + 1) * sizeof *info->versions);
+            if (!next) { free(name); free(source); free(provider); return 0; }
+            info->versions = next;
+            info->versions[info->version_count].provider = source;
+            info->versions[info->version_count].name = name;
+            info->versions[info->version_count].weak = !!(aux.vna_flags & VER_FLG_WEAK);
+            ++info->version_count;
+            if (j + 1 < need.vn_cnt) {
+                if (!aux.vna_next || aux.vna_next > available - aux_cursor) {
+                    free(provider);
+                    return 0;
+                }
+                aux_cursor += aux.vna_next;
+            }
+        }
+        free(provider);
+        if (i + 1 < count) {
+            if (!need.vn_next || need.vn_next > available - cursor) return 0;
+            cursor += need.vn_next;
+        }
+    }
+    return 1;
+}
+
 static int dynamic_table(Elf *elf, int fd, uint64_t file_size,
                          size_t phdr_count, const GElf_Phdr *dynamic,
                          struct holy_elf_info *info)
 {
     Elf_Data *data;
     uint64_t table_addr = 0, table_size = 0, soname = 0, rpath = 0, runpath = 0;
+    uint64_t verneed_addr = 0, verneed_num = 0;
     uint64_t *needed = NULL;
     size_t needed_count = 0, entry_size, entries, i, j;
     int has_addr = 0, has_size = 0, has_soname = 0, has_rpath = 0, has_runpath = 0;
+    int has_verneed = 0, has_verneednum = 0;
     int ended = 0, ok = 0;
     char *strings = NULL;
     if (!dynamic->p_filesz || dynamic->p_filesz > 16 * 1024 * 1024 ||
@@ -90,28 +184,22 @@ static int dynamic_table(Elf *elf, int fd, uint64_t file_size,
         } else if (item.d_tag == DT_RUNPATH) {
             if (has_runpath++) goto done;
             runpath = item.d_un.d_val;
+        } else if (item.d_tag == DT_VERNEED) {
+            if (has_verneed++) goto done;
+            verneed_addr = item.d_un.d_ptr;
+        } else if (item.d_tag == DT_VERNEEDNUM) {
+            if (has_verneednum++) goto done;
+            verneed_num = item.d_un.d_val;
         }
     }
     if (!ended) goto done;
-    if (needed_count || has_soname || has_rpath || has_runpath) {
-        uint64_t string_offset = 0;
-        int found = 0;
+    if (has_verneed != has_verneednum) goto done;
+    if (needed_count || has_soname || has_rpath || has_runpath || has_verneed) {
+        uint64_t string_offset = 0, available = 0;
         if (!has_addr || !has_size || !table_size || table_size > 16 * 1024 * 1024)
             goto done;
-        for (j = 0; j < phdr_count; ++j) {
-            GElf_Phdr load;
-            uint64_t delta;
-            if (!gelf_getphdr(elf, j, &load)) goto done;
-            if (load.p_type != PT_LOAD || table_addr < load.p_vaddr) continue;
-            delta = table_addr - load.p_vaddr;
-            if (delta > load.p_filesz || table_size > load.p_filesz - delta ||
-                load.p_offset > file_size || delta > file_size - load.p_offset ||
-                table_size > file_size - load.p_offset - delta) continue;
-            string_offset = load.p_offset + delta;
-            found = 1;
-            break;
-        }
-        if (!found) goto done;
+        if (!map_virtual(elf, phdr_count, table_addr, table_size, file_size,
+                         &string_offset, &available)) goto done;
         strings = malloc((size_t)table_size);
         if (!strings || !read_exact(fd, strings, (size_t)table_size, (off_t)string_offset))
             goto done;
@@ -134,6 +222,14 @@ static int dynamic_table(Elf *elf, int fd, uint64_t file_size,
             goto done;
         if (has_runpath && !(info->runpath = dynamic_string(strings, (size_t)table_size, runpath, 1)))
             goto done;
+        if (has_verneed) {
+            uint64_t need_offset, need_available;
+            size_t minimum = gelf_fsize(elf, ELF_T_VNEED, 1, EV_CURRENT);
+            if (!minimum || !map_virtual(elf, phdr_count, verneed_addr,
+                                         minimum, file_size, &need_offset, &need_available) ||
+                !version_needs(elf, need_offset, need_available, verneed_num,
+                               strings, (size_t)table_size, info)) goto done;
+        }
     }
     ok = 1;
 done:
@@ -215,6 +311,16 @@ void holy_elf_free(struct holy_elf_info *info)
     free(info->rpath);
     free(info->runpath);
     info->soname = info->rpath = info->runpath = NULL;
+    {
+        size_t i;
+        for (i = 0; i < info->version_count; ++i) {
+            free(info->versions[i].provider);
+            free(info->versions[i].name);
+        }
+    }
+    free(info->versions);
+    info->versions = NULL;
+    info->version_count = 0;
 }
 
 const char *holy_elf_machine(const struct holy_elf_info *info)

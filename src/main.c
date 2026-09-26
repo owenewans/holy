@@ -31,6 +31,9 @@ int main(int argc, char **argv)
             if (info.soname) printf("soname %s\n", info.soname);
             if (info.rpath) printf("rpath %s\n", info.rpath);
             if (info.runpath) printf("runpath %s\n", info.runpath);
+            for (i = 0; i < info.version_count; ++i)
+                printf("version %s %s%s\n", info.versions[i].provider,
+                       info.versions[i].name, info.versions[i].weak ? " weak" : "");
         }
         else fprintf(stderr, "holypkg: %s ELF input\n", rc == 1 ? "not an" : "invalid");
         holy_elf_free(&info);

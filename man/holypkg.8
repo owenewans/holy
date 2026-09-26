@@ -77,9 +77,10 @@ The developer-facing elf command reads a regular ELF through libelf/GElf
 without executing it or invoking ldd. It prints ELF class, a recognized
 machine (x86, x86_64 or x32), the PT_INTERP path, and a libc runtime hint
 only for recognized glibc or musl interpreters. It reads PT_DYNAMIC to list
-DT_NEEDED, SONAME, RPATH and RUNPATH even without section headers. No
-PT_INTERP yields unknown runtime. It does not inspect symbol versions,
-plugins or ISA notes yet;
+DT_NEEDED, SONAME, RPATH and RUNPATH even without section headers. GNU
+DT_VERNEED records list provider SONAME, version and weak flag. No PT_INTERP
+yields unknown runtime. It does not inspect exported symbol versions,
+plugin loading or ISA notes yet;
 its output is not a dependency resolution or package ABI verdict.
 .SH EXIT STATUS
 0 indicates success under the implemented checks; 1 indicates a failed local
