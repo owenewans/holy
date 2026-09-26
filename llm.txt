@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=f0bebda4a746cbe7406d592513763f09e310dc2dfc05a41e8ab982c34d290f5c
+holypkg.8 source=holy version=development sha256=a756a232c54d92ac01a7514c25c10dd9aa05a9816c499c463ec5924eae195e5c
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -181,11 +181,13 @@ DESCRIPTION
      facts, preflights extraction and inspects each DATA path in a supplied root
      by	 directory  descriptor.	 It  reports new paths, existing directories and
      conflicts without writing to the root. Parsed HOLY/deps requirements  count
-     as	 decisions  still  needed; no provider is selected. Preview refuses non-
-     empty HOLY/hooks and privileged payload modes. A zero-conflict  preview  is
-     not  an  installable  plan: it has no installed database generation, depen-
-     dency resolution, ownership decisions, transaction journal	 or  apply  com-
-     mand.  Changes to the root after preview invalidate the result.
+     as	 decisions  still needed. It counts observed DT_NEEDED edges separately,
+     including ones omitted from HOLY/deps; it does not	 deduplicate  or  select
+     providers.	 Either	 count	requires  resolution.  Preview	refuses nonempty
+     HOLY/hooks and privileged payload modes. A zero-conflict preview is not  an
+     installable plan: it has no installed database generation, dependency reso-
+     lution, ownership decisions, transaction journal or apply command.	 Changes
+     to the root after preview invalidate the result.
 
      The repository index command validates regular .holy files in DIRECTORY and
      writes  an	 unsigned, lexicographically ordered index through an atomic re-

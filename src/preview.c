@@ -71,11 +71,11 @@ int holy_preview_local(const char *package, const char *root_path)
     struct holy_package_identity identity = {0};
     struct action *actions = NULL;
     char *snapshot = holy_stage_local(package, "holy-preview");
-    size_t count = 0, i, conflicts = 0, requirements = 0;
+    size_t count = 0, i, conflicts = 0, requirements = 0, elf_needed = 0;
     int root = -1, status, rc = 2;
     if (!snapshot || !holy_verify_with_output(snapshot, 0) ||
         !holy_extract_preflight(snapshot) ||
-        !holy_scan_local_with_output(snapshot, 0) ||
+        !holy_scan_local_facts(snapshot, 0, &elf_needed) ||
         !holy_deps_count(snapshot, &requirements) ||
         !holy_package_identity(snapshot, &identity)) goto done;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
@@ -119,15 +119,15 @@ int holy_preview_local(const char *package, const char *root_path)
         if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
     }
     if (status != ARCHIVE_EOF) goto done;
-    printf("preview artifact=%s paths=%zu conflicts=%zu requirements=%zu\n",
-           identity.digest, count, conflicts, requirements);
+    printf("preview artifact=%s paths=%zu conflicts=%zu requirements=%zu elf-needed=%zu\n",
+           identity.digest, count, conflicts, requirements, elf_needed);
     for (i = 0; i < count; ++i) {
         printf("%s ", actions[i].state == 0 ? "new" :
                        actions[i].state == 1 ? "existing-dir" : "conflict");
         print_path(actions[i].path);
         putchar('\n');
     }
-    rc = conflicts ? 4 : requirements ? 3 : 0;
+    rc = conflicts ? 4 : (requirements || elf_needed) ? 3 : 0;
 done:
     if (rc == 2) fprintf(stderr, "holypkg: cannot preview package\n");
     if (archive) archive_read_free(archive);

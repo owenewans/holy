@@ -22,15 +22,16 @@ static void print_token(const char *path)
     }
 }
 
-int holy_scan_local_with_output(const char *path, int emit)
+int holy_scan_local_facts(const char *path, int emit, size_t *needed)
 {
     struct archive *a = NULL;
     struct archive_entry *entry;
     char *snapshot = holy_stage_local(path, "holy-scan");
     char *arch = NULL, *libc = NULL;
     char buffer[65536];
-    size_t scanned = 0;
+    size_t scanned = 0, edges = 0;
     int status, ok = 0;
+    if (needed) *needed = 0;
     if (!snapshot) {
         fprintf(stderr, "holypkg: could not stage regular local input\n");
         return 0;
@@ -139,11 +140,17 @@ int holy_scan_local_with_output(const char *path, int emit)
                 putchar('\n');
             }
         }
+        if (info.needed_count > (size_t)-1 - edges) {
+            holy_elf_free(&info);
+            goto done;
+        }
+        edges += info.needed_count;
         holy_elf_free(&info);
         ++scanned;
     }
     if (status != ARCHIVE_EOF) goto done;
     if (emit) printf("scanned %zu ELF files\n", scanned);
+    if (needed) *needed = edges;
     ok = 1;
 done:
     if (!ok) fprintf(stderr, "holypkg: payload ELF scan incomplete\n");
@@ -153,6 +160,11 @@ done:
     free(arch);
     free(libc);
     return ok;
+}
+
+int holy_scan_local_with_output(const char *path, int emit)
+{
+    return holy_scan_local_facts(path, emit, NULL);
 }
 
 int holy_scan_local(const char *path)

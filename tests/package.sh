@@ -70,7 +70,7 @@ grep -Fq '"original":"line\u000afeed"' "$tmp/out"
 grep -Fqx '{"schema":"holy-requirements-1","type":"summary","count":1}' "$tmp/out"
 mkdir "$tmp/preview-root"
 "$bin" preview "local:$tmp/package.holy" --root "$tmp/preview-root" > "$tmp/out"
-grep -qx "preview artifact=$expected paths=3 conflicts=0 requirements=0" "$tmp/out"
+grep -qx "preview artifact=$expected paths=3 conflicts=0 requirements=0 elf-needed=0" "$tmp/out"
 grep -qx 'new usr/bin/hello' "$tmp/out"
 test ! -e "$tmp/preview-root/usr"
 mkdir "$tmp/preview-root/usr"
@@ -78,7 +78,7 @@ ln -s "$tmp/payload/DATA/usr/bin" "$tmp/preview-root/usr/bin"
 rc=0
 "$bin" preview "local:$tmp/package.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 4
-grep -qx "preview artifact=$expected paths=3 conflicts=2 requirements=0" "$tmp/out"
+grep -qx "preview artifact=$expected paths=3 conflicts=2 requirements=0 elf-needed=0" "$tmp/out"
 grep -qx 'conflict usr/bin/hello' "$tmp/out"
 test -L "$tmp/preview-root/usr/bin"
 rm "$tmp/preview-root/usr/bin"
@@ -87,7 +87,7 @@ printf 'keep\n' > "$tmp/preview-root/usr/bin/hello"
 rc=0
 "$bin" preview "local:$tmp/package.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 4
-grep -qx "preview artifact=$expected paths=3 conflicts=1 requirements=0" "$tmp/out"
+grep -qx "preview artifact=$expected paths=3 conflicts=1 requirements=0 elf-needed=0" "$tmp/out"
 grep -qx 'conflict usr/bin/hello' "$tmp/out"
 grep -qx 'keep' "$tmp/preview-root/usr/bin/hello"
 cp -a "$tmp/payload" "$tmp/with-hook"
@@ -114,12 +114,12 @@ mkdir "$tmp/decision-root"
 rc=0
 "$bin" preview "local:$tmp/with-hook.holy" --root "$tmp/decision-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 3
-grep -q '^preview artifact=.* paths=3 conflicts=0 requirements=1$' "$tmp/out"
+grep -q '^preview artifact=.* paths=3 conflicts=0 requirements=1 elf-needed=0$' "$tmp/out"
 test ! -e "$tmp/decision-root/usr"
 rc=0
 "$bin" preview "local:$tmp/with-hook.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 4
-grep -q '^preview artifact=.* paths=3 conflicts=1 requirements=1$' "$tmp/out"
+grep -q '^preview artifact=.* paths=3 conflicts=1 requirements=1 elf-needed=0$' "$tmp/out"
 cp -a "$tmp/payload" "$tmp/privileged"
 chmod 4755 "$tmp/privileged/DATA/usr/bin/hello"
 sed 's/^file usr\/bin\/hello [^ ]*/file usr\/bin\/hello 4755/' \
@@ -151,8 +151,15 @@ grep -q '^elf usr/bin/probe class=ELF64 machine=x86_64 e_machine=62 runtime=glib
 grep -q '^elf usr/bin/plugin.so class=ELF64 machine=x86_64 e_machine=62 runtime=unknown ' "$tmp/out"
 grep -qx 'soname usr/bin/plugin.so plugin.so.1' "$tmp/out"
 grep -qx 'needed usr/bin/probe libc.so.6' "$tmp/out"
+grep -qx 'needed usr/bin/plugin.so libc.so.6' "$tmp/out"
 grep -q '^version usr/bin/probe libc.so.6 GLIBC_.* required$' "$tmp/out"
 grep -qx 'scanned 2 ELF files' "$tmp/out"
+mkdir "$tmp/elf-preview-root"
+rc=0
+"$bin" preview "local:$tmp/elf.holy" --root "$tmp/elf-preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
+test "$rc" -eq 3
+grep -q '^preview artifact=.* paths=5 conflicts=0 requirements=0 elf-needed=2$' "$tmp/out"
+test ! -e "$tmp/elf-preview-root/usr"
 test -z "$(find "$tmp" -maxdepth 1 -name 'holy-scan-*' -print)"
 cp -a "$tmp/elf-payload" "$tmp/plugin-only"
 rm "$tmp/plugin-only/DATA/usr/bin/probe"
