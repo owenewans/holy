@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <openssl/evp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -62,6 +63,50 @@ static int record(FILE *fp, const struct object *object)
         if (fputc(' ', fp) == EOF || !quote(fp, values[i])) return 0;
     }
     return fprintf(fp, " %s %" PRIu64 "\n", id->digest, id->size) >= 0;
+}
+
+static int digest_file(const char *path, char hex[65])
+{
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    unsigned char hash[32], buffer[65536];
+    unsigned int length;
+    size_t n, i;
+    FILE *fp = fopen(path, "rb");
+    int ok = fp && ctx && EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) == 1;
+    while (ok && (n = fread(buffer, 1, sizeof buffer, fp)) > 0)
+        ok = EVP_DigestUpdate(ctx, buffer, n) == 1;
+    if (ok) ok = !ferror(fp) && EVP_DigestFinal_ex(ctx, hash, &length) == 1 &&
+                 length == sizeof hash;
+    if (ok) {
+        for (i = 0; i < sizeof hash; ++i)
+            snprintf(hex + i * 2, 3, "%02x", hash[i]);
+        hex[64] = '\0';
+    }
+    if (fp) fclose(fp);
+    EVP_MD_CTX_free(ctx);
+    return ok;
+}
+
+static int read_current(int dir, char digest[65])
+{
+    char line[72];
+    struct stat st;
+    size_t i;
+    int fd = openat(dir, "current", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0) return errno == ENOENT ? 0 : -1;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size != sizeof line ||
+        pread(fd, line, sizeof line, 0) != sizeof line ||
+        memcmp(line, "sha256 ", 7) || line[71] != '\n') {
+        close(fd);
+        return -1;
+    }
+    close(fd);
+    for (i = 0; i < 64; ++i)
+        if (!((line[i + 7] >= '0' && line[i + 7] <= '9') ||
+              (line[i + 7] >= 'a' && line[i + 7] <= 'f'))) return -1;
+    memcpy(digest, line + 7, 64);
+    digest[64] = '\0';
+    return 1;
 }
 
 int holy_repo_index(const char *directory)
@@ -191,24 +236,40 @@ static int parse_record(char **v, size_t n, struct object *object)
     return 1;
 }
 
-static int list(const char *directory, const char *query)
+static int list(const char *directory, const char *query,
+                const char *forced_index, int lock, int emit)
 {
     struct object *objects = NULL;
     struct stat st;
     FILE *index = NULL;
-    char *line = NULL, *error = NULL;
+    char *line = NULL, *error = NULL, *index_snapshot = NULL;
+    char expected[65], actual_digest[65], index_name[71];
     size_t capacity = 0, count = 0, i, j, number = 0;
     ssize_t length;
-    int dir = -1, fd = -1, ok = 0;
+    int dir = -1, fd = -1, ok = 0, current = 0;
 
     dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    if (dir < 0 || flock(dir, LOCK_SH) < 0) goto done;
-    fd = openat(dir, "index", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (dir < 0 || (lock && flock(dir, LOCK_SH) < 0)) goto done;
+    if (forced_index) {
+        if (!*forced_index || strlen(forced_index) >= sizeof index_name ||
+            strchr(forced_index, '/')) goto done;
+        strcpy(index_name, forced_index);
+    } else {
+        current = read_current(dir, expected);
+        if (current < 0) goto done;
+        if (current) snprintf(index_name, sizeof index_name, "index.%s", expected);
+        else memcpy(index_name, "index", sizeof "index");
+    }
+    fd = openat(dir, index_name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
         st.st_size < 0 || st.st_size > 16 * 1024 * 1024) goto done;
-    index = fdopen(fd, "r");
-    if (!index) goto done;
+    index_snapshot = holy_stage_fd(fd, "holy-catalog");
+    close(fd);
     fd = -1;
+    if (!index_snapshot || (current && (!digest_file(index_snapshot, actual_digest) ||
+                                       strcmp(actual_digest, expected)))) goto done;
+    index = fopen(index_snapshot, "r");
+    if (!index) goto done;
     while ((length = getline(&line, &capacity, index)) >= 0) {
         char **v = NULL;
         size_t n = 0;
@@ -273,10 +334,10 @@ static int list(const char *directory, const char *query)
         size_t matches = 0;
         for (j = 0; j < count; ++j) {
             if (query && strcmp(objects[j].identity.name, query)) continue;
-            if (!record(stdout, &objects[j])) goto done;
+            if (emit && !record(stdout, &objects[j])) goto done;
             ++matches;
         }
-        printf("listed %zu packages\n", matches);
+        if (emit) printf("listed %zu packages\n", matches);
     }
     ok = 1;
 done:
@@ -285,6 +346,7 @@ done:
     free(error);
     free(line);
     if (index) fclose(index);
+    if (index_snapshot) { unlink(index_snapshot); free(index_snapshot); }
     if (fd >= 0) close(fd);
     for (i = 0; i < count; ++i) {
         free(objects[i].filename);
@@ -297,7 +359,7 @@ done:
 
 int holy_repo_list(const char *directory)
 {
-    return list(directory, NULL);
+    return list(directory, NULL, NULL, 1, 1);
 }
 
 int holy_repo_search(const char *directory, const char *query)
@@ -306,5 +368,99 @@ int holy_repo_search(const char *directory, const char *query)
         fprintf(stderr, "holypkg: package name required\n");
         return 0;
     }
-    return list(directory, query);
+    return list(directory, query, NULL, 1, 1);
+}
+
+int holy_repo_seal(const char *directory)
+{
+    char temporary[43] = {0}, pointer_temp[43] = {0};
+    char index_name[71], digest[65], previous[65], line[73];
+    char buffer[65536];
+    char *snapshot = NULL;
+    struct stat st;
+    int dir = -1, input = -1, output = -1, pointer = -1, ok = 0;
+    ssize_t got;
+    size_t written;
+    dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir < 0 || flock(dir, LOCK_EX) < 0) goto done;
+    if (read_current(dir, previous) < 0) goto done;
+    input = openat(dir, "index", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (input < 0 || fstat(input, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size < 0 || st.st_size > 16 * 1024 * 1024) goto done;
+    output = holy_temporary_at(dir, temporary);
+    if (output < 0) goto done;
+    while (lseek(output, 0, SEEK_CUR) < st.st_size) {
+        off_t position = lseek(output, 0, SEEK_CUR);
+        size_t amount;
+        if (position < 0) goto done;
+        amount = st.st_size - position < (off_t)sizeof buffer ?
+                 (size_t)(st.st_size - position) : sizeof buffer;
+        got = pread(input, buffer, amount, position);
+        size_t offset = 0;
+        if (got < 0) { if (errno == EINTR) continue; goto done; }
+        if (!got) goto done;
+        while (offset < (size_t)got) {
+            ssize_t sent = write(output, buffer + offset, (size_t)got - offset);
+            if (sent < 0 && errno == EINTR) continue;
+            if (sent <= 0) goto done;
+            offset += (size_t)sent;
+        }
+    }
+    if (fstat(input, &st) || st.st_size < 0 ||
+        lseek(output, 0, SEEK_CUR) != st.st_size) goto done;
+    if (fchmod(output, 0644) || fsync(output)) goto done;
+    close(output);
+    output = -1;
+    close(input);
+    input = -1;
+    if (!list(directory, NULL, temporary, 0, 0)) goto done;
+    input = openat(dir, temporary, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (input < 0) goto done;
+    snapshot = holy_stage_fd(input, "holy-seal");
+    if (!snapshot || !digest_file(snapshot, digest)) goto done;
+    snprintf(index_name, sizeof index_name, "index.%s", digest);
+    if (linkat(dir, temporary, dir, index_name, 0)) {
+        if (errno != EEXIST) goto done;
+        close(input);
+        input = openat(dir, index_name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (input < 0) goto done;
+        unlink(snapshot);
+        free(snapshot);
+        snapshot = holy_stage_fd(input, "holy-seal");
+        if (!snapshot || !digest_file(snapshot, previous) ||
+            strcmp(previous, digest)) goto done;
+    }
+    if (fsync(dir)) goto done;
+    if (fstatat(dir, "current", &st, AT_SYMLINK_NOFOLLOW) == 0) {
+        if (!S_ISREG(st.st_mode)) goto done;
+    } else if (errno != ENOENT) goto done;
+    pointer = holy_temporary_at(dir, pointer_temp);
+    if (pointer < 0) goto done;
+    snprintf(line, sizeof line, "sha256 %s\n", digest);
+    written = 0;
+    while (written < 72) {
+        ssize_t sent = write(pointer, line + written, 72 - written);
+        if (sent < 0 && errno == EINTR) continue;
+        if (sent <= 0) goto done;
+        written += (size_t)sent;
+    }
+    if (fchmod(pointer, 0644) || fsync(pointer)) goto done;
+    close(pointer);
+    pointer = -1;
+    if (renameat(dir, pointer_temp, dir, "current") || fsync(dir)) goto done;
+    pointer_temp[0] = '\0';
+    printf("sealed %s\n", digest);
+    ok = 1;
+done:
+    if (!ok) fprintf(stderr, "holypkg: repository seal incomplete\n");
+    if (snapshot) { unlink(snapshot); free(snapshot); }
+    if (pointer >= 0) close(pointer);
+    if (output >= 0) close(output);
+    if (input >= 0) close(input);
+    if (dir >= 0) {
+        if (temporary[0]) unlinkat(dir, temporary, 0);
+        if (pointer_temp[0]) unlinkat(dir, pointer_temp, 0);
+        close(dir);
+    }
+    return ok;
 }

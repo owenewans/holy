@@ -5,5 +5,6 @@
 int holy_repo_index(const char *directory);
 int holy_repo_list(const char *directory);
 int holy_repo_search(const char *directory, const char *query);
+int holy_repo_seal(const char *directory);
 
 #endif

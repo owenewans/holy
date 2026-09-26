@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=87c71c13720f1d5bf8d158136bd54b462a1272cb40e94b0350a8487d8fe72861
+holypkg.8 source=holy version=development sha256=ce49556fb629b4bfa707a506603c9828dab1f0fd223a0619a445b9eaa7f0b69e
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -67,6 +67,7 @@ SYNOPSIS
      holypkg repo index DIRECTORY
      holypkg repo list DIRECTORY
      holypkg repo search DIRECTORY NAME
+     holypkg repo seal DIRECTORY
 
 DESCRIPTION
      The  config  check	 command  checks  source  and rule configuration without
@@ -155,9 +156,16 @@ DESCRIPTION
      name.  It refuses symlinked packages, duplicate package  identities  and  a
      nonregular existing index. Records in format holy-index-prototype-1 contain
      the  quoted  name,	 version,  release,  os,  arch, libc, relative filename,
-     SHA-256 and size.	This prototype omits dependencies, provides,  signatures
-     and  generation  binding;	source	adapters must not treat it as the native
-     repository format.
+     SHA-256 and size.	This prototype omits dependencies, provides  and  signa-
+     tures; source adapters must not treat it as the native repository format.
+
+     The  seal command validates the entire local index, creates an index.SHA256
+     generation and atomically publishes a current pointer  containing	its  di-
+     gest.   The  list	and search commands check that digest before reading the
+     generation.  Indexing creates a draft index; publish it with seal after re-
+     viewing changes.  The pointer and artifacts  remain  unsigned  and	 can  be
+     changed  by someone with write access to the directory. Existing generation
+     files remain in place.
 
      The repository list command reads that prototype index with  the  holy.conf
      lexer and checks each referenced regular archive's size, SHA-256, identity,

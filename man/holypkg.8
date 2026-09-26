@@ -25,6 +25,8 @@ holypkg \- Holy local package tooling prototype
 .B holypkg repo list DIRECTORY
 .br
 .B holypkg repo search DIRECTORY NAME
+.br
+.B holypkg repo seal DIRECTORY
 .SH DESCRIPTION
 The config check command checks source and rule configuration without changing
 the system. Package installation, foreign import, remote fetch, dependency
@@ -110,8 +112,15 @@ writes an unsigned, lexicographically ordered index through an atomic rename.
 It refuses symlinked packages, duplicate package identities and a nonregular
 existing index. Records in format holy-index-prototype-1 contain the quoted
 name, version, release, os, arch, libc, relative filename, SHA-256 and size.
-This prototype omits dependencies, provides, signatures and generation
-binding; source adapters must not treat it as the native repository format.
+This prototype omits dependencies, provides and signatures; source adapters
+must not treat it as the native repository format.
+.PP
+The seal command validates the entire local index, creates an index.SHA256
+generation and atomically publishes a current pointer containing its digest.
+The list and search commands check that digest before reading the generation.
+Indexing creates a draft index; publish it with seal after reviewing changes.
+The pointer and artifacts remain unsigned and can be changed by someone with
+write access to the directory. Existing generation files remain in place.
 .PP
 The repository list command reads that prototype index with the holy.conf
 lexer and checks each referenced regular archive's size, SHA-256, identity,
