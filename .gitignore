@@ -1,2 +1,3 @@
 /holypkg
 /src/*.o
+/tests/solver

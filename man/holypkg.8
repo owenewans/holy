@@ -273,6 +273,13 @@ unverified: an exact name does not prove file presence, ABI compatibility,
 version constraints, or successful execution. There is no source ranking or
 dependency solver yet; the prototype-2 query uses indexed claim lookup but
 still scans all index rows.
+.PP
+The separate make check-solver target exercises an internal libsolv interface
+with normalized, exact capability IDs and an AND/OR fixture. The caller must
+pre-filter candidates using each source family's version semantics before it
+can use that interface. The fixture is not a holypkg solve command or an
+installed-system test. A missing libsolv development package makes the target
+fail rather than reporting a passed fixture.
 With --json it emits holy-repo-candidates-1 candidate events (package identity,
 filename, SHA-256 and byte size), then a count summary. Invalid catalogs emit
 one error event without partial candidates; invalid KIND/NAME emits an

@@ -22,6 +22,8 @@ make check
 `make install` installs the current `holypkg` prototype, man pages and generated
 `llm.txt`. Fixtures also need tar, lz4, sha256sum, GCC, setfattr, setfacl,
 objcopy, as and ld.
+`make check-solver` tests the internal libsolv boundary when libsolv development
+files are available through pkg-config. It returns an error if they are absent.
 
 ## status
 
@@ -33,6 +35,8 @@ It can initialize and inspect an empty target-root package database.
 It can build, seal, search exact provider claims and fetch an unsigned local
 repository catalog. The catalog records package capability claims; candidate
 lookup validates matching artifacts against those claims.
+An internal libsolv fixture solves exact prefiltered capability IDs; no CLI
+dependency resolver or version-family comparator is implemented yet.
 Installed-state transactions, a bootable image and QEMU acceptance are pending.
 The [Slackware holypkg](https://github.com/owenewans/holypkg) is a separate project.
 

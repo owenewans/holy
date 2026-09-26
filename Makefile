@@ -5,6 +5,8 @@ LDFLAGS ?=
 LDLIBS ?= -larchive -lcrypto -lelf
 PREFIX ?= /usr
 DESTDIR ?=
+SOLV_CFLAGS ?= $(patsubst -I%,-isystem %,$(shell pkg-config --cflags-only-I libsolv 2>/dev/null)) $(shell pkg-config --cflags-only-other libsolv 2>/dev/null)
+SOLV_LIBS ?= $(shell pkg-config --libs libsolv 2>/dev/null) -lz
 
 .PHONY: all check check-fixtures man
 all: holypkg
@@ -25,6 +27,11 @@ check: holypkg
 
 check-fixtures: check
 
+check-solver:
+	@pkg-config --exists libsolv || { echo 'libsolv development files required' >&2; exit 6; }
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOLV_CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o tests/solver tests/solver.c src/solve.c $(LDFLAGS) $(SOLV_LIBS)
+	./tests/solver
+
 man:
 	@for page in man/holy.conf.5 man/holypkg.8 man/holy-package.5; do groff -Tascii -man "$$page" > /dev/null || exit; done
 
@@ -40,4 +47,4 @@ install: holypkg llm.txt
 	install -m 644 llm.txt "$(DESTDIR)$(PREFIX)/share/holy/llm.txt"
 
 clean:
-	rm -f holypkg src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o
+	rm -f holypkg tests/solver src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o
