@@ -19,6 +19,47 @@ struct pending_link {
     char *target;
 };
 
+struct archive_path {
+    char *name;
+    int symlink;
+};
+
+static int compare_paths(const void *left, const void *right)
+{
+    const struct archive_path *a = left, *b = right;
+    return strcmp(a->name, b->name);
+}
+
+static int path_conflicts(struct archive_path *paths, size_t count)
+{
+    size_t i;
+    qsort(paths, count, sizeof *paths, compare_paths);
+    for (i = 0; i < count; ++i) {
+        size_t low, high, len;
+        char *prefix;
+        if (i && !strcmp(paths[i - 1].name, paths[i].name)) return 1;
+        if (!paths[i].symlink) continue;
+        len = strlen(paths[i].name);
+        if (len > (size_t)-1 - 2) return 1;
+        prefix = malloc(len + 2);
+        if (!prefix) return 1;
+        memcpy(prefix, paths[i].name, len);
+        prefix[len] = '/';
+        prefix[len + 1] = '\0';
+        low = 0;
+        high = count;
+        while (low < high) {
+            size_t middle = low + (high - low) / 2;
+            if (strcmp(paths[middle].name, prefix) < 0) low = middle + 1;
+            else high = middle;
+        }
+        free(prefix);
+        if (low < count && !strncmp(paths[low].name, paths[i].name, len) &&
+            paths[low].name[len] == '/') return 1;
+    }
+    return 0;
+}
+
 static struct archive *reader(const char *source)
 {
     struct archive *a = archive_read_new();
@@ -102,13 +143,30 @@ static int preflight(const char *source)
 {
     struct archive *a = reader(source);
     struct archive_entry *entry;
+    struct archive_path *paths = NULL;
+    size_t count = 0, i;
     int status, ok = 1;
     if (!a) { fprintf(stderr, "holypkg: archive open failed\n"); return 0; }
     while ((status = archive_read_next_header(a, &entry)) == ARCHIVE_OK) {
+        struct archive_path *next;
+        size_t length;
         if (!supported(entry)) { ok = 0; break; }
+        if (count == (size_t)-1 / sizeof *paths) { ok = 0; break; }
+        next = realloc(paths, (count + 1) * sizeof *paths);
+        if (!next) { ok = 0; break; }
+        paths = next;
+        paths[count].name = strdup(archive_entry_pathname(entry));
+        if (!paths[count].name) { ok = 0; break; }
+        length = strlen(paths[count].name);
+        if (length > 1 && paths[count].name[length - 1] == '/')
+            paths[count].name[length - 1] = '\0';
+        paths[count].symlink = archive_entry_filetype(entry) == AE_IFLNK;
+        ++count;
         if (archive_read_data_skip(a) != ARCHIVE_OK) { ok = 0; break; }
     }
-    if (status != ARCHIVE_EOF) ok = 0;
+    if (status != ARCHIVE_EOF || (ok && path_conflicts(paths, count))) ok = 0;
+    for (i = 0; i < count; ++i) free(paths[i].name);
+    free(paths);
     archive_read_free(a);
     if (!ok) fprintf(stderr, "holypkg: unsupported or damaged extraction input\n");
     return ok;

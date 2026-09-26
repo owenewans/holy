@@ -62,6 +62,32 @@ cmp "$tmp/payload/DATA/usr/bin/hello" "$tmp/unpacked/DATA/usr/bin/hello"
 test -z "$(find "$tmp" -maxdepth 1 -name 'holy-extract-*' -print)"
 if "$bin" fetch "local:$tmp/package.holy" --extract --output "$tmp/unpacked" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'create extraction directory' "$tmp/err"
+mkdir -p "$tmp/alias-payload/DATA/usr/bin"
+cp -a "$tmp/payload/HOLY" "$tmp/alias-payload/HOLY"
+cp "$tmp/payload/DATA/usr/bin/hello" "$tmp/alias-payload/DATA/usr/bin/hello"
+ln -s usr/bin "$tmp/alias-payload/DATA/alias"
+sed 's@file usr/bin/hello @file alias/evil @' \
+    "$tmp/payload/HOLY/files" > "$tmp/alias-payload/HOLY/files"
+printf 'symlink alias 777 root root %s %s 0 - none - - usr/bin\n' \
+    "$uid" "$gid" >> "$tmp/alias-payload/HOLY/files"
+tar -cf "$tmp/alias.tar" -C "$tmp/alias-payload" HOLY
+tar -rf "$tmp/alias.tar" --no-recursion -C "$tmp/alias-payload" DATA DATA/alias DATA/usr DATA/usr/bin
+tar -rf "$tmp/alias.tar" --transform='s@^DATA/usr/bin/hello$@DATA/alias/evil@' \
+    -C "$tmp/alias-payload" DATA/usr/bin/hello
+lz4 -q "$tmp/alias.tar" "$tmp/alias.holy"
+"$bin" verify "local:$tmp/alias.holy" > "$tmp/out"
+if "$bin" fetch "local:$tmp/alias.holy" --extract --output "$tmp/alias-out" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'unsupported or damaged extraction input' "$tmp/err"
+test ! -e "$tmp/alias-out"
+: > "$tmp/payload/HOLY/extra"
+tar -cf "$tmp/duplicate-extra.tar" -C "$tmp/payload" HOLY DATA
+tar -rf "$tmp/duplicate-extra.tar" -C "$tmp/payload" HOLY/extra
+lz4 -q "$tmp/duplicate-extra.tar" "$tmp/duplicate-extra.holy"
+"$bin" verify "local:$tmp/duplicate-extra.holy" > "$tmp/out"
+if "$bin" fetch "local:$tmp/duplicate-extra.holy" --extract --output "$tmp/duplicate-extra-out" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'unsupported or damaged extraction input' "$tmp/err"
+test ! -e "$tmp/duplicate-extra-out"
+rm "$tmp/payload/HOLY/extra"
 cp "$tmp/payload/HOLY/files" "$tmp/files-original"
 chmod 4755 "$tmp/payload/DATA/usr/bin/hello"
 sed "s@^file usr/bin/hello $mode @file usr/bin/hello 4755 @" \

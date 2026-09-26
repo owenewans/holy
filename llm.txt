@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=4057f8d45fe86a0846d36681937ae6a5df05ea65f4aba6a211328de1cefba975
+holypkg.8 source=holy version=development sha256=a8493d258c0ea90b39e715516d7f42fb51ad641d99f177679d2c52363f4285dc
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -93,17 +93,18 @@ DESCRIPTION
      With  --extract,  DIRECTORY  must not exist. The command copies the regular
      input into a private temporary file, verifies that	 copy  and  checks  that
      every  entry  is  a  directory,  regular  file,  relative symlink or direct
-     hardlink.	It then creates DIRECTORY and writes HOLY and  DATA  there  with
-     directory-relative	 operations  that  refuse symlink traversal and file re-
-     placement. It does not preserve UID/GID, setuid bits, capabilities or  xat-
-     trs.  It  refuses absolute symlink targets and special nodes; hardlink tar-
-     gets must resolve to regular files within the output tree. Hooks never run.
-     If an I/O error occurs after DIRECTORY is created, partial	 output	 remains
-     for inspection.  This command is not a system installation or a root trans-
-     action.
+     hardlink. Before creating DIRECTORY, it rejects duplicate paths and payload
+     paths nested under an archive  symlink.   It  then	 creates  DIRECTORY  and
+     writes  HOLY  and DATA there with directory-relative operations that refuse
+     symlink traversal and file replacement. It does not preserve  UID/GID,  se-
+     tuid  bits, capabilities or xattrs. It refuses absolute symlink targets and
+     special nodes; hardlink targets must resolve to regular  files  within  the
+     output  tree.  Hooks  never  run. If an I/O error occurs after DIRECTORY is
+     created, partial output remains for inspection.  This command is not a sys-
+     tem installation or a root transaction.
 
 EXIT STATUS
-     0	indicates a valid file under the implemented checks; 2 indicates invalid
+     0 indicates a valid file under the implemented checks; 2 indicates	 invalid
      arguments or invalid configuration. Diagnostics go to standard error.
 
 SEE ALSO
