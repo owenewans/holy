@@ -27,6 +27,8 @@ holypkg \- Holy local package tooling prototype
 .B holypkg repo search DIRECTORY NAME
 .br
 .B holypkg repo seal DIRECTORY
+.br
+.B holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 .SH DESCRIPTION
 The config check command checks source and rule configuration without changing
 the system. Package installation, foreign import, remote fetch, dependency
@@ -137,6 +139,12 @@ The repository search command verifies the same complete local index and
 returns exact name matches. No match prints a zero-count summary. This
 prototype does not perform fuzzy search, dependency resolution or provider
 selection.
+.PP
+The repository fetch command requires a lowercase SHA-256 from the sealed
+index. It verifies the complete index and artifacts, then copies the selected
+snapshot to an existing output directory as SHA256.holy. It rejects a missing
+digest or a changed unrelated artifact. The copy does not install or grant
+trust to the package; repository metadata and objects remain unsigned.
 .SH EXIT STATUS
 0 indicates success under the implemented checks; 1 indicates a failed local
 fetch, extraction or check; 2 indicates invalid arguments, configuration or

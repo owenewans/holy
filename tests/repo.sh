@@ -43,6 +43,21 @@ grep -qx "sealed $index_hash" "$tmp/out"
 "$bin" repo list "$tmp/repo" > "$tmp/out"
 grep -qx 'listed 1 packages' "$tmp/out"
 grep -qx "package \"fixture\" \"1.0\" \"1\" \"linux\" \"noarch\" \"nolibc\" \"fixture.holy\" $hash $size" "$tmp/out"
+mkdir "$tmp/fetched"
+"$bin" repo fetch "$tmp/repo" "$hash" --output "$tmp/fetched" > "$tmp/out"
+grep -Fxq "$tmp/fetched/$hash.holy" "$tmp/out"
+cmp "$tmp/repo/fixture.holy" "$tmp/fetched/$hash.holy"
+"$bin" repo fetch "$tmp/repo" "$hash" --output "$tmp/fetched" > "$tmp/out"
+mv "$tmp/repo/fixture.holy" "$tmp/fixture-object"
+ln -s "$tmp/fixture-object" "$tmp/repo/fixture.holy"
+if "$bin" repo fetch "$tmp/repo" "$hash" --output "$tmp/fetched" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
+rm "$tmp/repo/fixture.holy"
+mv "$tmp/fixture-object" "$tmp/repo/fixture.holy"
+if "$bin" repo fetch "$tmp/repo" "$(printf '%064d' 0)" --output "$tmp/fetched" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
+if "$bin" repo fetch "$tmp/repo" invalid --output "$tmp/fetched" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
 test "$(stat -c %a "$tmp/repo/index")" = 644
 grep -qx "sha256 $index_hash" "$tmp/repo/current"
 cmp "$tmp/repo/index" "$tmp/repo/index.$index_hash"
@@ -110,6 +125,8 @@ if "$bin" repo list "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 if "$bin" repo search "$tmp/repo" fixture > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
+if "$bin" repo fetch "$tmp/repo" "$hash" --output "$tmp/fetched" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
 cp "$tmp/variant-original" "$tmp/repo/variant.holy"
 cp "$tmp/repo/index" "$tmp/previous"
 printf 'bad archive\n' > "$tmp/repo/bad.holy"
@@ -129,4 +146,5 @@ if "$bin" repo index "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'index is not a regular file' "$tmp/err"
 cmp "$tmp/previous" "$tmp/repo/index"
 test -z "$(find "$tmp/repo" -name '.holy-tmp-*' -print)"
+test -z "$(find "$tmp/fetched" -name '.holy-tmp-*' -print)"
 printf 'repository fixtures passed\n'

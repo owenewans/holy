@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "repo.h"
 #include "config.h"
+#include "fetch.h"
 #include "package.h"
 #include "scan.h"
 #include "stage.h"
@@ -237,12 +238,13 @@ static int parse_record(char **v, size_t n, struct object *object)
 }
 
 static int list(const char *directory, const char *query,
-                const char *forced_index, int lock, int emit)
+                const char *forced_index, int lock, int emit,
+                const char *fetch_digest, const char *output)
 {
     struct object *objects = NULL;
     struct stat st;
     FILE *index = NULL;
-    char *line = NULL, *error = NULL, *index_snapshot = NULL;
+    char *line = NULL, *error = NULL, *index_snapshot = NULL, *chosen = NULL;
     char expected[65], actual_digest[65], index_name[71];
     size_t capacity = 0, count = 0, i, j, number = 0;
     ssize_t length;
@@ -325,10 +327,19 @@ static int list(const char *directory, const char *query,
                       objects[i].identity.size == actual.size;
             holy_package_identity_free(&actual);
         }
-        unlink(snapshot);
-        free(snapshot);
-        if (!matches) goto done;
+        if (!matches) {
+            unlink(snapshot);
+            free(snapshot);
+            goto done;
+        }
+        if (fetch_digest && !strcmp(fetch_digest, objects[i].identity.digest))
+            chosen = snapshot;
+        else {
+            unlink(snapshot);
+            free(snapshot);
+        }
     }
+    if (fetch_digest && (!chosen || !holy_fetch_local(chosen, output))) goto done;
     {
         size_t matches = 0;
         for (j = 0; j < count; ++j) {
@@ -346,6 +357,7 @@ done:
     free(line);
     if (index) fclose(index);
     if (index_snapshot) { unlink(index_snapshot); free(index_snapshot); }
+    if (chosen) { unlink(chosen); free(chosen); }
     if (fd >= 0) close(fd);
     for (i = 0; i < count; ++i) {
         free(objects[i].filename);
@@ -358,7 +370,7 @@ done:
 
 int holy_repo_list(const char *directory)
 {
-    return list(directory, NULL, NULL, 1, 1);
+    return list(directory, NULL, NULL, 1, 1, NULL, NULL);
 }
 
 int holy_repo_search(const char *directory, const char *query)
@@ -367,7 +379,20 @@ int holy_repo_search(const char *directory, const char *query)
         fprintf(stderr, "holypkg: package name required\n");
         return 0;
     }
-    return list(directory, query, NULL, 1, 1);
+    return list(directory, query, NULL, 1, 1, NULL, NULL);
+}
+
+int holy_repo_fetch(const char *directory, const char *digest, const char *output)
+{
+    size_t i;
+    if (!digest || strlen(digest) != 64) goto invalid;
+    for (i = 0; i < 64; ++i)
+        if (!((digest[i] >= '0' && digest[i] <= '9') ||
+              (digest[i] >= 'a' && digest[i] <= 'f'))) goto invalid;
+    return list(directory, NULL, NULL, 1, 0, digest, output);
+invalid:
+    fprintf(stderr, "holypkg: expected a lowercase SHA-256 digest\n");
+    return 0;
 }
 
 int holy_repo_seal(const char *directory)
@@ -412,7 +437,7 @@ int holy_repo_seal(const char *directory)
     output = -1;
     close(input);
     input = -1;
-    if (!list(directory, NULL, temporary, 0, 0)) goto done;
+    if (!list(directory, NULL, temporary, 0, 0, NULL, NULL)) goto done;
     input = openat(dir, temporary, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (input < 0) goto done;
     snapshot = holy_stage_fd(input, "holy-seal");
