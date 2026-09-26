@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=786ed98bea6ecf53c89707e83dc16b48bdb31754722de52f31ada6db3fc64ff7
+holypkg.8 source=holy version=development sha256=631e1a0f5d2b6928b17a4f7e4fb7e6adcb5f50c0cbf189801fbbe32522221d5e
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -70,8 +70,9 @@ DESCRIPTION
      tracting  or  executing it. It checks for repeated metadata and unsupported
      format versions.  It prints the SHA-256 digest of the  input  archive.   It
      rejects  archive entries outside HOLY and DATA, including dot segments.  It
-     does not validate the payload manifest, hashes, signatures or  installabil-
-     ity.
+     requires all seven HOLY metadata members as regular files and  rejects  du-
+     plicate members.  It does not validate the payload manifest, hashes, signa-
+     tures or installability.
 
      The  verify  command  checks  regular  DATA  files	 against  the  supported
      HOLY/files records, including size, mode, numeric	owner  and  SHA-256.  It
@@ -87,7 +88,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-package.5 source=holy version=development sha256=b42b3e5e75de6ff2cf55e6c79fb5a0c4a91d222331ec366ff5eee79a144224cf
+holy-package.5 source=holy version=development sha256=d5deebf2d97f28c8382a1124f525da4d657f0170ce461584e1d84debdf1cc57b
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -99,25 +100,31 @@ DESCRIPTION
      fields  are  format  (holy-package-1), name, version, release, os, arch and
      libc. An unknown requires-feature field fails inspection.
 
-     The prototype verifier reads HOLY/files. For each regular payload file  un-
+     The archive contains one regular file at  each  of	 HOLY/meta,  HOLY/files,
+     HOLY/deps,	 HOLY/provides,	 HOLY/hooks, HOLY/origin and HOLY/transform. The
+     inspector checks their presence and type. Empty metadata  placeholders  can
+     pass this structural check; it does not validate dependency, hook or origin
+     content.
+
+     The  prototype verifier reads HOLY/files. For each regular payload file un-
      der DATA/, one manifest line contains twelve whitespace-separated tokens:
      file PATH MODE OWNER GROUP UID GID SIZE SHA256 FLAGS XATTRS HARDLINK-GROUP
-     MODE  is  octal;  UID,  GID and SIZE are decimal. PATH is relative to DATA.
-     SHA256 has 64 hexadecimal digits. The current verifier accepts  FLAGS=none,
-     XATTRS=-  and  HARDLINK-GROUP=-  only. A symlink uses one additional TARGET
-     token, SIZE=0 and SHA256=-. A hardlinked file uses TYPE=hardlink,	a  group
-     identifier	 in  HARDLINK-GROUP  and one extra TARGET token naming a regular
-     file in DATA.  The target file carries the same group identifier. SIZE  and
-     SHA256  describe the target content. The verifier rejects chained hardlinks
-     and checks mode, UID and GID against the target. A directory uses the  same
-     twelve  tokens  as a file, with TYPE=dir, SIZE=0 and SHA256=-. The verifier
+     MODE is octal; UID, GID and SIZE are decimal. PATH	 is  relative  to  DATA.
+     SHA256  has 64 hexadecimal digits. The current verifier accepts FLAGS=none,
+     XATTRS=- and HARDLINK-GROUP=- only. A symlink uses	 one  additional  TARGET
+     token,  SIZE=0  and SHA256=-. A hardlinked file uses TYPE=hardlink, a group
+     identifier in HARDLINK-GROUP and one extra TARGET token  naming  a	 regular
+     file  in DATA.  The target file carries the same group identifier. SIZE and
+     SHA256 describe the target content. The verifier rejects chained  hardlinks
+     and  checks mode, UID and GID against the target. A directory uses the same
+     twelve tokens as a file, with TYPE=dir, SIZE=0 and SHA256=-.  The	verifier
      rejects symlink targets that escape the root by lexical traversal. The text
-     lexer follows holy.conf(5), so quotes and escapes can  preserve  spaces  in
+     lexer  follows  holy.conf(5),  so quotes and escapes can preserve spaces in
      paths. Every archived directory except DATA itself needs a manifest record.
-     The  verifier  does  not  support special files or extended attributes. The
+     The verifier does not support special files  or  extended	attributes.  The
      planned full format includes them.
 
-     The prototype cannot install archives. It	does  not  verify  dependencies,
+     The  prototype  cannot  install  archives. It does not verify dependencies,
      signatures, symbolic owner names or the installed filesystem. A full format
      implementation must verify file ownership, links, xattrs, hooks, origin and
      transaction semantics before accepting an artifact for installation.

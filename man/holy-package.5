@@ -7,6 +7,11 @@ HOLY/meta contains one key and one value per line. The required fields are
 format (holy-package-1), name, version, release, os, arch and libc. An unknown
 requires-feature field fails inspection.
 .PP
+The archive contains one regular file at each of HOLY/meta, HOLY/files,
+HOLY/deps, HOLY/provides, HOLY/hooks, HOLY/origin and HOLY/transform. The
+inspector checks their presence and type. Empty metadata placeholders can pass
+this structural check; it does not validate dependency, hook or origin content.
+.PP
 The prototype verifier reads HOLY/files. For each regular payload file under
 DATA/, one manifest line contains twelve whitespace-separated tokens:
 .nf

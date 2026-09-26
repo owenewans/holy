@@ -18,6 +18,8 @@ required fields from HOLY/meta. It reads archive data without extracting or
 executing it. It checks for repeated metadata and unsupported format versions.
 It prints the SHA-256 digest of the input archive.
 It rejects archive entries outside HOLY and DATA, including dot segments.
+It requires all seven HOLY metadata members as regular files and rejects
+duplicate members.
 It does not validate the payload manifest, hashes, signatures or installability.
 .PP
 The verify command checks regular DATA files against the supported HOLY/files

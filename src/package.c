@@ -15,6 +15,11 @@ static const char *const fields[] = {
     "format", "name", "version", "release", "os", "arch", "libc"
 };
 
+static const char *const members[] = {
+    "HOLY/meta", "HOLY/files", "HOLY/deps", "HOLY/provides",
+    "HOLY/hooks", "HOLY/origin", "HOLY/transform"
+};
+
 static int safe_value(const char *s)
 {
     const unsigned char *p = (const unsigned char *)s;
@@ -129,7 +134,8 @@ int holy_package_info(const char *path)
     unsigned int digest_size = 0;
     FILE *fp;
     size_t meta_size = 0, n, i;
-    int status, seen = 0, ok = 0;
+    int status, ok = 0;
+    unsigned char seen[sizeof members / sizeof *members] = {0};
     fp = fopen(path, "rb");
     if (!fp) { perror(path); return 0; }
     if (fread(head, 1, sizeof head, fp) != sizeof head ||
@@ -176,11 +182,15 @@ int holy_package_info(const char *path)
             fprintf(stderr, "%s: archive root marker is not a directory\n", path);
             goto done;
         }
-        if (is_meta && (seen++ || archive_entry_filetype(entry) != AE_IFREG ||
-                        archive_entry_size(entry) < 0 ||
-                        archive_entry_size(entry) > META_LIMIT)) {
-            fprintf(stderr, "%s: invalid or repeated HOLY/meta\n", path);
-            goto done;
+        for (i = 0; i < sizeof members / sizeof *members; ++i) {
+            if (strcmp(name, members[i])) continue;
+            if (seen[i]++ || archive_entry_filetype(entry) != AE_IFREG ||
+                archive_entry_hardlink(entry) || archive_entry_size(entry) < 0 ||
+                (is_meta && archive_entry_size(entry) > META_LIMIT)) {
+                fprintf(stderr, "%s: invalid or repeated %s\n", path, members[i]);
+                goto done;
+            }
+            break;
         }
         while ((got = archive_read_data(a, buffer, sizeof buffer)) > 0) {
             if (is_meta) {
@@ -204,7 +214,11 @@ int holy_package_info(const char *path)
         fprintf(stderr, "%s: archive header: %s\n", path, archive_error_string(a));
         goto done;
     }
-    if (!seen) { fprintf(stderr, "%s: missing HOLY/meta\n", path); goto done; }
+    for (i = 0; i < sizeof members / sizeof *members; ++i)
+        if (!seen[i]) {
+            fprintf(stderr, "%s: missing %s\n", path, members[i]);
+            goto done;
+        }
     ok = read_meta(path, meta ? meta : "", meta_size);
     if (ok) {
         fputs("sha256 ", stdout);

@@ -14,6 +14,9 @@ arch x86_64
 libc nolibc
 EOF
 printf 'hello\n' > "$tmp/payload/DATA/usr/bin/hello"
+for member in deps provides hooks origin transform; do
+    : > "$tmp/payload/HOLY/$member"
+done
 digest=$(sha256sum "$tmp/payload/DATA/usr/bin/hello" | cut -d ' ' -f 1)
 mode=$(stat -c %a "$tmp/payload/DATA/usr/bin/hello")
 uid=$(stat -c %u "$tmp/payload/DATA/usr/bin/hello")
@@ -32,6 +35,25 @@ grep -qx 'name fixture' "$tmp/out"
 grep -qx 'libc nolibc' "$tmp/out"
 expected=$(sha256sum "$tmp/package.holy" | cut -d ' ' -f 1)
 grep -qx "sha256 $expected" "$tmp/out"
+rm "$tmp/payload/HOLY/origin"
+tar -cf "$tmp/missing-member.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/missing-member.tar" "$tmp/missing-member.holy"
+if "$bin" info "local:$tmp/missing-member.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'missing HOLY/origin' "$tmp/err"
+: > "$tmp/payload/HOLY/origin"
+tar -cf "$tmp/duplicate-member.tar" -C "$tmp/payload" HOLY DATA
+tar -rf "$tmp/duplicate-member.tar" -C "$tmp/payload" HOLY/origin
+lz4 -q "$tmp/duplicate-member.tar" "$tmp/duplicate-member.holy"
+if "$bin" info "local:$tmp/duplicate-member.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'repeated HOLY/origin' "$tmp/err"
+rm "$tmp/payload/HOLY/origin"
+ln -s meta "$tmp/payload/HOLY/origin"
+tar -cf "$tmp/symlink-member.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/symlink-member.tar" "$tmp/symlink-member.holy"
+if "$bin" info "local:$tmp/symlink-member.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'invalid or repeated HOLY/origin' "$tmp/err"
+rm "$tmp/payload/HOLY/origin"
+: > "$tmp/payload/HOLY/origin"
 "$bin" verify "local:$tmp/package.holy" > "$tmp/out"
 grep -qx 'verified 1 regular files, 0 symlinks, 2 directories, 0 hardlinks' "$tmp/out"
 printf 'world\n' > "$tmp/payload/DATA/usr/bin/hello"
