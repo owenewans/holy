@@ -187,6 +187,7 @@ static int check_file(int root, char **v, struct stat *observed)
         goto done;
     }
     fd = openat(parent, base, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0 && errno == ENOENT) { result = 2; goto done; }
     if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
         (st.st_mode & 07777) != mode || (unsigned long long)st.st_uid != uid ||
         (unsigned long long)st.st_gid != gid ||
@@ -241,7 +242,7 @@ static int remove_file(int root, const char *path, const struct stat *observed)
     return ok;
 }
 
-static int walk_manifest(int files_fd, int root, int remove)
+static int walk_manifest(int files_fd, int root, int mode)
 {
     struct stat st;
     char *text = NULL;
@@ -282,15 +283,19 @@ static int walk_manifest(int files_fd, int root, int remove)
         }
         checked = check_file(root, v, &observed);
         if (checked < 0) result = -1;
+        else if (checked == 2) {
+            if (mode != 2 && result == 1) result = 0;
+            if (mode != 2) report_changed(v[1]);
+        }
         else if (!checked) {
             report_changed(v[1]);
             if (result == 1) result = 0;
-        } else if (remove && !strcmp(v[0], "file") &&
+        } else if (mode && !strcmp(v[0], "file") &&
                    !remove_file(root, v[1], &observed)) {
             result = 0;
         }
         holy_tokens_free(v, count);
-        if (result < 0 || (remove && result != 1)) goto done;
+        if (result < 0 || (mode && result != 1)) goto done;
     }
 done:
     free(text);
@@ -306,4 +311,10 @@ int holy_install_remove_manifest(int files_fd, int root)
 {
     if (holy_install_check_manifest(files_fd, root) != 1) return 0;
     return walk_manifest(files_fd, root, 1) == 1;
+}
+
+int holy_install_finish_remove_manifest(int files_fd, int root)
+{
+    if (walk_manifest(files_fd, root, 2) != 1) return 0;
+    return walk_manifest(files_fd, root, 2) == 1;
 }

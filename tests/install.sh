@@ -147,4 +147,14 @@ if "$bin" db recover --abort-empty --root "$tmp/failure" > "$tmp/out" 2> "$tmp/e
 test -f "$tmp/failure/usr/bin/data"
 test -f "$tmp/failure/var/lib/holypkg/transactions/journal"
 chmod 0755 "$tmp/failure/usr/bin"
+printf 'changed\n' > "$tmp/failure/usr/bin/data"
+if "$bin" db recover --continue --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
+test -f "$tmp/failure/var/lib/holypkg/transactions/journal"
+rm "$tmp/failure/usr/bin/data"
+"$bin" db recover --continue --root "$tmp/failure" > "$tmp/out"
+grep -qx "recovered removal $digest generation 2" "$tmp/out"
+test ! -e "$tmp/failure/usr/bin/data"
+test ! -e "$tmp/failure/var/lib/holypkg/transactions/journal"
+"$bin" db status --root "$tmp/failure" > "$tmp/out"
+grep -qx 'generation 2' "$tmp/out"
 printf 'install payload fixtures passed\n'

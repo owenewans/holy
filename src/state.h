@@ -27,5 +27,7 @@ int holy_state_abort_empty(const char *root_path);
 int holy_state_check(const char *digest, const char *root_path);
 /* remove one intact data-only installed instance; shared directories remain. */
 int holy_state_remove(const char *digest, const char *root_path);
+/* finish a removing journal if remaining listed files are unchanged. */
+int holy_state_continue_remove(const char *root_path);
 
 #endif

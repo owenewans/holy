@@ -58,6 +58,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db recover --abort-empty --root DIRECTORY
 .br
+.B holypkg db recover --continue --root DIRECTORY
+.br
 .B holypkg db preflight --root DIRECTORY
 .br
 .B holypkg db preflight --root DIRECTORY --json
@@ -161,9 +163,12 @@ SHA-256. It verifies all listed files before mutation, refuses changed files
 and pending reservations, then writes a removing journal. It unlinks only
 listed regular files and the instance record; shared directories and the
 cached artifact remain. The database generation advances after removal. If
-an I/O failure interrupts deletion, db status reports an incomplete journal
-and db recover requires manual inspection. --abort-empty applies only to an
-installing journal, never to removal. This command does not resolve reverse
+an I/O failure interrupts deletion, db status reports an incomplete journal.
+db recover --continue accepts a removing journal at its original generation
+with an intact installed record, treats absent listed files as removed, verifies
+every remaining file and completes removal. Changed files or partial installed
+records require manual inspection. --abort-empty applies only to an installing
+journal, never to removal. This command does not resolve reverse
 dependencies or remove general packages.
 .PP
 The info command reads an LZ4-frame-compressed tar archive and prints the seven
@@ -428,10 +433,11 @@ pending inode. A valid unpublished approved record for the same artifact may
 instead be removed while leaving its prepared predecessor intact. Recover
 preserves pending and returns 5. With no pending it returns 0 after removing
 the orphan. Unknown entries, stale generations, unrelated inodes and malformed
-records fail without deletion. For an incomplete file transaction, recover
+records fail without deletion. For an incomplete applying transaction, recover
 returns 5 unless --abort-empty proves that none of its payload files or
-installed instance has appeared. It does not replay hooks or undo installed
-files.
+installed instance has appeared. For an incomplete removing transaction,
+--continue verifies and removes any remaining listed files. It does not replay
+hooks or undo installed files.
 .PP
 Database preflight holds a shared database lock, validates the one pending
 reservation, reads a verified private snapshot of its cached artifact and runs

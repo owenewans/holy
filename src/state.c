@@ -1079,15 +1079,41 @@ done:
     return result;
 }
 
-int holy_state_remove(const char *digest, const char *root_path)
+static int finish_remove_record(int dir, int installed, int item, int transactions,
+                                const char *digest, unsigned long long generation)
 {
     static const char *const names[] = { "meta", "files", "deps", "origin", "state" };
-    unsigned long long generation;
-    char journal[256], generation_record[32], temp_name[43] = {0};
-    char reserved[65], approved[65];
+    char generation_record[32], temp_name[43] = {0};
     size_t length, i;
+    int temp = -1, ok = 0;
+    for (i = 0; i < sizeof names / sizeof *names; ++i)
+        if (unlinkat(item, names[i], 0)) goto done;
+    if (fsync(item) || unlinkat(installed, digest, AT_REMOVEDIR) ||
+        fsync(installed)) goto done;
+    length = (size_t)snprintf(generation_record, sizeof generation_record,
+                              "%llu\n", generation + 1);
+    if (length >= sizeof generation_record) goto done;
+    temp = holy_temporary_at(dir, temp_name);
+    if (temp < 0 || !write_all(temp, generation_record, length) || fsync(temp)) goto done;
+    if (close(temp)) { temp = -1; goto done; }
+    temp = -1;
+    if (renameat(dir, temp_name, dir, "generation") || fsync(dir) ||
+        unlinkat(transactions, "journal", 0) || fsync(transactions)) goto done;
+    ok = 1;
+done:
+    if (temp >= 0) close(temp);
+    if (temp_name[0]) unlinkat(dir, temp_name, 0);
+    return ok;
+}
+
+int holy_state_remove(const char *digest, const char *root_path)
+{
+    unsigned long long generation;
+    char journal[256];
+    char reserved[65], approved[65];
+    size_t length;
     int root, dir = -1, installed = -1, item = -1, files = -1;
-    int transactions = -1, temp = -1, journaled = 0, result = 1, pending;
+    int transactions = -1, journaled = 0, result = 1, pending;
     if (!valid_digest(digest)) return 2;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0) goto done;
@@ -1123,28 +1149,50 @@ int holy_state_remove(const char *digest, const char *root_path)
     if (!holy_install_remove_manifest(files, root)) goto done;
     if (close(files)) { files = -1; goto done; }
     files = -1;
-    for (i = 0; i < sizeof names / sizeof *names; ++i)
-        if (unlinkat(item, names[i], 0)) goto done;
-    if (fsync(item)) goto done;
-    if (close(item)) { item = -1; goto done; }
-    item = -1;
-    if (unlinkat(installed, digest, AT_REMOVEDIR) || fsync(installed)) goto done;
-    length = (size_t)snprintf(generation_record, sizeof generation_record,
-                              "%llu\n", generation + 1);
-    if (length >= sizeof generation_record) goto done;
-    temp = holy_temporary_at(dir, temp_name);
-    if (temp < 0 || !write_all(temp, generation_record, length) || fsync(temp)) goto done;
-    if (close(temp)) { temp = -1; goto done; }
-    temp = -1;
-    if (renameat(dir, temp_name, dir, "generation") || fsync(dir) ||
-        unlinkat(transactions, "journal", 0) || fsync(transactions)) goto done;
+    if (!finish_remove_record(dir, installed, item, transactions, digest, generation)) goto done;
     printf("removed %s generation %llu\n", digest, generation + 1);
     result = 0;
 done:
     if (result) fprintf(stderr, "holypkg: remove failed (status %d)%s\n", result,
                         journaled ? "; inspect incomplete transaction" : "");
-    if (temp >= 0) close(temp);
-    if (temp_name[0] && dir >= 0) unlinkat(dir, temp_name, 0);
+    if (files >= 0) close(files);
+    if (item >= 0) close(item);
+    if (installed >= 0) close(installed);
+    if (transactions >= 0) close(transactions);
+    if (dir >= 0) close(dir);
+    if (root >= 0) close(root);
+    return result;
+}
+
+int holy_state_continue_remove(const char *root_path)
+{
+    unsigned long long generation, recorded;
+    char digest[65], plan[65], reserved[65], approved[65];
+    int root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int dir = root < 0 ? -1 : state_dir_at(root, 0);
+    int installed = -1, item = -1, transactions = -1, files = -1;
+    int result = 5, removing = 0, found;
+    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+        !empty_child(dir, "index") || !read_generation(dir, &generation) ||
+        generation == ULLONG_MAX) { result = 1; goto done; }
+    found = journal_valid(dir, generation, &recorded, digest, plan, &removing);
+    if (found < 0) { result = 1; goto done; }
+    if (!found || !removing || recorded != generation ||
+        strspn(plan, "0") != 64 || !installed_valid(dir)) goto done;
+    transactions = child_dir(dir, "transactions", 0);
+    installed = child_dir(dir, "installed", 0);
+    if (transactions < 0 || installed < 0) { result = 1; goto done; }
+    if (read_reservation(transactions, "pending", generation, reserved, approved) != 0)
+        goto done;
+    item = child_dir(installed, digest, 0);
+    if (item < 0) goto done;
+    files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (files < 0 || !holy_install_finish_remove_manifest(files, root) ||
+        !finish_remove_record(dir, installed, item, transactions, digest, generation)) goto done;
+    printf("recovered removal %s generation %llu\n", digest, generation + 1);
+    result = 0;
+done:
+    if (result) fprintf(stderr, "holypkg: removal recovery requires manual inspection (status %d)\n", result);
     if (files >= 0) close(files);
     if (item >= 0) close(item);
     if (installed >= 0) close(installed);
