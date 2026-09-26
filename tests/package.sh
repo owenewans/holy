@@ -35,6 +35,52 @@ grep -qx 'name fixture' "$tmp/out"
 grep -qx 'libc nolibc' "$tmp/out"
 expected=$(sha256sum "$tmp/package.holy" | cut -d ' ' -f 1)
 grep -qx "sha256 $expected" "$tmp/out"
+cp -a "$tmp/payload" "$tmp/elf-payload"
+sed 's/^libc nolibc$/libc glibc/' "$tmp/payload/HOLY/meta" > "$tmp/elf-payload/HOLY/meta"
+printf '#include <stdio.h>\nint main(void) { return puts("probe") < 0; }\n' > "$tmp/probe.c"
+gcc -o "$tmp/elf-payload/DATA/usr/bin/probe" "$tmp/probe.c"
+gcc -shared -fPIC -o "$tmp/elf-payload/DATA/usr/bin/plugin.so" "$tmp/probe.c"
+for file in probe plugin.so; do
+    path="$tmp/elf-payload/DATA/usr/bin/$file"
+    printf 'file usr/bin/%s %s root root %s %s %s %s none - -\n' \
+        "$file" "$(stat -c %a "$path")" "$uid" "$gid" \
+        "$(stat -c %s "$path")" "$(sha256sum "$path" | cut -d ' ' -f 1)" \
+        >> "$tmp/elf-payload/HOLY/files"
+done
+tar -cf "$tmp/elf.tar" -C "$tmp/elf-payload" HOLY DATA
+lz4 -q "$tmp/elf.tar" "$tmp/elf.holy"
+TMPDIR="$tmp" "$bin" scan "local:$tmp/elf.holy" > "$tmp/out"
+grep -q '^elf usr/bin/probe class=ELF64 machine=x86_64 e_machine=62 runtime=glibc ' "$tmp/out"
+grep -q '^elf usr/bin/plugin.so class=ELF64 machine=x86_64 e_machine=62 runtime=unknown ' "$tmp/out"
+grep -qx 'scanned 2 ELF files' "$tmp/out"
+test -z "$(find "$tmp" -maxdepth 1 -name 'holy-scan-*' -print)"
+cp "$tmp/elf-payload/HOLY/meta" "$tmp/elf-meta"
+for mismatch in arch libc noarch; do
+    case "$mismatch" in
+        arch) sed 's/^arch x86_64$/arch x86/' "$tmp/elf-meta" > "$tmp/elf-payload/HOLY/meta" ;;
+        libc) sed 's/^libc glibc$/libc musl/' "$tmp/elf-meta" > "$tmp/elf-payload/HOLY/meta" ;;
+        noarch) sed -e 's/^arch x86_64$/arch noarch/' -e 's/^libc glibc$/libc nolibc/' \
+            "$tmp/elf-meta" > "$tmp/elf-payload/HOLY/meta" ;;
+    esac
+    tar -cf "$tmp/elf-mismatch.tar" -C "$tmp/elf-payload" HOLY DATA
+    lz4 -q -f "$tmp/elf-mismatch.tar" "$tmp/elf-mismatch.holy"
+    "$bin" verify "local:$tmp/elf-mismatch.holy" > "$tmp/out"
+    if "$bin" scan "local:$tmp/elf-mismatch.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+    grep -q 'ELF arch/libc mismatch' "$tmp/err"
+done
+cp "$tmp/elf-meta" "$tmp/elf-payload/HOLY/meta"
+printf '\177ELFbroken\n' > "$tmp/elf-payload/DATA/usr/bin/probe"
+grep -v '^file usr/bin/probe ' "$tmp/elf-payload/HOLY/files" > "$tmp/elf-files"
+path="$tmp/elf-payload/DATA/usr/bin/probe"
+printf 'file usr/bin/probe %s root root %s %s %s %s none - -\n' \
+    "$(stat -c %a "$path")" "$uid" "$gid" "$(stat -c %s "$path")" \
+    "$(sha256sum "$path" | cut -d ' ' -f 1)" >> "$tmp/elf-files"
+mv "$tmp/elf-files" "$tmp/elf-payload/HOLY/files"
+tar -cf "$tmp/elf-bad.tar" -C "$tmp/elf-payload" HOLY DATA
+lz4 -q "$tmp/elf-bad.tar" "$tmp/elf-bad.holy"
+"$bin" verify "local:$tmp/elf-bad.holy" > "$tmp/out"
+if "$bin" scan "local:$tmp/elf-bad.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'malformed ELF in payload' "$tmp/err"
 mkdir "$tmp/fetched"
 fetched=$("$bin" fetch "local:$tmp/package.holy" --output "$tmp/fetched")
 test "$fetched" = "$tmp/fetched/$expected.holy"

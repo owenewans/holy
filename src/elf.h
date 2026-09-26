@@ -29,7 +29,9 @@ struct holy_elf_info {
 };
 
 /* returns 0 on parsed ELF, 1 on non-ELF, 2 on malformed/unsupported ELF.
-   the caller frees interpreter, including after a failed read. */
+   read_fd borrows a regular-file descriptor and does not change its offset.
+   the caller frees the info after any result. */
+int holy_elf_read_fd(int fd, struct holy_elf_info *info);
 int holy_elf_read(const char *path, struct holy_elf_info *info);
 void holy_elf_free(struct holy_elf_info *info);
 const char *holy_elf_machine(const struct holy_elf_info *info);

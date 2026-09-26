@@ -373,17 +373,18 @@ done:
     return ok;
 }
 
-int holy_elf_read(const char *path, struct holy_elf_info *info)
+int holy_elf_read_fd(int fd, struct holy_elf_info *info)
 {
-    int fd, result = 2, seen = 0, seen_dynamic = 0;
+    int result = 2, seen = 0, seen_dynamic = 0;
     Elf *elf = NULL;
     GElf_Ehdr ehdr;
     struct stat st;
+    off_t original_offset;
     size_t count, i;
     GElf_Phdr dynamic = {0};
     memset(info, 0, sizeof *info);
-    fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
-    if (fd < 0) { perror(path); return 2; }
+    original_offset = lseek(fd, 0, SEEK_CUR);
+    if (original_offset < 0) return 2;
     if (fstat(fd, &st) || !S_ISREG(st.st_mode)) goto done;
     if (elf_version(EV_CURRENT) == EV_NONE) goto done;
     elf = elf_begin(fd, ELF_C_READ, NULL);
@@ -431,6 +432,20 @@ int holy_elf_read(const char *path, struct holy_elf_info *info)
     result = 0;
 done:
     if (elf) elf_end(elf);
+    if (lseek(fd, original_offset, SEEK_SET) < 0) result = 2;
+    return result;
+}
+
+int holy_elf_read(const char *path, struct holy_elf_info *info)
+{
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    int result;
+    if (fd < 0) {
+        perror(path);
+        memset(info, 0, sizeof *info);
+        return 2;
+    }
+    result = holy_elf_read_fd(fd, info);
     close(fd);
     return result;
 }

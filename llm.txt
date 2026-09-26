@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=9ac842121213b5a5c8c4827b4e620ec544e670efd0cd3dd0b8363bfaf31424a2
+holypkg.8 source=holy version=development sha256=b6abb20547ac04a8b87fe0e5b788fffcfa0975b6e05adc5c633f43317eefb5b0
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -63,6 +63,7 @@ SYNOPSIS
      holypkg check local:FILE --root DIRECTORY
      holypkg check local:FILE --root DIRECTORY --json
      holypkg elf FILE
+     holypkg scan local:FILE
 
 DESCRIPTION
      The  config  check	 command  checks  source  and rule configuration without
@@ -136,6 +137,15 @@ DESCRIPTION
      exported  symbol versions or plugin loading; its output is not a dependency
      resolution or package ABI verdict.
 
+     The local scan command stages a regular .holy input in a private file, ver-
+     ifies that copy, then copies ELF payload files to unnamed temporary  files.
+     It	 reports each file's class, machine, runtime hint and ISA using the same
+     reader. It does not execute payloads. It rejects a	 machine  mismatch  with
+     the  package arch, including ELF in noarch, and a recognized glibc/musl in-
+     terpreter that disagrees with the libc tag. A missing or  unrecognized  in-
+     terpreter	remains	 unknown;  scan	 does not infer nolibc, prove plugin re-
+     quirements or resolve dependencies.
+
 EXIT STATUS
      0 indicates success under the implemented checks; 1 indicates a failed  lo-
      cal  fetch,  extraction or check; 2 indicates invalid arguments, configura-
@@ -146,7 +156,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-package.5 source=holy version=development sha256=240fd1d3c47db8d1f8022c4aca8d708aad83226328223222badf38a297cf0c5c
+holy-package.5 source=holy version=development sha256=9c0f6a4d93924f296cb898cb7cd2ce6c76473b50aaf6c8cb5fe5634ca9622952
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -162,6 +172,10 @@ DESCRIPTION
      libc=glibc,  musl	or nolibc. noarch requires nolibc. These checks validate
      declared metadata values; they do not scan ELF files to prove ABI or  prove
      that a purported noarch payload has no machine code.
+
+     The  separate  holypkg  scan command examines regular ELF payload files and
+     rejects known arch/libc tag mismatches. The basic info and verify	commands
+     do not perform this ABI check.
 
      The  archive  contains  one  regular file at each of HOLY/meta, HOLY/files,
      HOLY/deps, HOLY/provides, HOLY/hooks, HOLY/origin and  HOLY/transform.  The

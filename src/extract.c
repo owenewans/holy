@@ -2,6 +2,7 @@
 #include "extract.h"
 #include "package.h"
 #include "verify.h"
+#include "stage.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -71,49 +72,6 @@ static struct archive *reader(const char *source)
         return NULL;
     }
     return a;
-}
-
-static char *stage(const char *source)
-{
-    const char *base = geteuid() ? getenv("TMPDIR") : NULL;
-    const char *suffix = "/holy-extract-XXXXXX";
-    char *path = NULL;
-    char buffer[65536];
-    struct stat st;
-    int input = -1, output = -1;
-    ssize_t got;
-    size_t length;
-    int ok = 0;
-    if (!base || !*base) base = "/tmp";
-    if (strlen(base) > (size_t)-1 - strlen(suffix) - 1) return NULL;
-    length = strlen(base) + strlen(suffix) + 1;
-    path = malloc(length);
-    if (!path) return NULL;
-    snprintf(path, length, "%s%s", base, suffix);
-    input = open(source, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-    if (input < 0 || fstat(input, &st) || !S_ISREG(st.st_mode)) goto done;
-    output = mkstemp(path);
-    if (output < 0) goto done;
-    while ((got = read(input, buffer, sizeof buffer)) != 0) {
-        size_t written = 0;
-        if (got < 0) {
-            if (errno == EINTR) continue;
-            goto done;
-        }
-        while (written < (size_t)got) {
-            ssize_t sent = write(output, buffer + written, (size_t)got - written);
-            if (sent < 0 && errno == EINTR) continue;
-            if (sent <= 0) goto done;
-            written += (size_t)sent;
-        }
-    }
-    if (fsync(output)) goto done;
-    ok = 1;
-done:
-    if (output >= 0) close(output);
-    if (input >= 0) close(input);
-    if (!ok) { if (output >= 0) unlink(path); free(path); path = NULL; }
-    return path;
 }
 
 static int supported(struct archive_entry *entry)
@@ -290,7 +248,7 @@ int holy_extract_local(const char *source, const char *output)
     struct archive *a = NULL;
     struct archive_entry *entry;
     struct pending_link *links = NULL;
-    char *snapshot = stage(source);
+    char *snapshot = holy_stage_local(source, "holy-extract");
     size_t link_count = 0, i;
     int root = -1, status, ok = 0, created = 0;
     if (!snapshot) {

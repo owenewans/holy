@@ -8,6 +8,7 @@ The verifier handles regular files, symlinks, directories and direct hardlinks.
 Local fetch copies objects by SHA-256 without installing them.
 Local extract handles regular files, directories and safe links in a new output directory.
 Local check compares a package payload against a chosen root without changing it.
+Local scan reads ELF payload facts and rejects known arch/libc tag mismatches.
 Holy does not contain a bootable distribution yet.
 
 Run `make` to build `holypkg` and `make check` to test it. `make install`

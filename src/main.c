@@ -5,6 +5,7 @@
 #include "extract.h"
 #include "check.h"
 #include "elf.h"
+#include "scan.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +44,9 @@ int main(int argc, char **argv)
         holy_elf_free(&info);
         return rc ? 2 : 0;
     }
+    if (argc == 3 && !strcmp(argv[1], "scan") &&
+        !strncmp(argv[2], "local:", 6) && argv[2][6])
+        return holy_scan_local(argv[2] + 6) ? 0 : 2;
 
     if (argc == 3 && !strcmp(argv[1], "info") &&
         !strncmp(argv[2], "local:", 6) && argv[2][6])
@@ -67,7 +71,7 @@ int main(int argc, char **argv)
         !strcmp(argv[3], "--root") && !strcmp(argv[5], "--json"))
         return holy_check_local(argv[2] + 6, argv[4], 1) ? 0 : 1;
     if (argc != 4 || strcmp(argv[1], "config") || strcmp(argv[2], "check")) {
-        fprintf(stderr, "usage: holypkg config check FILE | holypkg info local:FILE | holypkg verify local:FILE | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg check local:FILE --root DIRECTORY [--json] | holypkg elf FILE\n");
+        fprintf(stderr, "usage: holypkg config check FILE | holypkg info local:FILE | holypkg verify local:FILE | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg check local:FILE --root DIRECTORY [--json] | holypkg elf FILE | holypkg scan local:FILE\n");
         return 2;
     }
     path = argv[3];

@@ -17,6 +17,8 @@ holypkg \- Holy local package tooling prototype
 .B holypkg check local:FILE --root DIRECTORY --json
 .br
 .B holypkg elf FILE
+.br
+.B holypkg scan local:FILE
 .SH DESCRIPTION
 The config check command checks source and rule configuration without changing
 the system. Package installation, foreign import, remote fetch, dependency
@@ -87,6 +89,14 @@ ISA-needed properties in PT_NOTE report x86-64-baseline/v2/v3/v4 when present;
 absent or unrecognized properties report unknown. No PT_INTERP yields unknown
 runtime. It does not inspect exported symbol versions or plugin loading;
 its output is not a dependency resolution or package ABI verdict.
+.PP
+The local scan command stages a regular .holy input in a private file, verifies
+that copy, then copies ELF payload files to unnamed temporary files. It reports
+each file's class, machine, runtime hint and ISA using the same reader. It does
+not execute payloads. It rejects a machine mismatch with the package arch,
+including ELF in noarch, and a recognized glibc/musl interpreter that disagrees
+with the libc tag. A missing or unrecognized interpreter remains unknown;
+scan does not infer nolibc, prove plugin requirements or resolve dependencies.
 .SH EXIT STATUS
 0 indicates success under the implemented checks; 1 indicates a failed local
 fetch, extraction or check; 2 indicates invalid arguments, configuration or

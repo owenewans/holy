@@ -98,7 +98,8 @@ static int meta_line(char *line, size_t len, const char *path, size_t number,
     return 1;
 }
 
-static int read_meta(const char *path, const char *data, size_t length, int emit)
+static int read_meta(const char *path, const char *data, size_t length, int emit,
+                     char **arch, char **libc)
 {
     size_t i, start = 0, line = 1;
     char *values[sizeof fields / sizeof *fields] = {0};
@@ -140,12 +141,22 @@ static int read_meta(const char *path, const char *data, size_t length, int emit
     }
     if (ok && emit) for (i = 0; i < sizeof fields / sizeof *fields; ++i)
         printf("%s %s\n", fields[i], values[i]);
+    if (ok && arch && libc) {
+        *arch = strdup(values[5]);
+        *libc = strdup(values[6]);
+        if (!*arch || !*libc) {
+            free(*arch);
+            free(*libc);
+            *arch = *libc = NULL;
+            ok = 0;
+        }
+    }
     for (i = 0; i < sizeof fields / sizeof *fields; ++i) free(values[i]);
     free(error);
     return ok;
 }
 
-int holy_package_inspect(const char *path, int emit)
+static int inspect(const char *path, int emit, char **arch, char **libc)
 {
     static const unsigned char magic[] = {0x04, 0x22, 0x4d, 0x18};
     unsigned char head[4];
@@ -242,7 +253,7 @@ int holy_package_inspect(const char *path, int emit)
             fprintf(stderr, "%s: missing %s\n", path, members[i]);
             goto done;
         }
-    ok = read_meta(path, meta ? meta : "", meta_size, emit);
+    ok = read_meta(path, meta ? meta : "", meta_size, emit, arch, libc);
     if (ok && emit) {
         fputs("sha256 ", stdout);
         for (i = 0; i < digest_size; ++i) printf("%02x", digest[i]);
@@ -254,6 +265,17 @@ done:
     free(meta);
     EVP_MD_CTX_free(digest_ctx);
     return ok;
+}
+
+int holy_package_inspect(const char *path, int emit)
+{
+    return inspect(path, emit, NULL, NULL);
+}
+
+int holy_package_tags(const char *path, char **arch, char **libc)
+{
+    *arch = *libc = NULL;
+    return inspect(path, 0, arch, libc);
 }
 
 int holy_package_info(const char *path)
