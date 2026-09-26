@@ -111,7 +111,10 @@ empty hooks and transform, ordinary directories and non-executable regular
 files owned by the current UID/GID. Symlinks, hardlinks, privileged modes
 and writes inside holypkg state or cache trees are excluded. Output includes
 target-root device/inode, generation, artifact SHA-256, path count and a
-SHA-256 over those identities and ordered manifest entries. This command does not persist a plan,
+SHA-256 over those identities and ordered manifest entries. The narrow local
+planner rejects a second installed package with the same name, even when its
+payload paths differ; general source-ID and ABI slot management is pending.
+This command does not persist a plan,
 reserve ownership, authorize apply or recheck the target root at mutation
 time. Concurrent changes can invalidate the collision check. Apply revalidates
 inputs and paths under its writer lock.

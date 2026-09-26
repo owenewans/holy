@@ -7,6 +7,7 @@
 #include "extract.h"
 #include "package.h"
 #include "install.h"
+#include "config.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -682,7 +683,71 @@ static int same_root(const char *root_path, const struct stat *before)
     return ok;
 }
 
-static int inspect_plan(const char *root_path, int root,
+static int installed_name(int item, const char *name)
+{
+    struct stat st;
+    char *line = NULL;
+    size_t capacity = 0, number = 0;
+    ssize_t length;
+    int fd = openat(item, "meta", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    int found = 0, result = -1;
+    FILE *input;
+    if (fd < 0) return -1;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+        st.st_size > 16 * 1024 * 1024) { close(fd); return -1; }
+    input = fdopen(fd, "r");
+    if (!input) { close(fd); return -1; }
+    while ((length = getline(&line, &capacity, input)) >= 0) {
+        char **v = NULL, *error = NULL;
+        size_t count = 0;
+        ++number;
+        if (memchr(line, '\0', (size_t)length) ||
+            !holy_lex(line, (size_t)length, &v, &count, "installed/meta", number, &error)) {
+            free(error);
+            goto done;
+        }
+        if (count && count != 2) { holy_tokens_free(v, count); goto done; }
+        if (count && !strcmp(v[0], "name")) {
+            if (found) { holy_tokens_free(v, count); goto done; }
+            found = !strcmp(v[1], name) ? 2 : 1;
+        }
+        holy_tokens_free(v, count);
+    }
+    if (!ferror(input) && found && ftello(input) == st.st_size) result = found == 2;
+done:
+    free(line);
+    fclose(input);
+    return result;
+}
+
+static int name_available(int dir, const char *name)
+{
+    int installed = child_dir(dir, "installed", 0), available = -1;
+    DIR *list;
+    struct dirent *entry;
+    if (installed < 0) return -1;
+    list = fdopendir(dup(installed));
+    if (!list) { close(installed); return -1; }
+    errno = 0;
+    while ((entry = readdir(list))) {
+        int item, match;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        item = child_dir(installed, entry->d_name, 0);
+        if (item < 0) goto done;
+        match = installed_name(item, name);
+        close(item);
+        if (match < 0) goto done;
+        if (match) { available = 0; goto done; }
+        errno = 0;
+    }
+    if (!errno) available = 1;
+done:
+    closedir(list);
+    close(installed);
+    return available;
+}
+
+static int inspect_plan(const char *root_path, int root, int dir,
                         unsigned long long generation, const char *digest,
                         char output[65], size_t *paths)
 {
@@ -716,6 +781,13 @@ static int inspect_plan(const char *root_path, int root,
         !hash_text(plan.hash, root_id) ||
         !hash_text(plan.hash, generation_text) || !hash_text(plan.hash, digest) ||
         !holy_verify_visit(snapshot, plan_entry, &plan)) goto done;
+    result = name_available(dir, identity.name);
+    if (result < 0) { result = 1; goto done; }
+    if (!result) {
+        fprintf(stderr, "holypkg: installed package name already active: %s\n", identity.name);
+        result = 4;
+        goto done;
+    }
     if (EVP_DigestFinal_ex(plan.hash, checksum, &checksum_size) != 1 ||
         checksum_size != sizeof checksum) { result = 1; goto done; }
     if (!same_root(root_path, &root_st)) { result = 4; goto done; }
@@ -746,7 +818,7 @@ int holy_state_plan(const char *root_path)
     pending = pending_child(dir, generation, digest, approved);
     if (pending < 0) goto done;
     if (!pending) { result = 6; goto done; }
-    result = inspect_plan(root_path, root, generation, digest, hash, &paths);
+    result = inspect_plan(root_path, root, dir, generation, digest, hash, &paths);
     if (result) goto done;
     if (fstat(root, &root_st)) { result = 1; goto done; }
     printf("plan root %ju:%ju generation %llu artifact %s paths %zu sha256 %s read-only\n",
@@ -776,7 +848,7 @@ int holy_state_approve(const char *hash, const char *root_path)
     if (result < 0) { result = 1; goto done; }
     if (!result) { result = 6; goto done; }
     if (approved[0]) { result = 5; goto done; }
-    result = inspect_plan(root_path, root, generation, digest, actual, &paths);
+    result = inspect_plan(root_path, root, dir, generation, digest, actual, &paths);
     if (result) goto done;
     if (strcmp(hash, actual)) { result = 3; goto done; }
     result = 1;
@@ -818,7 +890,7 @@ int holy_state_recheck(const char *root_path)
     pending = pending_child(dir, generation, digest, approved);
     if (pending < 0) goto done;
     if (!pending || !approved[0]) { result = 5; goto done; }
-    result = inspect_plan(root_path, root, generation, digest, actual, &paths);
+    result = inspect_plan(root_path, root, dir, generation, digest, actual, &paths);
     if (result) goto done;
     if (strcmp(approved, actual)) { result = 3; goto done; }
     printf("rechecked %s generation %llu artifact %s paths %zu\n",
@@ -960,7 +1032,7 @@ int holy_state_apply(const char *root_path)
     result = pending_child(dir, generation, digest, approved);
     if (result < 0) { result = 1; goto done; }
     if (!result || !approved[0]) { result = 5; goto done; }
-    result = inspect_plan(root_path, root, generation, digest, actual, &paths);
+    result = inspect_plan(root_path, root, dir, generation, digest, actual, &paths);
     if (result) goto done;
     if (strcmp(actual, approved)) { result = 3; goto done; }
     snapshot = holy_cache_snapshot(digest, root_path);

@@ -19,6 +19,8 @@ it does not mean a bootable distribution or general package support.
   completed installs and interrupted removals under documented conditions.
 - [x] Query exact installed data-file ownership; report duplicate regular-file
   claims as conflicts while permitting shared directory entries.
+- [x] Reject a second local data package with an already installed name during
+  plan construction. This is a temporary restriction, not source-ID slot support.
 - [ ] Define stable source IDs, version families, installed ownership and selected
   dependency edges for general packages; implement multi-package transactions.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,

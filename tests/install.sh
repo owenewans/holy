@@ -101,6 +101,22 @@ if "$bin" db status --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1
 cp "$tmp/saved-state" "$db/installed/$digest/state"
 test ! -e "$db/transactions/pending"
 test ! -e "$db/transactions/journal"
+mv "$tmp/payload/DATA/usr/bin/data" "$tmp/payload/DATA/usr/bin/data-v2"
+sed 's@usr/bin/data @usr/bin/data-v2 @' "$tmp/payload/HOLY/files" > "$tmp/old-files"
+cp "$tmp/payload/HOLY/files" "$tmp/saved-files"
+mv "$tmp/old-files" "$tmp/payload/HOLY/files"
+tar -cf "$tmp/duplicate.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/duplicate.tar" "$tmp/duplicate.holy"
+duplicate=$(sha256sum "$tmp/duplicate.holy")
+duplicate=${duplicate%% *}
+"$bin" cache stage "local:$tmp/duplicate.holy" --root "$tmp/system" > "$tmp/out"
+"$bin" db reserve "$duplicate" --root "$tmp/system" > "$tmp/out"
+if "$bin" db plan --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+grep -qx 'holypkg: installed package name already active: data' "$tmp/err"
+test ! -s "$tmp/out"
+"$bin" db cancel --root "$tmp/system" > "$tmp/out"
+mv "$tmp/saved-files" "$tmp/payload/HOLY/files"
+mv "$tmp/payload/DATA/usr/bin/data-v2" "$tmp/payload/DATA/usr/bin/data"
 sed 's/name data/name data2/' "$tmp/payload/HOLY/meta" > "$tmp/new-meta"
 mv "$tmp/new-meta" "$tmp/payload/HOLY/meta"
 mv "$tmp/payload/DATA/usr/bin/data" "$tmp/payload/DATA/usr/bin/data2"
