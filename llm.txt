@@ -42,7 +42,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=816f98e82d8cde48b49b435b0a75b7f306a50cd7b7244365025fe846cfc3742c
+holypkg.8 source=holy version=development sha256=786ed98bea6ecf53c89707e83dc16b48bdb31754722de52f31ada6db3fc64ff7
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -69,7 +69,7 @@ DESCRIPTION
 
      The  verify  command  checks  regular  DATA  files	 against  the  supported
      HOLY/files records, including size, mode, numeric	owner  and  SHA-256.  It
-     checks  symlink and directory targets and refuses hardlinks and unsupported
+     checks  symlinks,	directories  and direct hardlinks, rejecting unsupported
      objects. It does not install or authenticate packages; the two read  passes
      do not provide a stable filesystem snapshot.
 
@@ -81,7 +81,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-package.5 source=holy version=development sha256=acd62a4f59c619254eb47d4b8cd4888211c3fe3d5fc5327007ae70b49ff801d0
+holy-package.5 source=holy version=development sha256=b42b3e5e75de6ff2cf55e6c79fb5a0c4a91d222331ec366ff5eee79a144224cf
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -99,13 +99,17 @@ DESCRIPTION
      MODE  is  octal;  UID,  GID and SIZE are decimal. PATH is relative to DATA.
      SHA256 has 64 hexadecimal digits. The current verifier accepts  FLAGS=none,
      XATTRS=-  and  HARDLINK-GROUP=-  only. A symlink uses one additional TARGET
-     token, SIZE=0 and SHA256=-. A directory uses the same twelve  tokens  as  a
-     file, with TYPE=dir, SIZE=0 and SHA256=-. The verifier rejects symlink tar-
-     gets  that	 escape	 the  root  by lexical traversal. The text lexer follows
-     holy.conf(5), so quotes and escapes can preserve  spaces  in  paths.  Every
-     archived directory except DATA itself needs a manifest record. The verifier
-     does  not	support	 hardlinks,  special  files  or extended attributes. The
-     planned full format includes these objects.
+     token, SIZE=0 and SHA256=-. A hardlinked file uses TYPE=hardlink,	a  group
+     identifier	 in  HARDLINK-GROUP  and one extra TARGET token naming a regular
+     file in DATA.  The target file carries the same group identifier. SIZE  and
+     SHA256  describe the target content. The verifier rejects chained hardlinks
+     and checks mode, UID and GID against the target. A directory uses the  same
+     twelve  tokens  as a file, with TYPE=dir, SIZE=0 and SHA256=-. The verifier
+     rejects symlink targets that escape the root by lexical traversal. The text
+     lexer follows holy.conf(5), so quotes and escapes can  preserve  spaces  in
+     paths. Every archived directory except DATA itself needs a manifest record.
+     The  verifier  does  not  support special files or extended attributes. The
+     planned full format includes them.
 
      The prototype cannot install archives. It	does  not  verify  dependencies,
      signatures, symbolic owner names or the installed filesystem. A full format

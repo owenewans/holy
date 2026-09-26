@@ -15,13 +15,16 @@ file PATH MODE OWNER GROUP UID GID SIZE SHA256 FLAGS XATTRS HARDLINK-GROUP
 MODE is octal; UID, GID and SIZE are decimal. PATH is relative to DATA. SHA256
 has 64 hexadecimal digits. The current verifier accepts FLAGS=none,
 XATTRS=- and HARDLINK-GROUP=- only. A symlink uses one additional TARGET token,
-SIZE=0 and SHA256=-. A directory uses the same twelve tokens as a file, with
+SIZE=0 and SHA256=-. A hardlinked file uses TYPE=hardlink, a group identifier
+in HARDLINK-GROUP and one extra TARGET token naming a regular file in DATA.
+The target file carries the same group identifier. SIZE and SHA256 describe
+the target content. The verifier rejects chained hardlinks and checks mode,
+UID and GID against the target. A directory uses the same twelve tokens as a file, with
 TYPE=dir, SIZE=0 and SHA256=-. The verifier rejects symlink targets that
 escape the root by lexical traversal. The text lexer follows holy.conf(5), so
 quotes and escapes can preserve spaces in paths. Every archived directory
 except DATA itself needs a manifest record. The verifier does not support
-hardlinks, special files or extended attributes. The planned full format
-includes these objects.
+special files or extended attributes. The planned full format includes them.
 .PP
 The prototype cannot install archives. It does not verify dependencies,
 signatures, symbolic owner names or the installed filesystem. A full format
