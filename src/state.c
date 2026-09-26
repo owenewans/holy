@@ -56,6 +56,16 @@ static int child_dir(int parent, const char *name, int create)
     return fd;
 }
 
+static DIR *directory_stream(int fd)
+{
+    int copy = dup(fd);
+    DIR *stream;
+    if (copy < 0) return NULL;
+    stream = fdopendir(copy);
+    if (!stream) close(copy);
+    return stream;
+}
+
 static int state_dir_at(int root, int create)
 {
     static const char *const path[] = { "var", "lib", "holypkg" };
@@ -177,7 +187,7 @@ static int installed_valid(int dir)
     DIR *list;
     struct dirent *entry;
     if (installed < 0) return 0;
-    list = fdopendir(dup(installed));
+    list = directory_stream(installed);
     if (!list) { close(installed); return 0; }
     errno = 0;
     while ((entry = readdir(list))) {
@@ -347,7 +357,7 @@ static int pending_child(int dir, unsigned long long generation, char digest[65]
     struct dirent *entry;
     size_t count = 0;
     if (child < 0) return -1;
-    listing = fdopendir(dup(child));
+    listing = directory_stream(child);
     if (!listing) { close(child); return -1; }
     errno = 0;
     while ((entry = readdir(listing))) {
@@ -536,7 +546,7 @@ int holy_state_recover(const char *root_path)
     if (!installed_valid(dir)) goto done;
     transactions = child_dir(dir, "transactions", 0);
     if (transactions < 0) goto done;
-    listing = fdopendir(dup(transactions));
+    listing = directory_stream(transactions);
     if (!listing) goto done;
     errno = 0;
     while ((entry = readdir(listing))) {
@@ -726,7 +736,7 @@ static int name_available(int dir, const char *name)
     DIR *list;
     struct dirent *entry;
     if (installed < 0) return -1;
-    list = fdopendir(dup(installed));
+    list = directory_stream(installed);
     if (!list) { close(installed); return -1; }
     errno = 0;
     while ((entry = readdir(list))) {
@@ -1135,10 +1145,9 @@ static int check_all(int installed, int root, unsigned long long generation, int
     DIR *list = NULL;
     struct dirent *entry;
     size_t count = 0, capacity = 0, i, passed = 0, failed = 0;
-    int copy = dup(installed), result = 1;
-    if (copy < 0) return 1;
-    list = fdopendir(copy);
-    if (!list) { close(copy); return 1; }
+    int result = 1;
+    list = directory_stream(installed);
+    if (!list) return 1;
     errno = 0;
     while ((entry = readdir(list))) {
         int item, files, status;
@@ -1456,7 +1465,7 @@ int holy_state_owner(const char *input, const char *root_path)
     found = 0;
     installed = child_dir(dir, "installed", 0);
     if (installed < 0) goto done;
-    list = fdopendir(dup(installed));
+    list = directory_stream(installed);
     if (!list) goto done;
     errno = 0;
     while ((entry = readdir(list))) {

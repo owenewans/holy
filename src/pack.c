@@ -178,7 +178,7 @@ static int walk_data(struct writer *writer, int parent, const char *relative,
         errno = 0;
     }
     if (errno) goto done;
-    qsort(names, count, sizeof *names, compare_names);
+    if (count) qsort(names, count, sizeof *names, compare_names);
     for (i = 0; i < count; ++i) {
         char *path;
         struct stat st;
