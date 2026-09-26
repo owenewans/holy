@@ -14,6 +14,12 @@ arch x86_64
 libc nolibc
 EOF
 printf 'hello\n' > "$tmp/payload/DATA/usr/bin/hello"
+digest=$(sha256sum "$tmp/payload/DATA/usr/bin/hello" | cut -d ' ' -f 1)
+mode=$(stat -c %a "$tmp/payload/DATA/usr/bin/hello")
+uid=$(stat -c %u "$tmp/payload/DATA/usr/bin/hello")
+gid=$(stat -c %g "$tmp/payload/DATA/usr/bin/hello")
+printf 'file usr/bin/hello %s root root %s %s 6 %s none - -\n' \
+    "$mode" "$uid" "$gid" "$digest" > "$tmp/payload/HOLY/files"
 tar -cf "$tmp/payload.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/payload.tar" "$tmp/package.holy"
 "$bin" info "local:$tmp/package.holy" > "$tmp/out"
@@ -21,6 +27,25 @@ grep -qx 'name fixture' "$tmp/out"
 grep -qx 'libc nolibc' "$tmp/out"
 expected=$(sha256sum "$tmp/package.holy" | cut -d ' ' -f 1)
 grep -qx "sha256 $expected" "$tmp/out"
+"$bin" verify "local:$tmp/package.holy" > "$tmp/out"
+grep -qx 'verified 1 regular files' "$tmp/out"
+printf 'world\n' > "$tmp/payload/DATA/usr/bin/hello"
+tar -cf "$tmp/payload.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q -f "$tmp/payload.tar" "$tmp/changed.holy"
+if "$bin" verify "local:$tmp/changed.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'payload SHA-256 mismatch' "$tmp/err"
+printf 'hello\n' > "$tmp/payload/DATA/usr/bin/hello"
+tar -cf "$tmp/duplicate.tar" -C "$tmp/payload" HOLY DATA
+tar -rf "$tmp/duplicate.tar" -C "$tmp/payload" DATA/usr/bin/hello
+lz4 -q "$tmp/duplicate.tar" "$tmp/duplicate.holy"
+if "$bin" verify "local:$tmp/duplicate.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'duplicate payload path' "$tmp/err"
+ln -s hello "$tmp/payload/DATA/usr/bin/link"
+tar -cf "$tmp/symlink.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/symlink.tar" "$tmp/symlink.holy"
+if "$bin" verify "local:$tmp/symlink.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'unsupported payload type' "$tmp/err"
+rm "$tmp/payload/DATA/usr/bin/link"
 cp "$tmp/package.holy" "$tmp/broken.holy"
 printf 'not a frame' > "$tmp/broken.holy"
 if "$bin" info "local:$tmp/broken.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi

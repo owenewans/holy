@@ -3,5 +3,6 @@
 
 /* read-only inspection; returns zero on success and prints diagnostics. */
 int holy_package_info(const char *path);
+int holy_safe_archive_path(const char *name);
 
 #endif

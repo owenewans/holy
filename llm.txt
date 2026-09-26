@@ -42,7 +42,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=a259575634fcbdb73e65c5f138b327b430a120ff13e1fda5723c0e166881e1da
+holypkg.8 source=holy version=development sha256=07e88aa11e1d0ceaa6a15e4cf61f1846e155faa18be7b4fde2aa94890c79aee4
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -51,6 +51,7 @@ NAME
 SYNOPSIS
      holypkg config check FILE
      holypkg info local:FILE
+     holypkg verify local:FILE
 
 DESCRIPTION
      Checks syntax, includes, sections and duplicate scalar keys of a configura-
@@ -66,11 +67,49 @@ DESCRIPTION
      does not validate the payload manifest, hashes, signatures or  installabil-
      ity.
 
+     The  verify  command  checks  regular  DATA  files	 against  the  supported
+     HOLY/files records, including size, mode, numeric owner and SHA-256. It re-
+     fuses unsupported record types and payload objects. It does not install  or
+     authenticate packages; the two read passes do not provide a stable filesys-
+     tem snapshot.
+
 EXIT STATUS
      0	indicates a valid file under the implemented checks; 2 indicates invalid
      arguments or invalid configuration. Diagnostics go to standard error.
 
 SEE ALSO
-     holy.conf(5)
+     holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
+holy-package.5 source=holy version=development sha256=56cf98cd792e1661afa209ef9ece16a0b1a2962f2bf9b92cc7057f019bf4c261
+HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
+
+NAME
+     holy-package - prototype native archive and regular-file manifest
+
+DESCRIPTION
+     A	.holy  archive	is  a  POSIX tar/PAX stream compressed as a standard LZ4
+     frame.  HOLY/meta contains one key and one value  per  line.  The	required
+     fields  are  format  (holy-package-1), name, version, release, os, arch and
+     libc. An unknown requires-feature field fails inspection.
+
+     The prototype verifier reads HOLY/files. For each regular payload file  un-
+     der DATA/, one manifest line contains twelve whitespace-separated tokens:
+     file PATH MODE OWNER GROUP UID GID SIZE SHA256 FLAGS XATTRS HARDLINK-GROUP
+     MODE  is  octal;  UID,  GID and SIZE are decimal. PATH is relative to DATA.
+     SHA256 has 64 hexadecimal digits. The current verifier accepts  FLAGS=none,
+     XATTRS=- and HARDLINK-GROUP=- only. The text lexer follows holy.conf(5), so
+     quotes  and  escapes  can preserve spaces in paths. Archive directories are
+     implicit; symlinks, hardlinks, special files and  extended	 attributes  are
+     not supported by the verifier. Rejecting them is not proof they are invalid
+     in the planned full format.
+
+     The  prototype  cannot  install  archives. It does not verify dependencies,
+     signatures, symbolic owner names or the installed filesystem. A full format
+     implementation must verify file ownership, links, xattrs, hooks, origin and
+     transaction semantics before accepting an artifact for installation.
+
+SEE ALSO
+     holypkg(8), holy.conf(5)
+
+Holy				 September 2026			 HOLY-PACKAGE(5)

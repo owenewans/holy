@@ -1,0 +1,29 @@
+.TH HOLY-PACKAGE 5 "September 2026" "Holy" "File Formats"
+.SH NAME
+holy-package \- prototype native archive and regular-file manifest
+.SH DESCRIPTION
+A .holy archive is a POSIX tar/PAX stream compressed as a standard LZ4 frame.
+HOLY/meta contains one key and one value per line. The required fields are
+format (holy-package-1), name, version, release, os, arch and libc. An unknown
+requires-feature field fails inspection.
+.PP
+The prototype verifier reads HOLY/files. For each regular payload file under
+DATA/, one manifest line contains twelve whitespace-separated tokens:
+.nf
+file PATH MODE OWNER GROUP UID GID SIZE SHA256 FLAGS XATTRS HARDLINK-GROUP
+.fi
+MODE is octal; UID, GID and SIZE are decimal. PATH is relative to DATA. SHA256
+has 64 hexadecimal digits. The current verifier accepts FLAGS=none,
+XATTRS=- and HARDLINK-GROUP=- only. The text lexer follows holy.conf(5), so
+quotes and escapes can preserve spaces in paths. Archive directories are
+implicit; symlinks, hardlinks, special files and extended attributes are not
+supported by the verifier. Rejecting them is not proof they are invalid in the
+planned full format.
+.PP
+The prototype cannot install archives. It does not verify dependencies,
+signatures, symbolic owner names or the installed filesystem. A full format
+implementation must verify file ownership, links, xattrs, hooks, origin and
+transaction semantics before accepting an artifact for installation.
+.SH SEE ALSO
+.BR holypkg (8),
+.BR holy.conf (5)

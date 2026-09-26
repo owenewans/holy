@@ -26,7 +26,7 @@ static int safe_value(const char *s)
     return 1;
 }
 
-static int safe_archive_path(const char *name)
+int holy_safe_archive_path(const char *name)
 {
     const char *part, *end;
     size_t n;
@@ -166,7 +166,7 @@ int holy_package_info(const char *path)
         const char *name = archive_entry_pathname(entry);
         int is_meta = name && !strcmp(name, "HOLY/meta");
         la_ssize_t got;
-        if (!safe_archive_path(name)) {
+        if (!holy_safe_archive_path(name)) {
             fprintf(stderr, "%s: unsafe or unexpected archive path\n", path);
             goto done;
         }

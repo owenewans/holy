@@ -1,5 +1,6 @@
 #include "config.h"
 #include "package.h"
+#include "verify.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,8 +16,11 @@ int main(int argc, char **argv)
     if (argc == 3 && !strcmp(argv[1], "info") &&
         !strncmp(argv[2], "local:", 6) && argv[2][6])
         return holy_package_info(argv[2] + 6) ? 0 : 2;
+    if (argc == 3 && !strcmp(argv[1], "verify") &&
+        !strncmp(argv[2], "local:", 6) && argv[2][6])
+        return holy_verify(argv[2] + 6) ? 0 : 2;
     if (argc != 4 || strcmp(argv[1], "config") || strcmp(argv[2], "check")) {
-        fprintf(stderr, "usage: holypkg config check FILE | holypkg info local:FILE\n");
+        fprintf(stderr, "usage: holypkg config check FILE | holypkg info local:FILE | holypkg verify local:FILE\n");
         return 2;
     }
     path = argv[3];
