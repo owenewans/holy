@@ -18,6 +18,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg solve local:ROOT [local:CANDIDATE ...]
 .br
+.B holypkg solve local:ROOT [local:CANDIDATE ...] --choose REQUIREMENT_ID=SHA256 [--json]
+.br
 .B holypkg solve local:ROOT [local:CANDIDATE ...] --json
 .br
 .B holypkg fetch local:FILE --output DIRECTORY
@@ -115,6 +117,12 @@ requirement. The solver checks package-set uniqueness, not ambiguous provider
 edges inside an identical set. Script interpreter and plugin requirements are
 not inferred from payload in this subset, so selection is not an
 installability verdict.
+For a direct root requirement, --choose pins a named requirement ID to the
+exact candidate artifact digest supplied on the command line. The candidate
+must provide the required package name; otherwise the command returns
+decision-required. The choice applies to this solve only and does not assign a
+source ID or rewrite ABI facts. Unsupported syntax returns 2. Transitive
+requirements and multiple choices cannot yet be pinned by this option.
 With --json, stdout contains holy-local-solve-1 selected events carrying
 artifact digests and a count summary after a unique solution. Errors emit
 one structured error event without partial selected events; malformed

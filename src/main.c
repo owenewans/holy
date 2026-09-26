@@ -71,8 +71,13 @@ int main(int argc, char **argv)
     if (argc >= 3 && !strcmp(argv[1], "solve")) {
         int json = !strcmp(argv[argc - 1], "--json");
         int last = argc - json;
+        const char *choice = NULL;
         const char **paths;
         int i, result;
+        if (last >= 5 && !strcmp(argv[last - 2], "--choose")) {
+            choice = argv[last - 1];
+            last -= 2;
+        }
         if (last < 3) {
             fprintf(stderr, "holypkg: solve requires local:FILE inputs\n");
             if (json) puts("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"invalid-query\"}");
@@ -92,7 +97,7 @@ int main(int argc, char **argv)
             }
             paths[i - 2] = argv[i] + 6;
         }
-        result = holy_resolve_local(paths, (size_t)last - 2, json, NULL);
+        result = holy_resolve_local(paths, (size_t)last - 2, json, NULL, choice);
         free(paths);
         return result;
     }
@@ -163,7 +168,7 @@ int main(int argc, char **argv)
         !strcmp(argv[3], "--root") && !strcmp(argv[5], "--json"))
         return holy_check_local(argv[2] + 6, argv[4], 1) ? 0 : 1;
     if (argc != 4 || strcmp(argv[1], "config") || strcmp(argv[2], "check")) {
-        fprintf(stderr, "usage: holypkg config check FILE | holypkg info local:FILE | holypkg verify local:FILE | holypkg requirements local:FILE [--json] | holypkg provides local:FILE [--json] | holypkg solve local:ROOT [local:CANDIDATE...] [--json] | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg check local:FILE --root DIRECTORY [--json] | holypkg preview local:FILE --root DIRECTORY | holypkg cache stage local:FILE --root DIRECTORY | holypkg cache verify SHA256 --root DIRECTORY | holypkg db init|status --root DIRECTORY | holypkg elf FILE | holypkg scan local:FILE | holypkg repo index DIRECTORY | holypkg repo list DIRECTORY | holypkg repo search DIRECTORY NAME | holypkg repo solve DIRECTORY NAME [--json] | holypkg repo providers DIRECTORY KIND NAME [--json] | holypkg repo seal DIRECTORY | holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY\n");
+        fprintf(stderr, "usage: holypkg config check FILE | holypkg info local:FILE | holypkg verify local:FILE | holypkg requirements local:FILE [--json] | holypkg provides local:FILE [--json] | holypkg solve local:ROOT [local:CANDIDATE...] [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg check local:FILE --root DIRECTORY [--json] | holypkg preview local:FILE --root DIRECTORY | holypkg cache stage local:FILE --root DIRECTORY | holypkg cache verify SHA256 --root DIRECTORY | holypkg db init|status --root DIRECTORY | holypkg elf FILE | holypkg scan local:FILE | holypkg repo index DIRECTORY | holypkg repo list DIRECTORY | holypkg repo search DIRECTORY NAME | holypkg repo solve DIRECTORY NAME [--json] | holypkg repo providers DIRECTORY KIND NAME [--json] | holypkg repo seal DIRECTORY | holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY\n");
         return 2;
     }
     path = argv[3];

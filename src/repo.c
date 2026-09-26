@@ -547,7 +547,7 @@ static int list(const char *directory, const char *query,
             paths[0] = candidate_snapshots[root];
             for (i = 0; i < count; ++i)
                 if (i != root) paths[next++] = candidate_snapshots[i];
-            *solve_rc = holy_resolve_local(paths, count, solve_json, expected);
+            *solve_rc = holy_resolve_local(paths, count, solve_json, expected, NULL);
             free(paths);
         }
     }

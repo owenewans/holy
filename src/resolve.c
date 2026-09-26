@@ -132,8 +132,29 @@ done:
     return missing;
 }
 
+static char *choice_requirement(const char *choice, const char **digest)
+{
+    const char *equal = strchr(choice, '=');
+    char *id;
+    size_t i, length;
+    if (!equal || equal == choice || strlen(equal + 1) != 64) return NULL;
+    length = (size_t)(equal - choice);
+    if (length > 65536) return NULL;
+    for (i = 0; i < length; ++i)
+        if (!((choice[i] >= 'a' && choice[i] <= 'z') ||
+              (choice[i] >= 'A' && choice[i] <= 'Z') ||
+              (choice[i] >= '0' && choice[i] <= '9') ||
+              choice[i] == '-' || choice[i] == '_' || choice[i] == '.')) return NULL;
+    for (i = 0; i < 64; ++i)
+        if (!((equal[i + 1] >= '0' && equal[i + 1] <= '9') ||
+              (equal[i + 1] >= 'a' && equal[i + 1] <= 'f'))) return NULL;
+    id = strndup(choice, length);
+    if (id) *digest = equal + 1;
+    return id;
+}
+
 int holy_resolve_local(const char *const *paths, size_t count, int json,
-                       const char *generation)
+                       const char *generation, const char *choice)
 {
     struct local_item *local = NULL;
     struct holy_solver_item *items = NULL;
@@ -141,6 +162,12 @@ int holy_resolve_local(const char *const *paths, size_t count, int json,
     size_t i, j, prepared = 0;
     int solved;
     const char *unresolved = NULL;
+    const char *chosen_digest = NULL;
+    char *chosen_id = NULL, *choice_capability = NULL;
+    if (choice) {
+        chosen_id = choice_requirement(choice, &chosen_digest);
+        if (!chosen_id) { result = 2; goto done; }
+    }
     if (!paths || !count || count > 10000) goto done;
     local = calloc(count, sizeof *local);
     items = calloc(count, sizeof *items);
@@ -182,6 +209,39 @@ int holy_resolve_local(const char *const *paths, size_t count, int json,
         items[i].requires = local[i].requirements;
         items[i].requires_count = local[i].requirement_count;
     }
+    if (chosen_id) {
+        size_t requirement = local[0].requirement_count, provider = count;
+        const char **providers;
+        char *replacement;
+        for (j = 0; j < local[0].requirement_count; ++j)
+            if (!strcmp(local[0].requirement_ids[j], chosen_id)) {
+                requirement = j;
+                break;
+            }
+        for (i = 0; i < count; ++i)
+            if (!strcmp(local[i].identity.digest, chosen_digest)) {
+                provider = i;
+                break;
+            }
+        if (requirement == local[0].requirement_count || provider == count ||
+            strcmp(local[0].requirements[requirement].first,
+                   local[provider].capability)) {
+            result = 3;
+            goto done;
+        }
+        choice_capability = malloc(strlen(chosen_id) + 8);
+        if (!choice_capability) goto done;
+        sprintf(choice_capability, "choice:%s", chosen_id);
+        replacement = strdup(choice_capability);
+        if (!replacement) goto done;
+        providers = realloc((void *)items[provider].provides, 2 * sizeof *providers);
+        if (!providers) { free(replacement); goto done; }
+        items[provider].provides = providers;
+        providers[1] = choice_capability;
+        items[provider].provides_count = 2;
+        free((char *)local[0].requirements[requirement].first);
+        local[0].requirements[requirement].first = replacement;
+    }
     solved = holy_solve_exact_unique(items, count, items[0].id, selected);
     if (solved == 1) {
         size_t selected_count = 0;
@@ -205,6 +265,7 @@ int holy_resolve_local(const char *const *paths, size_t count, int json,
     }
 done:
     if (result) fprintf(stderr, "holypkg: local resolution %s\n",
+                        result == 2 ? "has an invalid choice" :
                         result == 3 ? "needs provider choice" :
                         result == 4 ? "has a dependency conflict" :
                         "requires unsupported data or failed");
@@ -214,6 +275,7 @@ done:
             printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"dependency-conflict\",\"requirement\":\"%s\"}\n", unresolved);
         else
             printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"%s\"}\n",
+                   result == 2 ? "invalid-query" :
                    result == 3 ? "decision-required" :
                    result == 4 ? "dependency-conflict" : "unsupported-input");
     }
@@ -229,5 +291,6 @@ done:
     }
     if (items) for (i = 0; i < count; ++i) free((void *)items[i].provides);
     free(items); free(local); free(selected);
+    free(chosen_id); free(choice_capability);
     return result;
 }
