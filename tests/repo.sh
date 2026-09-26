@@ -7,6 +7,9 @@ mkdir "$tmp/empty"
 "$bin" repo index "$tmp/empty" > "$tmp/out"
 grep -qx 'indexed 0 packages' "$tmp/out"
 grep -qx 'format holy-index-prototype-1' "$tmp/empty/index"
+if "$bin" repo list "$tmp/empty" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
+"$bin" repo seal "$tmp/empty" > "$tmp/out"
 "$bin" repo list "$tmp/empty" > "$tmp/out"
 grep -qx 'listed 0 packages' "$tmp/out"
 mkdir -p "$tmp/repo" "$tmp/payload/HOLY" "$tmp/payload/DATA"
@@ -31,14 +34,16 @@ hash=${hash%% *}
 size=$(stat -c %s "$tmp/repo/fixture.holy")
 grep -qx 'format holy-index-prototype-1' "$tmp/repo/index"
 grep -qx "package \"fixture\" \"1.0\" \"1\" \"linux\" \"noarch\" \"nolibc\" \"fixture.holy\" $hash $size" "$tmp/repo/index"
-"$bin" repo list "$tmp/repo" > "$tmp/out"
-grep -qx 'listed 1 packages' "$tmp/out"
-grep -qx "package \"fixture\" \"1.0\" \"1\" \"linux\" \"noarch\" \"nolibc\" \"fixture.holy\" $hash $size" "$tmp/out"
-test "$(stat -c %a "$tmp/repo/index")" = 644
+if "$bin" repo list "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
 "$bin" repo seal "$tmp/repo" > "$tmp/out"
 index_hash=$(sha256sum "$tmp/repo/index")
 index_hash=${index_hash%% *}
 grep -qx "sealed $index_hash" "$tmp/out"
+"$bin" repo list "$tmp/repo" > "$tmp/out"
+grep -qx 'listed 1 packages' "$tmp/out"
+grep -qx "package \"fixture\" \"1.0\" \"1\" \"linux\" \"noarch\" \"nolibc\" \"fixture.holy\" $hash $size" "$tmp/out"
+test "$(stat -c %a "$tmp/repo/index")" = 644
 grep -qx "sha256 $index_hash" "$tmp/repo/current"
 cmp "$tmp/repo/index" "$tmp/repo/index.$index_hash"
 "$bin" repo list "$tmp/repo" > "$tmp/out"
@@ -49,6 +54,10 @@ test ! -s "$tmp/out"
 cp "$tmp/repo/index" "$tmp/repo/index.$index_hash"
 printf 'sha256 broken\n' > "$tmp/repo/current"
 if "$bin" repo search "$tmp/repo" fixture > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
+printf 'sha256 %s\n' "$index_hash" > "$tmp/repo/current"
+rm "$tmp/repo/current"
+if "$bin" repo list "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 printf 'sha256 %s\n' "$index_hash" > "$tmp/repo/current"
 "$bin" repo seal "$tmp/repo" > "$tmp/out"

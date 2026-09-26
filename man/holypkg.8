@@ -117,8 +117,10 @@ must not treat it as the native repository format.
 .PP
 The seal command validates the entire local index, creates an index.SHA256
 generation and atomically publishes a current pointer containing its digest.
-The list and search commands check that digest before reading the generation.
-Indexing creates a draft index; publish it with seal after reviewing changes.
+The list and search commands require current and check its digest before
+reading the generation. Indexing creates a draft index; publish it with seal
+after reviewing changes. Removing current makes the directory unavailable
+to list and search rather than exposing an unsealed draft.
 The pointer and artifacts remain unsigned and can be changed by someone with
 write access to the directory. Existing generation files remain in place.
 .PP

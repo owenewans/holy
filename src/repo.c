@@ -246,7 +246,7 @@ static int list(const char *directory, const char *query,
     char expected[65], actual_digest[65], index_name[71];
     size_t capacity = 0, count = 0, i, j, number = 0;
     ssize_t length;
-    int dir = -1, fd = -1, ok = 0, current = 0;
+    int dir = -1, fd = -1, ok = 0;
 
     dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dir < 0 || (lock && flock(dir, LOCK_SH) < 0)) goto done;
@@ -255,10 +255,8 @@ static int list(const char *directory, const char *query,
             strchr(forced_index, '/')) goto done;
         strcpy(index_name, forced_index);
     } else {
-        current = read_current(dir, expected);
-        if (current < 0) goto done;
-        if (current) snprintf(index_name, sizeof index_name, "index.%s", expected);
-        else memcpy(index_name, "index", sizeof "index");
+        if (read_current(dir, expected) != 1) goto done;
+        snprintf(index_name, sizeof index_name, "index.%s", expected);
     }
     fd = openat(dir, index_name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
@@ -266,8 +264,9 @@ static int list(const char *directory, const char *query,
     index_snapshot = holy_stage_fd(fd, "holy-catalog");
     close(fd);
     fd = -1;
-    if (!index_snapshot || (current && (!digest_file(index_snapshot, actual_digest) ||
-                                       strcmp(actual_digest, expected)))) goto done;
+    if (!index_snapshot || (!forced_index &&
+        (!digest_file(index_snapshot, actual_digest) ||
+         strcmp(actual_digest, expected)))) goto done;
     index = fopen(index_snapshot, "r");
     if (!index) goto done;
     while ((length = getline(&line, &capacity, index)) >= 0) {
