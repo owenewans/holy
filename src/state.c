@@ -115,19 +115,23 @@ int holy_state_init(const char *root_path)
 {
     char temp_name[43];
     unsigned long long generation;
+    struct stat st;
     int dir = state_dir(root_path, 1), temp = -1, ok = 0;
     if (dir < 0) goto done;
     if (flock(dir, LOCK_EX)) goto done;
-    if (!state_layout(dir, 1)) goto done;
+    if (!state_layout(dir, 1) ||
+        !empty_child(dir, "installed") ||
+        !empty_child(dir, "transactions") ||
+        !empty_child(dir, "index")) goto done;
+    if (fstatat(dir, "generation", &st, AT_SYMLINK_NOFOLLOW) == 0) {
+        if (!read_generation(dir, &generation)) goto done;
+    } else if (errno != ENOENT) goto done;
     temp = holy_temporary_at(dir, temp_name);
     if (temp < 0) goto done;
     if (write(temp, "0\n", 2) != 2 || fsync(temp)) goto done;
     if (linkat(dir, temp_name, dir, "generation", 0) && errno != EEXIST)
         goto done;
-    if (fsync(dir) || !read_generation(dir, &generation) ||
-        !empty_child(dir, "installed") ||
-        !empty_child(dir, "transactions") ||
-        !empty_child(dir, "index")) goto done;
+    if (fsync(dir) || !read_generation(dir, &generation)) goto done;
     printf("generation %llu\n", generation);
     ok = 1;
 done:

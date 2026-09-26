@@ -4,6 +4,12 @@ bin=$1
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 mkdir "$tmp/root" "$tmp/other" "$tmp/symlink" "$tmp/writable"
+mkdir -p "$tmp/other/var/lib/holypkg/installed"
+mkdir "$tmp/other/var/lib/holypkg/transactions" "$tmp/other/var/lib/holypkg/index"
+printf 'unrecognized\n' > "$tmp/other/var/lib/holypkg/installed/unknown"
+if "$bin" db init --root "$tmp/other" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
+test ! -e "$tmp/other/var/lib/holypkg/generation"
 if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 "$bin" db init --root "$tmp/root" > "$tmp/out"
