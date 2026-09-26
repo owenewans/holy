@@ -28,6 +28,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg fetch local:FILE --extract --output DIRECTORY
 .br
+.B holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE]
+.br
 .B holypkg pack DIRECTORY --output FILE.holy
 .br
 .B holypkg check local:FILE --root DIRECTORY
@@ -103,9 +105,20 @@ holypkg \- Holy local package tooling prototype
 .B holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 .SH DESCRIPTION
 The config check command checks source and rule configuration without changing
-the system. General package installation, foreign import, remote fetch and
+the system. General package installation, foreign import, source sync and
 multi-source resolution are not available yet. This executable is independent
 of the separate owenewans/holypkg project.
+.PP
+Pinned HTTPS fetch downloads one native .holy into an existing, non-writable-
+by-others output directory. It requires an expected SHA-256, HTTPS including
+redirects, certificate validation and an URL without embedded user/password.
+--ca-file explicitly selects a trusted CA file for a private test or source.
+The command limits downloads to 1 GiB and five minutes, verifies the completed
+archive, then publishes SHA256.holy without replacing an existing object. If
+the name exists, it compares the stored bytes with the expected digest. HTTP,
+unknown certificates, wrong digests and malformed archives cannot publish a
+new object. This fetch does not assign source-id, verify a repository signature,
+install files or run hooks. General foreign binary fetch remains separate.
 .PP
 Pack reads a prepared tree containing only HOLY/ and DATA/. HOLY/ must contain
 exactly meta, files, deps, provides, hooks, origin and transform as ordinary

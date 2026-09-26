@@ -12,7 +12,7 @@ independent linux distribution in development.
 
 ## build
 
-Requires libarchive, libelf, OpenSSL and libsolv development files:
+Requires libarchive, libelf, libcurl, OpenSSL and libsolv development files:
 
 ```sh
 make
@@ -38,6 +38,7 @@ requirements and capability claims, and checks root path conflicts.
 `holypkg pack` writes a verified `.holy` from a prepared tree of ordinary
 files and directories; recipes and foreign conversion remain open.
 It stages verified archives in a target-root cache.
+It can download a pinned native `.holy` over verified HTTPS to a local directory.
 It can initialize an empty target-root package database and reserve or cancel
 one verified cached artifact at a fixed generation. `db preflight` checks that
 reservation against the target root. `db plan`, `db approve` and `db apply`

@@ -2,13 +2,13 @@ CC ?= cc
 CPPFLAGS ?=
 CFLAGS ?= -O2
 LDFLAGS ?=
-LDLIBS ?= -larchive -lcrypto -lelf
+LDLIBS ?= -larchive -lcrypto -lelf -lcurl
 PREFIX ?= /usr
 DESTDIR ?=
 SOLV_CFLAGS ?= $(patsubst -I%,-isystem %,$(shell pkg-config --cflags-only-I libsolv 2>/dev/null)) $(shell pkg-config --cflags-only-other libsolv 2>/dev/null)
 SOLV_LIBS ?= $(shell pkg-config --libs libsolv 2>/dev/null) -lz
 
-.PHONY: all check check-fixtures check-root check-qemu check-qemu-gate check-solver check-install-payload man
+.PHONY: all check check-fixtures check-root check-qemu check-qemu-gate check-https check-solver check-install-payload man
 all: holypkg
 
 holypkg: src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o
@@ -20,7 +20,7 @@ src/solve.o: src/solve.c src/solve.h
 src/%.o: src/%.c src/config.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -c -o $@ $<
 
-check: holypkg check-solver check-install-payload
+check: holypkg check-solver check-install-payload check-https
 	sh tests/config.sh ./holypkg
 	sh tests/package.sh ./holypkg
 	sh tests/docs.sh
@@ -39,6 +39,10 @@ check-qemu:
 
 check-qemu-gate:
 	sh tests/qemu-gate.sh
+
+check-https: holypkg
+	@command -v python3 >/dev/null && command -v openssl >/dev/null || { echo 'python3 and openssl required for HTTPS fixture' >&2; exit 6; }
+	sh tests/https.sh ./holypkg
 
 check-install-payload: holypkg
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o tests/install-helper tests/install.c src/install.c src/verify.c src/package.c src/stage.c src/config.c $(LDFLAGS) -larchive -lcrypto
