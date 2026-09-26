@@ -18,6 +18,7 @@
 struct local_item {
     struct holy_package_identity identity;
     struct holy_solver_requirement *requirements;
+    char **requirement_ids;
     size_t requirement_count;
     char *capability;
 };
@@ -42,20 +43,29 @@ static int exact_requirement(void *opaque, const char *id,
 {
     struct local_item *item = opaque;
     struct holy_solver_requirement *next;
+    char **ids;
     char *capability;
-    (void)id; (void)original; (void)evidence;
+    char *identifier;
+    (void)original; (void)evidence;
     if (strcmp(consumer, item->identity.name) || strcmp(kind, "package") ||
         strcmp(arch, "any") || strcmp(libc, "any") ||
         strcmp(relation, "any") || strcmp(version, "-") ||
         item->requirement_count >= 65536) return 0;
     capability = package_capability(name);
     if (!capability) return 0;
+    identifier = strdup(id);
+    if (!identifier) { free(capability); return 0; }
     next = realloc(item->requirements,
                    (item->requirement_count + 1) * sizeof *next);
-    if (!next) { free(capability); return 0; }
+    if (!next) { free(identifier); free(capability); return 0; }
     item->requirements = next;
+    ids = realloc(item->requirement_ids,
+                  (item->requirement_count + 1) * sizeof *ids);
+    if (!ids) { free(identifier); free(capability); return 0; }
+    item->requirement_ids = ids;
     item->requirements[item->requirement_count].first = capability;
     item->requirements[item->requirement_count].alternative = NULL;
+    item->requirement_ids[item->requirement_count] = identifier;
     ++item->requirement_count;
     return 1;
 }
@@ -93,6 +103,7 @@ int holy_resolve_local(const char *const *paths, size_t count, int json)
     int *selected = NULL, result = 6;
     size_t i, j, prepared = 0;
     int solved;
+    const char *unresolved = NULL;
     if (!paths || !count || count > 10000) goto done;
     local = calloc(count, sizeof *local);
     items = calloc(count, sizeof *items);
@@ -147,20 +158,39 @@ int holy_resolve_local(const char *const *paths, size_t count, int json)
         if (json) printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"summary\",\"count\":%zu}\n", selected_count);
         result = 0;
     } else if (solved == 3) result = 3;
-    else if (solved == 2) result = 4;
+    else if (solved == 2) {
+        result = 4;
+        for (j = 0; j < local[0].requirement_count; ++j) {
+            for (i = 0; i < count; ++i)
+                if (!strcmp(local[0].requirements[j].first,
+                            local[i].capability)) break;
+            if (i == count) {
+                unresolved = local[0].requirement_ids[j];
+                break;
+            }
+        }
+    }
 done:
     if (result) fprintf(stderr, "holypkg: local resolution %s\n",
                         result == 3 ? "needs provider choice" :
                         result == 4 ? "has a dependency conflict" :
                         "requires unsupported data or failed");
-    if (result && json)
-        printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"%s\"}\n",
-               result == 3 ? "decision-required" :
-               result == 4 ? "dependency-conflict" : "unsupported-input");
+    if (unresolved) fprintf(stderr, "holypkg: unresolved requirement %s\n", unresolved);
+    if (result && json) {
+        if (unresolved)
+            printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"dependency-conflict\",\"requirement\":\"%s\"}\n", unresolved);
+        else
+            printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"%s\"}\n",
+                   result == 3 ? "decision-required" :
+                   result == 4 ? "dependency-conflict" : "unsupported-input");
+    }
     for (i = 0; i < prepared; ++i) {
         for (j = 0; j < local[i].requirement_count; ++j)
             free((char *)local[i].requirements[j].first);
+        for (j = 0; j < local[i].requirement_count; ++j)
+            free(local[i].requirement_ids[j]);
         free(local[i].requirements);
+        free(local[i].requirement_ids);
         free(local[i].capability);
         holy_package_identity_free(&local[i].identity);
     }

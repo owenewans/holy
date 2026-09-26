@@ -51,6 +51,8 @@ grep -qx "selected $c_hash" "$tmp/out"
 test "$(wc -l < "$tmp/out")" -eq 3
 if "$bin" solve "local:$tmp/root-1.holy" "local:$tmp/b-3.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 test ! -s "$tmp/out"
+if "$bin" solve "local:$tmp/root-1.holy" "local:$tmp/b-3.holy" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"dependency-conflict"}' "$tmp/out"
 printf 'provide package b noarch nolibc - metadata\n' > "$tmp/payload/HOLY/provides"
 build alias 1
 if "$bin" solve "local:$tmp/root-1.holy" "local:$tmp/alias-1.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
@@ -58,8 +60,9 @@ test ! -s "$tmp/out"
 : > "$tmp/payload/HOLY/provides"
 if "$bin" solve "local:$tmp/root-1.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 test ! -s "$tmp/out"
+grep -q 'unresolved requirement b-1' "$tmp/err"
 if "$bin" solve "local:$tmp/root-1.holy" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
-grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"dependency-conflict"}' "$tmp/out"
+grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"dependency-conflict","requirement":"b-1"}' "$tmp/out"
 test "$(wc -l < "$tmp/out")" -eq 1
 if "$bin" solve "local:$tmp/root-1.holy" "local:$tmp/b-1.holy" "local:$tmp/b-2.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 test ! -s "$tmp/out"

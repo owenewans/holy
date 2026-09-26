@@ -117,6 +117,9 @@ With --json, stdout contains holy-local-solve-1 selected events carrying
 artifact digests and a count summary after a unique solution. Errors emit
 one structured error event without partial selected events; malformed
 arguments use invalid-query. Diagnostics remain on stderr.
+For a missing direct provider, the error event also carries the validated
+requirement-id and stderr names it. Transitive conflicts can still lack an
+identified requirement in this prototype.
 .PP
 The provides command stages and verifies a native archive, then reads
 HOLY/provides as typed claims. Each supported line has seven tokens:
