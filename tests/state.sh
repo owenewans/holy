@@ -20,6 +20,14 @@ printf '7\n' > "$db/generation"
 grep -qx 'generation 7' "$tmp/out"
 "$bin" db status --root "$tmp/root" > "$tmp/out"
 grep -qx 'generation 7' "$tmp/out"
+for area in installed transactions index; do
+    printf 'unrecognized\n' > "$db/$area/unknown"
+    if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+    test ! -s "$tmp/out"
+    grep -q "unrecognized database entries in $area" "$tmp/err"
+    if "$bin" db init --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+    rm "$db/$area/unknown"
+done
 for invalid in '07' '-1' '18446744073709551616' 'garbage'; do
     printf '%s\n' "$invalid" > "$db/generation"
     if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi

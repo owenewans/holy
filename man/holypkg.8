@@ -196,7 +196,10 @@ transactions and index directories, and a generation file containing 0.
 It locks the database directory for this operation and uses a synced temporary
 file plus link for exclusive generation creation; repeating init retains the
 existing generation. Status holds a shared lock while validating the same
-layout and reading the generation. Both commands reject symlinked,
+layout and reading the generation. Until installed records and journals have
+parsers, both commands reject nonempty installed, transactions and index
+directories instead of treating unknown state as an empty database. Both
+commands reject symlinked,
 group-writable or world-writable ancestor directories inside the target root.
 Init does not register packages, create a transaction journal or install files.
 .PP
