@@ -25,6 +25,13 @@ int main(int argc, char **argv)
                    info.elf_class == 1 ? 32 : 64,
                    holy_elf_machine(&info), holy_elf_runtime(&info),
                    info.interpreter ? info.interpreter : "unknown");
+        if (!rc) {
+            size_t i;
+            for (i = 0; i < info.needed_count; ++i) printf("needed %s\n", info.needed[i]);
+            if (info.soname) printf("soname %s\n", info.soname);
+            if (info.rpath) printf("rpath %s\n", info.rpath);
+            if (info.runpath) printf("runpath %s\n", info.runpath);
+        }
         else fprintf(stderr, "holypkg: %s ELF input\n", rc == 1 ? "not an" : "invalid");
         holy_elf_free(&info);
         return rc ? 2 : 0;

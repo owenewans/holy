@@ -2,12 +2,18 @@
 #define HOLY_ELF_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 struct holy_elf_info {
     int elf_class;
     uint16_t machine;
     uint16_t type;
     char *interpreter;
+    char **needed;
+    size_t needed_count;
+    char *soname;
+    char *rpath;
+    char *runpath;
 };
 
 /* returns 0 on parsed ELF, 1 on non-ELF, 2 on malformed/unsupported ELF.

@@ -3,18 +3,26 @@ set -eu
 bin=$1
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
-printf 'int main(void) { return 0; }\n' > "$tmp/main.c"
+printf '#include <stdio.h>\nint main(void) { return puts("ok") < 0; }\n' > "$tmp/main.c"
 "${CC:-cc}" -o "$tmp/main" "$tmp/main.c"
 "$bin" elf "$tmp/main" > "$tmp/out"
 grep -qx 'class ELF64' "$tmp/out"
 grep -qx 'machine x86_64' "$tmp/out"
 grep -qx 'runtime glibc' "$tmp/out"
+grep -qx 'needed libc.so.6' "$tmp/out"
 objcopy --strip-section-headers "$tmp/main" "$tmp/no-sections"
 "$bin" elf "$tmp/no-sections" > "$tmp/out"
 grep -qx 'machine x86_64' "$tmp/out"
-"${CC:-cc}" -shared -fPIC -o "$tmp/plugin.so" "$tmp/main.c"
+grep -qx 'needed libc.so.6' "$tmp/out"
+"${CC:-cc}" -shared -fPIC -Wl,-soname,libfixture.so.1 -Wl,-rpath,'$ORIGIN' \
+    -o "$tmp/plugin.so" "$tmp/main.c"
 "$bin" elf "$tmp/plugin.so" > "$tmp/out"
 grep -qx 'runtime unknown' "$tmp/out"
+grep -qx 'soname libfixture.so.1' "$tmp/out"
+grep -qE '^(rpath|runpath) \$ORIGIN$' "$tmp/out"
+objcopy --remove-section .dynstr "$tmp/plugin.so" "$tmp/missing-dynstr.so"
+if "$bin" elf "$tmp/missing-dynstr.so" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'invalid ELF input' "$tmp/err"
 printf 'not ELF\n' > "$tmp/text"
 if "$bin" elf "$tmp/text" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'not an ELF input' "$tmp/err"
