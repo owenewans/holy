@@ -17,6 +17,8 @@ it does not mean a bootable distribution or general package support.
 - [x] Journal installation, check and removal of **data-only** `linux/noarch/nolibc`
   artifacts into existing directories. Recovery covers empty aborted installs,
   completed installs and interrupted removals under documented conditions.
+- [x] Query exact installed data-file ownership; report duplicate regular-file
+  claims as conflicts while permitting shared directory entries.
 - [ ] Define stable source IDs, version families, installed ownership and selected
   dependency edges for general packages; implement multi-package transactions.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,

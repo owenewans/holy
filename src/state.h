@@ -31,5 +31,7 @@ int holy_state_remove(const char *digest, const char *root_path);
 int holy_state_continue_remove(const char *root_path);
 /* clear a completed applying journal after verifying the installed instance. */
 int holy_state_finish_apply(const char *root_path);
+/* lookup installed data-file ownership without inspecting the live payload. */
+int holy_state_owner(const char *path, const char *root_path);
 
 #endif

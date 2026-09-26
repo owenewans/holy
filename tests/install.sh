@@ -76,6 +76,14 @@ grep -qx "recovered install $digest generation 1" "$tmp/out"
 test ! -e "$db/transactions/journal"
 "$bin" db check "$digest" --root "$tmp/system" > "$tmp/out"
 grep -qx "intact $digest generation 1" "$tmp/out"
+"$bin" db owner /usr/bin/data --root "$tmp/system" > "$tmp/out"
+grep -qx "$digest file usr/bin/data" "$tmp/out"
+"$bin" db owner usr/bin --root "$tmp/system" > "$tmp/out"
+grep -qx "$digest directory usr/bin" "$tmp/out"
+if "$bin" db owner /usr/bin/absent --root "$tmp/system" > "$tmp/out"; then exit 1; else test "$?" -eq 6; fi
+test ! -s "$tmp/out"
+if "$bin" db owner ../usr/bin/data --root "$tmp/system" > "$tmp/out"; then exit 1; else test "$?" -eq 2; fi
+test ! -s "$tmp/out"
 printf 'changed\n' > "$tmp/system/usr/bin/data"
 if "$bin" db check "$digest" --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 grep -qx 'holypkg: changed-file usr/bin/data' "$tmp/err"
@@ -114,6 +122,17 @@ test -f "$tmp/system/usr/bin/data2"
 "$bin" db status --root "$tmp/system" > "$tmp/out"
 grep -qx 'generation 2' "$tmp/out"
 "$bin" db check "$digest2" --root "$tmp/system" > "$tmp/out"
+"$bin" db owner usr/bin --root "$tmp/system" > "$tmp/out"
+grep -qx "$digest directory usr/bin" "$tmp/out"
+grep -qx "$digest2 directory usr/bin" "$tmp/out"
+test "$(head -n 1 "$tmp/out")" = "$(printf '%s\n%s\n' "$digest" "$digest2" | sort | head -n 1) directory usr/bin"
+other=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+cp -a "$db/installed/$digest" "$db/installed/$other"
+sed "s/$digest/$other/" "$db/installed/$digest/state" > "$db/installed/$other/state"
+if "$bin" db owner usr/bin/data --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+test ! -s "$tmp/out"
+grep -qx 'holypkg: conflicting installed owners for usr/bin/data' "$tmp/err"
+rm -r "$db/installed/$other"
 printf 'changed\n' > "$tmp/system/usr/bin/data"
 if "$bin" db rm "$digest" --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 test ! -e "$db/transactions/journal"

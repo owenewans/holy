@@ -1245,3 +1245,103 @@ done:
     if (root >= 0) close(root);
     return result;
 }
+
+static int valid_owner_path(const char *path)
+{
+    const char *part = path;
+    if (!*path) return 0;
+    while (*part) {
+        const char *end = strchr(part, '/');
+        size_t length = end ? (size_t)(end - part) : strlen(part), i;
+        if (!length || (length == 1 && part[0] == '.') ||
+            (length == 2 && part[0] == '.' && part[1] == '.')) return 0;
+        for (i = 0; i < length; ++i)
+            if ((unsigned char)part[i] < 32 ||
+                (unsigned char)part[i] == 127) return 0;
+        if (!end) break;
+        part = end + 1;
+    }
+    return 1;
+}
+
+static int compare_owner(const void *a, const void *b)
+{
+    return strcmp((const char *)a, (const char *)b);
+}
+
+int holy_state_owner(const char *input, const char *root_path)
+{
+    const char *path = *input == '/' ? input + 1 : input;
+    int root = -1, dir = -1, installed = -1, result = 1, found = 0;
+    unsigned long long generation;
+    char (*owners)[65] = NULL;
+    size_t count = 0, capacity = 0, i;
+    DIR *list = NULL;
+    struct dirent *entry;
+    if (!valid_owner_path(path)) return 2;
+    root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0) goto done;
+    dir = state_dir_at(root, 0);
+    if (dir < 0 || flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
+        !empty_child(dir, "index") || !read_generation(dir, &generation)) goto done;
+    found = journal_valid(dir, generation, NULL, NULL, NULL, NULL);
+    if (found < 0) goto done;
+    if (found) { result = 5; goto done; }
+    if (!installed_valid(dir)) goto done;
+    found = 0;
+    installed = child_dir(dir, "installed", 0);
+    if (installed < 0) goto done;
+    list = fdopendir(dup(installed));
+    if (!list) goto done;
+    errno = 0;
+    while ((entry = readdir(list))) {
+        int item, files, kind;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        item = child_dir(installed, entry->d_name, 0);
+        if (item < 0) goto done;
+        files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+        close(item);
+        if (files < 0) goto done;
+        kind = holy_install_manifest_owns(files, path);
+        close(files);
+        if (kind < 0) goto done;
+        if (kind) {
+            char (*grown)[65];
+            if (found && (found == 1 || kind == 1)) {
+                fprintf(stderr, "holypkg: conflicting installed owners for %s\n", path);
+                result = 4;
+                goto done;
+            }
+            if (count == capacity) {
+                size_t next = capacity ? capacity * 2 : 4;
+                if (next < capacity || next > SIZE_MAX / sizeof *owners) goto done;
+                grown = realloc(owners, next * sizeof *owners);
+                if (!grown) goto done;
+                owners = grown;
+                capacity = next;
+            }
+            memcpy(owners[count], entry->d_name, 65);
+            ++count;
+            found = kind;
+        }
+        errno = 0;
+    }
+    if (errno) goto done;
+    result = found ? 0 : 6;
+    if (!result) {
+        qsort(owners, count, sizeof *owners, compare_owner);
+        for (i = 0; i < count; ++i)
+            if (printf("%s %s %s\n", owners[i],
+                       found == 1 ? "file" : "directory", path) < 0) {
+                result = 1;
+                break;
+            }
+    }
+done:
+    free(owners);
+    if (list) closedir(list);
+    if (installed >= 0) close(installed);
+    if (dir >= 0) close(dir);
+    if (root >= 0) close(root);
+    return result;
+}

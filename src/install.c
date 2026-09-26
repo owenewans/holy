@@ -318,3 +318,45 @@ int holy_install_finish_remove_manifest(int files_fd, int root)
     if (walk_manifest(files_fd, root, 2) != 1) return 0;
     return walk_manifest(files_fd, root, 2) == 1;
 }
+
+int holy_install_manifest_owns(int files_fd, const char *path)
+{
+    struct stat st;
+    FILE *stream = NULL;
+    char *line = NULL;
+    size_t capacity = 0, number = 0;
+    ssize_t length;
+    int copy, found = 0;
+    if (fstat(files_fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+        st.st_size > 16 * 1024 * 1024 || lseek(files_fd, 0, SEEK_SET)) return -1;
+    copy = dup(files_fd);
+    if (copy < 0) return -1;
+    stream = fdopen(copy, "r");
+    if (!stream) { close(copy); return -1; }
+    while ((length = getline(&line, &capacity, stream)) >= 0) {
+        char **v = NULL, *error = NULL;
+        size_t count = 0;
+        ++number;
+        if (memchr(line, '\0', (size_t)length) ||
+            !holy_lex(line, (size_t)length, &v, &count,
+                      "installed/files", number, &error)) {
+            free(error);
+            found = -1;
+            break;
+        }
+        if (count) {
+            if (count != 12 || (strcmp(v[0], "file") && strcmp(v[0], "dir")))
+                found = -1;
+            else if (!strcmp(v[1], path)) {
+                if (found) found = -1;
+                else found = !strcmp(v[0], "file") ? 1 : 2;
+            }
+        }
+        holy_tokens_free(v, count);
+        if (found < 0) break;
+    }
+    if (ferror(stream) || st.st_size != ftello(stream)) found = -1;
+    free(line);
+    fclose(stream);
+    return found;
+}

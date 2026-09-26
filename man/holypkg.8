@@ -78,6 +78,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db rm SHA256 --root DIRECTORY
 .br
+.B holypkg db owner PATH --root DIRECTORY
+.br
 .B holypkg repo index DIRECTORY
 .br
 .B holypkg repo list DIRECTORY
@@ -164,6 +166,13 @@ symlinked parent paths. It returns 4 for changed or missing files, 6 when
 the instance is absent, and 5 while a file transaction is incomplete. The
 command neither downloads an archive nor repairs a file. This restricted
 check does not model dynamic linking, scripts or runtime behavior.
+.PP
+Database owner reads installed data manifests and lists the artifact digest
+and kind for an exact relative or root-absolute path. Multiple packages may
+list the same directory. If multiple records claim one regular file, the
+command returns conflict status 4 without listing an arbitrary owner. An
+absent path returns 6. It holds a shared database lock and does not require
+the path to exist in the live rootfs; db check compares actual contents.
 .PP
 Database rm removes one intact data-only installed instance by artifact
 SHA-256. It verifies all listed files before mutation, refuses changed files

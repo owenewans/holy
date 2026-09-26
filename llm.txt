@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=1cd3df4d9ce1f37e8bef9d84f7a973ec2a269b448abf0da6d48b3a68697895ce
+holypkg.8 source=holy version=development sha256=a43d3685f18c01baa07aea92b65a0df01fb8ff3bf37b58835b3cd2b13917f3be
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -94,6 +94,7 @@ SYNOPSIS
      holypkg db apply --root DIRECTORY
      holypkg db check SHA256 --root DIRECTORY
      holypkg db rm SHA256 --root DIRECTORY
+     holypkg db owner PATH --root DIRECTORY
      holypkg repo index DIRECTORY
      holypkg repo list DIRECTORY
      holypkg repo search DIRECTORY NAME
@@ -174,6 +175,13 @@ DESCRIPTION
      instance is absent, and 5 while a file transaction is incomplete. The  com-
      mand neither downloads an archive nor repairs a file. This restricted check
      does not model dynamic linking, scripts or runtime behavior.
+
+     Database owner reads installed data manifests and lists the artifact digest
+     and kind for an exact relative or root-absolute path. Multiple packages may
+     list  the	same  directory. If multiple records claim one regular file, the
+     command returns conflict status 4 without listing an  arbitrary  owner.  An
+     absent path returns 6. It holds a shared database lock and does not require
+     the path to exist in the live rootfs; db check compares actual contents.
 
      Database  rm  removes  one	 intact data-only installed instance by artifact
      SHA-256. It verifies all listed  files  before  mutation,	refuses	 changed
