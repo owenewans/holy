@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=6932754ac2998fb788d1a24866884e4ae67fb3dadd16756b9631a3392c37002d
+holypkg.8 source=holy version=development sha256=4db6a3e756f58a7f9c449840f99cfc256ec36a0d4e9ffbe26e88036fecf456f2
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -123,16 +123,16 @@ DESCRIPTION
      Other commands do not yet implement --json.
 
      The  developer-facing  elf	 command reads a regular ELF through libelf/GElf
-     without executing it or invoking ldd. It prints ELF class, a recognized ma-
-     chine (x86, x86_64 or x32), the PT_INTERP path, and  a  libc  runtime  hint
-     only for recognized glibc or musl interpreters. It reads PT_DYNAMIC to list
-     DT_NEEDED,	 SONAME,  RPATH	 and  RUNPATH  even without section headers. GNU
-     DT_VERNEED records list provider SONAME, version and  weak	 flag.	GNU  x86
-     ISA-needed	 properties  in	 PT_NOTE  report  x86-64-baseline/v2/v3/v4  when
-     present; absent or unrecognized properties	 report	 unknown.  No  PT_INTERP
-     yields  unknown  runtime.	It  does not inspect exported symbol versions or
-     plugin loading; its output is not a dependency resolution	or  package  ABI
-     verdict.
+     without executing it or invoking ldd. It prints ELF  class,  numeric  e_ma-
+     chine  and e_type, a recognized machine (x86, x86_64 or x32), the PT_INTERP
+     path, and a libc runtime hint only for  recognized	 glibc	or  musl  inter-
+     preters.  It  reads PT_DYNAMIC to list DT_NEEDED, SONAME, RPATH and RUNPATH
+     even without section headers. GNU DT_VERNEED records list provider	 SONAME,
+     version  and  weak	 flag.	GNU  x86 ISA-needed properties in PT_NOTE report
+     x86-64-baseline/v2/v3/v4 when present; absent  or	unrecognized  properties
+     report  unknown.  No  PT_INTERP yields unknown runtime. It does not inspect
+     exported symbol versions or plugin loading; its output is not a  dependency
+     resolution or package ABI verdict.
 
 EXIT STATUS
      0	indicates success under the implemented checks; 1 indicates a failed lo-

@@ -75,7 +75,8 @@ and status unknown. Paths use byte escapes. Other commands do not yet
 implement --json.
 .PP
 The developer-facing elf command reads a regular ELF through libelf/GElf
-without executing it or invoking ldd. It prints ELF class, a recognized
+without executing it or invoking ldd. It prints ELF class, numeric e_machine
+and e_type, a recognized
 machine (x86, x86_64 or x32), the PT_INTERP path, and a libc runtime hint
 only for recognized glibc or musl interpreters. It reads PT_DYNAMIC to list
 DT_NEEDED, SONAME, RPATH and RUNPATH even without section headers. GNU
