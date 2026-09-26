@@ -1,4 +1,4 @@
-holy.conf.5 source=holy version=development sha256=8238a4ed12298535d15be116515cdb3df7a5d03e621dd828cf78dbf5d14165c5
+holy.conf.5 source=holy version=development sha256=6685ab1b225b73fddc9a9f191a419585491daa89d0d4cc4218d15e022015932f
 HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
 
 NAME
@@ -28,6 +28,12 @@ DESCRIPTION
      yet  validate URL credentials, source relationships or references. It vali-
      dates key names, argument counts, and the scripts, trust,	ask-sources  and
      prefer values. The alias local is reserved and cannot name a source.
+
+     Each  populated  source section requires type and at least one url or repo.
+     Repository names within one source must be distinct.  Each	 populated  rule
+     requires  consumer,  require and provider. Empty values are rejected. These
+     checks do not prove that a repository is reachable or its packages can  re-
+     solve.
 
 EXAMPLE
      [general]

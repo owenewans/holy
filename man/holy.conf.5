@@ -21,6 +21,11 @@ The checker validates lexical and structural syntax; it does not yet validate
 URL credentials, source relationships or references. It validates key names,
 argument counts, and the scripts, trust, ask-sources and prefer values. The
 alias local is reserved and cannot name a source.
+.PP
+Each populated source section requires type and at least one url or repo.
+Repository names within one source must be distinct. Each populated rule
+requires consumer, require and provider. Empty values are rejected. These
+checks do not prove that a repository is reachable or its packages can resolve.
 .SH EXAMPLE
 .nf
 [general]

@@ -343,10 +343,54 @@ done:
     return ok;
 }
 
+static int validate(struct holy_config *config, char **error)
+{
+    size_t i, j;
+    for (i = 0; i < config->count; ++i) {
+        const struct holy_entry *e = &config->entries[i];
+        int type = 0, endpoint = 0, consumer = 0, require = 0, provider = 0;
+        if (!e->values[0][0] || (e->count == 2 && !e->values[1][0]))
+            return fail(error, e->file, e->line, "empty %s value", e->key);
+        if (!strcmp(e->key, "repo")) {
+            for (j = 0; j < i; ++j) {
+                const struct holy_entry *other = &config->entries[j];
+                if (!strcmp(e->section, other->section) &&
+                    !strcmp(other->key, "repo") &&
+                    !strcmp(e->values[0], other->values[0]))
+                    return fail(error, e->file, e->line,
+                                "duplicate repo name (first at %s:%zu)",
+                                other->file, other->line);
+            }
+        }
+        if (strncmp(e->section, "source ", 7) && strncmp(e->section, "rule ", 5))
+            continue;
+        for (j = 0; j < i; ++j)
+            if (!strcmp(e->section, config->entries[j].section)) break;
+        if (j != i) continue;
+        for (j = i; j < config->count; ++j) {
+            const struct holy_entry *field = &config->entries[j];
+            if (strcmp(field->section, e->section)) continue;
+            if (!strcmp(field->key, "type")) type = 1;
+            else if (!strcmp(field->key, "url") || !strcmp(field->key, "repo")) endpoint = 1;
+            else if (!strcmp(field->key, "consumer")) consumer = 1;
+            else if (!strcmp(field->key, "require")) require = 1;
+            else if (!strcmp(field->key, "provider")) provider = 1;
+        }
+        if (!strncmp(e->section, "source ", 7) && (!type || !endpoint))
+            return fail(error, e->file, e->line,
+                        "[%s] requires type and url or repo", e->section);
+        if (!strncmp(e->section, "rule ", 5) &&
+            (!consumer || !require || !provider))
+            return fail(error, e->file, e->line,
+                        "[%s] requires consumer, require and provider", e->section);
+    }
+    return 1;
+}
+
 int holy_config_load(const char *path, struct holy_config *out, char **error)
 {
     *error = NULL;
-    return parse(path, out, NULL, error);
+    return parse(path, out, NULL, error) && validate(out, error);
 }
 
 void holy_config_free(struct holy_config *config)

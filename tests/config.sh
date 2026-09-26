@@ -58,4 +58,35 @@ grep -q 'invalid scripts value' "$tmp/err"
 printf '[general]\narch \377\n' > "$tmp/encoding"
 if "$bin" config check "$tmp/encoding" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'invalid UTF-8' "$tmp/err"
+cat > "$tmp/incomplete-source" <<'EOF'
+[source extra]
+type holy-http
+EOF
+if "$bin" config check "$tmp/incomplete-source" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'requires type and url or repo' "$tmp/err"
+cat > "$tmp/incomplete-rule" <<'EOF'
+[rule broken]
+consumer arch:hello
+EOF
+if "$bin" config check "$tmp/incomplete-rule" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'requires consumer, require and provider' "$tmp/err"
+cat > "$tmp/repo-duplicate" <<'EOF'
+[source arch]
+type pacman
+repo main "https://mirror.example/a"
+repo main "https://mirror.example/b"
+EOF
+if "$bin" config check "$tmp/repo-duplicate" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'duplicate repo name' "$tmp/err"
+cat > "$tmp/split-source" <<'EOF'
+[source native]
+type holy-http
+include "split-source-child"
+EOF
+cat > "$tmp/split-source-child" <<'EOF'
+[source native]
+url "https://mirror.example/holy"
+EOF
+"$bin" config check "$tmp/split-source" > "$tmp/out"
+grep -q '2 entries' "$tmp/out"
 printf 'config fixtures passed\n'
