@@ -8,7 +8,7 @@ DESTDIR ?=
 SOLV_CFLAGS ?= $(patsubst -I%,-isystem %,$(shell pkg-config --cflags-only-I libsolv 2>/dev/null)) $(shell pkg-config --cflags-only-other libsolv 2>/dev/null)
 SOLV_LIBS ?= $(shell pkg-config --libs libsolv 2>/dev/null) -lz
 
-.PHONY: all check check-fixtures check-solver check-install-payload man
+.PHONY: all check check-fixtures check-root check-solver check-install-payload man
 all: holypkg
 
 holypkg: src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o
@@ -30,6 +30,9 @@ check: holypkg check-solver check-install-payload
 	sh tests/resolve.sh ./holypkg
 
 check-fixtures: check
+
+check-root: check-install-payload
+	sh tests/state.sh ./holypkg
 
 check-install-payload: holypkg
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o tests/install-helper tests/install.c src/install.c src/verify.c src/package.c src/stage.c src/config.c $(LDFLAGS) -larchive -lcrypto

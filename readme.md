@@ -17,6 +17,7 @@ Requires libarchive, libelf, OpenSSL and libsolv development files:
 ```sh
 make
 make check
+make check-root
 ```
 
 `make install` installs the current `holypkg` prototype, man pages and generated
@@ -24,6 +25,8 @@ make check
 objcopy, as and ld.
 `make check` includes the internal libsolv fixture. libsolv development files
 must be available through pkg-config; the check fails if they are absent.
+`make check-root` exercises package mutations only inside disposable target
+directories. It does not test a booted system.
 
 ## status
 

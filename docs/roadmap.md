@@ -54,7 +54,9 @@ it does not mean a bootable distribution or general package support.
 ## Acceptance gates
 
 - [x] Run current prototype fixtures under GCC, TCC and Clang ASan/UBSan.
-- [ ] Add real `make check-root`, `check-qemu`, `check-install` and
+- [x] Run `make check-root` against disposable target-root install, check,
+  remove and recovery fixtures; this gate does not boot a system.
+- [ ] Add real `make check-qemu`, `check-install` and
   `check-hardware` targets; unavailable inputs must fail or report skip.
 - [ ] Boot both target architectures in QEMU and prove PID 1, shell, package
   install/removal and recovery after removing either or both dynamic libc runtimes.
