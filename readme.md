@@ -1,5 +1,7 @@
 # Holy
 
+<div align="center"><img src="https://count.owenewans.org/owenewans/holy?theme=moebooru-h&amp;notitle" alt="Holy views"></div>
+
 Holy is a planned independent Linux distribution. This repository starts with
 the C99 configuration parser and read-only local package inspector/verifier.
 The verifier handles regular files, symlinks, directories and direct hardlinks.
