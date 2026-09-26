@@ -48,6 +48,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg repo search DIRECTORY NAME
 .br
+.B holypkg repo solve DIRECTORY NAME [--json]
+.br
 .B holypkg repo providers DIRECTORY KIND NAME
 .br
 .B holypkg repo providers DIRECTORY KIND NAME --json
@@ -121,6 +123,16 @@ For a missing provider on a path of uniquely determined candidates, the error
 event also carries the validated requirement-id and stderr names it. If a
 transitive edge has multiple candidate providers, this diagnosis stops at
 that edge rather than blaming an unselected candidate.
+.PP
+Repository solve accepts a package name in a sealed local repository. It
+validates the entire catalog and every artifact, freezes those artifacts in
+temporary snapshots, then invokes the same restricted read-only solver with
+the unique exact-name root first. Two versions of the requested name return
+decision-required. A missing name returns unavailable-artifact. An invalid
+generation returns invalid-catalog without partial results. --json uses the
+same holy-local-solve-1 events as solve. This command reads all archive
+payloads per query; it does not import remote sources, install packages or
+interpret typed HOLY/provides aliases as dependency providers.
 .PP
 The provides command stages and verifies a native archive, then reads
 HOLY/provides as typed claims. Each supported line has seven tokens:

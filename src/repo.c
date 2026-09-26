@@ -4,6 +4,7 @@
 #include "fetch.h"
 #include "deps.h"
 #include "provides.h"
+#include "resolve.h"
 #include "package.h"
 #include "scan.h"
 #include "stage.h"
@@ -376,9 +377,11 @@ static int parse_claim(char **v, size_t n, struct object *object)
 static int list(const char *directory, const char *query,
                  const char *forced_index, int lock, int emit,
                  const char *fetch_digest, const char *output,
-                 const char *provider_kind, const char *provider_name)
+                 const char *provider_kind, const char *provider_name,
+                 const char *solve_name, int solve_json, int *solve_rc)
 {
     struct object *objects = NULL;
+    char **candidate_snapshots = NULL;
     struct stat st;
     FILE *index = NULL;
     char *line = NULL, *error = NULL, *index_snapshot = NULL, *chosen = NULL;
@@ -453,6 +456,10 @@ static int list(const char *directory, const char *query,
                 goto done;
     }
     if (ferror(index) || !number) goto done;
+    if (solve_name) {
+        candidate_snapshots = calloc(count ? count : 1, sizeof *candidate_snapshots);
+        if (!candidate_snapshots) goto done;
+    }
     for (i = 0; i < count; ++i) {
         struct holy_package_identity actual;
         char *snapshot;
@@ -511,7 +518,8 @@ static int list(const char *directory, const char *query,
                 (!strcmp(provider_kind, "package") &&
                  !strcmp(provider_name, objects[i].identity.name));
         }
-        if (fetch_digest && !strcmp(fetch_digest, objects[i].identity.digest))
+        if (solve_name) candidate_snapshots[i] = snapshot;
+        else if (fetch_digest && !strcmp(fetch_digest, objects[i].identity.digest))
             chosen = snapshot;
         else {
             unlink(snapshot);
@@ -519,6 +527,30 @@ static int list(const char *directory, const char *query,
         }
     }
     if (fetch_digest && (!chosen || !holy_fetch_local(chosen, output))) goto done;
+    if (solve_name) {
+        const char **paths = NULL;
+        size_t root = count, roots = 0, next = 1;
+        for (i = 0; i < count; ++i) if (!strcmp(objects[i].identity.name, solve_name)) {
+            root = i;
+            ++roots;
+        }
+        if (roots != 1) {
+            *solve_rc = roots ? 3 : 6;
+            fprintf(stderr, "holypkg: repository root %s\n",
+                    roots ? "requires package choice" : "not found");
+            if (solve_json)
+                printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"%s\"}\n",
+                       roots ? "decision-required" : "unavailable-artifact");
+        } else {
+            paths = calloc(count, sizeof *paths);
+            if (!paths) goto done;
+            paths[0] = candidate_snapshots[root];
+            for (i = 0; i < count; ++i)
+                if (i != root) paths[next++] = candidate_snapshots[i];
+            *solve_rc = holy_resolve_local(paths, count, solve_json);
+            free(paths);
+        }
+    }
     {
         size_t matches = 0;
         for (j = 0; j < count; ++j) {
@@ -544,6 +576,14 @@ done:
     if (index) fclose(index);
     if (index_snapshot) { unlink(index_snapshot); free(index_snapshot); }
     if (chosen) { unlink(chosen); free(chosen); }
+    if (candidate_snapshots) {
+        for (i = 0; i < count; ++i)
+            if (candidate_snapshots[i]) {
+                unlink(candidate_snapshots[i]);
+                free(candidate_snapshots[i]);
+            }
+        free(candidate_snapshots);
+    }
     if (fd >= 0) close(fd);
     for (i = 0; i < count; ++i) {
         free(objects[i].filename);
@@ -557,7 +597,7 @@ done:
 
 int holy_repo_list(const char *directory)
 {
-    return list(directory, NULL, NULL, 1, 1, NULL, NULL, NULL, NULL);
+    return list(directory, NULL, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, 0, NULL);
 }
 
 int holy_repo_search(const char *directory, const char *query)
@@ -566,7 +606,7 @@ int holy_repo_search(const char *directory, const char *query)
         fprintf(stderr, "holypkg: package name required\n");
         return 0;
     }
-    return list(directory, query, NULL, 1, 1, NULL, NULL, NULL, NULL);
+    return list(directory, query, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, 0, NULL);
 }
 
 int holy_repo_providers(const char *directory, const char *kind,
@@ -578,7 +618,23 @@ int holy_repo_providers(const char *directory, const char *kind,
         return 0;
     }
     return list(directory, NULL, NULL, 1, json ? 2 : 1,
-                NULL, NULL, kind, name);
+                NULL, NULL, kind, name, NULL, 0, NULL);
+}
+
+int holy_repo_solve(const char *directory, const char *name, int json)
+{
+    int result = 6;
+    if (!name || !*name) {
+        fprintf(stderr, "holypkg: repository package name required\n");
+        if (json) puts("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"invalid-query\"}");
+        return 2;
+    }
+    if (!list(directory, NULL, NULL, 1, 0, NULL, NULL,
+              NULL, NULL, name, json, &result)) {
+        if (json) puts("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"invalid-catalog\"}");
+        return 6;
+    }
+    return result;
 }
 
 int holy_repo_fetch(const char *directory, const char *digest, const char *output)
@@ -588,7 +644,7 @@ int holy_repo_fetch(const char *directory, const char *digest, const char *outpu
     for (i = 0; i < 64; ++i)
         if (!((digest[i] >= '0' && digest[i] <= '9') ||
               (digest[i] >= 'a' && digest[i] <= 'f'))) goto invalid;
-    return list(directory, NULL, NULL, 1, 0, digest, output, NULL, NULL);
+    return list(directory, NULL, NULL, 1, 0, digest, output, NULL, NULL, NULL, 0, NULL);
 invalid:
     fprintf(stderr, "holypkg: expected a lowercase SHA-256 digest\n");
     return 0;
@@ -636,7 +692,7 @@ int holy_repo_seal(const char *directory)
     output = -1;
     close(input);
     input = -1;
-    if (!list(directory, NULL, temporary, 0, 0, NULL, NULL, NULL, NULL)) goto done;
+    if (!list(directory, NULL, temporary, 0, 0, NULL, NULL, NULL, NULL, NULL, 0, NULL)) goto done;
     input = openat(dir, temporary, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (input < 0) goto done;
     snapshot = holy_stage_fd(input, "holy-seal");

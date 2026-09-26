@@ -39,6 +39,23 @@ test "$(wc -l < "$tmp/out")" -eq 2
 grep -Fqx "{\"schema\":\"holy-local-solve-1\",\"type\":\"selected\",\"sha256\":\"$root_hash\"}" "$tmp/out"
 grep -Fqx "{\"schema\":\"holy-local-solve-1\",\"type\":\"selected\",\"sha256\":\"$b_hash\"}" "$tmp/out"
 grep -Fqx '{"schema":"holy-local-solve-1","type":"summary","count":2}' "$tmp/out"
+mkdir "$tmp/repo"
+cp "$tmp/root-1.holy" "$tmp/b-1.holy" "$tmp/unused-1.holy" "$tmp/repo/"
+"$bin" repo index "$tmp/repo" > "$tmp/out"
+if "$bin" repo solve "$tmp/repo" root --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"invalid-catalog"}' "$tmp/out"
+"$bin" repo seal "$tmp/repo" > "$tmp/out"
+"$bin" repo solve "$tmp/repo" root --json > "$tmp/out"
+grep -Fqx "{\"schema\":\"holy-local-solve-1\",\"type\":\"selected\",\"sha256\":\"$root_hash\"}" "$tmp/out"
+grep -Fqx "{\"schema\":\"holy-local-solve-1\",\"type\":\"selected\",\"sha256\":\"$b_hash\"}" "$tmp/out"
+grep -Fqx '{"schema":"holy-local-solve-1","type":"summary","count":2}' "$tmp/out"
+if "$bin" repo solve "$tmp/repo" absent --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"unavailable-artifact"}' "$tmp/out"
+printf 'corrupt\n' > "$tmp/repo/unused-1.holy"
+if "$bin" repo solve "$tmp/repo" root --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"invalid-catalog"}' "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
+cp "$tmp/unused-1.holy" "$tmp/repo/unused-1.holy"
 printf 'require c-1 b package c any any any - c metadata\n' > "$tmp/payload/HOLY/deps"
 build b 3
 : > "$tmp/payload/HOLY/deps"
@@ -88,6 +105,12 @@ if "$bin" solve "local:$tmp/root-1.holy" "local:$tmp/b-1.holy" "local:$tmp/b-1.h
 test ! -s "$tmp/out"
 printf 'require b-1 root soname b any any any - b metadata\n' > "$tmp/payload/HOLY/deps"
 build root 2
+cp "$tmp/root-2.holy" "$tmp/repo/"
+"$bin" repo index "$tmp/repo" > "$tmp/out"
+"$bin" repo seal "$tmp/repo" > "$tmp/out"
+if "$bin" repo solve "$tmp/repo" root --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"decision-required"}' "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
 if "$bin" solve "local:$tmp/root-2.holy" "local:$tmp/b-1.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 test ! -s "$tmp/out"
 if "$bin" solve "local:$tmp/root-2.holy" "local:$tmp/b-1.holy" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi

@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=ad01cb310124f09af0526143f849d75b5955c82697da2ae0ccf036c3cacfba1d
+holypkg.8 source=holy version=development sha256=22f2b68c49a0764d566f20243cd01b55fbdeda833621666bfc6fb19cc5e0000b
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -78,6 +78,7 @@ SYNOPSIS
      holypkg repo index DIRECTORY
      holypkg repo list DIRECTORY
      holypkg repo search DIRECTORY NAME
+     holypkg repo solve DIRECTORY NAME [--json]
      holypkg repo providers DIRECTORY KIND NAME
      holypkg repo providers DIRECTORY KIND NAME --json
      holypkg repo seal DIRECTORY
@@ -148,6 +149,16 @@ DESCRIPTION
      dates, the error event also carries the validated requirement-id and stderr
      names it. If a transitive edge has multiple candidate providers, this diag-
      nosis stops at that edge rather than blaming an unselected candidate.
+
+     Repository solve accepts a package name in a sealed  local	 repository.  It
+     validates the entire catalog and every artifact, freezes those artifacts in
+     temporary snapshots, then invokes the same restricted read-only solver with
+     the unique exact-name root first. Two versions of the requested name return
+     decision-required.	 A missing name returns unavailable-artifact. An invalid
+     generation returns invalid-catalog without partial results. --json uses the
+     same holy-local-solve-1 events as solve. This  command  reads  all	 archive
+     payloads  per query; it does not import remote sources, install packages or
+     interpret typed HOLY/provides aliases as dependency providers.
 
      The provides command stages and  verifies	a  native  archive,  then  reads
      HOLY/provides as typed claims. Each supported line has seven tokens:
