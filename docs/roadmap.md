@@ -11,6 +11,8 @@ it does not mean a bootable distribution or general package support.
 
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.
 - [x] Verify local LZ4-frame `.holy` archives, file manifests, hashes and basic ELF facts.
+- [x] Pack a prepared regular-file/dir tree into a verified native `.holy`;
+  reject unlisted inputs and unsupported file types before publication.
 - [x] Stage verified objects in a target-root cache; preview collisions.
 - [x] Build and seal a local repository catalog; search and fetch its verified objects.
 - [x] Resolve a restricted local/catalog graph with libsolv; reject unsupported semantics.

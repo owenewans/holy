@@ -44,7 +44,10 @@ special files, ACLs or extended attributes. The verifier rejects DATA entries
 that carry archive xattrs or ACLs, even if HOLY/files says XATTRS=-. The
 planned full format includes those attributes.
 .PP
-The prototype cannot install archives. It does not verify dependencies,
+The narrow database apply command installs only approved data-only archives
+into pre-existing safe directories. The pack command writes and verifies
+this archive format from a prepared tree of regular files and directories.
+The verifier does not verify dependencies,
 signatures, symbolic owner names or the installed filesystem. A full format
 implementation must verify file ownership, links, xattrs, hooks, origin and
 transaction semantics before accepting an artifact for installation.

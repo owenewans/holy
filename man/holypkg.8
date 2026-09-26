@@ -28,6 +28,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg fetch local:FILE --extract --output DIRECTORY
 .br
+.B holypkg pack DIRECTORY --output FILE.holy
+.br
 .B holypkg check local:FILE --root DIRECTORY
 .br
 .B holypkg check local:FILE --root DIRECTORY --json
@@ -102,6 +104,17 @@ The config check command checks source and rule configuration without changing
 the system. General package installation, foreign import, remote fetch and
 multi-source resolution are not available yet. This executable is independent
 of the separate owenewans/holypkg project.
+.PP
+Pack reads a prepared tree containing only HOLY/ and DATA/. HOLY/ must contain
+exactly meta, files, deps, provides, hooks, origin and transform as ordinary
+files. DATA/ may contain directories and ordinary files; the current writer
+rejects symlinks, hardlinks and extended attributes. It records file modes
+and numeric ownership, fixes archive timestamps to zero and orders directory
+entries by name. It writes a POSIX PAX tar compressed as an LZ4 frame to a
+temporary file alongside the destination, verifies the completed artifact,
+and publishes it only when the destination does not exist. Pack neither
+generates HOLY/files nor infers ABI facts. A mismatched manifest fails without
+publishing a package; recipes and foreign conversion are separate work.
 .PP
 The db plan command reads the prepared reservation at the current database
 generation. It verifies a private snapshot of the cached artifact, checks

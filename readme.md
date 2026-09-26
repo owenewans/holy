@@ -29,6 +29,8 @@ must be available through pkg-config; the check fails if they are absent.
 
 The C99 prototype verifies local `.holy` archives, inspects ELF, typed
 requirements and capability claims, and checks root path conflicts.
+`holypkg pack` writes a verified `.holy` from a prepared tree of ordinary
+files and directories; recipes and foreign conversion remain open.
 It stages verified archives in a target-root cache.
 It can initialize an empty target-root package database and reserve or cancel
 one verified cached artifact at a fixed generation. `db preflight` checks that
