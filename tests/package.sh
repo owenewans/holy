@@ -113,9 +113,18 @@ tar -cf "$tmp/symlink.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/symlink.tar" "$tmp/symlink.holy"
 "$bin" verify "local:$tmp/symlink.holy" > "$tmp/out"
 grep -qx 'verified 1 regular files, 1 symlinks, 2 directories, 0 hardlinks' "$tmp/out"
-if "$bin" fetch "local:$tmp/symlink.holy" --extract --output "$tmp/symlink-out" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+"$bin" fetch "local:$tmp/symlink.holy" --extract --output "$tmp/symlink-out" > "$tmp/out"
+test "$(readlink "$tmp/symlink-out/DATA/usr/bin/link")" = hello
+rm "$tmp/payload/DATA/usr/bin/link"
+ln -s /usr/bin/hello "$tmp/payload/DATA/usr/bin/link"
+sed 's@symlink usr/bin/link \(.*\) hello$@symlink usr/bin/link \1 /usr/bin/hello@' \
+    "$tmp/payload/HOLY/files" > "$tmp/absolute-files"
+mv "$tmp/absolute-files" "$tmp/payload/HOLY/files"
+tar -cf "$tmp/absolute.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/absolute.tar" "$tmp/absolute.holy"
+if "$bin" fetch "local:$tmp/absolute.holy" --extract --output "$tmp/absolute-out" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'unsupported or damaged extraction input' "$tmp/err"
-test ! -e "$tmp/symlink-out"
+test ! -e "$tmp/absolute-out"
 rm "$tmp/payload/DATA/usr/bin/link"
 ln -s ../../../escape "$tmp/payload/DATA/usr/bin/link"
 tar -cf "$tmp/symlink.tar" -C "$tmp/payload" HOLY DATA
@@ -134,9 +143,9 @@ tar -cf "$tmp/hard.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/hard.tar" "$tmp/hard.holy"
 "$bin" verify "local:$tmp/hard.holy" > "$tmp/out"
 grep -qx 'verified 1 regular files, 0 symlinks, 2 directories, 1 hardlinks' "$tmp/out"
-if "$bin" fetch "local:$tmp/hard.holy" --extract --output "$tmp/hard-out" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
-grep -q 'unsupported or damaged extraction input' "$tmp/err"
-test ! -e "$tmp/hard-out"
+"$bin" fetch "local:$tmp/hard.holy" --extract --output "$tmp/hard-out" > "$tmp/out"
+test "$(stat -c %i "$tmp/hard-out/DATA/usr/bin/hard")" = \
+    "$(stat -c %i "$tmp/hard-out/DATA/usr/bin/hello")"
 sed 's/group1 usr\/bin\/hello$/group2 usr\/bin\/hello/' \
     "$tmp/payload/HOLY/files" > "$tmp/files-mismatch"
 mv "$tmp/files-mismatch" "$tmp/payload/HOLY/files"

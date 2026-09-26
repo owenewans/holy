@@ -14,6 +14,11 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+struct pending_link {
+    char *name;
+    char *target;
+};
+
 static struct archive *reader(const char *source)
 {
     struct archive *a = archive_read_new();
@@ -73,12 +78,23 @@ done:
 static int supported(struct archive_entry *entry)
 {
     const char *name = archive_entry_pathname(entry);
+    const char *target = archive_entry_hardlink(entry);
     mode_t type = archive_entry_filetype(entry);
-    if (!holy_safe_archive_path(name) || archive_entry_hardlink(entry) ||
-        (type != AE_IFDIR && type != AE_IFREG) || archive_entry_size(entry) < 0)
+    if (!holy_safe_archive_path(name) || archive_entry_size(entry) < 0)
         return 0;
+    if (target) {
+        if ((type != AE_IFREG && type != 0) ||
+            strncmp(name, "DATA/", 5) || !name[5] ||
+            !holy_safe_archive_path(target) || strncmp(target, "DATA/", 5) ||
+            !target[5] || archive_entry_size(entry) != 0) return 0;
+    } else if (type == AE_IFLNK) {
+        const char *destination = archive_entry_symlink(entry);
+        if (strncmp(name, "DATA/", 5) || !name[5] ||
+            !destination || !*destination || destination[0] == '/' ||
+            archive_entry_size(entry) != 0) return 0;
+    } else if (type != AE_IFDIR && type != AE_IFREG) return 0;
     if (type == AE_IFDIR && archive_entry_size(entry) != 0) return 0;
-    if (type == AE_IFREG && name[strlen(name) - 1] == '/') return 0;
+    if (type != AE_IFDIR && name[strlen(name) - 1] == '/') return 0;
     return 1;
 }
 
@@ -98,7 +114,7 @@ static int preflight(const char *source)
     return ok;
 }
 
-static int directory(int root, const char *path)
+static int directory(int root, const char *path, int create)
 {
     char *parts = strdup(path), *cursor, *component, *slash;
     int current = root, next, ok = 0;
@@ -110,7 +126,7 @@ static int directory(int root, const char *path)
         component = cursor;
         slash = strchr(cursor, '/');
         if (slash) *slash = '\0';
-        if (mkdirat(current, component, 0700) && errno != EEXIST) goto done;
+        if (create && mkdirat(current, component, 0700) && errno != EEXIST) goto done;
         next = openat(current, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
         if (next < 0) goto done;
         if (current != root) close(current);
@@ -136,7 +152,7 @@ static int write_file(int root, const char *name, struct archive *a,
     last = strrchr(path, '/');
     if (last) {
         *last++ = '\0';
-        parent = directory(root, path);
+        parent = directory(root, path, 1);
     } else last = path;
     if (parent < 0 || !*last) goto done;
     fd = openat(parent, last, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
@@ -162,11 +178,61 @@ done:
     return ok;
 }
 
+static int parent_for(int root, const char *name, int create,
+                      char **storage, const char **base)
+{
+    char *slash;
+    int parent;
+    *storage = strdup(name);
+    if (!*storage) return -1;
+    slash = strrchr(*storage, '/');
+    if (!slash || !slash[1]) { free(*storage); *storage = NULL; return -1; }
+    *slash++ = '\0';
+    parent = directory(root, *storage, create);
+    if (parent < 0) { free(*storage); *storage = NULL; return -1; }
+    *base = slash;
+    return parent;
+}
+
+static int write_symlink(int root, const char *name, const char *target)
+{
+    char *path = NULL;
+    const char *base;
+    int parent = parent_for(root, name, 1, &path, &base), ok = 0;
+    if (parent < 0) return 0;
+    ok = symlinkat(target, parent, base) == 0;
+    if (parent != root) close(parent);
+    free(path);
+    return ok;
+}
+
+static int write_hardlink(int root, const char *name, const char *target)
+{
+    char *from = NULL, *to = NULL;
+    const char *source_name, *dest_name;
+    struct stat st;
+    int source_parent, dest_parent = -1, ok = 0;
+    source_parent = parent_for(root, target, 0, &from, &source_name);
+    if (source_parent < 0) return 0;
+    dest_parent = parent_for(root, name, 1, &to, &dest_name);
+    if (dest_parent >= 0 &&
+        !fstatat(source_parent, source_name, &st, AT_SYMLINK_NOFOLLOW) &&
+        S_ISREG(st.st_mode) &&
+        !linkat(source_parent, source_name, dest_parent, dest_name, 0)) ok = 1;
+    if (source_parent != root) close(source_parent);
+    if (dest_parent >= 0 && dest_parent != root) close(dest_parent);
+    free(from);
+    free(to);
+    return ok;
+}
+
 int holy_extract_local(const char *source, const char *output)
 {
     struct archive *a = NULL;
     struct archive_entry *entry;
+    struct pending_link *links = NULL;
     char *snapshot = stage(source);
+    size_t link_count = 0, i;
     int root = -1, status, ok = 0, created = 0;
     if (!snapshot) {
         fprintf(stderr, "holypkg: could not stage regular local input\n");
@@ -183,15 +249,37 @@ int holy_extract_local(const char *source, const char *output)
     if (root < 0 || !a) goto done;
     while ((status = archive_read_next_header(a, &entry)) == ARCHIVE_OK) {
         const char *name = archive_entry_pathname(entry);
+        const char *target = archive_entry_hardlink(entry);
         int parent;
         if (!supported(entry)) goto done;
-        if (archive_entry_filetype(entry) == AE_IFDIR) {
-            parent = directory(root, name);
+        if (target) {
+            struct pending_link *next;
+            if (link_count == (size_t)-1 / sizeof *links) goto done;
+            next = realloc(links, (link_count + 1) * sizeof *links);
+            if (!next) goto done;
+            links = next;
+            links[link_count].name = strdup(name);
+            links[link_count].target = strdup(target);
+            if (!links[link_count].name || !links[link_count].target) {
+                free(links[link_count].name);
+                free(links[link_count].target);
+                goto done;
+            }
+            ++link_count;
+            if (archive_read_data_skip(a) != ARCHIVE_OK) goto done;
+        } else if (archive_entry_filetype(entry) == AE_IFLNK) {
+            if (!write_symlink(root, name, archive_entry_symlink(entry)) ||
+                archive_read_data_skip(a) != ARCHIVE_OK) goto done;
+        } else if (archive_entry_filetype(entry) == AE_IFDIR) {
+            parent = directory(root, name, 1);
             if (parent < 0) goto done;
             if (parent != root) close(parent);
         } else if (!write_file(root, name, a, entry)) goto done;
     }
-    if (status != ARCHIVE_EOF || fsync(root)) goto done;
+    if (status != ARCHIVE_EOF) goto done;
+    for (i = 0; i < link_count; ++i)
+        if (!write_hardlink(root, links[i].name, links[i].target)) goto done;
+    if (fsync(root)) goto done;
     printf("extracted %s\n", output);
     ok = 1;
 done:
@@ -199,6 +287,11 @@ done:
         fprintf(stderr, "holypkg: extraction failed; inspect partial output: %s\n", output);
     if (a) archive_read_free(a);
     if (root >= 0) close(root);
+    for (i = 0; i < link_count; ++i) {
+        free(links[i].name);
+        free(links[i].target);
+    }
+    free(links);
     unlink(snapshot);
     free(snapshot);
     return ok;

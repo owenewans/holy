@@ -41,11 +41,12 @@ Remote source fetching is not implemented.
 .PP
 With --extract, DIRECTORY must not exist. The command copies the regular input
 into a private temporary file, verifies that copy and checks that every entry
-is a directory or regular file.
+is a directory, regular file, relative symlink or direct hardlink.
 It then creates DIRECTORY and writes HOLY and DATA there with directory-relative
 operations that refuse symlink traversal and file replacement. It does not
-preserve UID/GID, setuid bits, capabilities or xattrs, and it refuses symlink
-and hardlink payloads in this prototype. Hooks never run. If an I/O error
+preserve UID/GID, setuid bits, capabilities or xattrs. It refuses absolute
+symlink targets and special nodes; hardlink targets must resolve to regular
+files within the output tree. Hooks never run. If an I/O error
 occurs after DIRECTORY is created, partial output remains for inspection.
 This command is not a system installation or a root transaction.
 .SH EXIT STATUS

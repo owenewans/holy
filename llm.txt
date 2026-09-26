@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=413d6be6ea44eed9d59df3edc23d72b4d3f8cb587340c027243ad541248a9ff6
+holypkg.8 source=holy version=development sha256=4057f8d45fe86a0846d36681937ae6a5df05ea65f4aba6a211328de1cefba975
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -92,13 +92,15 @@ DESCRIPTION
 
      With  --extract,  DIRECTORY  must not exist. The command copies the regular
      input into a private temporary file, verifies that	 copy  and  checks  that
-     every  entry is a directory or regular file.  It then creates DIRECTORY and
-     writes HOLY and DATA there with directory-relative operations  that  refuse
-     symlink  traversal	 and file replacement. It does not preserve UID/GID, se-
-     tuid bits, capabilities or xattrs, and it refuses symlink and hardlink pay-
-     loads in this prototype. Hooks never run. If an I/O error occurs after  DI-
-     RECTORY is created, partial output remains for inspection.	 This command is
-     not a system installation or a root transaction.
+     every  entry  is  a  directory,  regular  file,  relative symlink or direct
+     hardlink.	It then creates DIRECTORY and writes HOLY and  DATA  there  with
+     directory-relative	 operations  that  refuse symlink traversal and file re-
+     placement. It does not preserve UID/GID, setuid bits, capabilities or  xat-
+     trs.  It  refuses absolute symlink targets and special nodes; hardlink tar-
+     gets must resolve to regular files within the output tree. Hooks never run.
+     If an I/O error occurs after DIRECTORY is created, partial	 output	 remains
+     for inspection.  This command is not a system installation or a root trans-
+     action.
 
 EXIT STATUS
      0	indicates a valid file under the implemented checks; 2 indicates invalid
