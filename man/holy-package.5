@@ -7,6 +7,11 @@ HOLY/meta contains one key and one value per line. The required fields are
 format (holy-package-1), name, version, release, os, arch and libc. An unknown
 requires-feature field fails inspection.
 .PP
+The inspector accepts os=linux or windows, arch=x86, x86_64 or noarch,
+and libc=glibc, musl or nolibc. noarch requires nolibc. These checks
+validate declared metadata values; they do not scan ELF files to prove ABI
+or prove that a purported noarch payload has no machine code.
+.PP
 The archive contains one regular file at each of HOLY/meta, HOLY/files,
 HOLY/deps, HOLY/provides, HOLY/hooks, HOLY/origin and HOLY/transform. The
 inspector checks their presence and type. Empty metadata placeholders can pass

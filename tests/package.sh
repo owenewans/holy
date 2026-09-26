@@ -96,6 +96,21 @@ grep -qx '{"schema":"holy-check-1","code":"changed-payload","severity":"error","
 grep -qx '{"schema":"holy-check-1","status":"fail","coverage":"local-payload","checked":3,"findings":2}' "$tmp/out"
 if "$bin" fetch "local:$tmp/package.holy" --extract --output "$tmp/unpacked" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'create extraction directory' "$tmp/err"
+cp "$tmp/payload/HOLY/meta" "$tmp/original-meta"
+for variant in os arch libc noarch; do
+    case "$variant" in
+        os) sed 's/^os linux$/os solaris/' "$tmp/original-meta" > "$tmp/payload/HOLY/meta" ;;
+        arch) sed 's/^arch x86_64$/arch x32/' "$tmp/original-meta" > "$tmp/payload/HOLY/meta" ;;
+        libc) sed 's/^libc nolibc$/libc unknown/' "$tmp/original-meta" > "$tmp/payload/HOLY/meta" ;;
+        noarch) sed -e 's/^arch x86_64$/arch noarch/' -e 's/^libc nolibc$/libc glibc/' \
+            "$tmp/original-meta" > "$tmp/payload/HOLY/meta" ;;
+    esac
+    tar -cf "$tmp/metadata.tar" -C "$tmp/payload" HOLY DATA
+    lz4 -q -f "$tmp/metadata.tar" "$tmp/metadata.holy"
+    if "$bin" info "local:$tmp/metadata.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+    grep -q "$variant" "$tmp/err"
+done
+cp "$tmp/original-meta" "$tmp/payload/HOLY/meta"
 setfattr -n user.holy -v probe "$tmp/payload/DATA/usr/bin/hello"
 tar --xattrs --format=pax -cf "$tmp/xattr.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/xattr.tar" "$tmp/xattr.holy"

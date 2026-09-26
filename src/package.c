@@ -31,6 +31,13 @@ static int safe_value(const char *s)
     return 1;
 }
 
+static int one_of(const char *value, const char *a, const char *b,
+                  const char *c)
+{
+    return !strcmp(value, a) || !strcmp(value, b) ||
+           (c && !strcmp(value, c));
+}
+
 int holy_safe_archive_path(const char *name)
 {
     const char *part, *end;
@@ -113,6 +120,22 @@ static int read_meta(const char *path, const char *data, size_t length, int emit
     }
     if (ok && strcmp(values[0], "holy-package-1")) {
         fprintf(stderr, "%s: unsupported format %s\n", path, values[0]);
+        ok = 0;
+    }
+    if (ok && !one_of(values[4], "linux", "windows", NULL)) {
+        fprintf(stderr, "%s: unsupported os in HOLY/meta\n", path);
+        ok = 0;
+    }
+    if (ok && !one_of(values[5], "x86", "x86_64", "noarch")) {
+        fprintf(stderr, "%s: unsupported arch in HOLY/meta\n", path);
+        ok = 0;
+    }
+    if (ok && !one_of(values[6], "glibc", "musl", "nolibc")) {
+        fprintf(stderr, "%s: unsupported libc in HOLY/meta\n", path);
+        ok = 0;
+    }
+    if (ok && !strcmp(values[5], "noarch") && strcmp(values[6], "nolibc")) {
+        fprintf(stderr, "%s: noarch requires nolibc in HOLY/meta\n", path);
         ok = 0;
     }
     if (ok && emit) for (i = 0; i < sizeof fields / sizeof *fields; ++i)
