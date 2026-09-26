@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=0baf8d4567f2999bbe59a759aba503153a201d5c3bfd731c4a0f31887cb62901
+holypkg.8 source=holy version=development sha256=e7ac94df025f8cb5ea0add158c0b484c2a00d4cd2ca3f328254802fdb03e3103
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -149,7 +149,10 @@ DESCRIPTION
      the package arch, including ELF in noarch, and a recognized glibc/musl  in-
      terpreter	that  disagrees with the libc tag. A missing or unrecognized in-
      terpreter remains unknown; scan does not infer  nolibc,  prove  plugin  re-
-     quirements or resolve dependencies.
+     quirements	 or  resolve  dependencies.  For each ELF it also prints SONAME,
+     DT_NEEDED, GNU version needs with weak or required status, and version def-
+     initions, when present.  These  file-scoped  facts	 do  not  prove	 that  a
+     provider exists or that a versioned symbol resolves.
 
      The repository index command validates regular .holy files in DIRECTORY and
      writes  an	 unsigned, lexicographically ordered index through an atomic re-

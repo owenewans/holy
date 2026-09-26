@@ -106,6 +106,9 @@ not execute payloads. It rejects a machine mismatch with the package arch,
 including ELF in noarch, and a recognized glibc/musl interpreter that disagrees
 with the libc tag. A missing or unrecognized interpreter remains unknown;
 scan does not infer nolibc, prove plugin requirements or resolve dependencies.
+For each ELF it also prints SONAME, DT_NEEDED, GNU version needs with weak or
+required status, and version definitions, when present. These file-scoped
+facts do not prove that a provider exists or that a versioned symbol resolves.
 .PP
 The repository index command validates regular .holy files in DIRECTORY and
 writes an unsigned, lexicographically ordered index through an atomic rename.

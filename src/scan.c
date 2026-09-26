@@ -12,7 +12,7 @@
 #include <string.h>
 #include <unistd.h>
 
-static void print_path(const char *path)
+static void print_token(const char *path)
 {
     const unsigned char *p = (const unsigned char *)path;
     for (; *p; ++p) {
@@ -90,12 +90,43 @@ int holy_scan_local_with_output(const char *path, int emit)
             goto done;
         }
         if (emit) {
+            size_t i;
             fputs("elf ", stdout);
-            print_path(name + 5);
+            print_token(name + 5);
             printf(" class=ELF%d machine=%s e_machine=%u runtime=%s isa=%s\n",
                    info.elf_class == 1 ? 32 : 64, holy_elf_machine(&info),
                    (unsigned int)info.machine, holy_elf_runtime(&info),
                    holy_elf_isa(&info));
+            if (info.soname) {
+                fputs("soname ", stdout);
+                print_token(name + 5);
+                putchar(' ');
+                print_token(info.soname);
+                putchar('\n');
+            }
+            for (i = 0; i < info.needed_count; ++i) {
+                fputs("needed ", stdout);
+                print_token(name + 5);
+                putchar(' ');
+                print_token(info.needed[i]);
+                putchar('\n');
+            }
+            for (i = 0; i < info.version_count; ++i) {
+                fputs("version ", stdout);
+                print_token(name + 5);
+                putchar(' ');
+                print_token(info.versions[i].provider);
+                putchar(' ');
+                print_token(info.versions[i].name);
+                printf(" %s\n", info.versions[i].weak ? "weak" : "required");
+            }
+            for (i = 0; i < info.defined_version_count; ++i) {
+                fputs("version-def ", stdout);
+                print_token(name + 5);
+                putchar(' ');
+                print_token(info.defined_versions[i]);
+                putchar('\n');
+            }
         }
         holy_elf_free(&info);
         ++scanned;
