@@ -56,6 +56,38 @@ static int quote(FILE *fp, const char *value)
     return fputc('"', fp) != EOF;
 }
 
+static void json_string(const char *value)
+{
+    const unsigned char *p = (const unsigned char *)value;
+    putchar('"');
+    for (; *p; ++p) {
+        if (*p == '"' || *p == '\\') { putchar('\\'); putchar(*p); }
+        else if (*p >= 32 && *p < 127) putchar(*p);
+        else printf("\\u%04x", (unsigned int)*p);
+    }
+    putchar('"');
+}
+
+static void candidate_json(const struct object *object)
+{
+    const struct holy_package_identity *id = &object->identity;
+    fputs("{\"schema\":\"holy-repo-candidates-1\",\"type\":\"candidate\",\"name\":", stdout);
+    json_string(id->name);
+    fputs(",\"version\":", stdout);
+    json_string(id->version);
+    fputs(",\"release\":", stdout);
+    json_string(id->release);
+    fputs(",\"os\":", stdout);
+    json_string(id->os);
+    fputs(",\"arch\":", stdout);
+    json_string(id->arch);
+    fputs(",\"libc\":", stdout);
+    json_string(id->libc);
+    fputs(",\"filename\":", stdout);
+    json_string(object->filename);
+    printf(",\"sha256\":\"%s\",\"size\":%" PRIu64 "}\n", id->digest, id->size);
+}
+
 static int record(FILE *fp, const struct object *object)
 {
     const struct holy_package_identity *id = &object->identity;
@@ -365,16 +397,21 @@ static int list(const char *directory, const char *query,
         for (j = 0; j < count; ++j) {
             if (query && strcmp(objects[j].identity.name, query)) continue;
             if (provider_kind && !objects[j].provider_match) continue;
-            if (emit && !record(stdout, &objects[j])) goto done;
+            if (emit == 1 && !record(stdout, &objects[j])) goto done;
+            if (emit == 2) candidate_json(&objects[j]);
             ++matches;
         }
-        if (emit) printf("listed %zu %s\n", matches,
-                         provider_kind ? "candidates" : "packages");
+        if (emit == 1) printf("listed %zu %s\n", matches,
+                              provider_kind ? "candidates" : "packages");
+        if (emit == 2) printf("{\"schema\":\"holy-repo-candidates-1\",\"type\":\"summary\",\"count\":%zu}\n", matches);
     }
     ok = 1;
 done:
-    if (!ok) fprintf(stderr, "holypkg: invalid or stale repository index%s%s\n",
-                     error ? ": " : "", error ? error : "");
+    if (!ok) {
+        fprintf(stderr, "holypkg: invalid or stale repository index%s%s\n",
+                error ? ": " : "", error ? error : "");
+        if (emit == 2) puts("{\"schema\":\"holy-repo-candidates-1\",\"type\":\"error\",\"code\":\"invalid-catalog\"}");
+    }
     free(error);
     free(line);
     if (index) fclose(index);
@@ -404,13 +441,16 @@ int holy_repo_search(const char *directory, const char *query)
     return list(directory, query, NULL, 1, 1, NULL, NULL, NULL, NULL);
 }
 
-int holy_repo_providers(const char *directory, const char *kind, const char *name)
+int holy_repo_providers(const char *directory, const char *kind,
+                        const char *name, int json)
 {
     if (!holy_provides_kind(kind) || !name || !*name) {
         fprintf(stderr, "holypkg: provider kind and exact name required\n");
+        if (json) puts("{\"schema\":\"holy-repo-candidates-1\",\"type\":\"error\",\"code\":\"invalid-query\"}");
         return 0;
     }
-    return list(directory, NULL, NULL, 1, 1, NULL, NULL, kind, name);
+    return list(directory, NULL, NULL, 1, json ? 2 : 1,
+                NULL, NULL, kind, name);
 }
 
 int holy_repo_fetch(const char *directory, const char *digest, const char *output)

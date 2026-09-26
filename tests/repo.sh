@@ -48,10 +48,18 @@ grep -qx "package \"fixture\" \"1.0\" \"1\" \"linux\" \"noarch\" \"nolibc\" \"fi
 "$bin" repo providers "$tmp/repo" package fixture > "$tmp/out"
 grep -qx 'listed 1 candidates' "$tmp/out"
 grep -qx "package \"fixture\" \"1.0\" \"1\" \"linux\" \"noarch\" \"nolibc\" \"fixture.holy\" $hash $size" "$tmp/out"
+"$bin" repo providers "$tmp/repo" package fixture --json > "$tmp/out"
+grep -Fqx "{\"schema\":\"holy-repo-candidates-1\",\"type\":\"candidate\",\"name\":\"fixture\",\"version\":\"1.0\",\"release\":\"1\",\"os\":\"linux\",\"arch\":\"noarch\",\"libc\":\"nolibc\",\"filename\":\"fixture.holy\",\"sha256\":\"$hash\",\"size\":$size}" "$tmp/out"
+grep -Fqx '{"schema":"holy-repo-candidates-1","type":"summary","count":1}' "$tmp/out"
 "$bin" repo providers "$tmp/repo" soname libc.so.6 > "$tmp/out"
 grep -qx 'listed 0 candidates' "$tmp/out"
+"$bin" repo providers "$tmp/repo" soname libc.so.6 --json > "$tmp/out"
+grep -Fqx '{"schema":"holy-repo-candidates-1","type":"summary","count":0}' "$tmp/out"
 if "$bin" repo providers "$tmp/repo" unknown fixture > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
+if "$bin" repo providers "$tmp/repo" unknown fixture --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -Fqx '{"schema":"holy-repo-candidates-1","type":"error","code":"invalid-query"}' "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
 mkdir "$tmp/fetched"
 "$bin" repo fetch "$tmp/repo" "$hash" --output "$tmp/fetched" > "$tmp/out"
 grep -Fxq "$tmp/fetched/$hash.holy" "$tmp/out"
@@ -139,6 +147,8 @@ grep -qx 'listed 1 candidates' "$tmp/out"
 grep -Fqx "package \"fixture\x20two\" \"2.0\" \"1\" \"linux\" \"noarch\" \"nolibc\" \"variant.holy\" $variant_hash $variant_size" "$tmp/out"
 "$bin" repo providers "$tmp/repo" package 'fixture two' > "$tmp/out"
 grep -qx 'listed 1 candidates' "$tmp/out"
+"$bin" repo providers "$tmp/repo" package 'fixture two' --json > "$tmp/out"
+grep -Fqx "{\"schema\":\"holy-repo-candidates-1\",\"type\":\"candidate\",\"name\":\"fixture two\",\"version\":\"2.0\",\"release\":\"1\",\"os\":\"linux\",\"arch\":\"noarch\",\"libc\":\"nolibc\",\"filename\":\"variant.holy\",\"sha256\":\"$variant_hash\",\"size\":$variant_size}" "$tmp/out"
 "$bin" repo providers "$tmp/repo" command help > "$tmp/out"
 grep -qx 'listed 0 candidates' "$tmp/out"
 "$bin" repo search "$tmp/repo" 'fixture two' > "$tmp/out"
@@ -152,6 +162,9 @@ if "$bin" repo search "$tmp/repo" fixture > "$tmp/out" 2> "$tmp/err"; then exit 
 test ! -s "$tmp/out"
 if "$bin" repo providers "$tmp/repo" command helper > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
+if "$bin" repo providers "$tmp/repo" command helper --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -Fqx '{"schema":"holy-repo-candidates-1","type":"error","code":"invalid-catalog"}' "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
 if "$bin" repo fetch "$tmp/repo" "$hash" --output "$tmp/fetched" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 cp "$tmp/variant-original" "$tmp/repo/variant.holy"
