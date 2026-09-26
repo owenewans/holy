@@ -30,11 +30,76 @@ static int same_identity(const struct holy_package_identity *a,
            !strcmp(a->arch, b->arch) && !strcmp(a->libc, b->libc);
 }
 
+struct claim {
+    char *kind, *name, *arch, *libc, *version, *evidence;
+};
+
 struct object {
     char *filename;
     struct holy_package_identity identity;
     int provider_match;
+    struct claim *claims;
+    size_t claim_count;
 };
+
+static void free_claims(struct object *object)
+{
+    size_t i;
+    for (i = 0; i < object->claim_count; ++i) {
+        struct claim *c = &object->claims[i];
+        free(c->kind); free(c->name); free(c->arch);
+        free(c->libc); free(c->version); free(c->evidence);
+    }
+    free(object->claims);
+}
+
+static int add_claim(struct object *object, const char *kind, const char *name,
+                     const char *arch, const char *libc, const char *version,
+                     const char *evidence)
+{
+    struct claim c = {0}, *next;
+    if (object->claim_count == (size_t)-1 / sizeof *object->claims) return 0;
+    c.kind = strdup(kind); c.name = strdup(name); c.arch = strdup(arch);
+    c.libc = strdup(libc); c.version = strdup(version);
+    c.evidence = strdup(evidence);
+    if (!c.kind || !c.name || !c.arch || !c.libc || !c.version || !c.evidence) {
+        free(c.kind); free(c.name); free(c.arch);
+        free(c.libc); free(c.version); free(c.evidence);
+        return 0;
+    }
+    next = realloc(object->claims,
+                   (object->claim_count + 1) * sizeof *object->claims);
+    if (!next) {
+        free(c.kind); free(c.name); free(c.arch);
+        free(c.libc); free(c.version); free(c.evidence);
+        return 0;
+    }
+    object->claims = next;
+    object->claims[object->claim_count++] = c;
+    return 1;
+}
+
+static int collect_claim(void *opaque, const char *kind, const char *name,
+                         const char *arch, const char *libc,
+                         const char *version, const char *evidence)
+{
+    return add_claim(opaque, kind, name, arch, libc, version, evidence);
+}
+
+struct claim_cursor { struct object *object; size_t index; };
+
+static int compare_claim(void *opaque, const char *kind, const char *name,
+                         const char *arch, const char *libc,
+                         const char *version, const char *evidence)
+{
+    struct claim_cursor *cursor = opaque;
+    struct claim *c;
+    if (cursor->index == cursor->object->claim_count) return 0;
+    c = &cursor->object->claims[cursor->index++];
+    return !strcmp(c->kind, kind) && !strcmp(c->name, name) &&
+           !strcmp(c->arch, arch) && !strcmp(c->libc, libc) &&
+           !strcmp(c->version, version) && !strcmp(c->evidence, evidence);
+}
 
 static int compare_names(const void *left, const void *right)
 {
@@ -99,6 +164,18 @@ static int record(FILE *fp, const struct object *object)
         if (fputc(' ', fp) == EOF || !quote(fp, values[i])) return 0;
     }
     return fprintf(fp, " %s %" PRIu64 "\n", id->digest, id->size) >= 0;
+}
+
+static int claim_record(FILE *fp, const struct object *object,
+                        const struct claim *claim)
+{
+    const char *values[] = {claim->kind, claim->name, claim->arch,
+                            claim->libc, claim->version, claim->evidence};
+    size_t i;
+    if (fprintf(fp, "claim %s", object->identity.digest) < 0) return 0;
+    for (i = 0; i < sizeof values / sizeof *values; ++i)
+        if (fputc(' ', fp) == EOF || !quote(fp, values[i])) return 0;
+    return fputc('\n', fp) != EOF;
 }
 
 static int digest_file(const char *path, char hex[65])
@@ -191,7 +268,8 @@ int holy_repo_index(const char *directory)
             !holy_scan_local_with_output(snapshot, 0) ||
             !holy_deps_local_with_output(snapshot, 0) ||
             !holy_provides_local(snapshot, 0) ||
-            !holy_package_identity(snapshot, &objects[i].identity)) {
+            !holy_package_identity(snapshot, &objects[i].identity) ||
+            !holy_provides_visit(snapshot, collect_claim, &objects[i])) {
             unlink(snapshot);
             free(snapshot);
             goto done;
@@ -220,8 +298,12 @@ int holy_repo_index(const char *directory)
     stream = fdopen(temp, "w");
     if (!stream) goto done;
     temp = -1;
-    if (fputs("format holy-index-prototype-1\n", stream) == EOF) goto done;
-    for (i = 0; i < count; ++i) if (!record(stream, &objects[i])) goto done;
+    if (fputs("format holy-index-prototype-2\n", stream) == EOF) goto done;
+    for (i = 0; i < count; ++i) {
+        if (!record(stream, &objects[i])) goto done;
+        for (j = 0; j < objects[i].claim_count; ++j)
+            if (!claim_record(stream, &objects[i], &objects[i].claims[j])) goto done;
+    }
     if (fflush(stream) || fchmod(fileno(stream), 0644) || fsync(fileno(stream)))
         goto done;
     if (fclose(stream)) { stream = NULL; goto done; }
@@ -239,6 +321,7 @@ done:
     for (i = 0; i < count; ++i) {
         free(objects[i].filename);
         holy_package_identity_free(&objects[i].identity);
+        free_claims(&objects[i]);
     }
     free(objects);
     if (dir >= 0) close(dir);
@@ -274,6 +357,15 @@ static int parse_record(char **v, size_t n, struct object *object)
     return 1;
 }
 
+static int parse_claim(char **v, size_t n, struct object *object)
+{
+    if (n != 8 || strcmp(v[0], "claim") ||
+        strcmp(v[1], object->identity.digest) ||
+        !holy_provides_kind(v[2]) || !v[3][0] || !v[4][0] ||
+        !v[5][0] || !v[6][0] || !v[7][0]) return 0;
+    return add_claim(object, v[2], v[3], v[4], v[5], v[6], v[7]);
+}
+
 static int list(const char *directory, const char *query,
                  const char *forced_index, int lock, int emit,
                  const char *fetch_digest, const char *output,
@@ -286,7 +378,7 @@ static int list(const char *directory, const char *query,
     char expected[65], actual_digest[65], index_name[71];
     size_t capacity = 0, count = 0, i, j, number = 0;
     ssize_t length;
-    int dir = -1, fd = -1, ok = 0;
+    int dir = -1, fd = -1, ok = 0, indexed = 0;
 
     dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dir < 0 || (lock && flock(dir, LOCK_SH) < 0)) goto done;
@@ -321,7 +413,15 @@ static int list(const char *directory, const char *query,
         }
         if (number == 1) {
             int valid = n == 2 && !strcmp(v[0], "format") &&
-                        !strcmp(v[1], "holy-index-prototype-1");
+                        (!strcmp(v[1], "holy-index-prototype-1") ||
+                         !strcmp(v[1], "holy-index-prototype-2"));
+            if (valid) indexed = !strcmp(v[1], "holy-index-prototype-2");
+            holy_tokens_free(v, n);
+            if (!valid) goto done;
+            continue;
+        }
+        if (indexed && n && !strcmp(v[0], "claim")) {
+            int valid = count && parse_claim(v, n, &objects[count - 1]);
             holy_tokens_free(v, n);
             if (!valid) goto done;
             continue;
@@ -372,13 +472,29 @@ static int list(const char *directory, const char *query,
             free(snapshot);
             goto done;
         }
-        if (provider_kind) {
-            int claim = 0;
-            if (!holy_provides_match(snapshot, provider_kind,
-                                     provider_name, &claim)) {
+        if (indexed) {
+            struct claim_cursor cursor = {&objects[i], 0};
+            if (!holy_provides_visit(snapshot, compare_claim, &cursor) ||
+                cursor.index != objects[i].claim_count) {
                 unlink(snapshot);
                 free(snapshot);
                 goto done;
+            }
+        }
+        if (provider_kind) {
+            int claim = 0;
+            if (indexed) {
+                size_t k;
+                for (k = 0; k < objects[i].claim_count; ++k)
+                    if (!strcmp(objects[i].claims[k].kind, provider_kind) &&
+                        !strcmp(objects[i].claims[k].name, provider_name)) claim = 1;
+            } else {
+                if (!holy_provides_match(snapshot, provider_kind,
+                                         provider_name, &claim)) {
+                    unlink(snapshot);
+                    free(snapshot);
+                    goto done;
+                }
             }
             objects[i].provider_match = claim ||
                 (!strcmp(provider_kind, "package") &&
@@ -421,6 +537,7 @@ done:
     for (i = 0; i < count; ++i) {
         free(objects[i].filename);
         holy_package_identity_free(&objects[i].identity);
+        free_claims(&objects[i]);
     }
     free(objects);
     if (dir >= 0) close(dir);

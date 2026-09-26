@@ -6,7 +6,7 @@ trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 mkdir "$tmp/empty"
 "$bin" repo index "$tmp/empty" > "$tmp/out"
 grep -qx 'indexed 0 packages' "$tmp/out"
-grep -qx 'format holy-index-prototype-1' "$tmp/empty/index"
+grep -qx 'format holy-index-prototype-2' "$tmp/empty/index"
 if "$bin" repo list "$tmp/empty" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 "$bin" repo seal "$tmp/empty" > "$tmp/out"
@@ -32,7 +32,7 @@ grep -qx 'indexed 1 packages' "$tmp/out"
 hash=$(sha256sum "$tmp/repo/fixture.holy")
 hash=${hash%% *}
 size=$(stat -c %s "$tmp/repo/fixture.holy")
-grep -qx 'format holy-index-prototype-1' "$tmp/repo/index"
+grep -qx 'format holy-index-prototype-2' "$tmp/repo/index"
 grep -qx "package \"fixture\" \"1.0\" \"1\" \"linux\" \"noarch\" \"nolibc\" \"fixture.holy\" $hash $size" "$tmp/repo/index"
 if "$bin" repo list "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
@@ -55,6 +55,17 @@ grep -Fqx '{"schema":"holy-repo-candidates-1","type":"summary","count":1}' "$tmp
 grep -qx 'listed 0 candidates' "$tmp/out"
 "$bin" repo providers "$tmp/repo" soname libc.so.6 --json > "$tmp/out"
 grep -Fqx '{"schema":"holy-repo-candidates-1","type":"summary","count":0}' "$tmp/out"
+mkdir "$tmp/legacy"
+cp "$tmp/repo/fixture.holy" "$tmp/legacy/fixture.holy"
+sed 's/holy-index-prototype-2/holy-index-prototype-1/' "$tmp/repo/index" > "$tmp/legacy/index"
+legacy_hash=$(sha256sum "$tmp/legacy/index")
+legacy_hash=${legacy_hash%% *}
+cp "$tmp/legacy/index" "$tmp/legacy/index.$legacy_hash"
+printf 'sha256 %s\n' "$legacy_hash" > "$tmp/legacy/current"
+"$bin" repo list "$tmp/legacy" > "$tmp/out"
+grep -qx 'listed 1 packages' "$tmp/out"
+"$bin" repo providers "$tmp/legacy" package fixture > "$tmp/out"
+grep -qx 'listed 1 candidates' "$tmp/out"
 if "$bin" repo providers "$tmp/repo" unknown fixture > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 if "$bin" repo providers "$tmp/repo" unknown fixture --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
@@ -132,6 +143,13 @@ variant_hash=$(sha256sum "$tmp/repo/variant.holy")
 variant_hash=${variant_hash%% *}
 variant_size=$(stat -c %s "$tmp/repo/variant.holy")
 grep -Fqx "package \"fixture\\x20two\" \"2.0\" \"1\" \"linux\" \"noarch\" \"nolibc\" \"variant.holy\" $variant_hash $variant_size" "$tmp/repo/index"
+grep -Fqx "claim $variant_hash \"package\" \"helper-alias\" \"noarch\" \"nolibc\" \"2.0\" \"metadata\"" "$tmp/repo/index"
+grep -Fqx "claim $variant_hash \"command\" \"helper\" \"noarch\" \"nolibc\" \"-\" \"metadata\"" "$tmp/repo/index"
+cp "$tmp/repo/index" "$tmp/index-before-forgery"
+sed 's/"helper-alias"/"forged-alias"/' "$tmp/index-before-forgery" > "$tmp/repo/index"
+if "$bin" repo seal "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
+cp "$tmp/index-before-forgery" "$tmp/repo/index"
 "$bin" repo list "$tmp/repo" > "$tmp/out"
 grep -qx 'listed 2 packages' "$tmp/out"
 "$bin" repo search "$tmp/repo" fixture > "$tmp/out"

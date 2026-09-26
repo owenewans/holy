@@ -115,7 +115,8 @@ static void json_string(const char *text)
 }
 
 static int inspect(const char *package, int emit, const char *kind,
-                   const char *name, int *matched)
+                   const char *name, int *matched,
+                   holy_capability_visit visitor, void *opaque)
 {
     char *snapshot = holy_stage_local(package, "holy-provides");
     char *data = NULL;
@@ -151,6 +152,10 @@ static int inspect(const char *package, int emit, const char *kind,
         for (i = 0; i < count; ++i)
             if (!strcmp(items[i].fields[1], kind) &&
                 !strcmp(items[i].fields[2], name)) *matched = 1;
+    }
+    if (visitor) for (i = 0; i < count; ++i) {
+        char **v = items[i].fields;
+        if (!visitor(opaque, v[1], v[2], v[3], v[4], v[5], v[6])) goto done;
     }
     if (emit == 1) {
         for (i = 0; i < count; ++i) {
@@ -193,7 +198,7 @@ done:
 
 int holy_provides_local(const char *package, int emit)
 {
-    return inspect(package, emit, NULL, NULL, NULL);
+    return inspect(package, emit, NULL, NULL, NULL, NULL, NULL);
 }
 
 int holy_provides_match(const char *package, const char *kind,
@@ -201,5 +206,12 @@ int holy_provides_match(const char *package, const char *kind,
 {
     if (!matched || !holy_provides_kind(kind) || !name || !*name) return 0;
     *matched = 0;
-    return inspect(package, 0, kind, name, matched);
+    return inspect(package, 0, kind, name, matched, NULL, NULL);
+}
+
+int holy_provides_visit(const char *package, holy_capability_visit visitor,
+                        void *opaque)
+{
+    if (!visitor) return 0;
+    return inspect(package, 0, NULL, NULL, NULL, visitor, opaque);
 }

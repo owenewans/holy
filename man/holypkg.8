@@ -232,9 +232,13 @@ The repository index command validates regular .holy files in DIRECTORY and
 writes an unsigned, lexicographically ordered index through an atomic rename.
 It refuses symlinked packages, duplicate package identities and a nonregular
 existing index. It rejects unsupported HOLY/deps records. Records in format
-holy-index-prototype-1 contain the quoted
+holy-index-prototype-2 contain the quoted
 name, version, release, os, arch, libc, relative filename, SHA-256 and size.
-This prototype omits dependencies, provides and signatures; source adapters
+Following package records include typed claim lines bound to the package
+SHA-256, copied from validated HOLY/provides. Readers compare every indexed
+claim to the artifact before returning records. Old holy-index-prototype-1
+generations remain readable. This prototype omits indexed dependencies and
+signatures; source adapters
 must not treat it as the native repository format.
 .PP
 The seal command validates the entire local index, creates an index.SHA256
