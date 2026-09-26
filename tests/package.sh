@@ -75,6 +75,30 @@ grep -q 'unsafe cache directory owner or mode' "$tmp/err"
 test ! -e "$tmp/cache-writable/var"
 "$bin" requirements "local:$tmp/package.holy" > "$tmp/out"
 grep -qx 'requirements 0' "$tmp/out"
+"$bin" provides "local:$tmp/package.holy" > "$tmp/out"
+grep -qx 'capabilities 0' "$tmp/out"
+cp -a "$tmp/payload" "$tmp/with-provides"
+printf 'provide package fixture x86_64 nolibc 1.0 metadata\nprovide file /usr/bin/hello x86_64 nolibc - payload\n' > "$tmp/with-provides/HOLY/provides"
+tar -cf "$tmp/with-provides.tar" -C "$tmp/with-provides" HOLY DATA
+lz4 -q "$tmp/with-provides.tar" "$tmp/with-provides.holy"
+"$bin" provides "local:$tmp/with-provides.holy" > "$tmp/out"
+grep -qx 'provide "package" "fixture" "x86_64" "nolibc" "1.0" "metadata"' "$tmp/out"
+grep -qx 'provide "file" "/usr/bin/hello" "x86_64" "nolibc" "-" "payload"' "$tmp/out"
+grep -qx 'capabilities 2' "$tmp/out"
+printf 'provide file /usr/bin/hello x86_64 nolibc - duplicate\n' >> "$tmp/with-provides/HOLY/provides"
+tar -cf "$tmp/with-provides.tar" -C "$tmp/with-provides" HOLY DATA
+lz4 -q -f "$tmp/with-provides.tar" "$tmp/with-provides.holy"
+if "$bin" provides "local:$tmp/with-provides.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
+grep -q 'duplicate capability' "$tmp/err"
+printf 'provide file relative x86_64 nolibc - metadata\n' > "$tmp/with-provides/HOLY/provides"
+tar -cf "$tmp/with-provides.tar" -C "$tmp/with-provides" HOLY DATA
+lz4 -q -f "$tmp/with-provides.tar" "$tmp/with-provides.holy"
+if "$bin" provides "local:$tmp/with-provides.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
+grep -q 'unsupported capability' "$tmp/err"
+if "$bin" cache stage "local:$tmp/with-provides.holy" --root "$tmp/cache-root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
 cp -a "$tmp/payload" "$tmp/with-deps"
 printf 'require libc-1 package soname libc.so.6 x86_64 glibc any - "libc.so.6" metadata\n' > "$tmp/with-deps/HOLY/deps"
 tar -cf "$tmp/with-deps.tar" -C "$tmp/with-deps" HOLY DATA

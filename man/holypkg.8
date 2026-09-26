@@ -12,6 +12,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg requirements local:FILE --json
 .br
+.B holypkg provides local:FILE
+.br
 .B holypkg fetch local:FILE --output DIRECTORY
 .br
 .B holypkg fetch local:FILE --extract --output DIRECTORY
@@ -75,6 +77,19 @@ eq, ge, le, gt or lt. VERSION is - only for any. ORIGINAL and EVIDENCE retain
 the source expression and basis as text. Requirement IDs must be unique. The
 command rejects unsupported records and duplicate IDs rather than dropping
 them; it does not evaluate version constraints or choose a provider.
+.PP
+The provides command stages and verifies a native archive, then reads
+HOLY/provides as typed claims. Each supported line has seven tokens:
+.nf
+provide KIND NAME ARCH LIBC VERSION EVIDENCE
+.fi
+KIND accepts package, file, command, soname, symbol-version or build. ARCH
+accepts any, x86, x86_64 or noarch; LIBC accepts any, glibc, musl or nolibc.
+VERSION is text or - for an unversioned claim. File names must be absolute;
+SONAME must have no slash. Duplicate KIND/NAME/ARCH/LIBC/VERSION claims fail.
+The parser does not prove a claimed file, command or SONAME exists, resolve a
+requirement or compare foreign version schemes. Repository and cache writers
+reject unrecognized capability records rather than publishing them as parsed.
 With --json, stdout contains holy-requirements-1 requirement events and a
 summary, or one error event on invalid input. Each requirement event has
 id, consumer, kind, name, arch, libc, relation, version, original and evidence
@@ -177,7 +192,7 @@ Changes to the root after preview invalidate the result.
 .PP
 The cache stage command copies a verified local archive to
 ROOT/var/cache/holypkg/objects/sha256/SHA256.holy. It validates known ELF ABI
-facts and the supported HOLY/deps subset before publication. It opens cache
+facts and the supported HOLY/deps and HOLY/provides subsets before publication. It opens cache
 directories relative to the target root without following symlinks and rejects
 a same-name object with a different digest. Existing target cache directories
 must allow writes by the caller and must not be group- or world-writable;

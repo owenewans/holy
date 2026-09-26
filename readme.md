@@ -25,8 +25,9 @@ objcopy, as and ld.
 
 ## status
 
-The C99 prototype verifies local `.holy` archives, inspects ELF and typed
-requirements, checks files and previews root path conflicts without installing.
+The C99 prototype verifies local `.holy` archives, inspects ELF, typed
+requirements and capability claims, checks files and previews root path
+conflicts without installing.
 It stages verified archives in a target-root cache.
 It can initialize and inspect an empty target-root package database.
 It can build, seal, search and fetch an unsigned local repository catalog.

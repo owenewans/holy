@@ -6,6 +6,7 @@
 #include "stage.h"
 #include "verify.h"
 #include "deps.h"
+#include "provides.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -106,6 +107,7 @@ int holy_preview_local(const char *package, const char *root_path)
         !holy_extract_preflight(snapshot) ||
         !holy_scan_local_facts(snapshot, 0, &elf_needed) ||
         !holy_deps_count(snapshot, &requirements) ||
+        !holy_provides_local(snapshot, 0) ||
         !holy_package_identity(snapshot, &identity)) goto done;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0) { perror("holypkg: target root"); rc = 1; goto done; }

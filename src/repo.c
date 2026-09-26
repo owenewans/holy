@@ -3,6 +3,7 @@
 #include "config.h"
 #include "fetch.h"
 #include "deps.h"
+#include "provides.h"
 #include "package.h"
 #include "scan.h"
 #include "stage.h"
@@ -156,6 +157,7 @@ int holy_repo_index(const char *directory)
         if (!holy_verify_with_output(snapshot, 0) ||
             !holy_scan_local_with_output(snapshot, 0) ||
             !holy_deps_local_with_output(snapshot, 0) ||
+            !holy_provides_local(snapshot, 0) ||
             !holy_package_identity(snapshot, &objects[i].identity)) {
             unlink(snapshot);
             free(snapshot);
@@ -323,6 +325,7 @@ static int list(const char *directory, const char *query,
         matches = holy_verify_with_output(snapshot, 0) &&
                   holy_scan_local_with_output(snapshot, 0) &&
                   holy_deps_local_with_output(snapshot, 0) &&
+                  holy_provides_local(snapshot, 0) &&
                   holy_package_identity(snapshot, &actual);
         if (matches) {
             matches = same_identity(&objects[i].identity, &actual) &&

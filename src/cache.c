@@ -6,6 +6,7 @@
 #include "scan.h"
 #include "stage.h"
 #include "verify.h"
+#include "provides.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -58,6 +59,7 @@ int holy_cache_stage_local(const char *source, const char *root_path)
     if (!snapshot || !holy_verify_with_output(snapshot, 0) ||
         !holy_scan_local_with_output(snapshot, 0) ||
         !holy_deps_local_with_output(snapshot, 0) ||
+        !holy_provides_local(snapshot, 0) ||
         !holy_package_identity(snapshot, &identity)) goto done;
     current = cache_directory(root_path, 1);
     if (current < 0) goto done;
@@ -96,6 +98,7 @@ int holy_cache_verify(const char *digest, const char *root_path)
     if (!snapshot || !holy_verify_with_output(snapshot, 0) ||
         !holy_scan_local_with_output(snapshot, 0) ||
         !holy_deps_local_with_output(snapshot, 0) ||
+        !holy_provides_local(snapshot, 0) ||
         !holy_package_identity(snapshot, &identity) ||
         strcmp(identity.digest, digest)) goto done;
     printf("verified %s %s %s %s\n", identity.digest, identity.name,

@@ -101,10 +101,13 @@ sed -e 's/^name fixture$/name "fixture two"/' -e 's/^version 1.0$/version 2.0/' 
     "$tmp/payload/HOLY/meta" > "$tmp/new-meta"
 mv "$tmp/new-meta" "$tmp/payload/HOLY/meta"
 printf 'require libc-1 package soname libc.so.6 x86_64 glibc any - libc.so.6 metadata\n' > "$tmp/payload/HOLY/deps"
+printf 'provide package "fixture two" noarch nolibc 2.0 metadata\n' > "$tmp/payload/HOLY/provides"
 tar -cf "$tmp/variant.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/variant.tar" "$tmp/repo/variant.holy"
 "$bin" requirements "local:$tmp/repo/variant.holy" > "$tmp/out"
 grep -qx 'requirements 1' "$tmp/out"
+"$bin" provides "local:$tmp/repo/variant.holy" > "$tmp/out"
+grep -qx 'capabilities 1' "$tmp/out"
 "$bin" repo index "$tmp/repo" > "$tmp/out"
 grep -qx 'indexed 2 packages' "$tmp/out"
 "$bin" repo seal "$tmp/repo" > "$tmp/out"
@@ -145,6 +148,14 @@ tar -cf "$tmp/unsupported.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/unsupported.tar" "$tmp/repo/unsupported.holy"
 if "$bin" repo index "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'unsupported requirement' "$tmp/err"
+cmp "$tmp/previous" "$tmp/repo/index"
+rm "$tmp/repo/unsupported.holy"
+: > "$tmp/payload/HOLY/deps"
+printf 'provide file relative noarch nolibc - metadata\n' > "$tmp/payload/HOLY/provides"
+tar -cf "$tmp/unsupported.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q -f "$tmp/unsupported.tar" "$tmp/repo/unsupported.holy"
+if "$bin" repo index "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'unsupported capability' "$tmp/err"
 cmp "$tmp/previous" "$tmp/repo/index"
 rm "$tmp/repo/unsupported.holy"
 rm "$tmp/repo/index"

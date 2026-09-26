@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=d30e982f39d02dc011f8542f27d36aaf43201dbfd4ea6f726d58d08693002a8d
+holypkg.8 source=holy version=development sha256=1ecc3f4e1bee1baab2aad9ef0b14432b946b67ba270b13bee40d22a9ec9de075
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -60,6 +60,7 @@ SYNOPSIS
      holypkg verify local:FILE
      holypkg requirements local:FILE
      holypkg requirements local:FILE --json
+     holypkg provides local:FILE
      holypkg fetch local:FILE --output DIRECTORY
      holypkg fetch local:FILE --extract --output DIRECTORY
      holypkg check local:FILE --root DIRECTORY
@@ -108,12 +109,24 @@ DESCRIPTION
      retain the source expression and basis as text.  Requirement  IDs	must  be
      unique.  The  command  rejects unsupported records and duplicate IDs rather
      than dropping them; it does not evaluate version constraints  or  choose  a
-     provider.	 With  --json,	stdout	contains holy-requirements-1 requirement
-     events and a summary, or one error event on invalid input. Each requirement
-     event has id, consumer, kind, name, arch, libc, relation, version, original
-     and evidence fields. The JSON encoder maps non-ASCII bytes	 to  \u00HH  es-
-     capes;  consumers	reconstruct  original bytes rather than treating them as
-     normalized text.
+     provider.
+
+     The  provides  command  stages  and  verifies  a native archive, then reads
+     HOLY/provides as typed claims. Each supported line has seven tokens:
+     provide KIND NAME ARCH LIBC VERSION EVIDENCE
+     KIND accepts package, file, command, soname, symbol-version or build.  ARCH
+     accepts  any,  x86,  x86_64 or noarch; LIBC accepts any, glibc, musl or no-
+     libc.  VERSION is text or - for an unversioned claim. File	 names	must  be
+     absolute;	SONAME must have no slash. Duplicate KIND/NAME/ARCH/LIBC/VERSION
+     claims fail.  The parser does not prove a claimed file, command  or  SONAME
+     exists,  resolve  a requirement or compare foreign version schemes. Reposi-
+     tory and cache writers reject unrecognized capability records  rather  than
+     publishing	 them  as  parsed.   With  --json, stdout contains holy-require-
+     ments-1 requirement events and a summary, or one error event on invalid in-
+     put. Each requirement event has id, consumer, kind, name, arch, libc, rela-
+     tion, version, original and evidence fields. The  JSON  encoder  maps  non-
+     ASCII  bytes to \u00HH escapes; consumers reconstruct original bytes rather
+     than treating them as normalized text.
 
      The local fetch command copies any regular input file to an existing direc-
      tory as SHA256.holy. It copies bytes  without  interpreting  metadata,  ex-
@@ -213,84 +226,84 @@ DESCRIPTION
 
      The  cache	  stage	  command   copies   a	 verified   local   archive   to
      ROOT/var/cache/holypkg/objects/sha256/SHA256.holy.	 It  validates known ELF
-     ABI facts and the supported HOLY/deps subset before publication.  It  opens
-     cache  directories	 relative  to the target root without following symlinks
-     and rejects a same-name object with a  different  digest.	Existing  target
-     cache directories must allow writes by the caller and must not be group- or
-     world-writable;  each directory must belong to root or the caller. The com-
-     mand creates cache directories and the object, not installed state or  pay-
-     load  files;  it does not resolve providers or run hooks. The cache remains
-     local and unsigned.
+     ABI facts and the supported HOLY/deps and HOLY/provides subsets before pub-
+     lication. It opens cache directories relative to the  target  root	 without
+     following	symlinks and rejects a same-name object with a different digest.
+     Existing target cache directories must allow writes by the caller and  must
+     not  be group- or world-writable; each directory must belong to root or the
+     caller. The command creates cache directories and the object, not installed
+     state or payload files; it does not resolve providers  or	run  hooks.  The
+     cache remains local and unsigned.
 
      Cache verify opens the object named by a lowercase SHA-256 through the same
-     target-root directory chain, stages a private snapshot and checks	the  di-
-     gest,  payload,  known ELF ABI facts and supported requirements. It reports
-     the verified name, arch and libc. It does not mutate  the	cache  or  prove
+     target-root  directory  chain, stages a private snapshot and checks the di-
+     gest, payload, known ELF ABI facts and supported requirements.  It	 reports
+     the  verified  name,  arch	 and libc. It does not mutate the cache or prove
      that other package dependencies can be satisfied.
 
-     Database  init creates an empty ROOT/var/lib/holypkg with installed, trans-
-     actions and index directories, and a  generation  file  containing	 0.   It
+     Database init creates an empty ROOT/var/lib/holypkg with installed,  trans-
+     actions  and  index  directories,	and  a generation file containing 0.  It
      locks the database directory for this operation and uses a synced temporary
-     file  plus	 link  for exclusive generation creation; repeating init retains
-     the existing generation. Status holds a shared lock  while	 validating  the
-     same  layout  and reading the generation. Until installed records and jour-
-     nals have parsers, both commands reject  nonempty	installed,  transactions
-     and  index	 directories instead of treating unknown state as an empty data-
-     base. Both commands reject symlinked, group-writable or world-writable  an-
-     cestor  directories  inside  the target root.  Init does not register pack-
+     file plus link for exclusive generation creation;	repeating  init	 retains
+     the  existing  generation.	 Status holds a shared lock while validating the
+     same layout and reading the generation. Until installed records  and  jour-
+     nals  have	 parsers,  both commands reject nonempty installed, transactions
+     and index directories instead of treating unknown state as an  empty  data-
+     base.  Both commands reject symlinked, group-writable or world-writable an-
+     cestor directories inside the target root.	 Init does  not	 register  pack-
      ages, create a transaction journal or install files.
 
      The repository index command validates regular .holy files in DIRECTORY and
-     writes an unsigned, lexicographically ordered index through an  atomic  re-
-     name.   It	 refuses  symlinked packages, duplicate package identities and a
+     writes  an	 unsigned, lexicographically ordered index through an atomic re-
+     name.  It refuses symlinked packages, duplicate package  identities  and  a
      nonregular	 existing  index.  It  rejects	unsupported  HOLY/deps	records.
-     Records  in format holy-index-prototype-1 contain the quoted name, version,
-     release, os, arch, libc, relative filename, SHA-256 and size.  This  proto-
-     type  omits dependencies, provides and signatures; source adapters must not
+     Records in format holy-index-prototype-1 contain the quoted name,	version,
+     release,  os, arch, libc, relative filename, SHA-256 and size.  This proto-
+     type omits dependencies, provides and signatures; source adapters must  not
      treat it as the native repository format.
 
-     The seal command validates the entire local index, creates an  index.SHA256
-     generation	 and  atomically  publishes a current pointer containing its di-
-     gest.  The list and search commands require current and  check  its  digest
-     before  reading  the generation. Indexing creates a draft index; publish it
+     The  seal command validates the entire local index, creates an index.SHA256
+     generation and atomically publishes a current pointer  containing	its  di-
+     gest.   The  list	and search commands require current and check its digest
+     before reading the generation. Indexing creates a draft index;  publish  it
      with seal after reviewing changes. Removing current makes the directory un-
-     available to list and search rather than exposing an unsealed  draft.   The
-     pointer  and  artifacts  remain unsigned and can be changed by someone with
+     available	to  list and search rather than exposing an unsealed draft.  The
+     pointer and artifacts remain unsigned and can be changed  by  someone  with
      write access to the directory. Existing generation files remain in place.
 
-     The repository list command reads that prototype index with  the  holy.conf
+     The  repository  list command reads that prototype index with the holy.conf
      lexer and checks each referenced regular archive's size, SHA-256, identity,
      payload and known ELF ABI facts before printing records. An index without a
-     signature	carries	 no provenance guarantee. Neither command installs pack-
+     signature carries no provenance guarantee. Neither command	 installs  pack-
      ages or activates this directory as a package source.
 
-     The repository search command verifies the same complete  local  index  and
+     The  repository  search  command verifies the same complete local index and
      returns exact name matches. No match prints a zero-count summary. This pro-
      totype does not perform fuzzy search, dependency resolution or provider se-
      lection.
 
-     The  repository  fetch command requires a lowercase SHA-256 from the sealed
-     index. It verifies the complete index and artifacts, then	copies	the  se-
-     lected  snapshot to an existing output directory as SHA256.holy. It rejects
+     The repository fetch command requires a lowercase SHA-256 from  the  sealed
+     index.  It	 verifies  the complete index and artifacts, then copies the se-
+     lected snapshot to an existing output directory as SHA256.holy. It	 rejects
      a missing digest or a changed unrelated artifact. The copy does not install
-     or grant trust to the package; repository metadata and objects  remain  un-
+     or	 grant	trust to the package; repository metadata and objects remain un-
      signed.
 
 EXIT STATUS
-     0	indicates success under the implemented checks; 1 indicates a failed lo-
-     cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
-     tion  or package inspection. Diagnostics go to standard error except --json
+     0 indicates success under the implemented checks; 1 indicates a failed  lo-
+     cal  fetch,  extraction or check; 2 indicates invalid arguments, configura-
+     tion or package inspection. Diagnostics go to standard error except  --json
      check events, which go to standard output.
 
-     Preview returns 3 when valid requirements need provider  decisions,  4  for
-     path  conflicts  and  6 when hooks or privileged modes need unsupported re-
+     Preview  returns  3  when valid requirements need provider decisions, 4 for
+     path conflicts and 6 when hooks or privileged modes  need	unsupported  re-
      view. It returns 1 on target-root I/O failure.
 
 SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-package.5 source=holy version=development sha256=9c0f6a4d93924f296cb898cb7cd2ce6c76473b50aaf6c8cb5fe5634ca9622952
+holy-package.5 source=holy version=development sha256=e2af27d0fe6fd32b96c75032ee03f1007bdbd740e48653c886e50374cb344922
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -314,8 +327,9 @@ DESCRIPTION
      The  archive  contains  one  regular file at each of HOLY/meta, HOLY/files,
      HOLY/deps, HOLY/provides, HOLY/hooks, HOLY/origin and  HOLY/transform.  The
      inspector	checks	their presence and type. Empty metadata placeholders can
-     pass this structural check; it does not validate dependency, hook or origin
-     content.
+     pass this structural check; it does not  validate	dependency,  capability,
+     hook  or  origin  content.	 The separate requirements and provides commands
+     parse supported subsets of HOLY/deps and HOLY/provides.
 
      The prototype verifier reads HOLY/files. For each regular payload file  un-
      der DATA/, one manifest line contains twelve whitespace-separated tokens:

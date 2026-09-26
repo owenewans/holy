@@ -19,7 +19,9 @@ do not perform this ABI check.
 The archive contains one regular file at each of HOLY/meta, HOLY/files,
 HOLY/deps, HOLY/provides, HOLY/hooks, HOLY/origin and HOLY/transform. The
 inspector checks their presence and type. Empty metadata placeholders can pass
-this structural check; it does not validate dependency, hook or origin content.
+this structural check; it does not validate dependency, capability, hook or
+origin content. The separate requirements and provides commands parse
+supported subsets of HOLY/deps and HOLY/provides.
 .PP
 The prototype verifier reads HOLY/files. For each regular payload file under
 DATA/, one manifest line contains twelve whitespace-separated tokens:
