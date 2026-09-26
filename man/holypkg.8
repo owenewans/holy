@@ -64,6 +64,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db approve PLAN_SHA256 --root DIRECTORY
 .br
+.B holypkg db recheck --root DIRECTORY
+.br
 .B holypkg repo index DIRECTORY
 .br
 .B holypkg repo list DIRECTORY
@@ -107,6 +109,13 @@ Status reports the approved digest; cancel removes the record. A mismatched
 plan returns decision-required without changing the reservation. Approval
 does not install files or authorize a future implementation to skip path,
 artifact and generation checks under the same writer lock at apply time.
+.PP
+Database recheck compares an approved record with a fresh verified cache
+snapshot and target-root collision preview under a shared database lock.
+It returns 5 without an approved record, 3 if the plan digest differs and 4
+for a path conflict. The check changes neither database nor rootfs. Other
+processes can change rootfs paths after recheck; it cannot replace the
+writer-locked validation required by apply.
 .PP
 The info command reads an LZ4-frame-compressed tar archive and prints the seven
 required fields from HOLY/meta. It reads archive data without extracting or

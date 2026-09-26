@@ -637,3 +637,28 @@ done:
     if (root >= 0) close(root);
     return result;
 }
+
+int holy_state_recheck(const char *root_path)
+{
+    unsigned long long generation;
+    char digest[65], approved[65], actual[65];
+    size_t paths;
+    int root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int dir = root < 0 ? -1 : state_dir_at(root, 0), pending, result = 1;
+    if (dir < 0 || flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
+        !empty_child(dir, "installed") || !empty_child(dir, "index") ||
+        !read_generation(dir, &generation)) goto done;
+    pending = pending_child(dir, generation, digest, approved);
+    if (pending < 0) goto done;
+    if (!pending || !approved[0]) { result = 5; goto done; }
+    result = inspect_plan(root_path, root, generation, digest, actual, &paths);
+    if (result) goto done;
+    if (strcmp(approved, actual)) { result = 3; goto done; }
+    printf("rechecked %s generation %llu artifact %s paths %zu\n",
+           approved, generation, digest, paths);
+done:
+    if (result) fprintf(stderr, "holypkg: approved plan recheck failed (status %d)\n", result);
+    if (dir >= 0) close(dir);
+    if (root >= 0) close(root);
+    return result;
+}

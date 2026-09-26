@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=7ab3b8615ddfba873ca25dc9456790ebdf40cd988bb45872943291a06beb5a58
+holypkg.8 source=holy version=development sha256=8d9f18ea7ac809d277730b523761db13b75218bff9b2ce3b138e56a7eb6dfe08
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -87,6 +87,7 @@ SYNOPSIS
      holypkg db preflight --root DIRECTORY --json
      holypkg db plan --root DIRECTORY
      holypkg db approve PLAN_SHA256 --root DIRECTORY
+     holypkg db recheck --root DIRECTORY
      holypkg repo index DIRECTORY
      holypkg repo list DIRECTORY
      holypkg repo search DIRECTORY NAME
@@ -125,6 +126,13 @@ DESCRIPTION
      Approval does not install files or authorize  a  future  implementation  to
      skip path, artifact and generation checks under the same writer lock at ap-
      ply time.
+
+     Database  recheck	compares  an approved record with a fresh verified cache
+     snapshot and target-root collision preview under a	 shared	 database  lock.
+     It returns 5 without an approved record, 3 if the plan digest differs and 4
+     for  a  path conflict. The check changes neither database nor rootfs. Other
+     processes can change rootfs paths after  recheck;	it  cannot  replace  the
+     writer-locked validation required by apply.
 
      The  info	command reads an LZ4-frame-compressed tar archive and prints the
      seven required fields from HOLY/meta. It reads  archive  data  without  ex-

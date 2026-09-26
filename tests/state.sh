@@ -99,6 +99,8 @@ if "$bin" db approve "$(printf '%064d' 0)" --root "$tmp/root" > "$tmp/out" 2> "$
 grep -qx 'stage prepared' "$db/transactions/pending"
 "$bin" db approve "$plan_hash" --root "$tmp/root" > "$tmp/out"
 grep -qx "approved $plan_hash generation 7 artifact $digest" "$tmp/out"
+"$bin" db recheck --root "$tmp/root" > "$tmp/out"
+grep -qx "rechecked $plan_hash generation 7 artifact $digest paths 0" "$tmp/out"
 "$bin" db plan --root "$tmp/root" > "$tmp/out"
 cmp "$tmp/out" "$tmp/plan"
 if "$bin" db status --root "$tmp/root" --json > "$tmp/out"; then exit 1; else test "$?" -eq 5; fi
@@ -106,10 +108,12 @@ grep -Fqx "{\"schema\":\"holy-db-status-1\",\"type\":\"state\",\"generation\":7,
 if "$bin" db approve "$plan_hash" --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
 printf '8\n' > "$db/generation"
 if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+if "$bin" db recheck --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 if "$bin" db approve "$plan_hash" --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 printf '7\n' > "$db/generation"
 "$bin" db cancel --root "$tmp/root" > "$tmp/out"
 "$bin" db reserve "$digest" --root "$tmp/root" > "$tmp/out"
+if "$bin" db recheck --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
 temp_approval="$db/transactions/.holy-tmp-11111111111111111111111111111111"
 sed 's/stage prepared/stage approved/' "$db/transactions/pending" > "$temp_approval"
 printf 'plan %s\n' "$plan_hash" >> "$temp_approval"
@@ -232,6 +236,11 @@ collision_plan=$(sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
 printf 'changed\n' > "$tmp/root/usr/bin/hello"
 if "$bin" db approve "$collision_plan" --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 grep -qx 'stage prepared' "$db/transactions/pending"
+rm "$tmp/root/usr/bin/hello"
+"$bin" db approve "$collision_plan" --root "$tmp/root" > "$tmp/out"
+printf 'changed\n' > "$tmp/root/usr/bin/hello"
+if "$bin" db recheck --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+grep -qx 'stage approved' "$db/transactions/pending"
 "$bin" db cancel --root "$tmp/root" > "$tmp/out"
 rm "$tmp/root/usr/bin/hello"
 printf 'postinstall /bin/sh script\n' > "$tmp/payload/HOLY/hooks"

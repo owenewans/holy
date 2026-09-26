@@ -17,5 +17,7 @@ int holy_state_preflight(const char *root_path, int json);
 int holy_state_plan(const char *root_path);
 /* persist approval only when the current writer-locked plan matches. */
 int holy_state_approve(const char *hash, const char *root_path);
+/* revalidate an approved plan; no rootfs or database mutation. */
+int holy_state_recheck(const char *root_path);
 
 #endif
