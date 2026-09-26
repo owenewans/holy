@@ -70,6 +70,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db apply --root DIRECTORY
 .br
+.B holypkg db check SHA256 --root DIRECTORY
+.br
 .B holypkg repo index DIRECTORY
 .br
 .B holypkg repo list DIRECTORY
@@ -143,6 +145,14 @@ A regular successful return requires both the installed record and
 generation publication. General ownership replacement, file removal and
 automatic rollback are not implemented. The command is not an installer for
 arbitrary .holy packages.
+.PP
+Database check reads one installed data manifest and compares its regular
+files against the target root by path, type, size, mode, numeric ownership
+and SHA-256. It checks that listed directories remain safe and rejects
+symlinked parent paths. It returns 4 for changed or missing files, 6 when
+the instance is absent, and 5 while a file transaction is incomplete. The
+command neither downloads an archive nor repairs a file. This restricted
+check does not model dynamic linking, scripts or runtime behavior.
 .PP
 The info command reads an LZ4-frame-compressed tar archive and prints the seven
 required fields from HOLY/meta. It reads archive data without extracting or

@@ -1042,3 +1042,37 @@ done:
     if (root >= 0) close(root);
     return result;
 }
+
+int holy_state_check(const char *digest, const char *root_path)
+{
+    unsigned long long generation;
+    int root, dir = -1, installed = -1, item = -1, files = -1, result = 1;
+    int checked;
+    if (!valid_digest(digest)) return 2;
+    root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0) goto done;
+    dir = state_dir_at(root, 0);
+    if (dir < 0 || flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
+        !empty_child(dir, "index") || !read_generation(dir, &generation)) goto done;
+    checked = journal_valid(dir, generation, NULL, NULL, NULL);
+    if (checked < 0) goto done;
+    if (checked) { result = 5; goto done; }
+    if (!installed_valid(dir)) goto done;
+    installed = child_dir(dir, "installed", 0);
+    if (installed < 0) goto done;
+    item = child_dir(installed, digest, 0);
+    if (item < 0) { result = 6; goto done; }
+    files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (files < 0) goto done;
+    checked = holy_install_check_manifest(files, root);
+    result = checked > 0 ? 0 : checked == 0 ? 4 : 1;
+    if (!result) printf("intact %s generation %llu\n", digest, generation);
+done:
+    if (result) fprintf(stderr, "holypkg: installed check failed (status %d)\n", result);
+    if (files >= 0) close(files);
+    if (item >= 0) close(item);
+    if (installed >= 0) close(installed);
+    if (dir >= 0) close(dir);
+    if (root >= 0) close(root);
+    return result;
+}

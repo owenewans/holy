@@ -23,5 +23,7 @@ int holy_state_recheck(const char *root_path);
 int holy_state_apply(const char *root_path);
 /* clear a journal only when no payload or installed instance was written. */
 int holy_state_abort_empty(const char *root_path);
+/* compare one installed data manifest to the target root without repair. */
+int holy_state_check(const char *digest, const char *root_path);
 
 #endif

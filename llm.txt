@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=9dca3dce59dc85e84364ad92d1054d042203feb4a633e661a7f697637a79bcb5
+holypkg.8 source=holy version=development sha256=c57a95542f50550f87d9f1e9c5fc2ad0a1af9801c132425e1cafe4ddbb1bb477
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -90,6 +90,7 @@ SYNOPSIS
      holypkg db approve PLAN_SHA256 --root DIRECTORY
      holypkg db recheck --root DIRECTORY
      holypkg db apply --root DIRECTORY
+     holypkg db check SHA256 --root DIRECTORY
      holypkg repo index DIRECTORY
      holypkg repo list DIRECTORY
      holypkg repo search DIRECTORY NAME
@@ -158,6 +159,14 @@ DESCRIPTION
      record  and generation publication. General ownership replacement, file re-
      moval and automatic rollback are not implemented. The command is not an in-
      staller for arbitrary .holy packages.
+
+     Database check reads one installed data manifest and compares  its	 regular
+     files  against the target root by path, type, size, mode, numeric ownership
+     and SHA-256. It checks that listed directories remain safe and rejects sym-
+     linked parent paths. It returns 4 for changed or missing files, 6 when  the
+     instance  is absent, and 5 while a file transaction is incomplete. The com-
+     mand neither downloads an archive nor repairs a file. This restricted check
+     does not model dynamic linking, scripts or runtime behavior.
 
      The info command reads an LZ4-frame-compressed tar archive and  prints  the
      seven  required  fields  from  HOLY/meta. It reads archive data without ex-

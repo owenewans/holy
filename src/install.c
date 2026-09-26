@@ -1,14 +1,17 @@
 #define _POSIX_C_SOURCE 200809L
 #include "install.h"
 #include "verify.h"
+#include "config.h"
 
 #include <archive.h>
 #include <archive_entry.h>
+#include <openssl/evp.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -141,4 +144,131 @@ done:
     archive_read_free(archive);
     if (!ok) fprintf(stderr, "holypkg: install payload incomplete; inspect transaction journal\n");
     return ok;
+}
+
+static int decimal(const char *text, int base, unsigned long long *value)
+{
+    char *end;
+    errno = 0;
+    if (!*text || *text == '-' || *text == '+') return 0;
+    *value = strtoull(text, &end, base);
+    return !errno && !*end;
+}
+
+static int check_file(int root, char **v)
+{
+    unsigned long long mode, uid, gid, size;
+    struct stat st;
+    char *storage = NULL;
+    const char *base;
+    int parent, fd = -1, result = -1;
+    EVP_MD_CTX *hash = NULL;
+    unsigned char digest[32];
+    unsigned int digest_size;
+    char buffer[65536];
+    ssize_t got;
+    size_t i;
+    if ((strcmp(v[0], "dir") && strcmp(v[0], "file")) ||
+        !decimal(v[2], 8, &mode) || mode > 07777 ||
+        !decimal(v[5], 10, &uid) || uid > 0x7fffffff ||
+        !decimal(v[6], 10, &gid) || gid > 0x7fffffff ||
+        !decimal(v[7], 10, &size) || size > LLONG_MAX ||
+        strcmp(v[9], "none") || strcmp(v[10], "-") || strcmp(v[11], "-"))
+        return -1;
+    if (!strcmp(v[0], "dir")) {
+        if (size || strcmp(v[8], "-")) return -1;
+    } else if (strlen(v[8]) != 64) return -1;
+    parent = parent_fd(root, v[1], &storage, &base);
+    if (parent < 0) return 0;
+    if (!strcmp(v[0], "dir")) {
+        result = !fstatat(parent, base, &st, AT_SYMLINK_NOFOLLOW) &&
+                 S_ISDIR(st.st_mode) &&
+                 (st.st_uid == 0 || st.st_uid == geteuid()) && !(st.st_mode & 0022);
+        goto done;
+    }
+    fd = openat(parent, base, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        (st.st_mode & 07777) != mode || (unsigned long long)st.st_uid != uid ||
+        (unsigned long long)st.st_gid != gid ||
+        (unsigned long long)st.st_size != size) { result = 0; goto done; }
+    hash = EVP_MD_CTX_new();
+    if (!hash || EVP_DigestInit_ex(hash, EVP_sha256(), NULL) != 1) goto done;
+    while ((got = read(fd, buffer, sizeof buffer)) > 0)
+        if (EVP_DigestUpdate(hash, buffer, (size_t)got) != 1) goto done;
+    if (got < 0 || EVP_DigestFinal_ex(hash, digest, &digest_size) != 1 ||
+        digest_size != sizeof digest) goto done;
+    result = 1;
+    for (i = 0; i < sizeof digest; ++i) {
+        char hex[3];
+        snprintf(hex, sizeof hex, "%02x", digest[i]);
+        if (v[8][i * 2] != hex[0] || v[8][i * 2 + 1] != hex[1]) result = 0;
+    }
+done:
+    EVP_MD_CTX_free(hash);
+    if (fd >= 0) close(fd);
+    close(parent);
+    free(storage);
+    return result;
+}
+
+static void report_changed(const char *path)
+{
+    const unsigned char *p = (const unsigned char *)path;
+    fputs("holypkg: changed-file ", stderr);
+    for (; *p; ++p)
+        if (*p == '\\' || *p <= 32 || *p >= 127)
+            fprintf(stderr, "\\x%02x", (unsigned int)*p);
+        else fputc(*p, stderr);
+    fputc('\n', stderr);
+}
+
+int holy_install_check_manifest(int files_fd, int root)
+{
+    struct stat st;
+    char *text = NULL;
+    size_t length, used = 0, start = 0, i, line = 0;
+    int result = 1;
+    if (fstat(files_fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+        st.st_size > 16 * 1024 * 1024) return -1;
+    length = (size_t)st.st_size;
+    text = malloc(length + 1);
+    if (!text) return -1;
+    while (used < length) {
+        ssize_t got = read(files_fd, text + used, length - used);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) { result = -1; goto done; }
+        used += (size_t)got;
+    }
+    text[length] = '\0';
+    for (i = 0; i <= length; ++i) {
+        char **v = NULL, *error = NULL;
+        size_t count = 0;
+        int checked;
+        if (i < length && text[i] != '\n') continue;
+        ++line;
+        if (memchr(text + start, '\0', i - start) ||
+            !holy_lex(text + start, i - start, &v, &count, "installed/files", line, &error)) {
+            free(error);
+            result = -1;
+            goto done;
+        }
+        start = i + 1;
+        if (!count) { holy_tokens_free(v, count); continue; }
+        if (count != 12) {
+            holy_tokens_free(v, count);
+            result = -1;
+            goto done;
+        }
+        checked = check_file(root, v);
+        if (checked < 0) result = -1;
+        else if (!checked) {
+            report_changed(v[1]);
+            if (result == 1) result = 0;
+        }
+        holy_tokens_free(v, count);
+        if (result < 0) goto done;
+    }
+done:
+    free(text);
+    return result;
 }
