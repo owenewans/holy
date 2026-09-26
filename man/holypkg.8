@@ -39,7 +39,8 @@ the two read passes do not provide a stable filesystem snapshot.
 .PP
 The local fetch command copies any regular input file to an existing directory
 as SHA256.holy. It copies bytes without interpreting metadata, extracting files
-or running hooks. A temporary file receives mode 0600 and is synchronized
+or running hooks. It creates a mode 0600 temporary file relative to the opened
+output directory and synchronizes it
 before a no-overwrite hardlink creates the object. Repeating the command checks
 the existing object's digest. A mismatched object is left untouched. Fetch
 does not establish archive validity, provenance or a trusted root-owned cache.

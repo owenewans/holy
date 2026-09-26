@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/random.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -58,13 +59,38 @@ static int copy_and_hash(int source, int target, unsigned char digest[32])
     return ok;
 }
 
+static int temporary_file(int dir, char name[43])
+{
+    unsigned char random_bytes[16];
+    size_t attempt, done, i;
+    for (attempt = 0; attempt < 16; ++attempt) {
+        done = 0;
+        while (done < sizeof random_bytes) {
+            ssize_t got = getrandom(random_bytes + done, sizeof random_bytes - done, 0);
+            if (got < 0 && errno == EINTR) continue;
+            if (got <= 0) return -1;
+            done += (size_t)got;
+        }
+        memcpy(name, ".holy-tmp-", 10);
+        for (i = 0; i < sizeof random_bytes; ++i)
+            snprintf(name + 10 + i * 2, 3, "%02x", random_bytes[i]);
+        name[42] = '\0';
+        {
+            int fd = openat(dir, name, O_WRONLY | O_CREAT | O_EXCL |
+                            O_NOFOLLOW | O_CLOEXEC, 0600);
+            if (fd >= 0 || errno != EEXIST) return fd;
+        }
+    }
+    errno = EEXIST;
+    return -1;
+}
+
 int holy_fetch_local(const char *source, const char *output)
 {
     int input = -1, dir = -1, temp = -1, existing = -1, ok = 0;
     unsigned char digest[32], prior[32];
-    char *temporary = NULL, name[72];
-    const char *basename;
-    size_t length, i;
+    char temporary[43], name[72];
+    size_t i;
     struct stat st;
 
     input = open(source, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
@@ -74,22 +100,15 @@ int holy_fetch_local(const char *source, const char *output)
     }
     dir = open(output, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dir < 0) { perror("holypkg: output directory"); goto done; }
-    length = strlen(output);
-    if (length > (size_t)-1 - sizeof "/.holy-tmp-XXXXXX") goto done;
-    temporary = malloc(length + sizeof "/.holy-tmp-XXXXXX");
-    if (!temporary) goto done;
-    snprintf(temporary, length + sizeof "/.holy-tmp-XXXXXX", "%s/.holy-tmp-XXXXXX", output);
-    temp = mkstemp(temporary);
+    temp = temporary_file(dir, temporary);
     if (temp < 0) { perror("holypkg: temporary file"); goto done; }
-    basename = strrchr(temporary, '/');
-    basename = basename ? basename + 1 : temporary;
     if (!copy_and_hash(input, temp, digest) || fsync(temp)) {
         fprintf(stderr, "holypkg: local copy failed\n");
         goto done;
     }
     for (i = 0; i < 32; ++i) snprintf(name + i * 2, 3, "%02x", digest[i]);
     memcpy(name + 64, ".holy", 6);
-    if (linkat(dir, basename, dir, name, 0)) {
+    if (linkat(dir, temporary, dir, name, 0)) {
         if (errno != EEXIST) { perror("holypkg: link object"); goto done; }
         existing = openat(dir, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
         if (existing < 0 || fstat(existing, &st) || !S_ISREG(st.st_mode) ||
@@ -104,8 +123,7 @@ int holy_fetch_local(const char *source, const char *output)
 done:
     if (existing >= 0) close(existing);
     if (temp >= 0) close(temp);
-    if (temp >= 0) unlinkat(dir, basename, 0);
-    free(temporary);
+    if (temp >= 0) unlinkat(dir, temporary, 0);
     if (dir >= 0) close(dir);
     if (input >= 0) close(input);
     return ok;

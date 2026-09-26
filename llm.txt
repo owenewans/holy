@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=7bd149e6d29558cb9952d31ba0f36864308591143d838a982c3c60f9b5cd6ab9
+holypkg.8 source=holy version=development sha256=6932754ac2998fb788d1a24866884e4ae67fb3dadd16756b9631a3392c37002d
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -87,56 +87,57 @@ DESCRIPTION
 
      The local fetch command copies any regular input file to an existing direc-
      tory as SHA256.holy. It copies bytes  without  interpreting  metadata,  ex-
-     tracting files or running hooks. A temporary file receives mode 0600 and is
-     synchronized  before  a no-overwrite hardlink creates the object. Repeating
-     the command checks the existing object's digest.  A  mismatched  object  is
-     left  untouched. Fetch does not establish archive validity, provenance or a
-     trusted root-owned cache.	Remote source fetching is not implemented.
+     tracting files or running hooks. It creates a mode 0600 temporary file rel-
+     ative  to the opened output directory and synchronizes it before a no-over-
+     write hardlink creates the object. Repeating the command checks the  exist-
+     ing  object's digest. A mismatched object is left untouched. Fetch does not
+     establish archive validity, provenance or a trusted root-owned cache.   Re-
+     mote source fetching is not implemented.
 
-     With --extract, DIRECTORY must not exist. The command  copies  the	 regular
-     input  into  a  private  temporary file, verifies that copy and checks that
-     every entry is a  directory,  regular  file,  relative  symlink  or  direct
-     hardlink.	Before	creating DIRECTORY, it rejects duplicate paths and paths
-     nested under any non-directory archive entry.  It	then  creates  DIRECTORY
-     and  writes  HOLY	and  DATA  there with directory-relative operations that
-     refuse symlink  traversal	and  file  replacement.	 It  does  not	preserve
-     UID/GID,  setuid  bits, capabilities or xattrs. It refuses absolute symlink
-     targets and special nodes; hardlink targets must resolve to  regular  files
-     within  the  output tree. Hooks never run. If an I/O error occurs after DI-
+     With  --extract,  DIRECTORY  must not exist. The command copies the regular
+     input into a private temporary file, verifies that	 copy  and  checks  that
+     every  entry  is  a  directory,  regular  file,  relative symlink or direct
+     hardlink. Before creating DIRECTORY, it rejects duplicate paths  and  paths
+     nested  under  any	 non-directory archive entry.  It then creates DIRECTORY
+     and writes HOLY and DATA  there  with  directory-relative	operations  that
+     refuse  symlink  traversal	 and  file  replacement.  It  does  not preserve
+     UID/GID, setuid bits, capabilities or xattrs. It refuses  absolute	 symlink
+     targets  and  special nodes; hardlink targets must resolve to regular files
+     within the output tree. Hooks never run. If an I/O error occurs  after  DI-
      RECTORY is created, partial output remains for inspection.	 This command is
      not a system installation or a root transaction.
 
-     The local check command first verifies the package, then compares its  DATA
-     members  with  a  supplied filesystem root. It follows directory components
-     through directory	descriptors  without  following	 symlinks.  It	compares
-     types,  mode,  numeric  UID/GID, file size and SHA-256, symlink targets and
-     hardlink inode identity. It reports each changed path. Check does	not  run
+     The  local check command first verifies the package, then compares its DATA
+     members with a supplied filesystem root. It  follows  directory  components
+     through  directory	 descriptors  without  following  symlinks.  It compares
+     types, mode, numeric UID/GID, file size and SHA-256,  symlink  targets  and
+     hardlink  inode  identity. It reports each changed path. Check does not run
      package code, download files or modify the root. It does not consult an in-
-     stalled  database, model ELF loaders, check unknown runtime dependencies or
+     stalled database, model ELF loaders, check unknown runtime dependencies  or
      prove a stable snapshot if the package or root changes during checking.
 
      With --json, check prints one JSON object per finding and a final pass/fail
      summary on stdout. The schema is holy-check-1; changed-payload and missing-
-     payload are stable finding codes. Input or	 operational  failures	use  in-
-     valid-package  or	check-error  and status unknown. Paths use byte escapes.
+     payload  are  stable  finding  codes. Input or operational failures use in-
+     valid-package or check-error and status unknown. Paths  use  byte	escapes.
      Other commands do not yet implement --json.
 
-     The developer-facing elf command reads a regular  ELF  through  libelf/GElf
+     The  developer-facing  elf	 command reads a regular ELF through libelf/GElf
      without executing it or invoking ldd. It prints ELF class, a recognized ma-
-     chine  (x86,  x86_64  or  x32), the PT_INTERP path, and a libc runtime hint
+     chine (x86, x86_64 or x32), the PT_INTERP path, and  a  libc  runtime  hint
      only for recognized glibc or musl interpreters. It reads PT_DYNAMIC to list
-     DT_NEEDED, SONAME, RPATH and RUNPATH  even	 without  section  headers.  GNU
-     DT_VERNEED	 records  list	provider  SONAME, version and weak flag. GNU x86
+     DT_NEEDED,	 SONAME,  RPATH	 and  RUNPATH  even without section headers. GNU
+     DT_VERNEED records list provider SONAME, version and  weak	 flag.	GNU  x86
      ISA-needed	 properties  in	 PT_NOTE  report  x86-64-baseline/v2/v3/v4  when
-     present;  absent  or  unrecognized	 properties report unknown. No PT_INTERP
-     yields unknown runtime. It does not inspect  exported  symbol  versions  or
-     plugin  loading;  its  output is not a dependency resolution or package ABI
+     present; absent or unrecognized properties	 report	 unknown.  No  PT_INTERP
+     yields  unknown  runtime.	It  does not inspect exported symbol versions or
+     plugin loading; its output is not a dependency resolution	or  package  ABI
      verdict.
 
 EXIT STATUS
-     0 indicates success under the implemented checks; 1 indicates a failed  lo-
-     cal  fetch,  extraction or check; 2 indicates invalid arguments, configura-
-     tion or package inspection. Diagnostics go to standard error except  --json
+     0	indicates success under the implemented checks; 1 indicates a failed lo-
+     cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
+     tion  or package inspection. Diagnostics go to standard error except --json
      check events, which go to standard output.
 
 SEE ALSO

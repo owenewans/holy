@@ -39,6 +39,8 @@ mkdir "$tmp/fetched"
 fetched=$("$bin" fetch "local:$tmp/package.holy" --output "$tmp/fetched")
 test "$fetched" = "$tmp/fetched/$expected.holy"
 cmp "$tmp/package.holy" "$fetched"
+test "$(stat -c %a "$fetched")" = 600
+test -z "$(find "$tmp/fetched" -name '.holy-tmp-*' -print)"
 test "$("$bin" fetch "local:$tmp/package.holy" --output "$tmp/fetched")" = "$fetched"
 printf 'damaged\n' > "$fetched"
 if "$bin" fetch "local:$tmp/package.holy" --output "$tmp/fetched" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
