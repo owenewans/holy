@@ -23,8 +23,8 @@ int holy_state_recheck(const char *root_path);
 int holy_state_apply(const char *root_path);
 /* clear a journal only when no payload or installed instance was written. */
 int holy_state_abort_empty(const char *root_path);
-/* compare one installed data manifest to the target root without repair. */
-int holy_state_check(const char *digest, const char *root_path);
+/* compare one or --all installed data manifests; no repair. */
+int holy_state_check(const char *digest, const char *root_path, int json);
 /* remove one intact data-only installed instance; shared directories remain. */
 int holy_state_remove(const char *digest, const char *root_path);
 /* finish a removing journal if remaining listed files are unchanged. */

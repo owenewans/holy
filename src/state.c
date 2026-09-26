@@ -1129,12 +1129,12 @@ static int compare_check_result(const void *a, const void *b)
     return strcmp(left->digest, right->digest);
 }
 
-static int check_all(int installed, int root, unsigned long long generation)
+static int check_all(int installed, int root, unsigned long long generation, int json)
 {
     struct check_result *records = NULL;
     DIR *list = NULL;
     struct dirent *entry;
-    size_t count = 0, capacity = 0, i;
+    size_t count = 0, capacity = 0, i, passed = 0, failed = 0;
     int copy = dup(installed), result = 1;
     if (copy < 0) return 1;
     list = fdopendir(copy);
@@ -1169,24 +1169,41 @@ static int check_all(int installed, int root, unsigned long long generation)
     if (count) qsort(records, count, sizeof *records, compare_check_result);
     result = 0;
     for (i = 0; i < count; ++i) {
-        if (printf("%s %s generation %llu\n",
-                   records[i].intact ? "intact" : "changed",
-                   records[i].digest, generation) < 0) { result = 1; break; }
-        if (!records[i].intact) result = 4;
+        int written;
+        if (records[i].intact) ++passed;
+        else { ++failed; result = 4; }
+        if (json)
+            written = printf("{\"schema\":\"holy-installed-check-1\",\"type\":\"artifact\",\"artifact\":\"%s\",\"state\":\"%s\",\"code\":%s,\"generation\":%llu}\n",
+                             records[i].digest, records[i].intact ? "pass" : "fail",
+                             records[i].intact ? "null" : "\"changed-file\"", generation);
+        else
+            written = printf("%s %s generation %llu\n",
+                             records[i].intact ? "intact" : "changed",
+                             records[i].digest, generation);
+        if (written < 0) { result = 1; break; }
     }
-    if (count == 0 && puts("checked 0 installed packages") == EOF) result = 1;
+    if (result != 1) {
+        if (json) {
+            if (printf("{\"schema\":\"holy-installed-check-1\",\"type\":\"summary\",\"pass\":%zu,\"fail\":%zu,\"coverage\":\"data-manifest\"}\n",
+                       passed, failed) < 0) result = 1;
+        } else if (count == 0 && puts("checked 0 installed packages") == EOF)
+            result = 1;
+    }
 done:
     free(records);
     closedir(list);
     return result;
 }
 
-int holy_state_check(const char *digest, const char *root_path)
+int holy_state_check(const char *digest, const char *root_path, int json)
 {
     unsigned long long generation;
     int root, dir = -1, installed = -1, item = -1, files = -1, result = 1;
     int checked, all = !strcmp(digest, "--all");
-    if (!all && !valid_digest(digest)) return 2;
+    if (!all && !valid_digest(digest)) {
+        if (json) puts("{\"schema\":\"holy-installed-check-1\",\"type\":\"error\",\"code\":\"invalid-argument\",\"status\":2}");
+        return 2;
+    }
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0) goto done;
     dir = state_dir_at(root, 0);
@@ -1198,16 +1215,28 @@ int holy_state_check(const char *digest, const char *root_path)
     if (!installed_valid(dir)) goto done;
     installed = child_dir(dir, "installed", 0);
     if (installed < 0) goto done;
-    if (all) { result = check_all(installed, root, generation); goto done; }
+    if (all) { result = check_all(installed, root, generation, json); goto done; }
     item = child_dir(installed, digest, 0);
     if (item < 0) { result = 6; goto done; }
     files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (files < 0) goto done;
     checked = holy_install_check_manifest(files, root);
     result = checked > 0 ? 0 : checked == 0 ? 4 : 1;
-    if (!result) printf("intact %s generation %llu\n", digest, generation);
+    if (json && (result == 0 || result == 4)) {
+        printf("{\"schema\":\"holy-installed-check-1\",\"type\":\"artifact\",\"artifact\":\"%s\",\"state\":\"%s\",\"code\":%s,\"generation\":%llu}\n",
+               digest, result ? "fail" : "pass",
+               result ? "\"changed-file\"" : "null", generation);
+        printf("{\"schema\":\"holy-installed-check-1\",\"type\":\"summary\",\"pass\":%d,\"fail\":%d,\"coverage\":\"data-manifest\"}\n",
+               result ? 0 : 1, result ? 1 : 0);
+    } else if (!result) printf("intact %s generation %llu\n", digest, generation);
 done:
     if (result) fprintf(stderr, "holypkg: installed check failed (status %d)\n", result);
+    if (json && result != 0 && result != 4) {
+        const char *code = result == 5 ? "incomplete-transaction" :
+                           result == 6 ? "unavailable-instance" : "invalid-state";
+        printf("{\"schema\":\"holy-installed-check-1\",\"type\":\"error\",\"code\":\"%s\",\"status\":%d}\n",
+               code, result);
+    }
     if (files >= 0) close(files);
     if (item >= 0) close(item);
     if (installed >= 0) close(installed);

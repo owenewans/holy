@@ -87,6 +87,19 @@ mkdir -p "$tmp/system/usr/bin"
 "$bin" db init --root "$tmp/system" > "$tmp/out"
 "$bin" db check --all --root "$tmp/system" > "$tmp/out"
 grep -qx 'checked 0 installed packages' "$tmp/out"
+"$bin" db check --all --root "$tmp/system" --json > "$tmp/out"
+python3 - "$tmp/out" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as stream:
+    records = [json.loads(line) for line in stream]
+assert records == [{'schema': 'holy-installed-check-1', 'type': 'summary',
+                    'pass': 0, 'fail': 0, 'coverage': 'data-manifest'}]
+PY
+missing=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+if "$bin" db check "$missing" --root "$tmp/system" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+grep -qx '{"schema":"holy-installed-check-1","type":"error","code":"unavailable-instance","status":6}' "$tmp/out"
+if "$bin" db check invalid --root "$tmp/system" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+grep -qx '{"schema":"holy-installed-check-1","type":"error","code":"invalid-argument","status":2}' "$tmp/out"
 "$bin" cache stage "local:$tmp/data.holy" --root "$tmp/system" > "$tmp/out"
 digest=$(sha256sum "$tmp/data.holy")
 digest=${digest%% *}
@@ -122,6 +135,17 @@ grep -qx "recovered install $digest generation 1" "$tmp/out"
 test ! -e "$db/transactions/journal"
 "$bin" db check "$digest" --root "$tmp/system" > "$tmp/out"
 grep -qx "intact $digest generation 1" "$tmp/out"
+"$bin" db check "$digest" --root "$tmp/system" --json > "$tmp/out"
+python3 - "$tmp/out" "$digest" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as stream:
+    artifact, summary = [json.loads(line) for line in stream]
+assert artifact == {'schema': 'holy-installed-check-1', 'type': 'artifact',
+                    'artifact': sys.argv[2], 'state': 'pass', 'code': None,
+                    'generation': 1}
+assert summary == {'schema': 'holy-installed-check-1', 'type': 'summary',
+                   'pass': 1, 'fail': 0, 'coverage': 'data-manifest'}
+PY
 "$bin" db owner /usr/bin/data --root "$tmp/system" > "$tmp/out"
 grep -qx "$digest file usr/bin/data" "$tmp/out"
 "$bin" db owner usr/bin --root "$tmp/system" > "$tmp/out"
@@ -133,6 +157,14 @@ test ! -s "$tmp/out"
 printf 'changed\n' > "$tmp/system/usr/bin/data"
 if "$bin" db check "$digest" --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 grep -qx 'holypkg: changed-file usr/bin/data' "$tmp/err"
+if "$bin" db check "$digest" --root "$tmp/system" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+python3 - "$tmp/out" "$digest" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as stream:
+    artifact, summary = [json.loads(line) for line in stream]
+assert artifact['artifact'] == sys.argv[2] and artifact['code'] == 'changed-file'
+assert artifact['state'] == 'fail' and summary['fail'] == 1
+PY
 cp "$tmp/payload/DATA/usr/bin/data" "$tmp/system/usr/bin/data"
 "$bin" db check "$digest" --root "$tmp/system" > "$tmp/out"
 rm "$tmp/system/usr/bin/data"
@@ -188,10 +220,28 @@ grep -qx 'generation 2' "$tmp/out"
 grep -qx "intact $digest generation 2" "$tmp/out"
 grep -qx "intact $digest2 generation 2" "$tmp/out"
 test "$(wc -l < "$tmp/out")" -eq 2
+"$bin" db check --all --root "$tmp/system" --json > "$tmp/out"
+python3 - "$tmp/out" "$digest" "$digest2" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as stream:
+    a, b, summary = [json.loads(line) for line in stream]
+assert [a['artifact'], b['artifact']] == sorted(sys.argv[2:])
+assert [a['state'], b['state']] == ['pass', 'pass']
+assert summary['pass'] == 2 and summary['fail'] == 0
+PY
 printf 'changed\n' > "$tmp/system/usr/bin/data"
 if "$bin" db check --all --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 grep -qx "changed $digest generation 2" "$tmp/out"
 grep -qx "intact $digest2 generation 2" "$tmp/out"
+if "$bin" db check --all --root "$tmp/system" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+python3 - "$tmp/out" "$digest" "$digest2" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as stream:
+    records = [json.loads(line) for line in stream]
+assert {item['artifact']: item['state'] for item in records[:-1]} == {
+    sys.argv[2]: 'fail', sys.argv[3]: 'pass'}
+assert records[-1]['fail'] == 1 and records[-1]['pass'] == 1
+PY
 cp "$tmp/payload/DATA/usr/bin/data2" "$tmp/system/usr/bin/data"
 "$bin" db owner usr/bin --root "$tmp/system" > "$tmp/out"
 grep -qx "$digest directory usr/bin" "$tmp/out"
@@ -235,6 +285,8 @@ test -f "$tmp/failure/var/lib/holypkg/transactions/journal"
 if "$bin" db status --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
 grep -qx 'incomplete transaction; inspect journal' "$tmp/out"
 if "$bin" db check --all --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
+if "$bin" db check --all --root "$tmp/failure" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
+grep -qx '{"schema":"holy-installed-check-1","type":"error","code":"incomplete-transaction","status":5}' "$tmp/out"
 if "$bin" db recover --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
 test ! -e "$tmp/failure/usr/bin/data"
 chmod 0755 "$tmp/failure/usr/bin"

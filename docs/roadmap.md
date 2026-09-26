@@ -25,6 +25,7 @@ it does not mean a bootable distribution or general package support.
   claims as conflicts while permitting shared directory entries.
 - [x] Check one or all installed data manifests against the target root without
   downloads or repair; report each changed artifact in the all-packages pass.
+  Emit machine-readable pass/fail summaries for this restricted check.
 - [x] Reject a second local data package with an already installed name during
   plan construction. This is a temporary restriction, not source-ID slot support.
 - [ ] Define stable source IDs, version families, installed ownership and selected

@@ -188,7 +188,11 @@ int main(int argc, char **argv)
         return holy_state_approve(argv[3], argv[5]);
     if (argc == 6 && !strcmp(argv[1], "db") &&
         !strcmp(argv[2], "check") && !strcmp(argv[4], "--root"))
-        return holy_state_check(argv[3], argv[5]);
+        return holy_state_check(argv[3], argv[5], 0);
+    if (argc == 7 && !strcmp(argv[1], "db") &&
+        !strcmp(argv[2], "check") && !strcmp(argv[4], "--root") &&
+        !strcmp(argv[6], "--json"))
+        return holy_state_check(argv[3], argv[5], 1);
     if (argc == 6 && !strcmp(argv[1], "db") &&
         !strcmp(argv[2], "rm") && !strcmp(argv[4], "--root"))
         return holy_state_remove(argv[3], argv[5]);
