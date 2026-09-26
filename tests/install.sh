@@ -63,6 +63,16 @@ printf 'bad\n' > "$tmp/payload/HOLY/files"
 if "$bin" pack "$tmp/payload" --output "$tmp/refused.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
 test ! -e "$tmp/refused.holy"
 mv "$tmp/valid-files" "$tmp/payload/HOLY/files"
+cp "$tmp/payload/DATA/usr/bin/data" "$tmp/valid-data"
+cp "$tmp/payload/HOLY/files" "$tmp/valid-files"
+printf '\177ELFfake' > "$tmp/payload/DATA/usr/bin/data"
+elfhash=$(sha256sum "$tmp/payload/DATA/usr/bin/data")
+elfhash=${elfhash%% *}
+sed "s/$hash/$elfhash/" "$tmp/valid-files" > "$tmp/payload/HOLY/files"
+if "$bin" pack "$tmp/payload" --output "$tmp/refused.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+test ! -e "$tmp/refused.holy"
+mv "$tmp/valid-data" "$tmp/payload/DATA/usr/bin/data"
+mv "$tmp/valid-files" "$tmp/payload/HOLY/files"
 "$helper" "$tmp/data.holy" "$tmp/root"
 cmp "$tmp/root/usr/bin/data" "$tmp/payload/DATA/usr/bin/data"
 if "$helper" "$tmp/data.holy" "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi

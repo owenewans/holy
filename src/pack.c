@@ -1,6 +1,9 @@
 #define _POSIX_C_SOURCE 200809L
 #include "pack.h"
 #include "verify.h"
+#include "scan.h"
+#include "deps.h"
+#include "provides.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -253,7 +256,11 @@ int holy_pack(const char *tree, const char *output)
     archive_fd = -1;
     if (fsync(fd) || close(fd)) { fd = -1; goto done; }
     fd = -1;
-    if (!holy_verify_with_output(temporary, 0) || link(temporary, output)) goto done;
+    if (!holy_verify_with_output(temporary, 0) ||
+        !holy_scan_local_with_output(temporary, 0) ||
+        !holy_deps_local_with_output(temporary, 0) ||
+        !holy_provides_local(temporary, 0) ||
+        link(temporary, output)) goto done;
     if (!sync_parent(output)) {
         fprintf(stderr, "holypkg: output published but directory sync failed: %s\n", output);
         goto done;

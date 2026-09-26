@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=3a255aee67a4b8c4813aba28fc51beb05cb3b54e5e9481e584883b8ec24bb6bd
+holypkg.8 source=holy version=development sha256=eca254c2df954e2283b396035dd29fad1ca2a0c370e0f374b225e852bcf9ff7a
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -119,10 +119,11 @@ DESCRIPTION
      file modes and numeric ownership, fixes archive timestamps to zero and  or-
      ders  directory entries by name. It writes a POSIX PAX tar compressed as an
      LZ4 frame to a temporary file alongside the destination, verifies the  com-
-     pleted artifact, and publishes it only when the destination does not exist.
-     Pack  neither generates HOLY/files nor infers ABI facts. A mismatched mani-
-     fest fails without publishing a package; recipes and foreign conversion are
-     separate work.
+     pleted   artifact,	  checks  known	 ELF  ABI  facts  and  supported  depen-
+     dency/provider records, and publishes it only when the destination does not
+     exist. Pack neither generates HOLY/files nor infers ABI facts. A mismatched
+     manifest fails without publishing a package; recipes and foreign conversion
+     are separate work.
 
      The db plan command reads the prepared reservation at the current	database
      generation.  It  verifies a private snapshot of the cached artifact, checks

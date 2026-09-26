@@ -112,7 +112,8 @@ rejects symlinks, hardlinks and extended attributes. It records file modes
 and numeric ownership, fixes archive timestamps to zero and orders directory
 entries by name. It writes a POSIX PAX tar compressed as an LZ4 frame to a
 temporary file alongside the destination, verifies the completed artifact,
-and publishes it only when the destination does not exist. Pack neither
+checks known ELF ABI facts and supported dependency/provider records, and
+publishes it only when the destination does not exist. Pack neither
 generates HOLY/files nor infers ABI facts. A mismatched manifest fails without
 publishing a package; recipes and foreign conversion are separate work.
 .PP
