@@ -33,9 +33,13 @@ int main(int argc, char **argv)
     if (argc == 5 && !strcmp(argv[1], "check") &&
         !strncmp(argv[2], "local:", 6) && argv[2][6] &&
         !strcmp(argv[3], "--root"))
-        return holy_check_local(argv[2] + 6, argv[4]) ? 0 : 1;
+        return holy_check_local(argv[2] + 6, argv[4], 0) ? 0 : 1;
+    if (argc == 6 && !strcmp(argv[1], "check") &&
+        !strncmp(argv[2], "local:", 6) && argv[2][6] &&
+        !strcmp(argv[3], "--root") && !strcmp(argv[5], "--json"))
+        return holy_check_local(argv[2] + 6, argv[4], 1) ? 0 : 1;
     if (argc != 4 || strcmp(argv[1], "config") || strcmp(argv[2], "check")) {
-        fprintf(stderr, "usage: holypkg config check FILE | holypkg info local:FILE | holypkg verify local:FILE | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg check local:FILE --root DIRECTORY\n");
+        fprintf(stderr, "usage: holypkg config check FILE | holypkg info local:FILE | holypkg verify local:FILE | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg check local:FILE --root DIRECTORY [--json]\n");
         return 2;
     }
     path = argv[3];

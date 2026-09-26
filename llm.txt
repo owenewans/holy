@@ -48,11 +48,11 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=a49e50632e104ab1d18d9613321dbed05aae9446cc00b52d562d812af49889c2
+holypkg.8 source=holy version=development sha256=41367c2f03767ab405a0b10110a36595de8f4eec2cd319bbc4ae0c33a23e5c42
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
-     holypkg - Holy package tooling (configuration checker prototype)
+     holypkg - Holy local package tooling prototype
 
 SYNOPSIS
      holypkg config check FILE
@@ -61,61 +61,70 @@ SYNOPSIS
      holypkg fetch local:FILE --output DIRECTORY
      holypkg fetch local:FILE --extract --output DIRECTORY
      holypkg check local:FILE --root DIRECTORY
+     holypkg check local:FILE --root DIRECTORY --json
 
 DESCRIPTION
-     Checks syntax, includes, sections and duplicate scalar keys of a configura-
-     tion  file	 without  changing  the system. No package installation, import,
-     fetch, resolution or indexing command is available yet. This executable  is
-     independent of the separate owenewans/holypkg project.
+     The  config  check	 command  checks  source  and rule configuration without
+     changing the system. Package installation, foreign	 import,  remote  fetch,
+     dependency	 resolution  and indexing are not available yet. This executable
+     is independent of the separate owenewans/holypkg project.
 
-     The  info	command reads an LZ4-frame-compressed tar archive and prints the
-     seven required fields from HOLY/meta. It reads  archive  data  without  ex-
-     tracting  or  executing it. It checks for repeated metadata and unsupported
-     format versions.  It prints the SHA-256 digest of the  input  archive.   It
-     rejects  archive entries outside HOLY and DATA, including dot segments.  It
-     requires all seven HOLY metadata members as regular files and  rejects  du-
+     The info command reads an LZ4-frame-compressed tar archive and  prints  the
+     seven  required  fields  from  HOLY/meta. It reads archive data without ex-
+     tracting or executing it. It checks for repeated metadata	and  unsupported
+     format  versions.	 It  prints the SHA-256 digest of the input archive.  It
+     rejects archive entries outside HOLY and DATA, including dot segments.   It
+     requires  all  seven HOLY metadata members as regular files and rejects du-
      plicate members.  It does not validate the payload manifest, hashes, signa-
      tures or installability.
 
      The  verify  command  checks  regular  DATA  files	 against  the  supported
-     HOLY/files records, including size, mode, numeric	owner  and  SHA-256.  It
-     checks  symlinks,	directories  and direct hardlinks, rejecting unsupported
-     objects. It does not install or authenticate packages; the two read  passes
+     HOLY/files	 records,  including  size,  mode, numeric owner and SHA-256. It
+     checks symlinks, directories and direct  hardlinks,  rejecting  unsupported
+     objects.  It does not install or authenticate packages; the two read passes
      do not provide a stable filesystem snapshot.
 
      The local fetch command copies any regular input file to an existing direc-
-     tory  as  SHA256.holy.  It	 copies bytes without interpreting metadata, ex-
+     tory as SHA256.holy. It copies bytes  without  interpreting  metadata,  ex-
      tracting files or running hooks. A temporary file receives mode 0600 and is
-     synchronized before a no-overwrite hardlink creates the  object.  Repeating
-     the  command  checks  the	existing object's digest. A mismatched object is
-     left untouched. Fetch does not establish archive validity, provenance or  a
+     synchronized  before  a no-overwrite hardlink creates the object. Repeating
+     the command checks the existing object's digest.  A  mismatched  object  is
+     left  untouched. Fetch does not establish archive validity, provenance or a
      trusted root-owned cache.	Remote source fetching is not implemented.
 
-     With  --extract,  DIRECTORY  must not exist. The command copies the regular
-     input into a private temporary file, verifies that	 copy  and  checks  that
-     every  entry  is  a  directory,  regular  file,  relative symlink or direct
-     hardlink. Before creating DIRECTORY, it rejects duplicate paths  and  paths
-     nested  under  any	 non-directory archive entry.  It then creates DIRECTORY
-     and writes HOLY and DATA  there  with  directory-relative	operations  that
-     refuse  symlink  traversal	 and  file  replacement.  It  does  not preserve
-     UID/GID, setuid bits, capabilities or xattrs. It refuses  absolute	 symlink
-     targets  and  special nodes; hardlink targets must resolve to regular files
-     within the output tree. Hooks never run. If an I/O error occurs  after  DI-
+     With --extract, DIRECTORY must not exist. The command  copies  the	 regular
+     input  into  a  private  temporary file, verifies that copy and checks that
+     every entry is a  directory,  regular  file,  relative  symlink  or  direct
+     hardlink.	Before	creating DIRECTORY, it rejects duplicate paths and paths
+     nested under any non-directory archive entry.  It	then  creates  DIRECTORY
+     and  writes  HOLY	and  DATA  there with directory-relative operations that
+     refuse symlink  traversal	and  file  replacement.	 It  does  not	preserve
+     UID/GID,  setuid  bits, capabilities or xattrs. It refuses absolute symlink
+     targets and special nodes; hardlink targets must resolve to  regular  files
+     within  the  output tree. Hooks never run. If an I/O error occurs after DI-
      RECTORY is created, partial output remains for inspection.	 This command is
      not a system installation or a root transaction.
 
-     The  local check command first verifies the package, then compares its DATA
-     members with a supplied filesystem root. It  follows  directory  components
-     through  directory	 descriptors  without  following  symlinks.  It compares
-     types, mode, numeric UID/GID, file size and SHA-256,  symlink  targets  and
-     hardlink  inode identity. It reports the first changed path. Check does not
+     The local check command first verifies the package, then compares its  DATA
+     members  with  a  supplied filesystem root. It follows directory components
+     through directory	descriptors  without  following	 symlinks.  It	compares
+     types,  mode,  numeric  UID/GID, file size and SHA-256, symlink targets and
+     hardlink inode identity. It reports the first changed path. Check does  not
      run package code, download files or modify the root. It does not consult an
-     installed database, model ELF loaders, check unknown  runtime  dependencies
+     installed	database,  model ELF loaders, check unknown runtime dependencies
      or prove a stable snapshot if the package or root changes during checking.
 
+     With --json, check prints one JSON object on stdout: a pass  summary  or  a
+     finding  with schema holy-check-1 and stable code changed-payload. Input or
+     operational failures use invalid-package or check-error and status unknown.
+     The byte-escaped path is included for changed-payload.  Other  commands  do
+     not yet implement --json. The local check reports only its first finding.
+
 EXIT STATUS
-     0	indicates a valid file under the implemented checks; 2 indicates invalid
-     arguments or invalid configuration. Diagnostics go to standard error.
+     0	indicates success under the implemented checks; 1 indicates a failed lo-
+     cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
+     tion  or package inspection. Diagnostics go to standard error except --json
+     check events, which go to standard output.
 
 SEE ALSO
      holy.conf(5), holy-package(5)

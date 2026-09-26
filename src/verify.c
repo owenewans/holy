@@ -188,7 +188,7 @@ static int validate_manifest(const char *path, char *text, size_t size,
     return 1;
 }
 
-int holy_verify(const char *path)
+int holy_verify_with_output(const char *path, int emit)
 {
     struct archive *a = NULL;
     struct archive_entry *entry;
@@ -197,7 +197,7 @@ int holy_verify(const char *path)
     char *manifest = NULL;
     char buffer[8192];
     int status, seen = 0, ok = 0;
-    if (!holy_package_info(path)) return 0;
+    if (!holy_package_inspect(path, emit)) return 0;
     a = archive_read_new();
     if (!a || archive_read_support_filter_lz4(a) != ARCHIVE_OK ||
         archive_read_support_format_tar(a) != ARCHIVE_OK ||
@@ -348,7 +348,7 @@ int holy_verify(const char *path)
         }
     if (!resolve_hardlinks(path, files, count)) goto done;
     ok = validate_manifest(path, manifest ? manifest : "", manifest_size, files, count);
-    if (ok) printf("verified %zu regular files, %zu symlinks, %zu directories, %zu hardlinks\n",
+    if (ok && emit) printf("verified %zu regular files, %zu symlinks, %zu directories, %zu hardlinks\n",
                    count - symlinks - directories - hardlinks, symlinks, directories, hardlinks);
 done:
     for (i = 0; i < count; ++i) {
@@ -361,4 +361,9 @@ done:
     free(manifest);
     if (a) archive_read_free(a);
     return ok;
+}
+
+int holy_verify(const char *path)
+{
+    return holy_verify_with_output(path, 1);
 }

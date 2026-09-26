@@ -1,6 +1,6 @@
 .TH HOLYPKG 8 "September 2026" "Holy" "System Administration"
 .SH NAME
-holypkg \- Holy package tooling (configuration checker prototype)
+holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
 .B holypkg config check FILE
 .br
@@ -13,10 +13,12 @@ holypkg \- Holy package tooling (configuration checker prototype)
 .B holypkg fetch local:FILE --extract --output DIRECTORY
 .br
 .B holypkg check local:FILE --root DIRECTORY
+.br
+.B holypkg check local:FILE --root DIRECTORY --json
 .SH DESCRIPTION
-Checks syntax, includes, sections and duplicate scalar keys of a configuration
-file without changing the system. No package installation, import, fetch,
-resolution or indexing command is available yet. This executable is independent
+The config check command checks source and rule configuration without changing
+the system. Package installation, foreign import, remote fetch, dependency
+resolution and indexing are not available yet. This executable is independent
 of the separate owenewans/holypkg project.
 .PP
 The info command reads an LZ4-frame-compressed tar archive and prints the seven
@@ -62,9 +64,17 @@ inode identity. It reports the first changed path. Check does not run package
 code, download files or modify the root. It does not consult an installed
 database, model ELF loaders, check unknown runtime dependencies or prove a
 stable snapshot if the package or root changes during checking.
+.PP
+With --json, check prints one JSON object on stdout: a pass summary or a
+finding with schema holy-check-1 and stable code changed-payload. Input or
+operational failures use invalid-package or check-error and status unknown.
+The byte-escaped path is included for changed-payload. Other commands do not
+yet implement --json. The local check reports only its first finding.
 .SH EXIT STATUS
-0 indicates a valid file under the implemented checks; 2 indicates invalid
-arguments or invalid configuration. Diagnostics go to standard error.
+0 indicates success under the implemented checks; 1 indicates a failed local
+fetch, extraction or check; 2 indicates invalid arguments, configuration or
+package inspection. Diagnostics go to standard error except --json check
+events, which go to standard output.
 .SH SEE ALSO
 .BR holy.conf (5),
 .BR holy-package (5)

@@ -132,13 +132,38 @@ static int compare_hardlink(int root, struct archive_entry *entry,
     return ok;
 }
 
-int holy_check_local(const char *package, const char *root_path)
+static void json_string(const char *text)
+{
+    const unsigned char *p = (const unsigned char *)text;
+    putchar('"');
+    for (; *p; ++p) {
+        if (*p == '"' || *p == '\\') { putchar('\\'); putchar(*p); }
+        else if (*p >= 32 && *p < 127) putchar(*p);
+        else printf("\\u%04x", (unsigned int)*p);
+    }
+    putchar('"');
+}
+
+static void report_changed(const char *path, int json)
+{
+    if (!json) fprintf(stderr, "holypkg: changed payload: %s\n", path);
+    else {
+        fputs("{\"schema\":\"holy-check-1\",\"code\":\"changed-payload\",\"severity\":\"error\",\"status\":\"fail\",\"path\":", stdout);
+        json_string(path);
+        fputs("}\n", stdout);
+    }
+}
+
+int holy_check_local(const char *package, const char *root_path, int json)
 {
     struct archive *a = NULL;
     struct archive_entry *entry;
-    int root = -1, status, ok = 0;
+    int root = -1, status, ok = 0, reported = 0;
     size_t checked = 0;
-    if (!holy_verify(package)) return 0;
+    if (!holy_verify_with_output(package, 0)) {
+        if (json) puts("{\"schema\":\"holy-check-1\",\"code\":\"invalid-package\",\"severity\":\"error\",\"status\":\"unknown\"}");
+        return 0;
+    }
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0) { perror("holypkg: check root"); goto done; }
     a = archive_read_new();
@@ -161,7 +186,8 @@ int holy_check_local(const char *package, const char *root_path)
         }
         parent = parent_fd(root, path + 5, &storage, &name);
         if (parent < 0) {
-            fprintf(stderr, "holypkg: missing parent for %s\n", path);
+            report_changed(path, json);
+            reported = 1;
             goto done;
         }
         matches = !fstatat(parent, name, &st, AT_SYMLINK_NOFOLLOW) &&
@@ -180,15 +206,19 @@ int holy_check_local(const char *package, const char *root_path)
         if (parent != root) close(parent);
         free(storage);
         if (!matches) {
-            fprintf(stderr, "holypkg: changed payload: %s\n", path);
+            report_changed(path, json);
+            reported = 1;
             goto done;
         }
         ++checked;
     }
     if (status != ARCHIVE_EOF) goto done;
-    printf("checked %zu payload objects\n", checked);
+    if (json) printf("{\"schema\":\"holy-check-1\",\"status\":\"pass\",\"coverage\":\"local-payload\",\"checked\":%zu}\n", checked);
+    else printf("checked %zu payload objects\n", checked);
     ok = 1;
 done:
+    if (!ok && json && !reported)
+        puts("{\"schema\":\"holy-check-1\",\"code\":\"check-error\",\"severity\":\"error\",\"status\":\"unknown\"}");
     if (a) archive_read_free(a);
     if (root >= 0) close(root);
     return ok;

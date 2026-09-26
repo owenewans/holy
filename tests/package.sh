@@ -66,9 +66,15 @@ chmod "$(stat -c %a "$tmp/payload/DATA/usr")" "$tmp/unpacked/DATA/usr"
 chmod "$(stat -c %a "$tmp/payload/DATA/usr/bin")" "$tmp/unpacked/DATA/usr/bin"
 "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" > "$tmp/out"
 grep -qx 'checked 3 payload objects' "$tmp/out"
+"$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" --json > "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
+grep -qx '{"schema":"holy-check-1","status":"pass","coverage":"local-payload","checked":3}' "$tmp/out"
 printf 'world\n' > "$tmp/unpacked/DATA/usr/bin/hello"
 if "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'changed payload: DATA/usr/bin/hello' "$tmp/err"
+if "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test "$(wc -l < "$tmp/out")" -eq 1
+grep -qx '{"schema":"holy-check-1","code":"changed-payload","severity":"error","status":"fail","path":"DATA/usr/bin/hello"}' "$tmp/out"
 rm "$tmp/unpacked/DATA/usr/bin/hello"
 ln -s /etc/passwd "$tmp/unpacked/DATA/usr/bin/hello"
 if "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
@@ -147,6 +153,8 @@ tar -cf "$tmp/missing-member.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/missing-member.tar" "$tmp/missing-member.holy"
 if "$bin" info "local:$tmp/missing-member.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'missing HOLY/origin' "$tmp/err"
+if "$bin" check "local:$tmp/missing-member.holy" --root "$tmp/unpacked/DATA" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -qx '{"schema":"holy-check-1","code":"invalid-package","severity":"error","status":"unknown"}' "$tmp/out"
 : > "$tmp/payload/HOLY/origin"
 tar -cf "$tmp/duplicate-member.tar" -C "$tmp/payload" HOLY DATA
 tar -rf "$tmp/duplicate-member.tar" -C "$tmp/payload" HOLY/origin

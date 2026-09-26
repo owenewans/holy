@@ -91,7 +91,7 @@ static int meta_line(char *line, size_t len, const char *path, size_t number,
     return 1;
 }
 
-static int read_meta(const char *path, const char *data, size_t length)
+static int read_meta(const char *path, const char *data, size_t length, int emit)
 {
     size_t i, start = 0, line = 1;
     char *values[sizeof fields / sizeof *fields] = {0};
@@ -115,14 +115,14 @@ static int read_meta(const char *path, const char *data, size_t length)
         fprintf(stderr, "%s: unsupported format %s\n", path, values[0]);
         ok = 0;
     }
-    if (ok) for (i = 0; i < sizeof fields / sizeof *fields; ++i)
+    if (ok && emit) for (i = 0; i < sizeof fields / sizeof *fields; ++i)
         printf("%s %s\n", fields[i], values[i]);
     for (i = 0; i < sizeof fields / sizeof *fields; ++i) free(values[i]);
     free(error);
     return ok;
 }
 
-int holy_package_info(const char *path)
+int holy_package_inspect(const char *path, int emit)
 {
     static const unsigned char magic[] = {0x04, 0x22, 0x4d, 0x18};
     unsigned char head[4];
@@ -219,8 +219,8 @@ int holy_package_info(const char *path)
             fprintf(stderr, "%s: missing %s\n", path, members[i]);
             goto done;
         }
-    ok = read_meta(path, meta ? meta : "", meta_size);
-    if (ok) {
+    ok = read_meta(path, meta ? meta : "", meta_size, emit);
+    if (ok && emit) {
         fputs("sha256 ", stdout);
         for (i = 0; i < digest_size; ++i) printf("%02x", digest[i]);
         putchar('\n');
@@ -231,4 +231,9 @@ done:
     free(meta);
     EVP_MD_CTX_free(digest_ctx);
     return ok;
+}
+
+int holy_package_info(const char *path)
+{
+    return holy_package_inspect(path, 1);
 }
