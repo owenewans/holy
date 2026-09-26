@@ -10,6 +10,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg requirements local:FILE
 .br
+.B holypkg requirements local:FILE --json
+.br
 .B holypkg fetch local:FILE --output DIRECTORY
 .br
 .B holypkg fetch local:FILE --extract --output DIRECTORY
@@ -65,6 +67,11 @@ eq, ge, le, gt or lt. VERSION is - only for any. ORIGINAL and EVIDENCE retain
 the source expression and basis as text. Requirement IDs must be unique. The
 command rejects unsupported records and duplicate IDs rather than dropping
 them; it does not evaluate version constraints or choose a provider.
+With --json, stdout contains holy-requirements-1 requirement events and a
+summary, or one error event on invalid input. Each requirement event has
+id, consumer, kind, name, arch, libc, relation, version, original and evidence
+fields. The JSON encoder maps non-ASCII bytes to \eu00HH escapes; consumers
+reconstruct original bytes rather than treating them as normalized text.
 .PP
 The local fetch command copies any regular input file to an existing directory
 as SHA256.holy. It copies bytes without interpreting metadata, extracting files
@@ -101,8 +108,8 @@ stable snapshot if the root changes during checking.
 With --json, check prints one JSON object per finding and a final pass/fail
 summary on stdout. The schema is holy-check-1; changed-payload and
 missing-payload are stable finding codes. Input or operational failures use invalid-package or check-error
-and status unknown. Paths use byte escapes. Other commands do not yet
-implement --json.
+and status unknown. Paths use byte escapes. Other commands besides
+requirements do not yet implement --json.
 .PP
 The developer-facing elf command reads a regular ELF through libelf/GElf
 without executing it or invoking ldd. It prints ELF class, numeric e_machine

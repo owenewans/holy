@@ -44,18 +44,30 @@ lz4 -q "$tmp/with-deps.tar" "$tmp/with-deps.holy"
 "$bin" requirements "local:$tmp/with-deps.holy" > "$tmp/out"
 grep -qx 'requirements 1' "$tmp/out"
 grep -Fqx 'require "libc-1" "package" "soname" "libc.so.6" "x86_64" "glibc" "any" "-" "libc.so.6" "metadata"' "$tmp/out"
+"$bin" requirements "local:$tmp/with-deps.holy" --json > "$tmp/out"
+grep -Fqx '{"schema":"holy-requirements-1","type":"requirement","id":"libc-1","consumer":"package","kind":"soname","name":"libc.so.6","arch":"x86_64","libc":"glibc","relation":"any","version":"-","original":"libc.so.6","evidence":"metadata"}' "$tmp/out"
+grep -Fqx '{"schema":"holy-requirements-1","type":"summary","count":1}' "$tmp/out"
 printf 'require libc-1 package soname libc.so.6 x86_64 glibc any - original duplicate\n' >> "$tmp/with-deps/HOLY/deps"
 tar -cf "$tmp/with-deps.tar" -C "$tmp/with-deps" HOLY DATA
 lz4 -q -f "$tmp/with-deps.tar" "$tmp/with-deps.holy"
 if "$bin" requirements "local:$tmp/with-deps.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 grep -q 'duplicate requirement id' "$tmp/err"
+if "$bin" requirements "local:$tmp/with-deps.holy" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -Fqx '{"schema":"holy-requirements-1","type":"error","code":"invalid-requirements"}' "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
 printf 'alternative unsupported\n' > "$tmp/with-deps/HOLY/deps"
 tar -cf "$tmp/with-deps.tar" -C "$tmp/with-deps" HOLY DATA
 lz4 -q -f "$tmp/with-deps.tar" "$tmp/with-deps.holy"
 if "$bin" requirements "local:$tmp/with-deps.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 grep -q 'unsupported requirement' "$tmp/err"
+printf '%s\n' 'require escaped package file /tmp/probe any any any - "line\nfeed" metadata' > "$tmp/with-deps/HOLY/deps"
+tar -cf "$tmp/with-deps.tar" -C "$tmp/with-deps" HOLY DATA
+lz4 -q -f "$tmp/with-deps.tar" "$tmp/with-deps.holy"
+"$bin" requirements "local:$tmp/with-deps.holy" --json > "$tmp/out"
+grep -Fq '"original":"line\u000afeed"' "$tmp/out"
+grep -Fqx '{"schema":"holy-requirements-1","type":"summary","count":1}' "$tmp/out"
 mkdir "$tmp/preview-root"
 "$bin" preview "local:$tmp/package.holy" --root "$tmp/preview-root" > "$tmp/out"
 grep -qx "preview artifact=$expected paths=3 conflicts=0" "$tmp/out"

@@ -101,6 +101,18 @@ static void print_token(const char *value)
     putchar('"');
 }
 
+static void json_string(const char *value)
+{
+    const unsigned char *p = (const unsigned char *)value;
+    putchar('"');
+    for (; *p; ++p) {
+        if (*p == '"' || *p == '\\') { putchar('\\'); putchar(*p); }
+        else if (*p >= 32 && *p < 127) putchar(*p);
+        else printf("\\u%04x", (unsigned int)*p);
+    }
+    putchar('"');
+}
+
 int holy_deps_local_with_output(const char *package, int emit)
 {
     char *snapshot = holy_stage_local(package, "holy-deps");
@@ -133,7 +145,7 @@ int holy_deps_local_with_output(const char *package, int emit)
         } else if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
     }
     if (status != ARCHIVE_EOF || !seen) goto done;
-    if (emit) {
+    if (emit == 1) {
         for (i = 0; i < count; ++i) {
             fputs("require", stdout);
             for (j = 1; j < 11; ++j) {
@@ -143,10 +155,28 @@ int holy_deps_local_with_output(const char *package, int emit)
             putchar('\n');
         }
         printf("requirements %zu\n", count);
+    } else if (emit == 2) {
+        static const char *const keys[] = {
+            "id", "consumer", "kind", "name", "arch", "libc",
+            "relation", "version", "original", "evidence"
+        };
+        for (i = 0; i < count; ++i) {
+            fputs("{\"schema\":\"holy-requirements-1\",\"type\":\"requirement\"", stdout);
+            for (j = 1; j < 11; ++j) {
+                printf(",\"%s\":", keys[j - 1]);
+                json_string(items[i].fields[j]);
+            }
+            puts("}");
+        }
+        printf("{\"schema\":\"holy-requirements-1\",\"type\":\"summary\",\"count\":%zu}\n", count);
     }
     ok = 1;
 done:
-    if (!ok) fprintf(stderr, "holypkg: requirements inspection failed\n");
+    if (!ok) {
+        fprintf(stderr, "holypkg: requirements inspection failed\n");
+        if (emit == 2)
+            puts("{\"schema\":\"holy-requirements-1\",\"type\":\"error\",\"code\":\"invalid-requirements\"}");
+    }
     for (i = 0; i < count; ++i) holy_tokens_free(items[i].fields, 11);
     free(items);
     free(data);
