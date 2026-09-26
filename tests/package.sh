@@ -41,12 +41,24 @@ cache="$tmp/cache-root/var/cache/holypkg/objects/sha256/$expected.holy"
 grep -Fqx "$cache" "$tmp/out"
 cmp "$tmp/package.holy" "$cache"
 test "$(stat -c %a "$cache")" = 600
+"$bin" cache verify "$expected" --root "$tmp/cache-root" > "$tmp/out"
+grep -qx "verified $expected fixture x86_64 nolibc" "$tmp/out"
+if "$bin" cache verify invalid --root "$tmp/cache-root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
 "$bin" cache stage "local:$tmp/package.holy" --root "$tmp/cache-root" > "$tmp/out"
 grep -Fqx "$cache" "$tmp/out"
 printf 'tampered' > "$cache"
+if "$bin" cache verify "$expected" --root "$tmp/cache-root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
 if "$bin" cache stage "local:$tmp/package.holy" --root "$tmp/cache-root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 grep -Fqx 'tampered' "$cache"
+rm "$cache"
+"$bin" cache stage "local:$tmp/package.holy" --root "$tmp/cache-root" > "$tmp/out"
+rm "$cache"
+ln -s "$tmp/package.holy" "$cache"
+if "$bin" cache verify "$expected" --root "$tmp/cache-root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
 rm "$cache"
 "$bin" cache stage "local:$tmp/package.holy" --root "$tmp/cache-root" > "$tmp/out"
 mkdir "$tmp/cache-symlink"

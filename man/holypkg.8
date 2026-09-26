@@ -28,6 +28,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg cache stage local:FILE --root DIRECTORY
 .br
+.B holypkg cache verify SHA256 --root DIRECTORY
+.br
 .B holypkg repo index DIRECTORY
 .br
 .B holypkg repo list DIRECTORY
@@ -178,6 +180,12 @@ must allow writes by the caller and must not be group- or world-writable;
 each directory must belong to root or the caller. The command creates cache directories and
 the object, not installed state or payload files; it does not resolve providers
 or run hooks. The cache remains local and unsigned.
+.PP
+Cache verify opens the object named by a lowercase SHA-256 through the same
+target-root directory chain, stages a private snapshot and checks the digest,
+payload, known ELF ABI facts and supported requirements. It reports the
+verified name, arch and libc. It does not mutate the cache or prove that
+other package dependencies can be satisfied.
 .PP
 The repository index command validates regular .holy files in DIRECTORY and
 writes an unsigned, lexicographically ordered index through an atomic rename.
