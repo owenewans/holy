@@ -54,6 +54,9 @@ int main(int argc, char **argv)
     if (argc == 4 && !strcmp(argv[1], "repo") &&
         !strcmp(argv[2], "list"))
         return holy_repo_list(argv[3]) ? 0 : 1;
+    if (argc == 5 && !strcmp(argv[1], "repo") &&
+        !strcmp(argv[2], "search"))
+        return holy_repo_search(argv[3], argv[4]) ? 0 : 1;
 
     if (argc == 3 && !strcmp(argv[1], "info") &&
         !strncmp(argv[2], "local:", 6) && argv[2][6])
@@ -78,7 +81,7 @@ int main(int argc, char **argv)
         !strcmp(argv[3], "--root") && !strcmp(argv[5], "--json"))
         return holy_check_local(argv[2] + 6, argv[4], 1) ? 0 : 1;
     if (argc != 4 || strcmp(argv[1], "config") || strcmp(argv[2], "check")) {
-        fprintf(stderr, "usage: holypkg config check FILE | holypkg info local:FILE | holypkg verify local:FILE | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg check local:FILE --root DIRECTORY [--json] | holypkg elf FILE | holypkg scan local:FILE | holypkg repo index DIRECTORY | holypkg repo list DIRECTORY\n");
+        fprintf(stderr, "usage: holypkg config check FILE | holypkg info local:FILE | holypkg verify local:FILE | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg check local:FILE --root DIRECTORY [--json] | holypkg elf FILE | holypkg scan local:FILE | holypkg repo index DIRECTORY | holypkg repo list DIRECTORY | holypkg repo search DIRECTORY NAME\n");
         return 2;
     }
     path = argv[3];

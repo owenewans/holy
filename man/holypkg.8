@@ -23,6 +23,8 @@ holypkg \- Holy local package tooling prototype
 .B holypkg repo index DIRECTORY
 .br
 .B holypkg repo list DIRECTORY
+.br
+.B holypkg repo search DIRECTORY NAME
 .SH DESCRIPTION
 The config check command checks source and rule configuration without changing
 the system. Package installation, foreign import, remote fetch, dependency
@@ -116,6 +118,11 @@ lexer and checks each referenced regular archive's size, SHA-256, identity,
 payload and known ELF ABI facts before printing records. An index without a
 signature carries no provenance guarantee. Neither command installs packages
 or activates this directory as a package source.
+.PP
+The repository search command verifies the same complete local index and
+returns exact name matches. No match prints a zero-count summary. This
+prototype does not perform fuzzy search, dependency resolution or provider
+selection.
 .SH EXIT STATUS
 0 indicates success under the implemented checks; 1 indicates a failed local
 fetch, extraction or check; 2 indicates invalid arguments, configuration or

@@ -191,7 +191,7 @@ static int parse_record(char **v, size_t n, struct object *object)
     return 1;
 }
 
-int holy_repo_list(const char *directory)
+static int list(const char *directory, const char *query)
 {
     struct object *objects = NULL;
     struct stat st;
@@ -269,9 +269,15 @@ int holy_repo_list(const char *directory)
         free(snapshot);
         if (!matches) goto done;
     }
-    for (j = 0; j < count; ++j)
-        if (!record(stdout, &objects[j])) goto done;
-    printf("listed %zu packages\n", count);
+    {
+        size_t matches = 0;
+        for (j = 0; j < count; ++j) {
+            if (query && strcmp(objects[j].identity.name, query)) continue;
+            if (!record(stdout, &objects[j])) goto done;
+            ++matches;
+        }
+        printf("listed %zu packages\n", matches);
+    }
     ok = 1;
 done:
     if (!ok) fprintf(stderr, "holypkg: invalid or stale repository index%s%s\n",
@@ -287,4 +293,18 @@ done:
     free(objects);
     if (dir >= 0) close(dir);
     return ok;
+}
+
+int holy_repo_list(const char *directory)
+{
+    return list(directory, NULL);
+}
+
+int holy_repo_search(const char *directory, const char *query)
+{
+    if (!query || !*query) {
+        fprintf(stderr, "holypkg: package name required\n");
+        return 0;
+    }
+    return list(directory, query);
 }

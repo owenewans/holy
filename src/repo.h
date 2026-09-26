@@ -4,5 +4,6 @@
 /* writes an unsigned local prototype index after validating native objects. */
 int holy_repo_index(const char *directory);
 int holy_repo_list(const char *directory);
+int holy_repo_search(const char *directory, const char *query);
 
 #endif
