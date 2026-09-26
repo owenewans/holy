@@ -26,6 +26,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg preview local:FILE --root DIRECTORY
 .br
+.B holypkg cache stage local:FILE --root DIRECTORY
+.br
 .B holypkg repo index DIRECTORY
 .br
 .B holypkg repo list DIRECTORY
@@ -164,6 +166,16 @@ HOLY/hooks and privileged payload modes. A zero-conflict preview is not an
 installable plan: it has no installed database generation, dependency
 resolution, ownership decisions, transaction journal or apply command.
 Changes to the root after preview invalidate the result.
+.PP
+The cache stage command copies a verified local archive to
+ROOT/var/cache/holypkg/objects/sha256/SHA256.holy. It validates known ELF ABI
+facts and the supported HOLY/deps subset before publication. It opens cache
+directories relative to the target root without following symlinks and rejects
+a same-name object with a different digest. Existing target cache directories
+must allow writes by the caller and must not be group- or world-writable;
+each directory must belong to root or the caller. The command creates cache directories and
+the object, not installed state or payload files; it does not resolve providers
+or run hooks. The cache remains local and unsigned.
 .PP
 The repository index command validates regular .holy files in DIRECTORY and
 writes an unsigned, lexicographically ordered index through an atomic rename.

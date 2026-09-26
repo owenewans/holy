@@ -59,11 +59,12 @@ static int copy_and_hash(int source, int target, unsigned char digest[32])
     return ok;
 }
 
-int holy_fetch_local(const char *source, const char *output)
+int holy_fetch_at(const char *source, int dir, const char *expected,
+                  char name[70])
 {
-    int input = -1, dir = -1, temp = -1, existing = -1, ok = 0;
+    int input = -1, temp = -1, existing = -1, ok = 0;
     unsigned char digest[32], prior[32];
-    char temporary[43], name[72];
+    char temporary[43];
     size_t i;
     struct stat st;
 
@@ -72,8 +73,6 @@ int holy_fetch_local(const char *source, const char *output)
         fprintf(stderr, "holypkg: local input must be a regular file\n");
         goto done;
     }
-    dir = open(output, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    if (dir < 0) { perror("holypkg: output directory"); goto done; }
     temp = holy_temporary_at(dir, temporary);
     if (temp < 0) { perror("holypkg: temporary file"); goto done; }
     if (!copy_and_hash(input, temp, digest) || fsync(temp)) {
@@ -82,6 +81,10 @@ int holy_fetch_local(const char *source, const char *output)
     }
     for (i = 0; i < 32; ++i) snprintf(name + i * 2, 3, "%02x", digest[i]);
     memcpy(name + 64, ".holy", 6);
+    if (expected && (strlen(expected) != 64 || strncmp(name, expected, 64))) {
+        fprintf(stderr, "holypkg: staged object differs from expected digest\n");
+        goto done;
+    }
     if (linkat(dir, temporary, dir, name, 0)) {
         if (errno != EEXIST) { perror("holypkg: link object"); goto done; }
         existing = openat(dir, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
@@ -92,13 +95,23 @@ int holy_fetch_local(const char *source, const char *output)
         }
     }
     if (fsync(dir)) { perror("holypkg: sync output"); goto done; }
-    printf("%s/%s\n", output, name);
     ok = 1;
 done:
     if (existing >= 0) close(existing);
     if (temp >= 0) close(temp);
     if (temp >= 0) unlinkat(dir, temporary, 0);
-    if (dir >= 0) close(dir);
     if (input >= 0) close(input);
+    return ok;
+}
+
+int holy_fetch_local(const char *source, const char *output)
+{
+    char name[70];
+    int dir = open(output, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int ok;
+    if (dir < 0) { perror("holypkg: output directory"); return 0; }
+    ok = holy_fetch_at(source, dir, NULL, name);
+    close(dir);
+    if (ok) printf("%s/%s\n", output, name);
     return ok;
 }

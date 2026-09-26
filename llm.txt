@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=8b35c37e7e0b17675e9fc972c36e0a8e1af285cd3ab5e6a2218f9fba8f2aac53
+holypkg.8 source=holy version=development sha256=17d80c3b01e75d2e12a1fc79eba7c58ceb9150be2b1a32a22981afa127dea8de
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -67,6 +67,7 @@ SYNOPSIS
      holypkg elf FILE
      holypkg scan local:FILE
      holypkg preview local:FILE --root DIRECTORY
+     holypkg cache stage local:FILE --root DIRECTORY
      holypkg repo index DIRECTORY
      holypkg repo list DIRECTORY
      holypkg repo search DIRECTORY NAME
@@ -204,6 +205,17 @@ DESCRIPTION
      database  generation,  dependency resolution, ownership decisions, transac-
      tion journal or apply command.  Changes to the root after	preview	 invali-
      date the result.
+
+     The   cache   stage   command   copies   a	  verified   local   archive  to
+     ROOT/var/cache/holypkg/objects/sha256/SHA256.holy. It validates  known  ELF
+     ABI  facts	 and the supported HOLY/deps subset before publication. It opens
+     cache directories relative to the target root  without  following	symlinks
+     and  rejects  a  same-name	 object with a different digest. Existing target
+     cache directories must allow writes by the caller and must not be group- or
+     world-writable; each directory must belong to root or the caller. The  com-
+     mand  creates cache directories and the object, not installed state or pay-
+     load files; it does not resolve providers or run hooks. The  cache	 remains
+     local and unsigned.
 
      The repository index command validates regular .holy files in DIRECTORY and
      writes  an	 unsigned, lexicographically ordered index through an atomic re-

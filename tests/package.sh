@@ -35,6 +35,32 @@ grep -qx 'name fixture' "$tmp/out"
 grep -qx 'libc nolibc' "$tmp/out"
 expected=$(sha256sum "$tmp/package.holy" | cut -d ' ' -f 1)
 grep -qx "sha256 $expected" "$tmp/out"
+mkdir "$tmp/cache-root"
+"$bin" cache stage "local:$tmp/package.holy" --root "$tmp/cache-root" > "$tmp/out"
+cache="$tmp/cache-root/var/cache/holypkg/objects/sha256/$expected.holy"
+grep -Fqx "$cache" "$tmp/out"
+cmp "$tmp/package.holy" "$cache"
+test "$(stat -c %a "$cache")" = 600
+"$bin" cache stage "local:$tmp/package.holy" --root "$tmp/cache-root" > "$tmp/out"
+grep -Fqx "$cache" "$tmp/out"
+printf 'tampered' > "$cache"
+if "$bin" cache stage "local:$tmp/package.holy" --root "$tmp/cache-root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
+grep -Fqx 'tampered' "$cache"
+rm "$cache"
+"$bin" cache stage "local:$tmp/package.holy" --root "$tmp/cache-root" > "$tmp/out"
+mkdir "$tmp/cache-symlink"
+ln -s "$tmp/cache-root/var" "$tmp/cache-symlink/var"
+if "$bin" cache stage "local:$tmp/package.holy" --root "$tmp/cache-symlink" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
+test -z "$(find "$tmp/cache-symlink" -name '.holy-tmp-*' -print)"
+test -z "$(find "$tmp/cache-root" -name '.holy-tmp-*' -print)"
+mkdir "$tmp/cache-writable"
+chmod 777 "$tmp/cache-writable"
+if "$bin" cache stage "local:$tmp/package.holy" --root "$tmp/cache-writable" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
+grep -q 'unsafe cache directory owner or mode' "$tmp/err"
+test ! -e "$tmp/cache-writable/var"
 "$bin" requirements "local:$tmp/package.holy" > "$tmp/out"
 grep -qx 'requirements 0' "$tmp/out"
 cp -a "$tmp/payload" "$tmp/with-deps"
@@ -62,6 +88,8 @@ lz4 -q -f "$tmp/with-deps.tar" "$tmp/with-deps.holy"
 if "$bin" requirements "local:$tmp/with-deps.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 grep -q 'unsupported requirement' "$tmp/err"
+if "$bin" cache stage "local:$tmp/with-deps.holy" --root "$tmp/cache-root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
 printf '%s\n' 'require escaped package file /tmp/probe any any any - "line\nfeed" metadata' > "$tmp/with-deps/HOLY/deps"
 tar -cf "$tmp/with-deps.tar" -C "$tmp/with-deps" HOLY DATA
 lz4 -q -f "$tmp/with-deps.tar" "$tmp/with-deps.holy"
