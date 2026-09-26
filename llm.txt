@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=50f9e96db64649d58264cfb47bf78013aabbbbbf683e313c4900f949ea87e1ce
+holypkg.8 source=holy version=development sha256=003d9b71ed1474f89a30df0a2919be6ab2fd5445cfe2b4509da0c7ef377b528c
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -77,6 +77,8 @@ SYNOPSIS
      holypkg cache verify SHA256 --root DIRECTORY
      holypkg db init --root DIRECTORY
      holypkg db status --root DIRECTORY
+     holypkg db reserve SHA256 --root DIRECTORY
+     holypkg db cancel --root DIRECTORY
      holypkg repo index DIRECTORY
      holypkg repo list DIRECTORY
      holypkg repo search DIRECTORY NAME
@@ -313,12 +315,24 @@ DESCRIPTION
      the existing generation. Init checks existing records and generation before
      publishing a new generation file; unknown entries	cannot	turn  a	 partial
      database  into  an	 apparently  initialized one. Status holds a shared lock
-     while validating the same layout and  reading  the	 generation.  Until  in-
-     stalled  records  and  journals have parsers, both commands reject nonempty
-     installed, transactions and index directories instead of  treating	 unknown
-     state  as an empty database. Both commands reject symlinked, group-writable
-     or world-writable ancestor directories inside the target root.   Init  does
-     not register packages, create a transaction journal or install files.
+     while validating the same layout and reading the generation. It  recognizes
+     one  pending  reservation;	 other entries fail validation. Init rejects any
+     nonempty installed, transactions or index directory. Both	commands  reject
+     symlinked, group-writable or world-writable ancestor directories inside the
+     target root.  Init does not register packages, create a transaction journal
+     or install files.
+
+     Database reserve checks a verified SHA-256 object in the target-root cache,
+     locks  the	 empty	database  at  its  current  generation and publishes one
+     fsynced prepared reservation in transactions/pending. Status validates  the
+     record  and returns 5 while it is present. Reserve refuses a second pending
+     record with status 5. Database cancel validates and removes only this  pre-
+     pared record; it leaves the cached archive and rootfs unchanged. The record
+     has  format holy-reservation-1, stage prepared, generation and artifact di-
+     gest.  This is a reservation of inputs, not a  dependency-resolved	 install
+     plan  or  committed  transaction.	No apply or recovery from an interrupted
+     filesystem mutation exists. An unknown or malformed journal  entry	 remains
+     an error; cancel will not discard it silently.
 
      The repository index command validates regular .holy files in DIRECTORY and
      writes  an	 unsigned, lexicographically ordered index through an atomic re-

@@ -3,7 +3,11 @@
 
 /* initializes an empty database under an explicit target root. */
 int holy_state_init(const char *root_path);
-/* checks database layout and prints its monotonic generation. */
+/* 0 empty, 5 recognized prepared reservation, 1 invalid database. */
 int holy_state_status(const char *root_path);
+/* reserve one cached object at the current generation; no payload mutation. */
+int holy_state_reserve(const char *digest, const char *root_path);
+/* discard only the recognized prepared reservation. */
+int holy_state_cancel(const char *root_path);
 
 #endif

@@ -54,5 +54,62 @@ test ! -s "$tmp/out"
 chmod 777 "$tmp/writable"
 if "$bin" db init --root "$tmp/writable" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -e "$tmp/writable/var"
+mkdir -p "$tmp/payload/HOLY" "$tmp/payload/DATA"
+cat > "$tmp/payload/HOLY/meta" <<'EOF'
+format holy-package-1
+name reserved
+version 1
+release 1
+os linux
+arch noarch
+libc nolibc
+EOF
+for part in files deps provides hooks origin transform; do
+    : > "$tmp/payload/HOLY/$part"
+done
+tar -cf "$tmp/reserved.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/reserved.tar" "$tmp/reserved.holy"
+digest=$(sha256sum "$tmp/reserved.holy")
+digest=${digest%% *}
+if "$bin" db reserve invalid --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+test ! -e "$db/transactions/pending"
+if "$bin" db reserve "$digest" --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+test ! -e "$db/transactions/pending"
+"$bin" cache stage "local:$tmp/reserved.holy" --root "$tmp/root" > "$tmp/out"
+"$bin" db reserve "$digest" --root "$tmp/root" > "$tmp/out"
+grep -qx "reserved $digest generation 7" "$tmp/out"
+grep -qx 'format holy-reservation-1' "$db/transactions/pending"
+grep -qx 'stage prepared' "$db/transactions/pending"
+grep -qx 'generation 7' "$db/transactions/pending"
+grep -qx "artifact $digest" "$db/transactions/pending"
+if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
+grep -qx 'generation 7' "$tmp/out"
+grep -qx "pending $digest" "$tmp/out"
+if "$bin" db reserve "$digest" --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
+if "$bin" db init --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+printf '8\n' > "$db/generation"
+if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
+if "$bin" db cancel --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+printf '7\n' > "$db/generation"
+"$bin" db cancel --root "$tmp/root" > "$tmp/out"
+grep -qx "cancelled $digest" "$tmp/out"
+test -f "$tmp/root/var/cache/holypkg/objects/sha256/$digest.holy"
+"$bin" db status --root "$tmp/root" > "$tmp/out"
+grep -qx 'generation 7' "$tmp/out"
+if "$bin" db cancel --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+printf 'bad\n' > "$db/transactions/pending"
+if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
+if "$bin" db cancel --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+rm "$db/transactions/pending"
+printf 'unknown\n' > "$db/transactions/other"
+if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+if "$bin" db reserve "$digest" --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+rm "$db/transactions/other"
+ln -s "$tmp/reserved.holy" "$db/transactions/pending"
+if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+if "$bin" db cancel --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+rm "$db/transactions/pending"
 test -z "$(find "$db" -name '.holy-tmp-*' -print)"
 printf 'database fixtures passed\n'

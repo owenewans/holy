@@ -44,6 +44,10 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db status --root DIRECTORY
 .br
+.B holypkg db reserve SHA256 --root DIRECTORY
+.br
+.B holypkg db cancel --root DIRECTORY
+.br
 .B holypkg repo index DIRECTORY
 .br
 .B holypkg repo list DIRECTORY
@@ -284,13 +288,25 @@ It locks the database directory for this operation and uses a synced temporary
 file plus link for exclusive generation creation; repeating init retains the
 existing generation. Init checks existing records and generation before
 publishing a new generation file; unknown entries cannot turn a partial
-database into an apparently initialized one. Status holds a shared lock while validating the same
-layout and reading the generation. Until installed records and journals have
-parsers, both commands reject nonempty installed, transactions and index
-directories instead of treating unknown state as an empty database. Both
+database into an apparently initialized one. Status holds a shared lock while
+validating the same layout and reading the generation. It recognizes one
+pending reservation; other entries fail validation. Init rejects any nonempty
+installed, transactions or index directory. Both
 commands reject symlinked,
 group-writable or world-writable ancestor directories inside the target root.
 Init does not register packages, create a transaction journal or install files.
+.PP
+Database reserve checks a verified SHA-256 object in the target-root cache,
+locks the empty database at its current generation and publishes one
+fsynced prepared reservation in transactions/pending. Status validates the
+record and returns 5 while it is present. Reserve refuses a second pending
+record with status 5. Database cancel validates and removes only this prepared
+record; it leaves the cached archive and rootfs unchanged. The record has
+format holy-reservation-1, stage prepared, generation and artifact digest.
+This is a reservation of inputs, not a dependency-resolved install plan or
+committed transaction. No apply or recovery from an interrupted filesystem
+mutation exists. An unknown or malformed journal entry remains an error;
+cancel will not discard it silently.
 .PP
 The repository index command validates regular .holy files in DIRECTORY and
 writes an unsigned, lexicographically ordered index through an atomic rename.

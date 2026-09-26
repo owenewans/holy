@@ -31,7 +31,8 @@ The C99 prototype verifies local `.holy` archives, inspects ELF, typed
 requirements and capability claims, checks files and previews root path
 conflicts without installing.
 It stages verified archives in a target-root cache.
-It can initialize and inspect an empty target-root package database.
+It can initialize an empty target-root package database and reserve or cancel
+one verified cached artifact at a fixed generation. It cannot install it.
 It can build, seal, search exact provider claims and fetch an unsigned local
 repository catalog. The catalog records package capability claims; candidate
 lookup validates matching artifacts against those claims.

@@ -77,7 +77,7 @@ done:
     return ok;
 }
 
-int holy_cache_verify(const char *digest, const char *root_path)
+static int verify_object(const char *digest, const char *root_path, int emit)
 {
     struct holy_package_identity identity = {0};
     struct stat st;
@@ -101,8 +101,8 @@ int holy_cache_verify(const char *digest, const char *root_path)
         !holy_provides_local(snapshot, 0) ||
         !holy_package_identity(snapshot, &identity) ||
         strcmp(identity.digest, digest)) goto done;
-    printf("verified %s %s %s %s\n", identity.digest, identity.name,
-           identity.arch, identity.libc);
+    if (emit) printf("verified %s %s %s %s\n", identity.digest, identity.name,
+                     identity.arch, identity.libc);
     ok = 1;
 done:
     if (!ok) fprintf(stderr, "holypkg: cache object verification failed\n");
@@ -111,4 +111,14 @@ done:
     if (fd >= 0) close(fd);
     if (dir >= 0) close(dir);
     return ok;
+}
+
+int holy_cache_verify(const char *digest, const char *root_path)
+{
+    return verify_object(digest, root_path, 1);
+}
+
+int holy_cache_object(const char *digest, const char *root_path)
+{
+    return verify_object(digest, root_path, 0);
 }

@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "state.h"
 #include "stage.h"
+#include "cache.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -19,6 +20,16 @@ static int safe_directory(int fd)
     return !fstat(fd, &st) && S_ISDIR(st.st_mode) &&
            (st.st_uid == 0 || st.st_uid == geteuid()) &&
            !(st.st_mode & 0022);
+}
+
+static int valid_digest(const char *digest)
+{
+    size_t i;
+    if (!digest || strlen(digest) != 64) return 0;
+    for (i = 0; i < 64; ++i)
+        if (!((digest[i] >= '0' && digest[i] <= '9') ||
+              (digest[i] >= 'a' && digest[i] <= 'f'))) return 0;
+    return 1;
 }
 
 static int child_dir(int parent, const char *name, int create)
@@ -111,6 +122,59 @@ static int empty_child(int dir, const char *name)
     return empty;
 }
 
+static int read_pending(int transactions, unsigned long long generation,
+                        char digest[65])
+{
+    char buffer[192], prefix[96];
+    struct stat st;
+    ssize_t got;
+    size_t length, i;
+    int fd = openat(transactions, "pending", O_RDONLY | O_NOFOLLOW |
+                    O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0) return errno == ENOENT ? 0 : -1;
+    length = (size_t)snprintf(prefix, sizeof prefix,
+        "format holy-reservation-1\nstage prepared\ngeneration %llu\nartifact ",
+        generation);
+    if (length >= sizeof prefix || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size != (off_t)(length + 65) || (st.st_mode & 0022) ||
+        (st.st_uid != 0 && st.st_uid != geteuid())) { close(fd); return -1; }
+    got = read(fd, buffer, sizeof buffer);
+    close(fd);
+    if (got != st.st_size || memcmp(buffer, prefix, length) ||
+        buffer[length + 64] != '\n') return -1;
+    for (i = 0; i < 64; ++i)
+        if (!((buffer[length + i] >= '0' && buffer[length + i] <= '9') ||
+              (buffer[length + i] >= 'a' && buffer[length + i] <= 'f')))
+            return -1;
+    memcpy(digest, buffer + length, 64);
+    digest[64] = '\0';
+    return 1;
+}
+
+static int pending_child(int dir, unsigned long long generation, char digest[65])
+{
+    int child = child_dir(dir, "transactions", 0), result = -1;
+    DIR *listing;
+    struct dirent *entry;
+    size_t count = 0;
+    if (child < 0) return -1;
+    listing = fdopendir(dup(child));
+    if (!listing) { close(child); return -1; }
+    errno = 0;
+    while ((entry = readdir(listing))) {
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+            continue;
+        if (strcmp(entry->d_name, "pending") || ++count > 1) break;
+        errno = 0;
+    }
+    if (!entry && !errno && count <= 1)
+        result = read_pending(child, generation, digest);
+    closedir(listing);
+    close(child);
+    if (result < 0) fprintf(stderr, "holypkg: unrecognized database entries in transactions\n");
+    return result;
+}
+
 int holy_state_init(const char *root_path)
 {
     char temp_name[43];
@@ -144,17 +208,84 @@ done:
 int holy_state_status(const char *root_path)
 {
     unsigned long long generation;
-    int dir = state_dir(root_path, 0), ok = 0;
+    char digest[65];
+    int dir = state_dir(root_path, 0), pending, result = 1;
     if (dir < 0) goto done;
     if (flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
         !empty_child(dir, "installed") ||
-        !empty_child(dir, "transactions") ||
         !empty_child(dir, "index") ||
         !read_generation(dir, &generation)) goto done;
+    pending = pending_child(dir, generation, digest);
+    if (pending < 0) goto done;
     printf("generation %llu\n", generation);
-    ok = 1;
+    if (pending) {
+        printf("pending %s\n", digest);
+        result = 5;
+    } else result = 0;
 done:
-    if (!ok) fprintf(stderr, "holypkg: database status unavailable\n");
+    if (result == 1) fprintf(stderr, "holypkg: database status unavailable\n");
     if (dir >= 0) close(dir);
-    return ok;
+    return result;
+}
+
+int holy_state_reserve(const char *digest, const char *root_path)
+{
+    unsigned long long generation;
+    char existing[65], temp_name[43] = {0}, record[192];
+    int dir = -1, transactions = -1, temp = -1, result = 1;
+    size_t length;
+    if (!valid_digest(digest)) {
+        fprintf(stderr, "holypkg: expected a lowercase SHA-256 digest\n");
+        return 2;
+    }
+    dir = state_dir(root_path, 0);
+    if (!holy_cache_object(digest, root_path)) { result = 6; goto done; }
+    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+        !empty_child(dir, "installed") || !empty_child(dir, "index") ||
+        !read_generation(dir, &generation)) goto done;
+    result = pending_child(dir, generation, existing);
+    if (result < 0) { result = 1; goto done; }
+    if (result) { result = 5; goto done; }
+    result = 1;
+    transactions = child_dir(dir, "transactions", 0);
+    if (transactions < 0) goto done;
+    length = (size_t)snprintf(record, sizeof record,
+        "format holy-reservation-1\nstage prepared\ngeneration %llu\nartifact %s\n",
+        generation, digest);
+    if (length >= sizeof record) goto done;
+    temp = holy_temporary_at(transactions, temp_name);
+    if (temp < 0 || write(temp, record, length) != (ssize_t)length || fsync(temp) ||
+        linkat(transactions, temp_name, transactions, "pending", 0)) goto done;
+    if (close(temp)) { temp = -1; goto done; }
+    temp = -1;
+    if (unlinkat(transactions, temp_name, 0) || fsync(transactions)) goto done;
+    printf("reserved %s generation %llu\n", digest, generation);
+    result = 0;
+done:
+    if (result && result != 5) fprintf(stderr, "holypkg: reservation failed\n");
+    if (temp >= 0) { close(temp); unlinkat(transactions, temp_name, 0); }
+    if (transactions >= 0) close(transactions);
+    if (dir >= 0) close(dir);
+    return result;
+}
+
+int holy_state_cancel(const char *root_path)
+{
+    unsigned long long generation;
+    char digest[65];
+    int dir = state_dir(root_path, 0), transactions = -1, result = 1;
+    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+        !empty_child(dir, "installed") || !empty_child(dir, "index") ||
+        !read_generation(dir, &generation) ||
+        pending_child(dir, generation, digest) != 1) goto done;
+    transactions = child_dir(dir, "transactions", 0);
+    if (transactions < 0 || unlinkat(transactions, "pending", 0) ||
+        fsync(transactions)) goto done;
+    printf("cancelled %s\n", digest);
+    result = 0;
+done:
+    if (result) fprintf(stderr, "holypkg: reservation cancellation failed\n");
+    if (transactions >= 0) close(transactions);
+    if (dir >= 0) close(dir);
+    return result;
 }
