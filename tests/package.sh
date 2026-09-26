@@ -70,7 +70,7 @@ grep -Fq '"original":"line\u000afeed"' "$tmp/out"
 grep -Fqx '{"schema":"holy-requirements-1","type":"summary","count":1}' "$tmp/out"
 mkdir "$tmp/preview-root"
 "$bin" preview "local:$tmp/package.holy" --root "$tmp/preview-root" > "$tmp/out"
-grep -qx "preview artifact=$expected paths=3 conflicts=0" "$tmp/out"
+grep -qx "preview artifact=$expected paths=3 conflicts=0 requirements=0" "$tmp/out"
 grep -qx 'new usr/bin/hello' "$tmp/out"
 test ! -e "$tmp/preview-root/usr"
 mkdir "$tmp/preview-root/usr"
@@ -78,7 +78,7 @@ ln -s "$tmp/payload/DATA/usr/bin" "$tmp/preview-root/usr/bin"
 rc=0
 "$bin" preview "local:$tmp/package.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 4
-grep -qx "preview artifact=$expected paths=3 conflicts=2" "$tmp/out"
+grep -qx "preview artifact=$expected paths=3 conflicts=2 requirements=0" "$tmp/out"
 grep -qx 'conflict usr/bin/hello' "$tmp/out"
 test -L "$tmp/preview-root/usr/bin"
 rm "$tmp/preview-root/usr/bin"
@@ -87,7 +87,7 @@ printf 'keep\n' > "$tmp/preview-root/usr/bin/hello"
 rc=0
 "$bin" preview "local:$tmp/package.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 4
-grep -qx "preview artifact=$expected paths=3 conflicts=1" "$tmp/out"
+grep -qx "preview artifact=$expected paths=3 conflicts=1 requirements=0" "$tmp/out"
 grep -qx 'conflict usr/bin/hello' "$tmp/out"
 grep -qx 'keep' "$tmp/preview-root/usr/bin/hello"
 cp -a "$tmp/payload" "$tmp/with-hook"
@@ -98,15 +98,28 @@ rc=0
 "$bin" preview "local:$tmp/with-hook.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 6
 test ! -s "$tmp/out"
-grep -q 'requires empty hooks and deps' "$tmp/err"
+grep -q 'requires empty hooks' "$tmp/err"
 : > "$tmp/with-hook/HOLY/hooks"
 printf 'require unknown\n' > "$tmp/with-hook/HOLY/deps"
 tar -cf "$tmp/with-hook.tar" -C "$tmp/with-hook" HOLY DATA
 lz4 -q -f "$tmp/with-hook.tar" "$tmp/with-hook.holy"
 rc=0
 "$bin" preview "local:$tmp/with-hook.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
-test "$rc" -eq 6
+test "$rc" -eq 2
 test ! -s "$tmp/out"
+cp "$tmp/with-deps/HOLY/deps" "$tmp/with-hook/HOLY/deps"
+tar -cf "$tmp/with-hook.tar" -C "$tmp/with-hook" HOLY DATA
+lz4 -q -f "$tmp/with-hook.tar" "$tmp/with-hook.holy"
+mkdir "$tmp/decision-root"
+rc=0
+"$bin" preview "local:$tmp/with-hook.holy" --root "$tmp/decision-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
+test "$rc" -eq 3
+grep -q '^preview artifact=.* paths=3 conflicts=0 requirements=1$' "$tmp/out"
+test ! -e "$tmp/decision-root/usr"
+rc=0
+"$bin" preview "local:$tmp/with-hook.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
+test "$rc" -eq 4
+grep -q '^preview artifact=.* paths=3 conflicts=1 requirements=1$' "$tmp/out"
 cp -a "$tmp/payload" "$tmp/privileged"
 chmod 4755 "$tmp/privileged/DATA/usr/bin/hello"
 sed 's/^file usr\/bin\/hello [^ ]*/file usr\/bin\/hello 4755/' \

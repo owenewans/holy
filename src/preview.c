@@ -5,6 +5,7 @@
 #include "scan.h"
 #include "stage.h"
 #include "verify.h"
+#include "deps.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -70,11 +71,12 @@ int holy_preview_local(const char *package, const char *root_path)
     struct holy_package_identity identity = {0};
     struct action *actions = NULL;
     char *snapshot = holy_stage_local(package, "holy-preview");
-    size_t count = 0, i, conflicts = 0;
+    size_t count = 0, i, conflicts = 0, requirements = 0;
     int root = -1, status, rc = 2;
     if (!snapshot || !holy_verify_with_output(snapshot, 0) ||
         !holy_extract_preflight(snapshot) ||
         !holy_scan_local_with_output(snapshot, 0) ||
+        !holy_deps_count(snapshot, &requirements) ||
         !holy_package_identity(snapshot, &identity)) goto done;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0) { perror("holypkg: target root"); rc = 1; goto done; }
@@ -86,9 +88,9 @@ int holy_preview_local(const char *package, const char *root_path)
         const char *path = archive_entry_pathname(entry);
         struct action *next;
         int state;
-        if (!strcmp(path, "HOLY/hooks") || !strcmp(path, "HOLY/deps")) {
+        if (!strcmp(path, "HOLY/hooks")) {
             if (archive_entry_size(entry) != 0) {
-                fprintf(stderr, "holypkg: preview requires empty hooks and deps\n");
+                fprintf(stderr, "holypkg: preview requires empty hooks\n");
                 rc = 6;
                 goto done;
             }
@@ -117,14 +119,15 @@ int holy_preview_local(const char *package, const char *root_path)
         if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
     }
     if (status != ARCHIVE_EOF) goto done;
-    printf("preview artifact=%s paths=%zu conflicts=%zu\n", identity.digest, count, conflicts);
+    printf("preview artifact=%s paths=%zu conflicts=%zu requirements=%zu\n",
+           identity.digest, count, conflicts, requirements);
     for (i = 0; i < count; ++i) {
         printf("%s ", actions[i].state == 0 ? "new" :
                        actions[i].state == 1 ? "existing-dir" : "conflict");
         print_path(actions[i].path);
         putchar('\n');
     }
-    rc = conflicts ? 4 : 0;
+    rc = conflicts ? 4 : requirements ? 3 : 0;
 done:
     if (rc == 2) fprintf(stderr, "holypkg: cannot preview package\n");
     if (archive) archive_read_free(archive);

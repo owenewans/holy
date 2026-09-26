@@ -113,7 +113,7 @@ static void json_string(const char *value)
     putchar('"');
 }
 
-int holy_deps_local_with_output(const char *package, int emit)
+static int inspect_local(const char *package, int emit, size_t *result_count)
 {
     char *snapshot = holy_stage_local(package, "holy-deps");
     char *data = NULL;
@@ -145,6 +145,7 @@ int holy_deps_local_with_output(const char *package, int emit)
         } else if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
     }
     if (status != ARCHIVE_EOF || !seen) goto done;
+    if (result_count) *result_count = count;
     if (emit == 1) {
         for (i = 0; i < count; ++i) {
             fputs("require", stdout);
@@ -188,4 +189,15 @@ done:
 int holy_deps_local(const char *package)
 {
     return holy_deps_local_with_output(package, 1);
+}
+
+int holy_deps_local_with_output(const char *package, int emit)
+{
+    return inspect_local(package, emit, NULL);
+}
+
+int holy_deps_count(const char *package, size_t *count)
+{
+    *count = 0;
+    return inspect_local(package, 0, count);
 }
