@@ -96,6 +96,42 @@ done:
     return ok;
 }
 
+static const char *missing_requirement(const struct local_item *local,
+                                        size_t count)
+{
+    unsigned char *seen = calloc(count, 1);
+    size_t *queue = malloc(count * sizeof *queue);
+    size_t head = 0, tail = 1, j;
+    const char *missing = NULL;
+    if (!seen || !queue) goto done;
+    seen[0] = 1;
+    queue[0] = 0;
+    while (head < tail) {
+        const struct local_item *consumer = &local[queue[head++]];
+        for (j = 0; j < consumer->requirement_count; ++j) {
+            size_t i, matches = 0, provider = 0;
+            for (i = 0; i < count; ++i)
+                if (!strcmp(consumer->requirements[j].first,
+                            local[i].capability)) {
+                    ++matches;
+                    provider = i;
+                }
+            if (!matches) {
+                missing = consumer->requirement_ids[j];
+                goto done;
+            }
+            if (matches == 1 && !seen[provider]) {
+                seen[provider] = 1;
+                queue[tail++] = provider;
+            }
+        }
+    }
+done:
+    free(seen);
+    free(queue);
+    return missing;
+}
+
 int holy_resolve_local(const char *const *paths, size_t count, int json)
 {
     struct local_item *local = NULL;
@@ -160,15 +196,7 @@ int holy_resolve_local(const char *const *paths, size_t count, int json)
     } else if (solved == 3) result = 3;
     else if (solved == 2) {
         result = 4;
-        for (j = 0; j < local[0].requirement_count; ++j) {
-            for (i = 0; i < count; ++i)
-                if (!strcmp(local[0].requirements[j].first,
-                            local[i].capability)) break;
-            if (i == count) {
-                unresolved = local[0].requirement_ids[j];
-                break;
-            }
-        }
+        unresolved = missing_requirement(local, count);
     }
 done:
     if (result) fprintf(stderr, "holypkg: local resolution %s\n",

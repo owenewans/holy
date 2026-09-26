@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=f431edc3be3cb0512310ab431c2e9a8ed655742117c23aa600494783dff83189
+holypkg.8 source=holy version=development sha256=ad01cb310124f09af0526143f849d75b5955c82697da2ae0ccf036c3cacfba1d
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -144,9 +144,10 @@ DESCRIPTION
      solve-1 selected events carrying artifact digests and a count summary after
      a	unique	solution. Errors emit one structured error event without partial
      selected events; malformed arguments use invalid-query. Diagnostics  remain
-     on stderr.	 For a missing direct provider, the error event also carries the
-     validated	requirement-id	and  stderr  names  it. Transitive conflicts can
-     still lack an identified requirement in this prototype.
+     on	 stderr.  For a missing provider on a path of uniquely determined candi-
+     dates, the error event also carries the validated requirement-id and stderr
+     names it. If a transitive edge has multiple candidate providers, this diag-
+     nosis stops at that edge rather than blaming an unselected candidate.
 
      The provides command stages and  verifies	a  native  archive,  then  reads
      HOLY/provides as typed claims. Each supported line has seven tokens:
