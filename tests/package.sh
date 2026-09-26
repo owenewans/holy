@@ -72,6 +72,8 @@ grep -qx '{"schema":"holy-check-1","status":"pass","coverage":"local-payload","c
 mkdir "$tmp/empty-root"
 if "$bin" check "local:$tmp/package.holy" --root "$tmp/empty-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test "$(wc -l < "$tmp/out")" -eq 4
+grep -qx '{"schema":"holy-check-1","code":"missing-payload","severity":"error","status":"fail","path":"DATA/usr/"}' "$tmp/out"
+grep -qx '{"schema":"holy-check-1","code":"missing-payload","severity":"error","status":"fail","path":"DATA/usr/bin/hello"}' "$tmp/out"
 grep -qx '{"schema":"holy-check-1","status":"fail","coverage":"local-payload","checked":3,"findings":3}' "$tmp/out"
 printf 'world\n' > "$tmp/unpacked/DATA/usr/bin/hello"
 if "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
@@ -84,6 +86,9 @@ rm "$tmp/unpacked/DATA/usr/bin/hello"
 ln -s /etc/passwd "$tmp/unpacked/DATA/usr/bin/hello"
 if "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'changed payload: DATA/usr/bin/hello' "$tmp/err"
+rm "$tmp/unpacked/DATA/usr/bin/hello"
+if "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -qx '{"schema":"holy-check-1","code":"missing-payload","severity":"error","status":"fail","path":"DATA/usr/bin/hello"}' "$tmp/out"
 chmod 700 "$tmp/unpacked/DATA/usr"
 if "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test "$(wc -l < "$tmp/out")" -eq 3

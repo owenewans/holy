@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=50bbe16ad0b5c2cd7ed853c51bbbc82b5802074459158e58c0e6a044780e16cd
+holypkg.8 source=holy version=development sha256=4686c4c463f5359e02b8e50863fd22ad91ef727b9fe3115c74cfbe6ba225f11a
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -115,10 +115,10 @@ DESCRIPTION
      prove a stable snapshot if the package or root changes during checking.
 
      With --json, check prints one JSON object per finding and a final pass/fail
-     summary on stdout. The schema is holy-check-1; changed-payload is a  stable
-     finding  code.  Input or operational failures use invalid-package or check-
-     error and status unknown. Paths use byte escapes. Other commands do not yet
-     implement --json.
+     summary on stdout. The schema is holy-check-1; changed-payload and missing-
+     payload are stable finding codes. Input or	 operational  failures	use  in-
+     valid-package  or	check-error  and status unknown. Paths use byte escapes.
+     Other commands do not yet implement --json.
 
 EXIT STATUS
      0 indicates success under the implemented checks; 1 indicates a failed  lo-

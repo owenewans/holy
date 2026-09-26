@@ -34,7 +34,13 @@ static int parent_fd(int root, const char *path, char **storage, const char **ba
         if (end) *end = '\0';
         next = openat(current, cursor, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
         if (current != root) close(current);
-        if (next < 0) { free(*storage); *storage = NULL; return -1; }
+        if (next < 0) {
+            int error = errno;
+            free(*storage);
+            *storage = NULL;
+            errno = error;
+            return -1;
+        }
         current = next;
         cursor = end ? end + 1 : cursor + strlen(cursor);
     }
@@ -144,11 +150,12 @@ static void json_string(const char *text)
     putchar('"');
 }
 
-static void report_changed(const char *path, int json)
+static void report_changed(const char *path, const char *code, int json)
 {
-    if (!json) fprintf(stderr, "holypkg: changed payload: %s\n", path);
+    if (!json) fprintf(stderr, "holypkg: %s payload: %s\n",
+                       !strcmp(code, "missing-payload") ? "missing" : "changed", path);
     else {
-        fputs("{\"schema\":\"holy-check-1\",\"code\":\"changed-payload\",\"severity\":\"error\",\"status\":\"fail\",\"path\":", stdout);
+        printf("{\"schema\":\"holy-check-1\",\"code\":\"%s\",\"severity\":\"error\",\"status\":\"fail\",\"path\":", code);
         json_string(path);
         fputs("}\n", stdout);
     }
@@ -187,13 +194,27 @@ int holy_check_local(const char *package, const char *root_path, int json)
         ++checked;
         parent = parent_fd(root, path + 5, &storage, &name);
         if (parent < 0) {
-            report_changed(path, json);
+            if (errno != ENOENT && errno != ENOTDIR && errno != ELOOP) goto done;
+            report_changed(path, errno == ENOENT ? "missing-payload" : "changed-payload", json);
             ++findings;
             if (archive_read_data_skip(a) != ARCHIVE_OK) goto done;
             continue;
         }
-        matches = !fstatat(parent, name, &st, AT_SYMLINK_NOFOLLOW) &&
-                  (st.st_mode & 07777) == archive_entry_perm(entry) &&
+        matches = !fstatat(parent, name, &st, AT_SYMLINK_NOFOLLOW);
+        if (!matches && errno != ENOENT) {
+            if (parent != root) close(parent);
+            free(storage);
+            goto done;
+        }
+        if (!matches) {
+            if (parent != root) close(parent);
+            free(storage);
+            report_changed(path, "missing-payload", json);
+            ++findings;
+            if (archive_read_data_skip(a) != ARCHIVE_OK) goto done;
+            continue;
+        }
+        matches = (st.st_mode & 07777) == archive_entry_perm(entry) &&
                   st.st_uid == (uid_t)archive_entry_uid(entry) &&
                   st.st_gid == (gid_t)archive_entry_gid(entry);
         if (matches && archive_entry_hardlink(entry))
@@ -208,7 +229,7 @@ int holy_check_local(const char *package, const char *root_path, int json)
         if (parent != root) close(parent);
         free(storage);
         if (!matches) {
-            report_changed(path, json);
+            report_changed(path, "changed-payload", json);
             ++findings;
         }
         if (archive_read_data_skip(a) != ARCHIVE_OK) goto done;

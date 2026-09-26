@@ -66,8 +66,8 @@ database, model ELF loaders, check unknown runtime dependencies or prove a
 stable snapshot if the package or root changes during checking.
 .PP
 With --json, check prints one JSON object per finding and a final pass/fail
-summary on stdout. The schema is holy-check-1; changed-payload is a stable
-finding code. Input or operational failures use invalid-package or check-error
+summary on stdout. The schema is holy-check-1; changed-payload and
+missing-payload are stable finding codes. Input or operational failures use invalid-package or check-error
 and status unknown. Paths use byte escapes. Other commands do not yet
 implement --json.
 .SH EXIT STATUS
