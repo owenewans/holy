@@ -14,7 +14,7 @@ Run `make` to build `holypkg` and `make check` to test it. `make install`
 installs the binary, man pages and generated `llm.txt`. Read
 `man/holy.conf.5`, `man/holy-package.5` and `man/holypkg.8` for the implemented
 interface. Builds require libarchive, libelf and OpenSSL; fixtures also require tar,
-lz4, sha256sum, setfattr, setfacl and objcopy. Package installation, ISO images and runtime acceptance
+lz4, sha256sum, setfattr, setfacl, objcopy, as and ld. Package installation, ISO images and runtime acceptance
 tests remain unimplemented.
 
 The similarly named `owenewans/holypkg` repository is a separate project.
