@@ -18,6 +18,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg solve local:ROOT [local:CANDIDATE ...]
 .br
+.B holypkg solve local:ROOT [local:CANDIDATE ...] --json
+.br
 .B holypkg fetch local:FILE --output DIRECTORY
 .br
 .B holypkg fetch local:FILE --extract --output DIRECTORY
@@ -111,6 +113,10 @@ requirement. The solver checks package-set uniqueness, not ambiguous provider
 edges inside an identical set. Script interpreter and plugin requirements are
 not inferred from payload in this subset, so selection is not an
 installability verdict.
+With --json, stdout contains holy-local-solve-1 selected events carrying
+artifact digests and a count summary after a unique solution. Errors emit
+one structured error event without partial selected events; malformed
+arguments use invalid-query. Diagnostics remain on stderr.
 .PP
 The provides command stages and verifies a native archive, then reads
 HOLY/provides as typed claims. Each supported line has seven tokens:
@@ -176,7 +182,7 @@ With --json, check prints one JSON object per finding and a final pass/fail
 summary on stdout. The schema is holy-check-1; changed-payload and
 missing-payload are stable finding codes. Input or operational failures use invalid-package or check-error
 and status unknown. Paths use byte escapes. Only check, requirements, provides
-and repo providers support --json in this prototype.
+repo providers and solve support --json in this prototype.
 .PP
 The developer-facing elf command reads a regular ELF through libelf/GElf
 without executing it or invoking ldd. It prints ELF class, numeric e_machine

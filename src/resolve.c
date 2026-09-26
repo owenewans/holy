@@ -86,7 +86,7 @@ done:
     return ok;
 }
 
-int holy_resolve_local(const char *const *paths, size_t count)
+int holy_resolve_local(const char *const *paths, size_t count, int json)
 {
     struct local_item *local = NULL;
     struct holy_solver_item *items = NULL;
@@ -136,8 +136,15 @@ int holy_resolve_local(const char *const *paths, size_t count)
     }
     solved = holy_solve_exact_unique(items, count, items[0].id, selected);
     if (solved == 1) {
-        for (i = 0; i < count; ++i)
-            if (selected[i]) printf("selected %s\n", local[i].identity.digest);
+        size_t selected_count = 0;
+        for (i = 0; i < count; ++i) if (selected[i]) {
+            if (json)
+                printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"selected\",\"sha256\":\"%s\"}\n",
+                       local[i].identity.digest);
+            else printf("selected %s\n", local[i].identity.digest);
+            ++selected_count;
+        }
+        if (json) printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"summary\",\"count\":%zu}\n", selected_count);
         result = 0;
     } else if (solved == 3) result = 3;
     else if (solved == 2) result = 4;
@@ -146,6 +153,10 @@ done:
                         result == 3 ? "needs provider choice" :
                         result == 4 ? "has a dependency conflict" :
                         "requires unsupported data or failed");
+    if (result && json)
+        printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"%s\"}\n",
+               result == 3 ? "decision-required" :
+               result == 4 ? "dependency-conflict" : "unsupported-input");
     for (i = 0; i < prepared; ++i) {
         for (j = 0; j < local[i].requirement_count; ++j)
             free((char *)local[i].requirements[j].first);

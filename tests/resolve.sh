@@ -35,6 +35,10 @@ b_hash=${b_hash%% *}
 grep -qx "selected $root_hash" "$tmp/out"
 grep -qx "selected $b_hash" "$tmp/out"
 test "$(wc -l < "$tmp/out")" -eq 2
+"$bin" solve "local:$tmp/root-1.holy" "local:$tmp/b-1.holy" --json > "$tmp/out"
+grep -Fqx "{\"schema\":\"holy-local-solve-1\",\"type\":\"selected\",\"sha256\":\"$root_hash\"}" "$tmp/out"
+grep -Fqx "{\"schema\":\"holy-local-solve-1\",\"type\":\"selected\",\"sha256\":\"$b_hash\"}" "$tmp/out"
+grep -Fqx '{"schema":"holy-local-solve-1","type":"summary","count":2}' "$tmp/out"
 printf 'require c-1 b package c any any any - c metadata\n' > "$tmp/payload/HOLY/deps"
 build b 3
 : > "$tmp/payload/HOLY/deps"
@@ -54,14 +58,28 @@ test ! -s "$tmp/out"
 : > "$tmp/payload/HOLY/provides"
 if "$bin" solve "local:$tmp/root-1.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 test ! -s "$tmp/out"
+if "$bin" solve "local:$tmp/root-1.holy" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"dependency-conflict"}' "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
 if "$bin" solve "local:$tmp/root-1.holy" "local:$tmp/b-1.holy" "local:$tmp/b-2.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 test ! -s "$tmp/out"
+if "$bin" solve "local:$tmp/root-1.holy" "local:$tmp/b-1.holy" "local:$tmp/b-2.holy" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"decision-required"}' "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
+if "$bin" solve --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"invalid-query"}' "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
+if "$bin" solve "local:$tmp/root-1.holy" bad --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"invalid-query"}' "$tmp/out"
 if "$bin" solve "local:$tmp/root-1.holy" "local:$tmp/b-1.holy" "local:$tmp/b-1.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 test ! -s "$tmp/out"
 printf 'require b-1 root soname b any any any - b metadata\n' > "$tmp/payload/HOLY/deps"
 build root 2
 if "$bin" solve "local:$tmp/root-2.holy" "local:$tmp/b-1.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 test ! -s "$tmp/out"
+if "$bin" solve "local:$tmp/root-2.holy" "local:$tmp/b-1.holy" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"unsupported-input"}' "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
 printf 'require b-1 root package b any any eq 1 b metadata\n' > "$tmp/payload/HOLY/deps"
 build root 3
 if "$bin" solve "local:$tmp/root-3.holy" "local:$tmp/b-1.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
