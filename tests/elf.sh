@@ -17,6 +17,15 @@ grep -qx 'isa x86-64-v3' "$tmp/out"
 objcopy --strip-section-headers "$tmp/isa-v3" "$tmp/isa-v3-no-sections"
 "$bin" elf "$tmp/isa-v3-no-sections" > "$tmp/out"
 grep -qx 'isa x86-64-v3' "$tmp/out"
+objcopy --remove-section .note.gnu.property "$tmp/isa-v3" "$tmp/isa-unknown"
+"$bin" elf "$tmp/isa-unknown" > "$tmp/out"
+grep -qx 'isa unknown' "$tmp/out"
+cp "$tmp/isa-v3" "$tmp/isa-bad"
+offset=$(readelf -W -S "$tmp/isa-bad" | awk '/\.note\.gnu\.property / {print $5; exit}')
+test -n "$offset"
+printf '\377\377\377\177' | dd of="$tmp/isa-bad" bs=1 seek=$((0x$offset + 20)) conv=notrunc status=none
+if "$bin" elf "$tmp/isa-bad" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'invalid ELF input' "$tmp/err"
 objcopy --strip-section-headers "$tmp/main" "$tmp/no-sections"
 "$bin" elf "$tmp/no-sections" > "$tmp/out"
 grep -qx 'machine x86_64' "$tmp/out"
