@@ -21,6 +21,8 @@ test -d "$db/index"
 test "$(stat -c %a "$db/generation")" = 600
 "$bin" db status --root "$tmp/root" > "$tmp/out"
 grep -qx 'generation 0' "$tmp/out"
+"$bin" db status --root "$tmp/root" --json > "$tmp/out"
+grep -Fqx '{"schema":"holy-db-status-1","type":"state","generation":0,"pending":null}' "$tmp/out"
 printf '7\n' > "$db/generation"
 "$bin" db init --root "$tmp/root" > "$tmp/out"
 grep -qx 'generation 7' "$tmp/out"
@@ -85,6 +87,9 @@ grep -qx "artifact $digest" "$db/transactions/pending"
 if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
 grep -qx 'generation 7' "$tmp/out"
 grep -qx "pending $digest" "$tmp/out"
+if "$bin" db status --root "$tmp/root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
+grep -Fqx "{\"schema\":\"holy-db-status-1\",\"type\":\"state\",\"generation\":7,\"pending\":{\"stage\":\"prepared\",\"sha256\":\"$digest\"}}" "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
 temp_record="$db/transactions/.holy-tmp-00000000000000000000000000000000"
 ln "$db/transactions/pending" "$temp_record"
 if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
@@ -123,6 +128,9 @@ if "$bin" db cancel --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; 
 printf 'bad\n' > "$db/transactions/pending"
 if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
+if "$bin" db status --root "$tmp/root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+grep -Fqx '{"schema":"holy-db-status-1","type":"error","code":"invalid-state"}' "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
 if "$bin" db cancel --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 rm "$db/transactions/pending"
 printf 'unknown\n' > "$db/transactions/other"

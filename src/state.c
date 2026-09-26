@@ -205,7 +205,7 @@ done:
     return ok;
 }
 
-int holy_state_status(const char *root_path)
+int holy_state_status(const char *root_path, int json)
 {
     unsigned long long generation;
     char digest[65];
@@ -217,13 +217,24 @@ int holy_state_status(const char *root_path)
         !read_generation(dir, &generation)) goto done;
     pending = pending_child(dir, generation, digest);
     if (pending < 0) goto done;
-    printf("generation %llu\n", generation);
+    if (json) {
+        printf("{\"schema\":\"holy-db-status-1\",\"type\":\"state\",\"generation\":%llu,\"pending\":",
+               generation);
+        if (pending) printf("{\"stage\":\"prepared\",\"sha256\":\"%s\"}", digest);
+        else fputs("null", stdout);
+        puts("}");
+    } else {
+        printf("generation %llu\n", generation);
+        if (pending) printf("pending %s\n", digest);
+    }
     if (pending) {
-        printf("pending %s\n", digest);
         result = 5;
     } else result = 0;
 done:
-    if (result == 1) fprintf(stderr, "holypkg: database status unavailable\n");
+    if (result == 1) {
+        fprintf(stderr, "holypkg: database status unavailable\n");
+        if (json) puts("{\"schema\":\"holy-db-status-1\",\"type\":\"error\",\"code\":\"invalid-state\"}");
+    }
     if (dir >= 0) close(dir);
     return result;
 }

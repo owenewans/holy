@@ -44,6 +44,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db status --root DIRECTORY
 .br
+.B holypkg db status --root DIRECTORY --json
+.br
 .B holypkg db reserve SHA256 --root DIRECTORY
 .br
 .B holypkg db cancel --root DIRECTORY
@@ -309,6 +311,10 @@ This is a reservation of inputs, not a dependency-resolved install plan or
 committed transaction. No apply or recovery from an interrupted filesystem
 mutation exists. An unknown or malformed journal entry remains an error;
 cancel will not discard it silently.
+.PP
+Status --json emits one holy-db-status-1 state event with numeric generation
+and pending null or a prepared SHA-256 object. A malformed database emits one
+invalid-state event and returns 1, without partial state on stdout.
 .PP
 Database recover handles only interruption of reservation publication. It
 accepts one .holy-tmp- followed by 32 lowercase hex digits, verifies its
