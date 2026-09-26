@@ -8,6 +8,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg verify local:FILE
 .br
+.B holypkg requirements local:FILE
+.br
 .B holypkg fetch local:FILE --output DIRECTORY
 .br
 .B holypkg fetch local:FILE --extract --output DIRECTORY
@@ -50,6 +52,19 @@ The verify command checks regular DATA files against the supported HOLY/files
 records, including size, mode, numeric owner and SHA-256. It checks symlinks,
 directories and direct hardlinks, rejecting unsupported objects. It does not install or authenticate packages;
 the two read passes do not provide a stable filesystem snapshot.
+.PP
+The requirements command stages and verifies a regular archive, then reads
+HOLY/deps using the holy.conf lexer. Its current typed subset accepts lines of
+eleven tokens:
+.nf
+require ID CONSUMER KIND NAME ARCH LIBC RELATION VERSION ORIGINAL EVIDENCE
+.fi
+KIND is package, file, command, soname, symbol-version or build. ARCH is any,
+x86, x86_64 or noarch; LIBC is any, glibc, musl or nolibc. RELATION is any,
+eq, ge, le, gt or lt. VERSION is - only for any. ORIGINAL and EVIDENCE retain
+the source expression and basis as text. Requirement IDs must be unique. The
+command rejects unsupported records and duplicate IDs rather than dropping
+them; it does not evaluate version constraints or choose a provider.
 .PP
 The local fetch command copies any regular input file to an existing directory
 as SHA256.holy. It copies bytes without interpreting metadata, extracting files
@@ -127,7 +142,8 @@ Changes to the root after preview invalidate the result.
 The repository index command validates regular .holy files in DIRECTORY and
 writes an unsigned, lexicographically ordered index through an atomic rename.
 It refuses symlinked packages, duplicate package identities and a nonregular
-existing index. Records in format holy-index-prototype-1 contain the quoted
+existing index. It rejects unsupported HOLY/deps records. Records in format
+holy-index-prototype-1 contain the quoted
 name, version, release, os, arch, libc, relative filename, SHA-256 and size.
 This prototype omits dependencies, provides and signatures; source adapters
 must not treat it as the native repository format.

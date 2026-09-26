@@ -35,6 +35,27 @@ grep -qx 'name fixture' "$tmp/out"
 grep -qx 'libc nolibc' "$tmp/out"
 expected=$(sha256sum "$tmp/package.holy" | cut -d ' ' -f 1)
 grep -qx "sha256 $expected" "$tmp/out"
+"$bin" requirements "local:$tmp/package.holy" > "$tmp/out"
+grep -qx 'requirements 0' "$tmp/out"
+cp -a "$tmp/payload" "$tmp/with-deps"
+printf 'require libc-1 package soname libc.so.6 x86_64 glibc any - "libc.so.6" metadata\n' > "$tmp/with-deps/HOLY/deps"
+tar -cf "$tmp/with-deps.tar" -C "$tmp/with-deps" HOLY DATA
+lz4 -q "$tmp/with-deps.tar" "$tmp/with-deps.holy"
+"$bin" requirements "local:$tmp/with-deps.holy" > "$tmp/out"
+grep -qx 'requirements 1' "$tmp/out"
+grep -Fqx 'require "libc-1" "package" "soname" "libc.so.6" "x86_64" "glibc" "any" "-" "libc.so.6" "metadata"' "$tmp/out"
+printf 'require libc-1 package soname libc.so.6 x86_64 glibc any - original duplicate\n' >> "$tmp/with-deps/HOLY/deps"
+tar -cf "$tmp/with-deps.tar" -C "$tmp/with-deps" HOLY DATA
+lz4 -q -f "$tmp/with-deps.tar" "$tmp/with-deps.holy"
+if "$bin" requirements "local:$tmp/with-deps.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
+grep -q 'duplicate requirement id' "$tmp/err"
+printf 'alternative unsupported\n' > "$tmp/with-deps/HOLY/deps"
+tar -cf "$tmp/with-deps.tar" -C "$tmp/with-deps" HOLY DATA
+lz4 -q -f "$tmp/with-deps.tar" "$tmp/with-deps.holy"
+if "$bin" requirements "local:$tmp/with-deps.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
+grep -q 'unsupported requirement' "$tmp/err"
 mkdir "$tmp/preview-root"
 "$bin" preview "local:$tmp/package.holy" --root "$tmp/preview-root" > "$tmp/out"
 grep -qx "preview artifact=$expected paths=3 conflicts=0" "$tmp/out"

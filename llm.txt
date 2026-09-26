@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=df16620679fd7e27408e5b4ec9cdbddf88853a409ff1ea66600e98263eb61592
+holypkg.8 source=holy version=development sha256=1c861a46dc0ab8a8333ce7adb9b8269f09d8dbc0a4ae6bfdb944b819b20fd085
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -58,6 +58,7 @@ SYNOPSIS
      holypkg config check FILE
      holypkg info local:FILE
      holypkg verify local:FILE
+     holypkg requirements local:FILE
      holypkg fetch local:FILE --output DIRECTORY
      holypkg fetch local:FILE --extract --output DIRECTORY
      holypkg check local:FILE --root DIRECTORY
@@ -92,124 +93,137 @@ DESCRIPTION
      objects.  It does not install or authenticate packages; the two read passes
      do not provide a stable filesystem snapshot.
 
+     The requirements command stages and verifies a regular archive, then  reads
+     HOLY/deps using the holy.conf lexer. Its current typed subset accepts lines
+     of eleven tokens:
+     require ID CONSUMER KIND NAME ARCH LIBC RELATION VERSION ORIGINAL EVIDENCE
+     KIND  is  package,	 file, command, soname, symbol-version or build. ARCH is
+     any, x86, x86_64 or noarch; LIBC is any, glibc, musl or nolibc. RELATION is
+     any, eq, ge, le, gt or lt. VERSION is - only for any. ORIGINAL and EVIDENCE
+     retain the source expression and basis as text.  Requirement  IDs	must  be
+     unique.  The  command  rejects unsupported records and duplicate IDs rather
+     than dropping them; it does not evaluate version constraints  or  choose  a
+     provider.
+
      The local fetch command copies any regular input file to an existing direc-
-     tory as SHA256.holy. It copies bytes  without  interpreting  metadata,  ex-
+     tory  as  SHA256.holy.  It	 copies bytes without interpreting metadata, ex-
      tracting files or running hooks. It creates a mode 0600 temporary file rel-
-     ative  to the opened output directory and synchronizes it before a no-over-
-     write hardlink creates the object. Repeating the command checks the  exist-
-     ing  object's digest. A mismatched object is left untouched. Fetch does not
-     establish archive validity, provenance or a trusted root-owned cache.   Re-
+     ative to the opened output directory and synchronizes it before a	no-over-
+     write  hardlink creates the object. Repeating the command checks the exist-
+     ing object's digest. A mismatched object is left untouched. Fetch does  not
+     establish	archive validity, provenance or a trusted root-owned cache.  Re-
      mote source fetching is not implemented.
 
-     With  --extract,  DIRECTORY  must not exist. The command copies the regular
-     input into a private temporary file, verifies that	 copy  and  checks  that
-     every  entry  is  a  directory,  regular  file,  relative symlink or direct
-     hardlink. Before creating DIRECTORY, it rejects duplicate paths  and  paths
-     nested  under  any	 non-directory archive entry.  It then creates DIRECTORY
-     and writes HOLY and DATA  there  with  directory-relative	operations  that
-     refuse  symlink  traversal	 and  file  replacement.  It  does  not preserve
-     UID/GID, setuid bits, capabilities or xattrs. It refuses  absolute	 symlink
-     targets  and  special nodes; hardlink targets must resolve to regular files
-     within the output tree. Hooks never run. If an I/O error occurs  after  DI-
+     With --extract, DIRECTORY must not exist. The command  copies  the	 regular
+     input  into  a  private  temporary file, verifies that copy and checks that
+     every entry is a  directory,  regular  file,  relative  symlink  or  direct
+     hardlink.	Before	creating DIRECTORY, it rejects duplicate paths and paths
+     nested under any non-directory archive entry.  It	then  creates  DIRECTORY
+     and  writes  HOLY	and  DATA  there with directory-relative operations that
+     refuse symlink  traversal	and  file  replacement.	 It  does  not	preserve
+     UID/GID,  setuid  bits, capabilities or xattrs. It refuses absolute symlink
+     targets and special nodes; hardlink targets must resolve to  regular  files
+     within  the  output tree. Hooks never run. If an I/O error occurs after DI-
      RECTORY is created, partial output remains for inspection.	 This command is
      not a system installation or a root transaction.
 
-     The  local	 check	command	 copies the regular input to a private temporary
-     file, verifies that copy and checks known ELF  arch/libc  mismatches,  then
-     compares  its  DATA members with a supplied filesystem root. It follows di-
-     rectory components through directory  descriptors	without	 following  sym-
-     links.  It	 compares  types,  mode, numeric UID/GID, file size and SHA-256,
-     symlink targets and hardlink inode identity. It reports each changed  path.
+     The local check command copies the regular input  to  a  private  temporary
+     file,  verifies  that  copy and checks known ELF arch/libc mismatches, then
+     compares its DATA members with a supplied filesystem root. It  follows  di-
+     rectory  components  through  directory  descriptors without following sym-
+     links. It compares types, mode, numeric UID/GID,  file  size  and	SHA-256,
+     symlink  targets and hardlink inode identity. It reports each changed path.
      Check does not run package code, download files or modify the root. It does
      not consult an installed database, model ELF loaders, check unknown runtime
-     dependencies  or  prove a stable snapshot if the root changes during check-
+     dependencies or prove a stable snapshot if the root changes  during  check-
      ing.
 
      With --json, check prints one JSON object per finding and a final pass/fail
      summary on stdout. The schema is holy-check-1; changed-payload and missing-
-     payload are stable finding codes. Input or	 operational  failures	use  in-
-     valid-package  or	check-error  and status unknown. Paths use byte escapes.
+     payload  are  stable  finding  codes. Input or operational failures use in-
+     valid-package or check-error and status unknown. Paths  use  byte	escapes.
      Other commands do not yet implement --json.
 
-     The developer-facing elf command reads a regular  ELF  through  libelf/GElf
-     without  executing	 it  or invoking ldd. It prints ELF class, numeric e_ma-
-     chine and e_type, a recognized machine (x86, x86_64 or x32), the  PT_INTERP
-     path,  and	 a  libc  runtime  hint only for recognized glibc or musl inter-
-     preters. It reads PT_DYNAMIC to list DT_NEEDED, SONAME, RPATH  and	 RUNPATH
-     even  without section headers. GNU DT_VERNEED records list provider SONAME,
+     The  developer-facing  elf	 command reads a regular ELF through libelf/GElf
+     without executing it or invoking ldd. It prints ELF  class,  numeric  e_ma-
+     chine  and e_type, a recognized machine (x86, x86_64 or x32), the PT_INTERP
+     path, and a libc runtime hint only for  recognized	 glibc	or  musl  inter-
+     preters.  It  reads PT_DYNAMIC to list DT_NEEDED, SONAME, RPATH and RUNPATH
+     even without section headers. GNU DT_VERNEED records list provider	 SONAME,
      version and weak flag. GNU DT_VERDEF records list version-definition names;
-     these records do not prove that a specific symbol	satisfies  a  consumer's
-     versioned	reference.  GNU	 x86  ISA-needed  properties  in  PT_NOTE report
-     x86-64-baseline/v2/v3/v4 when present; absent  or	unrecognized  properties
-     report  unknown.  No  PT_INTERP yields unknown runtime. It does not inspect
-     exported symbol versions or plugin loading; its output is not a  dependency
+     these  records  do	 not prove that a specific symbol satisfies a consumer's
+     versioned reference.  GNU	x86  ISA-needed	 properties  in	 PT_NOTE  report
+     x86-64-baseline/v2/v3/v4  when  present;  absent or unrecognized properties
+     report unknown. No PT_INTERP yields unknown runtime. It  does  not	 inspect
+     exported  symbol versions or plugin loading; its output is not a dependency
      resolution or package ABI verdict.
 
      The local scan command stages a regular .holy input in a private file, ver-
-     ifies  that copy, then copies ELF payload files to unnamed temporary files.
-     It reports each file's class, machine, runtime hint and ISA using the  same
-     reader.  It  does	not execute payloads. It rejects a machine mismatch with
-     the package arch, including ELF in noarch, and a recognized glibc/musl  in-
-     terpreter	that  disagrees with the libc tag. A missing or unrecognized in-
-     terpreter remains unknown; an exact DT_NEEDED libc.so.6 on	 a  plugin  also
-     rejects  a non-glibc package tag.	scan does not infer nolibc, prove plugin
-     requirements or resolve dependencies.  For each ELF it also prints	 SONAME,
+     ifies that copy, then copies ELF payload files to unnamed temporary  files.
+     It	 reports each file's class, machine, runtime hint and ISA using the same
+     reader. It does not execute payloads. It rejects a	 machine  mismatch  with
+     the  package arch, including ELF in noarch, and a recognized glibc/musl in-
+     terpreter that disagrees with the libc tag. A missing or  unrecognized  in-
+     terpreter	remains	 unknown;  an exact DT_NEEDED libc.so.6 on a plugin also
+     rejects a non-glibc package tag.  scan does not infer nolibc, prove  plugin
+     requirements  or resolve dependencies.  For each ELF it also prints SONAME,
      DT_NEEDED, GNU version needs with weak or required status, and version def-
-     initions,	when  present.	These  file-scoped  facts  do  not  prove that a
+     initions, when present.  These  file-scoped  facts	 do  not  prove	 that  a
      provider exists or that a versioned symbol resolves.
 
-     The preview command stages and verifies a native archive,	checks	ELF  ABI
+     The  preview  command  stages and verifies a native archive, checks ELF ABI
      facts, preflights extraction and inspects each DATA path in a supplied root
-     by	 directory  descriptor.	 It  reports new paths, existing directories and
-     conflicts without writing to the root. It	refuses	 nonempty  HOLY/deps  or
-     HOLY/hooks	 and privileged payload modes. A zero-conflict preview is not an
+     by directory descriptor. It reports new  paths,  existing	directories  and
+     conflicts	without	 writing  to  the root. It refuses nonempty HOLY/deps or
+     HOLY/hooks and privileged payload modes. A zero-conflict preview is not  an
      installable plan: it has no installed database generation, dependency reso-
      lution, ownership decisions, transaction journal or apply command.	 Changes
      to the root after preview invalidate the result.
 
      The repository index command validates regular .holy files in DIRECTORY and
-     writes an unsigned, lexicographically ordered index through an  atomic  re-
-     name.   It	 refuses  symlinked packages, duplicate package identities and a
-     nonregular existing index. Records in format holy-index-prototype-1 contain
-     the quoted name, version,	release,  os,  arch,  libc,  relative  filename,
-     SHA-256  and  size.  This prototype omits dependencies, provides and signa-
-     tures; source adapters must not treat it as the native repository format.
+     writes  an	 unsigned, lexicographically ordered index through an atomic re-
+     name.  It refuses symlinked packages, duplicate package  identities  and  a
+     nonregular	 existing  index.  It  rejects	unsupported  HOLY/deps	records.
+     Records in format holy-index-prototype-1 contain the quoted name,	version,
+     release,  os, arch, libc, relative filename, SHA-256 and size.  This proto-
+     type omits dependencies, provides and signatures; source adapters must  not
+     treat it as the native repository format.
 
-     The seal command validates the entire local index, creates an  index.SHA256
-     generation	 and  atomically  publishes a current pointer containing its di-
-     gest.  The list and search commands require current and  check  its  digest
-     before  reading  the generation. Indexing creates a draft index; publish it
+     The  seal command validates the entire local index, creates an index.SHA256
+     generation and atomically publishes a current pointer  containing	its  di-
+     gest.   The  list	and search commands require current and check its digest
+     before reading the generation. Indexing creates a draft index;  publish  it
      with seal after reviewing changes. Removing current makes the directory un-
-     available to list and search rather than exposing an unsealed  draft.   The
-     pointer  and  artifacts  remain unsigned and can be changed by someone with
+     available	to  list and search rather than exposing an unsealed draft.  The
+     pointer and artifacts remain unsigned and can be changed  by  someone  with
      write access to the directory. Existing generation files remain in place.
 
-     The repository list command reads that prototype index with  the  holy.conf
+     The  repository  list command reads that prototype index with the holy.conf
      lexer and checks each referenced regular archive's size, SHA-256, identity,
      payload and known ELF ABI facts before printing records. An index without a
-     signature	carries	 no provenance guarantee. Neither command installs pack-
+     signature carries no provenance guarantee. Neither command	 installs  pack-
      ages or activates this directory as a package source.
 
-     The repository search command verifies the same complete  local  index  and
+     The  repository  search  command verifies the same complete local index and
      returns exact name matches. No match prints a zero-count summary. This pro-
      totype does not perform fuzzy search, dependency resolution or provider se-
      lection.
 
-     The  repository  fetch command requires a lowercase SHA-256 from the sealed
-     index. It verifies the complete index and artifacts, then	copies	the  se-
-     lected  snapshot to an existing output directory as SHA256.holy. It rejects
+     The repository fetch command requires a lowercase SHA-256 from  the  sealed
+     index.  It	 verifies  the complete index and artifacts, then copies the se-
+     lected snapshot to an existing output directory as SHA256.holy. It	 rejects
      a missing digest or a changed unrelated artifact. The copy does not install
-     or grant trust to the package; repository metadata and objects  remain  un-
+     or	 grant	trust to the package; repository metadata and objects remain un-
      signed.
 
 EXIT STATUS
-     0	indicates success under the implemented checks; 1 indicates a failed lo-
-     cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
-     tion  or package inspection. Diagnostics go to standard error except --json
+     0 indicates success under the implemented checks; 1 indicates a failed  lo-
+     cal  fetch,  extraction or check; 2 indicates invalid arguments, configura-
+     tion or package inspection. Diagnostics go to standard error except  --json
      check events, which go to standard output.
 
-     Preview returns 4 for path conflicts and 6 when hooks or  dependencies  re-
-     quire  an	unsupported planning step. It returns 1 on target-root I/O fail-
+     Preview  returns  4 for path conflicts and 6 when hooks or dependencies re-
+     quire an unsupported planning step. It returns 1 on target-root  I/O  fail-
      ure.
 
 SEE ALSO

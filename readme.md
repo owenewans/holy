@@ -9,6 +9,7 @@ Local fetch copies objects by SHA-256 without installing them.
 Local extract handles regular files, directories and safe links in a new output directory.
 Local check compares a package payload against a chosen root without changing it.
 Local scan reads ELF payload facts and rejects known arch/libc tag mismatches.
+Local requirements inspection validates a typed `HOLY/deps` subset without resolving providers.
 Local preview checks payload path conflicts in a target root without changing it.
 Local repository indexing writes an unsigned prototype catalog from verified `.holy` files.
 Holy does not contain a bootable distribution yet.
