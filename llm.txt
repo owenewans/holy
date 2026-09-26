@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=a43d3685f18c01baa07aea92b65a0df01fb8ff3bf37b58835b3cd2b13917f3be
+holypkg.8 source=holy version=development sha256=9d35f59a15d0ac6dfa73b00bdb0acf150dd055596d20cbf518a59e9ac09680a4
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -122,51 +122,50 @@ DESCRIPTION
      and a SHA-256 over those identities and ordered manifest entries. This com-
      mand does not persist a plan, reserve ownership, authorize apply or recheck
      the  target  root	at  mutation time. Concurrent changes can invalidate the
-     collision check. A future apply command  must  revalidate	all  inputs  and
-     paths under its writer lock.
+     collision check. Apply revalidates inputs and paths under its writer lock.
 
-     The  db  approve  command	recomputes  the plan under an exclusive database
-     lock.  If its SHA-256 matches PLAN_SHA256, the command  replaces  the  pre-
+     The db approve command recomputes the  plan  under	 an  exclusive	database
+     lock.   If	 its  SHA-256 matches PLAN_SHA256, the command replaces the pre-
      pared reservation with an approved record bound to its artifact and genera-
-     tion.   Status  reports  the  approved digest; cancel removes the record. A
+     tion.  Status reports the approved digest; cancel	removes	 the  record.  A
      mismatched plan returns decision-required without changing the reservation.
-     Approval does not install files or authorize  a  future  implementation  to
+     Approval  does  not  install  files or authorize a future implementation to
      skip path, artifact and generation checks under the same writer lock at ap-
      ply time.
 
-     Database  recheck	compares  an approved record with a fresh verified cache
-     snapshot and target-root collision preview under a	 shared	 database  lock.
+     Database recheck compares an approved record with a  fresh	 verified  cache
+     snapshot  and  target-root	 collision preview under a shared database lock.
      It returns 5 without an approved record, 3 if the plan digest differs and 4
-     for  a  path conflict. The check changes neither database nor rootfs. Other
-     processes can change rootfs paths after  recheck;	it  cannot  replace  the
+     for a path conflict. The check changes neither database nor  rootfs.  Other
+     processes	can  change  rootfs  paths  after recheck; it cannot replace the
      writer-locked validation required by apply.
 
-     Database  apply  installs only an approved linux/noarch/nolibc data package
+     Database apply installs only an approved linux/noarch/nolibc  data	 package
      with empty hooks, transform and requirements. Its payload may contain ordi-
-     nary non-executable regular files and directory  entries;	every  directory
-     must  already  exist  in  the target root. No symlink, hardlink, privileged
-     mode or file collision is accepted. The caller must review the db plan  di-
+     nary  non-executable  regular  files and directory entries; every directory
+     must already exist in the target root.  No	 symlink,  hardlink,  privileged
+     mode  or file collision is accepted. The caller must review the db plan di-
      gest and invoke db approve first. Apply holds the database writer lock, re-
      computes the approved plan and rechecks every path against opened directory
-     descriptors.   It	creates	 each file with O_EXCL, then synchronizes it and
-     its parent. It records a journal before changing the rootfs  and  publishes
-     installed	metadata  and the next database generation after copying payload
-     files. The installed record contains meta, files, deps, origin  and  state;
-     local  delivery  has no trusted source-id. Apply does not run package hooks
-     or configure services.  An I/O failure after journal publication leaves  an
-     incomplete	 transaction  for inspection; db status returns 5 and db recover
+     descriptors.  It creates each file with O_EXCL, then  synchronizes	 it  and
+     its  parent.  It records a journal before changing the rootfs and publishes
+     installed metadata and the next database generation after	copying	 payload
+     files.  The  installed record contains meta, files, deps, origin and state;
+     local delivery has no trusted source-id. Apply does not run  package  hooks
+     or	 configure services.  An I/O failure after journal publication leaves an
+     incomplete transaction for inspection; db status returns 5 and  db	 recover
      does not retry file mutations. db recover --abort-empty can clear an incom-
      plete journal only at its original generation, with the same approved arti-
-     fact and no installed instance or payload files. It retains approval for  a
-     later  apply or cancel.  Otherwise the operator must inspect the rootfs and
-     journal manually.	A crash after publishing the next generation  can  leave
+     fact  and no installed instance or payload files. It retains approval for a
+     later apply or cancel.  Otherwise the operator must inspect the rootfs  and
+     journal  manually.	  A crash after publishing the next generation can leave
      the journal and approved reservation behind. db recover --finish-apply ver-
-     ifies  the installed instance, its generation, all listed payload files and
-     any remaining approval before clearing those records. It refuses an  incom-
-     plete  payload  and  does not resume file extraction.  A regular successful
-     return requires both the installed record and generation publication.  Gen-
-     eral ownership replacement, file removal and automatic rollback are not im-
-     plemented. The command is not an installer for arbitrary .holy packages.
+     ifies the installed instance, its generation, all listed payload files  and
+     any  remaining approval before clearing those records. It refuses an incom-
+     plete payload and does not resume file extraction.	  A  regular  successful
+     return  requires both the installed record and generation publication. Gen-
+     eral ownership replacement and automatic rollback are not implemented.  The
+     command is not an installer for arbitrary .holy packages.
 
      Database  check  reads one installed data manifest and compares its regular
      files against the target root by path, type, size, mode, numeric  ownership
