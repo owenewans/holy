@@ -23,6 +23,8 @@ test "$(stat -c %a "$db/generation")" = 600
 grep -qx 'generation 0' "$tmp/out"
 if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 test ! -s "$tmp/out"
+if "$bin" db preflight --root "$tmp/root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+grep -Fqx '{"schema":"holy-preview-1","type":"error","code":"unavailable-reservation"}' "$tmp/out"
 "$bin" db status --root "$tmp/root" --json > "$tmp/out"
 grep -Fqx '{"schema":"holy-db-status-1","type":"state","generation":0,"pending":null}' "$tmp/out"
 printf '7\n' > "$db/generation"
@@ -85,10 +87,16 @@ grep -qx "reserved $digest generation 7" "$tmp/out"
 "$bin" db preflight --root "$tmp/root" > "$tmp/out"
 grep -qx "preview artifact=$digest paths=0 conflicts=0 requirements=0 elf-needed=0 script-interpreters=0 helper-commands=0" "$tmp/out"
 grep -qx "reservation generation 7 artifact $digest" "$tmp/out"
+"$bin" db preflight --root "$tmp/root" --json > "$tmp/out"
+grep -Fqx "{\"schema\":\"holy-preview-1\",\"type\":\"summary\",\"artifact\":\"$digest\",\"paths\":0,\"conflicts\":0,\"requirements\":0,\"elf_needed\":0,\"script_interpreters\":0,\"helper_commands\":0}" "$tmp/out"
+grep -Fqx "{\"schema\":\"holy-preview-1\",\"type\":\"reservation\",\"generation\":7,\"artifact\":\"$digest\"}" "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 2
 object="$tmp/root/var/cache/holypkg/objects/sha256/$digest.holy"
 mv "$object" "$tmp/cache-held"
 if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 test ! -s "$tmp/out"
+if "$bin" db preflight --root "$tmp/root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+grep -Fqx '{"schema":"holy-preview-1","type":"error","code":"unavailable-artifact"}' "$tmp/out"
 mv "$tmp/cache-held" "$object"
 grep -qx 'format holy-reservation-1' "$db/transactions/pending"
 grep -qx 'stage prepared' "$db/transactions/pending"
@@ -145,6 +153,9 @@ needs=${needs%% *}
 "$bin" db reserve "$needs" --root "$tmp/root" > "$tmp/out"
 if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 grep -qx "preview artifact=$needs paths=0 conflicts=0 requirements=1 elf-needed=0 script-interpreters=0 helper-commands=0" "$tmp/out"
+if "$bin" db preflight --root "$tmp/root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+grep -Fq '"requirements":1' "$tmp/out"
+grep -Fqx "{\"schema\":\"holy-preview-1\",\"type\":\"reservation\",\"generation\":7,\"artifact\":\"$needs\"}" "$tmp/out"
 "$bin" db cancel --root "$tmp/root" > "$tmp/out"
 : > "$tmp/payload/HOLY/deps"
 mkdir -p "$tmp/payload/DATA/usr/bin" "$tmp/root/usr/bin"
@@ -170,6 +181,8 @@ collision=${collision%% *}
 "$bin" db reserve "$collision" --root "$tmp/root" > "$tmp/out"
 if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 grep -qx "preview artifact=$collision paths=3 conflicts=1 requirements=0 elf-needed=0 script-interpreters=0 helper-commands=0" "$tmp/out"
+if "$bin" db preflight --root "$tmp/root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+grep -Fqx '{"schema":"holy-preview-1","type":"path","path":"usr/bin/hello","state":"conflict","interpreter":null,"helper":null}' "$tmp/out"
 grep -qx 'keep' "$tmp/root/usr/bin/hello"
 "$bin" db cancel --root "$tmp/root" > "$tmp/out"
 printf 'postinstall /bin/sh script\n' > "$tmp/payload/HOLY/hooks"
@@ -181,6 +194,9 @@ hooks=${hooks%% *}
 "$bin" db reserve "$hooks" --root "$tmp/root" > "$tmp/out"
 if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 test ! -s "$tmp/out"
+if "$bin" db preflight --root "$tmp/root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+grep -Fqx '{"schema":"holy-preview-1","type":"error","code":"unsupported-input"}' "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
 "$bin" db cancel --root "$tmp/root" > "$tmp/out"
 printf 'bad\n' > "$db/transactions/pending"
 if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi

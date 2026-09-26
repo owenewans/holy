@@ -36,6 +36,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg preview local:FILE --root DIRECTORY
 .br
+.B holypkg preview local:FILE --root DIRECTORY --json
+.br
 .B holypkg cache stage local:FILE --root DIRECTORY
 .br
 .B holypkg cache verify SHA256 --root DIRECTORY
@@ -53,6 +55,8 @@ holypkg \- Holy local package tooling prototype
 .B holypkg db recover --root DIRECTORY
 .br
 .B holypkg db preflight --root DIRECTORY
+.br
+.B holypkg db preflight --root DIRECTORY --json
 .br
 .B holypkg repo index DIRECTORY
 .br
@@ -225,7 +229,7 @@ With --json, check prints one JSON object per finding and a final pass/fail
 summary on stdout. The schema is holy-check-1; changed-payload and
 missing-payload are stable finding codes. Input or operational failures use invalid-package or check-error
 and status unknown. Paths use byte escapes. Only check, requirements, provides
-repo providers and solve support --json in this prototype.
+repo providers, solve, preview and database preflight support --json in this prototype.
 .PP
 The developer-facing elf command reads a regular ELF through libelf/GElf
 without executing it or invoking ldd. It prints ELF class, numeric e_machine
@@ -337,6 +341,12 @@ generation and artifact digest.
 It does not turn the reservation into an install plan. File changes outside
 the database lock can invalidate the preview before a future apply command;
 such a command must recheck paths and the artifact.
+With --json, both preview and database preflight emit holy-preview-1 path
+events and a summary only after the full archive walk. Path events include
+state new, existing-dir or conflict and optional interpreter and helper
+fields. A completed database preflight adds a reservation event with
+generation and artifact. Invalid input, unsupported hooks and unavailable
+reservations produce one structured error event, without partial path output.
 .PP
 The repository index command validates regular .holy files in DIRECTORY and
 writes an unsigned, lexicographically ordered index through an atomic rename.

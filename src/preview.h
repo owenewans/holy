@@ -3,5 +3,7 @@
 
 /* returns 0 for a collision-free preview, 4 for conflicts, 1/2/6 for errors. */
 int holy_preview_local(const char *package, const char *root);
+/* json emits holy-preview-1 events after a complete inspection. */
+int holy_preview_local_format(const char *package, const char *root, int json);
 
 #endif

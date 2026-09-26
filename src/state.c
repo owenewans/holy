@@ -361,24 +361,33 @@ done:
     return result;
 }
 
-int holy_state_preflight(const char *root_path)
+int holy_state_preflight(const char *root_path, int json)
 {
     unsigned long long generation;
     char digest[65], *snapshot = NULL;
     int dir = state_dir(root_path, 0), pending, result = 1;
+    int inspected = 0;
+    const char *code = "invalid-state";
     if (dir < 0 || flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
         !empty_child(dir, "installed") || !empty_child(dir, "index") ||
         !read_generation(dir, &generation)) goto done;
     pending = pending_child(dir, generation, digest);
     if (pending < 0) goto done;
-    if (!pending) { result = 6; goto done; }
+    if (!pending) { result = 6; code = "unavailable-reservation"; goto done; }
     snapshot = holy_cache_snapshot(digest, root_path);
-    if (!snapshot) { result = 6; goto done; }
-    result = holy_preview_local(snapshot, root_path);
-    if (result == 0 || result == 3 || result == 4)
-        printf("reservation generation %llu artifact %s\n", generation, digest);
+    if (!snapshot) { result = 6; code = "unavailable-artifact"; goto done; }
+    inspected = 1;
+    result = holy_preview_local_format(snapshot, root_path, json);
+    if (result == 0 || result == 3 || result == 4) {
+        if (json)
+            printf("{\"schema\":\"holy-preview-1\",\"type\":\"reservation\",\"generation\":%llu,\"artifact\":\"%s\"}\n",
+                   generation, digest);
+        else printf("reservation generation %llu artifact %s\n", generation, digest);
+    }
 done:
     if (result == 6) fprintf(stderr, "holypkg: reservation preflight unavailable\n");
+    if (json && !inspected && result != 0)
+        printf("{\"schema\":\"holy-preview-1\",\"type\":\"error\",\"code\":\"%s\"}\n", code);
     if (snapshot) { unlink(snapshot); free(snapshot); }
     if (dir >= 0) close(dir);
     return result;

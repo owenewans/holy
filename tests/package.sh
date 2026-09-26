@@ -148,6 +148,9 @@ mkdir "$tmp/preview-root"
 "$bin" preview "local:$tmp/package.holy" --root "$tmp/preview-root" > "$tmp/out"
 grep -qx "preview artifact=$expected paths=3 conflicts=0 requirements=0 elf-needed=0 script-interpreters=0 helper-commands=0" "$tmp/out"
 grep -qx 'new usr/bin/hello' "$tmp/out"
+"$bin" preview "local:$tmp/package.holy" --root "$tmp/preview-root" --json > "$tmp/out"
+grep -Fqx "{\"schema\":\"holy-preview-1\",\"type\":\"summary\",\"artifact\":\"$expected\",\"paths\":3,\"conflicts\":0,\"requirements\":0,\"elf_needed\":0,\"script_interpreters\":0,\"helper_commands\":0}" "$tmp/out"
+grep -Fqx '{"schema":"holy-preview-1","type":"path","path":"usr/bin/hello","state":"new","interpreter":null,"helper":null}' "$tmp/out"
 test ! -e "$tmp/preview-root/usr"
 mkdir "$tmp/preview-root/usr"
 ln -s "$tmp/payload/DATA/usr/bin" "$tmp/preview-root/usr/bin"
@@ -227,6 +230,10 @@ test "$rc" -eq 3
 grep -qx 'interpreter usr/bin/hello /usr/bin/env' "$tmp/out"
 grep -qx 'helper-command usr/bin/hello python3' "$tmp/out"
 grep -q '^preview artifact=.* paths=3 conflicts=0 requirements=0 elf-needed=0 script-interpreters=1 helper-commands=1$' "$tmp/out"
+rc=0
+"$bin" preview "local:$tmp/script-env.holy" --root "$tmp/decision-root" --json > "$tmp/out" 2> "$tmp/err" || rc=$?
+test "$rc" -eq 3
+grep -Fqx '{"schema":"holy-preview-1","type":"path","path":"usr/bin/hello","state":"new","interpreter":"/usr/bin/env","helper":"python3"}' "$tmp/out"
 for spec in '-S python3 -O' '-i python3'; do
     printf '#!/usr/bin/env %s\nexit 0\n' "$spec" > "$tmp/script-payload/DATA/usr/bin/hello"
     path="$tmp/script-payload/DATA/usr/bin/hello"

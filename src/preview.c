@@ -34,6 +34,18 @@ static void print_path(const char *path)
         else putchar(*p);
 }
 
+static void json_string(const char *text)
+{
+    const unsigned char *p = (const unsigned char *)text;
+    putchar('"');
+    for (; *p; ++p) {
+        if (*p == '"' || *p == '\\') { putchar('\\'); putchar(*p); }
+        else if (*p >= 32 && *p < 127) putchar(*p);
+        else printf("\\u%04x", (unsigned int)*p);
+    }
+    putchar('"');
+}
+
 static char *env_helper(const char *text, size_t used, size_t position)
 {
     size_t start, end;
@@ -93,7 +105,8 @@ done:
     return state;
 }
 
-int holy_preview_local(const char *package, const char *root_path)
+int holy_preview_local_format(const char *package, const char *root_path,
+                              int json)
 {
     struct archive *archive = NULL;
     struct archive_entry *entry;
@@ -192,33 +205,56 @@ int holy_preview_local(const char *package, const char *root_path)
         if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
     }
     if (status != ARCHIVE_EOF) goto done;
-    printf("preview artifact=%s paths=%zu conflicts=%zu requirements=%zu elf-needed=%zu script-interpreters=%zu helper-commands=%zu\n",
-           identity.digest, count, conflicts, requirements, elf_needed,
-           script_interpreters, helper_commands);
-    for (i = 0; i < count; ++i) {
-        printf("%s ", actions[i].state == 0 ? "new" :
-                       actions[i].state == 1 ? "existing-dir" : "conflict");
-        print_path(actions[i].path);
-        putchar('\n');
-        if (actions[i].interpreter) {
-            fputs("interpreter ", stdout);
-            print_path(actions[i].path);
-            putchar(' ');
-            print_path(actions[i].interpreter);
-            putchar('\n');
+    if (json) {
+        for (i = 0; i < count; ++i) {
+            fputs("{\"schema\":\"holy-preview-1\",\"type\":\"path\",\"path\":", stdout);
+            json_string(actions[i].path);
+            printf(",\"state\":\"%s\",\"interpreter\":",
+                   actions[i].state == 0 ? "new" :
+                   actions[i].state == 1 ? "existing-dir" : "conflict");
+            if (actions[i].interpreter) json_string(actions[i].interpreter);
+            else fputs("null", stdout);
+            fputs(",\"helper\":", stdout);
+            if (actions[i].helper) json_string(actions[i].helper);
+            else fputs("null", stdout);
+            puts("}");
         }
-        if (actions[i].helper) {
-            fputs("helper-command ", stdout);
+        printf("{\"schema\":\"holy-preview-1\",\"type\":\"summary\",\"artifact\":\"%s\",\"paths\":%zu,\"conflicts\":%zu,\"requirements\":%zu,\"elf_needed\":%zu,\"script_interpreters\":%zu,\"helper_commands\":%zu}\n",
+               identity.digest, count, conflicts, requirements, elf_needed,
+               script_interpreters, helper_commands);
+    } else {
+        printf("preview artifact=%s paths=%zu conflicts=%zu requirements=%zu elf-needed=%zu script-interpreters=%zu helper-commands=%zu\n",
+               identity.digest, count, conflicts, requirements, elf_needed,
+               script_interpreters, helper_commands);
+        for (i = 0; i < count; ++i) {
+            printf("%s ", actions[i].state == 0 ? "new" :
+                            actions[i].state == 1 ? "existing-dir" : "conflict");
             print_path(actions[i].path);
-            putchar(' ');
-            print_path(actions[i].helper);
             putchar('\n');
+            if (actions[i].interpreter) {
+                fputs("interpreter ", stdout);
+                print_path(actions[i].path);
+                putchar(' ');
+                print_path(actions[i].interpreter);
+                putchar('\n');
+            }
+            if (actions[i].helper) {
+                fputs("helper-command ", stdout);
+                print_path(actions[i].path);
+                putchar(' ');
+                print_path(actions[i].helper);
+                putchar('\n');
+            }
         }
     }
     rc = conflicts ? 4 :
          (requirements || elf_needed || script_interpreters) ? 3 : 0;
 done:
     if (rc == 2) fprintf(stderr, "holypkg: cannot preview package\n");
+    if (json && rc != 0 && rc != 3 && rc != 4)
+        printf("{\"schema\":\"holy-preview-1\",\"type\":\"error\",\"code\":\"%s\"}\n",
+               rc == 6 ? "unsupported-input" :
+               rc == 1 ? "operational-error" : "invalid-preview");
     if (archive) archive_read_free(archive);
     if (root >= 0) close(root);
     if (snapshot) { unlink(snapshot); free(snapshot); }
@@ -230,4 +266,9 @@ done:
     free(actions);
     holy_package_identity_free(&identity);
     return rc;
+}
+
+int holy_preview_local(const char *package, const char *root_path)
+{
+    return holy_preview_local_format(package, root_path, 0);
 }
