@@ -11,5 +11,7 @@ int holy_state_reserve(const char *digest, const char *root_path);
 int holy_state_cancel(const char *root_path);
 /* clean one validated temporary reservation after interrupted publication. */
 int holy_state_recover(const char *root_path);
+/* read-only preview of the one prepared cache object against target root. */
+int holy_state_preflight(const char *root_path);
 
 #endif

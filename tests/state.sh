@@ -21,6 +21,8 @@ test -d "$db/index"
 test "$(stat -c %a "$db/generation")" = 600
 "$bin" db status --root "$tmp/root" > "$tmp/out"
 grep -qx 'generation 0' "$tmp/out"
+if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+test ! -s "$tmp/out"
 "$bin" db status --root "$tmp/root" --json > "$tmp/out"
 grep -Fqx '{"schema":"holy-db-status-1","type":"state","generation":0,"pending":null}' "$tmp/out"
 printf '7\n' > "$db/generation"
@@ -80,6 +82,14 @@ test ! -e "$db/transactions/pending"
 "$bin" cache stage "local:$tmp/reserved.holy" --root "$tmp/root" > "$tmp/out"
 "$bin" db reserve "$digest" --root "$tmp/root" > "$tmp/out"
 grep -qx "reserved $digest generation 7" "$tmp/out"
+"$bin" db preflight --root "$tmp/root" > "$tmp/out"
+grep -qx "preview artifact=$digest paths=0 conflicts=0 requirements=0 elf-needed=0 script-interpreters=0 helper-commands=0" "$tmp/out"
+grep -qx "reservation generation 7 artifact $digest" "$tmp/out"
+object="$tmp/root/var/cache/holypkg/objects/sha256/$digest.holy"
+mv "$object" "$tmp/cache-held"
+if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+test ! -s "$tmp/out"
+mv "$tmp/cache-held" "$object"
 grep -qx 'format holy-reservation-1' "$db/transactions/pending"
 grep -qx 'stage prepared' "$db/transactions/pending"
 grep -qx 'generation 7' "$db/transactions/pending"
@@ -112,6 +122,7 @@ if "$bin" db cancel --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; 
 printf '7\n' > "$db/generation"
 "$bin" db cancel --root "$tmp/root" > "$tmp/out"
 grep -qx "cancelled $digest" "$tmp/out"
+if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 test -f "$tmp/root/var/cache/holypkg/objects/sha256/$digest.holy"
 cp "$tmp/reservation-record" "$temp_record"
 if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
@@ -125,6 +136,52 @@ rm "$temp_record"
 "$bin" db status --root "$tmp/root" > "$tmp/out"
 grep -qx 'generation 7' "$tmp/out"
 if "$bin" db cancel --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+printf 'require missing-1 reserved package missing any any any - missing metadata\n' > "$tmp/payload/HOLY/deps"
+tar -cf "$tmp/needs.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/needs.tar" "$tmp/needs.holy"
+needs=$(sha256sum "$tmp/needs.holy")
+needs=${needs%% *}
+"$bin" cache stage "local:$tmp/needs.holy" --root "$tmp/root" > "$tmp/out"
+"$bin" db reserve "$needs" --root "$tmp/root" > "$tmp/out"
+if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+grep -qx "preview artifact=$needs paths=0 conflicts=0 requirements=1 elf-needed=0 script-interpreters=0 helper-commands=0" "$tmp/out"
+"$bin" db cancel --root "$tmp/root" > "$tmp/out"
+: > "$tmp/payload/HOLY/deps"
+mkdir -p "$tmp/payload/DATA/usr/bin" "$tmp/root/usr/bin"
+printf 'hello\n' > "$tmp/payload/DATA/usr/bin/hello"
+printf 'keep\n' > "$tmp/root/usr/bin/hello"
+filehash=$(sha256sum "$tmp/payload/DATA/usr/bin/hello")
+filehash=${filehash%% *}
+uid=$(stat -c %u "$tmp/payload/DATA/usr/bin/hello")
+gid=$(stat -c %g "$tmp/payload/DATA/usr/bin/hello")
+for dir in usr usr/bin; do
+    mode=$(stat -c %a "$tmp/payload/DATA/$dir")
+    printf 'dir %s %s root root %s %s 0 - none - -\n' \
+        "$dir" "$mode" "$uid" "$gid" >> "$tmp/payload/HOLY/files"
+done
+mode=$(stat -c %a "$tmp/payload/DATA/usr/bin/hello")
+printf 'file usr/bin/hello %s root root %s %s 6 %s none - -\n' \
+    "$mode" "$uid" "$gid" "$filehash" >> "$tmp/payload/HOLY/files"
+tar -cf "$tmp/collision.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/collision.tar" "$tmp/collision.holy"
+collision=$(sha256sum "$tmp/collision.holy")
+collision=${collision%% *}
+"$bin" cache stage "local:$tmp/collision.holy" --root "$tmp/root" > "$tmp/out"
+"$bin" db reserve "$collision" --root "$tmp/root" > "$tmp/out"
+if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+grep -qx "preview artifact=$collision paths=3 conflicts=1 requirements=0 elf-needed=0 script-interpreters=0 helper-commands=0" "$tmp/out"
+grep -qx 'keep' "$tmp/root/usr/bin/hello"
+"$bin" db cancel --root "$tmp/root" > "$tmp/out"
+printf 'postinstall /bin/sh script\n' > "$tmp/payload/HOLY/hooks"
+tar -cf "$tmp/hooks.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/hooks.tar" "$tmp/hooks.holy"
+hooks=$(sha256sum "$tmp/hooks.holy")
+hooks=${hooks%% *}
+"$bin" cache stage "local:$tmp/hooks.holy" --root "$tmp/root" > "$tmp/out"
+"$bin" db reserve "$hooks" --root "$tmp/root" > "$tmp/out"
+if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+test ! -s "$tmp/out"
+"$bin" db cancel --root "$tmp/root" > "$tmp/out"
 printf 'bad\n' > "$db/transactions/pending"
 if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"

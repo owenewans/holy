@@ -2,6 +2,7 @@
 #include "state.h"
 #include "stage.h"
 #include "cache.h"
+#include "preview.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -356,6 +357,29 @@ done:
     if (result == 1) fprintf(stderr, "holypkg: reservation recovery failed\n");
     if (listing) closedir(listing);
     if (transactions >= 0) close(transactions);
+    if (dir >= 0) close(dir);
+    return result;
+}
+
+int holy_state_preflight(const char *root_path)
+{
+    unsigned long long generation;
+    char digest[65], *snapshot = NULL;
+    int dir = state_dir(root_path, 0), pending, result = 1;
+    if (dir < 0 || flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
+        !empty_child(dir, "installed") || !empty_child(dir, "index") ||
+        !read_generation(dir, &generation)) goto done;
+    pending = pending_child(dir, generation, digest);
+    if (pending < 0) goto done;
+    if (!pending) { result = 6; goto done; }
+    snapshot = holy_cache_snapshot(digest, root_path);
+    if (!snapshot) { result = 6; goto done; }
+    result = holy_preview_local(snapshot, root_path);
+    if (result == 0 || result == 3 || result == 4)
+        printf("reservation generation %llu artifact %s\n", generation, digest);
+done:
+    if (result == 6) fprintf(stderr, "holypkg: reservation preflight unavailable\n");
+    if (snapshot) { unlink(snapshot); free(snapshot); }
     if (dir >= 0) close(dir);
     return result;
 }

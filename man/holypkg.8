@@ -52,6 +52,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db recover --root DIRECTORY
 .br
+.B holypkg db preflight --root DIRECTORY
+.br
 .B holypkg repo index DIRECTORY
 .br
 .B holypkg repo list DIRECTORY
@@ -324,6 +326,17 @@ pending inode; recover preserves pending and returns 5. With no pending it
 returns 0 after removing the orphan. Unknown entries, stale generations,
 different inodes and malformed records fail without deletion. This command
 does not recover hooks, installed files or arbitrary incomplete transactions.
+.PP
+Database preflight holds a shared database lock, validates the one prepared
+reservation, reads a verified private snapshot of its cached artifact and runs
+the same target-root collision and dependency preview as preview local:FILE.
+It returns 0 for a zero-decision preview, 3 for unresolved requirements or
+runtime edges, 4 for path conflicts and 6 if the reservation, cached input or
+supported payload profile is unavailable. The output names the database
+generation and artifact digest.
+It does not turn the reservation into an install plan. File changes outside
+the database lock can invalidate the preview before a future apply command;
+such a command must recheck paths and the artifact.
 .PP
 The repository index command validates regular .holy files in DIRECTORY and
 writes an unsigned, lexicographically ordered index through an atomic rename.

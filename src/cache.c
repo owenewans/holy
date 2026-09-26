@@ -77,7 +77,7 @@ done:
     return ok;
 }
 
-static int verify_object(const char *digest, const char *root_path, int emit)
+char *holy_cache_snapshot(const char *digest, const char *root_path)
 {
     struct holy_package_identity identity = {0};
     struct stat st;
@@ -101,15 +101,28 @@ static int verify_object(const char *digest, const char *root_path, int emit)
         !holy_provides_local(snapshot, 0) ||
         !holy_package_identity(snapshot, &identity) ||
         strcmp(identity.digest, digest)) goto done;
-    if (emit) printf("verified %s %s %s %s\n", identity.digest, identity.name,
-                     identity.arch, identity.libc);
     ok = 1;
 done:
     if (!ok) fprintf(stderr, "holypkg: cache object verification failed\n");
     holy_package_identity_free(&identity);
-    if (snapshot) { unlink(snapshot); free(snapshot); }
     if (fd >= 0) close(fd);
     if (dir >= 0) close(dir);
+    if (!ok && snapshot) { unlink(snapshot); free(snapshot); snapshot = NULL; }
+    return snapshot;
+}
+
+static int verify_object(const char *digest, const char *root_path, int emit)
+{
+    struct holy_package_identity identity = {0};
+    char *snapshot = holy_cache_snapshot(digest, root_path);
+    int ok = snapshot != NULL;
+    if (ok && emit) {
+        ok = holy_package_identity(snapshot, &identity);
+        if (ok) printf("verified %s %s %s %s\n", identity.digest, identity.name,
+                       identity.arch, identity.libc);
+    }
+    holy_package_identity_free(&identity);
+    if (snapshot) { unlink(snapshot); free(snapshot); }
     return ok;
 }
 

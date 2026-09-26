@@ -7,5 +7,7 @@ int holy_cache_stage_local(const char *source, const char *root_path);
 int holy_cache_verify(const char *digest, const char *root_path);
 /* same verification without success output; returns one for a valid object. */
 int holy_cache_object(const char *digest, const char *root_path);
+/* returns a verified private snapshot; caller must unlink and free it. */
+char *holy_cache_snapshot(const char *digest, const char *root_path);
 
 #endif
