@@ -9,6 +9,8 @@ holypkg \- Holy package tooling (configuration checker prototype)
 .B holypkg verify local:FILE
 .br
 .B holypkg fetch local:FILE --output DIRECTORY
+.br
+.B holypkg fetch local:FILE --extract --output DIRECTORY
 .SH DESCRIPTION
 Checks syntax, includes, sections and duplicate scalar keys of a configuration
 file without changing the system. No package installation, import, fetch,
@@ -36,6 +38,16 @@ before a no-overwrite hardlink creates the object. Repeating the command checks
 the existing object's digest. A mismatched object is left untouched. Fetch
 does not establish archive validity, provenance or a trusted root-owned cache.
 Remote source fetching is not implemented.
+.PP
+With --extract, DIRECTORY must not exist. The command copies the regular input
+into a private temporary file, verifies that copy and checks that every entry
+is a directory or regular file.
+It then creates DIRECTORY and writes HOLY and DATA there with directory-relative
+operations that refuse symlink traversal and file replacement. It does not
+preserve UID/GID, setuid bits, capabilities or xattrs, and it refuses symlink
+and hardlink payloads in this prototype. Hooks never run. If an I/O error
+occurs after DIRECTORY is created, partial output remains for inspection.
+This command is not a system installation or a root transaction.
 .SH EXIT STATUS
 0 indicates a valid file under the implemented checks; 2 indicates invalid
 arguments or invalid configuration. Diagnostics go to standard error.

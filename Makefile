@@ -9,7 +9,7 @@ DESTDIR ?=
 .PHONY: all check check-fixtures man
 all: holypkg
 
-holypkg: src/main.o src/config.o src/package.o src/verify.o src/fetch.o
+holypkg: src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 src/%.o: src/%.c src/config.h
@@ -35,4 +35,4 @@ install: holypkg
 	install -m 644 man/holypkg.8 "$(DESTDIR)$(PREFIX)/share/man/man8/holypkg.8"
 
 clean:
-	rm -f holypkg src/main.o src/config.o src/package.o src/verify.o src/fetch.o
+	rm -f holypkg src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o

@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=dd16b18a0d2f6d9e6d3b8ad8b61ecee68cb3cd458fa903e686ff8f5dddbbe982
+holypkg.8 source=holy version=development sha256=413d6be6ea44eed9d59df3edc23d72b4d3f8cb587340c027243ad541248a9ff6
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -59,6 +59,7 @@ SYNOPSIS
      holypkg info local:FILE
      holypkg verify local:FILE
      holypkg fetch local:FILE --output DIRECTORY
+     holypkg fetch local:FILE --extract --output DIRECTORY
 
 DESCRIPTION
      Checks syntax, includes, sections and duplicate scalar keys of a configura-
@@ -88,6 +89,16 @@ DESCRIPTION
      the  command  checks  the	existing object's digest. A mismatched object is
      left untouched. Fetch does not establish archive validity, provenance or  a
      trusted root-owned cache.	Remote source fetching is not implemented.
+
+     With  --extract,  DIRECTORY  must not exist. The command copies the regular
+     input into a private temporary file, verifies that	 copy  and  checks  that
+     every  entry is a directory or regular file.  It then creates DIRECTORY and
+     writes HOLY and DATA there with directory-relative operations  that  refuse
+     symlink  traversal	 and file replacement. It does not preserve UID/GID, se-
+     tuid bits, capabilities or xattrs, and it refuses symlink and hardlink pay-
+     loads in this prototype. Hooks never run. If an I/O error occurs after  DI-
+     RECTORY is created, partial output remains for inspection.	 This command is
+     not a system installation or a root transaction.
 
 EXIT STATUS
      0	indicates a valid file under the implemented checks; 2 indicates invalid

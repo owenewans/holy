@@ -56,6 +56,22 @@ grep -q 'output directory' "$tmp/err"
 mkfifo "$tmp/pipe"
 if "$bin" fetch "local:$tmp/pipe" --output "$tmp/fetched" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'input must be a regular file' "$tmp/err"
+TMPDIR="$tmp" "$bin" fetch "local:$tmp/package.holy" --extract --output "$tmp/unpacked" > "$tmp/out"
+cmp "$tmp/payload/HOLY/meta" "$tmp/unpacked/HOLY/meta"
+cmp "$tmp/payload/DATA/usr/bin/hello" "$tmp/unpacked/DATA/usr/bin/hello"
+test -z "$(find "$tmp" -maxdepth 1 -name 'holy-extract-*' -print)"
+if "$bin" fetch "local:$tmp/package.holy" --extract --output "$tmp/unpacked" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'create extraction directory' "$tmp/err"
+cp "$tmp/payload/HOLY/files" "$tmp/files-original"
+chmod 4755 "$tmp/payload/DATA/usr/bin/hello"
+sed "s@^file usr/bin/hello $mode @file usr/bin/hello 4755 @" \
+    "$tmp/files-original" > "$tmp/payload/HOLY/files"
+tar -cf "$tmp/setuid.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/setuid.tar" "$tmp/setuid.holy"
+"$bin" fetch "local:$tmp/setuid.holy" --extract --output "$tmp/setuid-out" > "$tmp/out"
+test "$(stat -c %a "$tmp/setuid-out/DATA/usr/bin/hello")" = 755
+chmod "$mode" "$tmp/payload/DATA/usr/bin/hello"
+mv "$tmp/files-original" "$tmp/payload/HOLY/files"
 rm "$tmp/payload/HOLY/origin"
 tar -cf "$tmp/missing-member.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/missing-member.tar" "$tmp/missing-member.holy"
@@ -97,6 +113,9 @@ tar -cf "$tmp/symlink.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/symlink.tar" "$tmp/symlink.holy"
 "$bin" verify "local:$tmp/symlink.holy" > "$tmp/out"
 grep -qx 'verified 1 regular files, 1 symlinks, 2 directories, 0 hardlinks' "$tmp/out"
+if "$bin" fetch "local:$tmp/symlink.holy" --extract --output "$tmp/symlink-out" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'unsupported or damaged extraction input' "$tmp/err"
+test ! -e "$tmp/symlink-out"
 rm "$tmp/payload/DATA/usr/bin/link"
 ln -s ../../../escape "$tmp/payload/DATA/usr/bin/link"
 tar -cf "$tmp/symlink.tar" -C "$tmp/payload" HOLY DATA
@@ -115,6 +134,9 @@ tar -cf "$tmp/hard.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/hard.tar" "$tmp/hard.holy"
 "$bin" verify "local:$tmp/hard.holy" > "$tmp/out"
 grep -qx 'verified 1 regular files, 0 symlinks, 2 directories, 1 hardlinks' "$tmp/out"
+if "$bin" fetch "local:$tmp/hard.holy" --extract --output "$tmp/hard-out" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'unsupported or damaged extraction input' "$tmp/err"
+test ! -e "$tmp/hard-out"
 sed 's/group1 usr\/bin\/hello$/group2 usr\/bin\/hello/' \
     "$tmp/payload/HOLY/files" > "$tmp/files-mismatch"
 mv "$tmp/files-mismatch" "$tmp/payload/HOLY/files"
@@ -160,4 +182,6 @@ tar -cf "$tmp/traversal.tar" --transform='s@^DATA/usr/bin/hello$@DATA/../../esca
 lz4 -q "$tmp/traversal.tar" "$tmp/traversal.holy"
 if "$bin" info "local:$tmp/traversal.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'unsafe or unexpected archive path' "$tmp/err"
+if "$bin" fetch "local:$tmp/traversal.holy" --extract --output "$tmp/traversal-out" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -e "$tmp/traversal-out"
 printf 'package fixtures passed\n'
