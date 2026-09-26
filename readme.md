@@ -7,6 +7,7 @@ the C99 configuration parser and read-only local package inspector/verifier.
 The verifier handles regular files, symlinks, directories and direct hardlinks.
 Local fetch copies objects by SHA-256 without installing them.
 Local extract handles regular files, directories and safe links in a new output directory.
+Local check compares a package payload against a chosen root without changing it.
 Holy does not contain a bootable distribution yet.
 
 Run `make` to build `holypkg` and `make check` to test it. Read

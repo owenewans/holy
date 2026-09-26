@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=e96a9407fbc17008e1124ea9413c7fb301551e9641c972418f47129c183db558
+holypkg.8 source=holy version=development sha256=a49e50632e104ab1d18d9613321dbed05aae9446cc00b52d562d812af49889c2
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -60,6 +60,7 @@ SYNOPSIS
      holypkg verify local:FILE
      holypkg fetch local:FILE --output DIRECTORY
      holypkg fetch local:FILE --extract --output DIRECTORY
+     holypkg check local:FILE --root DIRECTORY
 
 DESCRIPTION
      Checks syntax, includes, sections and duplicate scalar keys of a configura-
@@ -102,6 +103,15 @@ DESCRIPTION
      within the output tree. Hooks never run. If an I/O error occurs  after  DI-
      RECTORY is created, partial output remains for inspection.	 This command is
      not a system installation or a root transaction.
+
+     The  local check command first verifies the package, then compares its DATA
+     members with a supplied filesystem root. It  follows  directory  components
+     through  directory	 descriptors  without  following  symlinks.  It compares
+     types, mode, numeric UID/GID, file size and SHA-256,  symlink  targets  and
+     hardlink  inode identity. It reports the first changed path. Check does not
+     run package code, download files or modify the root. It does not consult an
+     installed database, model ELF loaders, check unknown  runtime  dependencies
+     or prove a stable snapshot if the package or root changes during checking.
 
 EXIT STATUS
      0	indicates a valid file under the implemented checks; 2 indicates invalid

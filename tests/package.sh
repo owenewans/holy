@@ -60,6 +60,19 @@ TMPDIR="$tmp" "$bin" fetch "local:$tmp/package.holy" --extract --output "$tmp/un
 cmp "$tmp/payload/HOLY/meta" "$tmp/unpacked/HOLY/meta"
 cmp "$tmp/payload/DATA/usr/bin/hello" "$tmp/unpacked/DATA/usr/bin/hello"
 test -z "$(find "$tmp" -maxdepth 1 -name 'holy-extract-*' -print)"
+if "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'changed payload: DATA/usr/' "$tmp/err"
+chmod "$(stat -c %a "$tmp/payload/DATA/usr")" "$tmp/unpacked/DATA/usr"
+chmod "$(stat -c %a "$tmp/payload/DATA/usr/bin")" "$tmp/unpacked/DATA/usr/bin"
+"$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" > "$tmp/out"
+grep -qx 'checked 3 payload objects' "$tmp/out"
+printf 'world\n' > "$tmp/unpacked/DATA/usr/bin/hello"
+if "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'changed payload: DATA/usr/bin/hello' "$tmp/err"
+rm "$tmp/unpacked/DATA/usr/bin/hello"
+ln -s /etc/passwd "$tmp/unpacked/DATA/usr/bin/hello"
+if "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'changed payload: DATA/usr/bin/hello' "$tmp/err"
 if "$bin" fetch "local:$tmp/package.holy" --extract --output "$tmp/unpacked" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'create extraction directory' "$tmp/err"
 setfattr -n user.holy -v probe "$tmp/payload/DATA/usr/bin/hello"
@@ -172,6 +185,14 @@ lz4 -q "$tmp/symlink.tar" "$tmp/symlink.holy"
 grep -qx 'verified 1 regular files, 1 symlinks, 2 directories, 0 hardlinks' "$tmp/out"
 "$bin" fetch "local:$tmp/symlink.holy" --extract --output "$tmp/symlink-out" > "$tmp/out"
 test "$(readlink "$tmp/symlink-out/DATA/usr/bin/link")" = hello
+chmod "$(stat -c %a "$tmp/payload/DATA/usr")" "$tmp/symlink-out/DATA/usr"
+chmod "$(stat -c %a "$tmp/payload/DATA/usr/bin")" "$tmp/symlink-out/DATA/usr/bin"
+"$bin" check "local:$tmp/symlink.holy" --root "$tmp/symlink-out/DATA" > "$tmp/out"
+grep -qx 'checked 4 payload objects' "$tmp/out"
+rm "$tmp/symlink-out/DATA/usr/bin/link"
+ln -s wrong "$tmp/symlink-out/DATA/usr/bin/link"
+if "$bin" check "local:$tmp/symlink.holy" --root "$tmp/symlink-out/DATA" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'changed payload: DATA/usr/bin/link' "$tmp/err"
 rm "$tmp/payload/DATA/usr/bin/link"
 ln -s /usr/bin/hello "$tmp/payload/DATA/usr/bin/link"
 sed 's@symlink usr/bin/link \(.*\) hello$@symlink usr/bin/link \1 /usr/bin/hello@' \
@@ -203,6 +224,14 @@ grep -qx 'verified 1 regular files, 0 symlinks, 2 directories, 1 hardlinks' "$tm
 "$bin" fetch "local:$tmp/hard.holy" --extract --output "$tmp/hard-out" > "$tmp/out"
 test "$(stat -c %i "$tmp/hard-out/DATA/usr/bin/hard")" = \
     "$(stat -c %i "$tmp/hard-out/DATA/usr/bin/hello")"
+chmod "$(stat -c %a "$tmp/payload/DATA/usr")" "$tmp/hard-out/DATA/usr"
+chmod "$(stat -c %a "$tmp/payload/DATA/usr/bin")" "$tmp/hard-out/DATA/usr/bin"
+"$bin" check "local:$tmp/hard.holy" --root "$tmp/hard-out/DATA" > "$tmp/out"
+grep -qx 'checked 4 payload objects' "$tmp/out"
+rm "$tmp/hard-out/DATA/usr/bin/hard"
+cp "$tmp/hard-out/DATA/usr/bin/hello" "$tmp/hard-out/DATA/usr/bin/hard"
+if "$bin" check "local:$tmp/hard.holy" --root "$tmp/hard-out/DATA" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'changed payload: DATA/usr/bin/hard' "$tmp/err"
 sed 's/group1 usr\/bin\/hello$/group2 usr\/bin\/hello/' \
     "$tmp/payload/HOLY/files" > "$tmp/files-mismatch"
 mv "$tmp/files-mismatch" "$tmp/payload/HOLY/files"
