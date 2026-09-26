@@ -48,6 +48,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db cancel --root DIRECTORY
 .br
+.B holypkg db recover --root DIRECTORY
+.br
 .B holypkg repo index DIRECTORY
 .br
 .B holypkg repo list DIRECTORY
@@ -307,6 +309,15 @@ This is a reservation of inputs, not a dependency-resolved install plan or
 committed transaction. No apply or recovery from an interrupted filesystem
 mutation exists. An unknown or malformed journal entry remains an error;
 cancel will not discard it silently.
+.PP
+Database recover handles only interruption of reservation publication. It
+accepts one .holy-tmp- followed by 32 lowercase hex digits, verifies its
+record against the current generation and removes that directory entry. If
+pending also exists, the temporary name must be a hardlink to that exact
+pending inode; recover preserves pending and returns 5. With no pending it
+returns 0 after removing the orphan. Unknown entries, stale generations,
+different inodes and malformed records fail without deletion. This command
+does not recover hooks, installed files or arbitrary incomplete transactions.
 .PP
 The repository index command validates regular .holy files in DIRECTORY and
 writes an unsigned, lexicographically ordered index through an atomic rename.

@@ -122,14 +122,14 @@ static int empty_child(int dir, const char *name)
     return empty;
 }
 
-static int read_pending(int transactions, unsigned long long generation,
-                        char digest[65])
+static int read_reservation(int transactions, const char *name,
+                            unsigned long long generation, char digest[65])
 {
     char buffer[192], prefix[96];
     struct stat st;
     ssize_t got;
     size_t length, i;
-    int fd = openat(transactions, "pending", O_RDONLY | O_NOFOLLOW |
+    int fd = openat(transactions, name, O_RDONLY | O_NOFOLLOW |
                     O_CLOEXEC | O_NONBLOCK);
     if (fd < 0) return errno == ENOENT ? 0 : -1;
     length = (size_t)snprintf(prefix, sizeof prefix,
@@ -168,7 +168,7 @@ static int pending_child(int dir, unsigned long long generation, char digest[65]
         errno = 0;
     }
     if (!entry && !errno && count <= 1)
-        result = read_pending(child, generation, digest);
+        result = read_reservation(child, "pending", generation, digest);
     closedir(listing);
     close(child);
     if (result < 0) fprintf(stderr, "holypkg: unrecognized database entries in transactions\n");
@@ -285,6 +285,65 @@ int holy_state_cancel(const char *root_path)
     result = 0;
 done:
     if (result) fprintf(stderr, "holypkg: reservation cancellation failed\n");
+    if (transactions >= 0) close(transactions);
+    if (dir >= 0) close(dir);
+    return result;
+}
+
+static int temporary_name(const char *name)
+{
+    size_t i;
+    if (strlen(name) != 42 || strncmp(name, ".holy-tmp-", 10)) return 0;
+    for (i = 10; i < 42; ++i)
+        if (!((name[i] >= '0' && name[i] <= '9') ||
+              (name[i] >= 'a' && name[i] <= 'f'))) return 0;
+    return 1;
+}
+
+int holy_state_recover(const char *root_path)
+{
+    unsigned long long generation;
+    char temp_name[43] = {0}, pending_digest[65], temp_digest[65];
+    struct stat pending_st, temp_st;
+    DIR *listing = NULL;
+    struct dirent *entry;
+    int dir = state_dir(root_path, 0), transactions = -1;
+    int has_pending = 0, result = 1;
+    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+        !empty_child(dir, "installed") || !empty_child(dir, "index") ||
+        !read_generation(dir, &generation)) goto done;
+    transactions = child_dir(dir, "transactions", 0);
+    if (transactions < 0) goto done;
+    listing = fdopendir(dup(transactions));
+    if (!listing) goto done;
+    errno = 0;
+    while ((entry = readdir(listing))) {
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
+            continue;
+        if (!strcmp(entry->d_name, "pending")) {
+            if (has_pending++) goto done;
+        } else if (temporary_name(entry->d_name) && !temp_name[0]) {
+            memcpy(temp_name, entry->d_name, 43);
+        } else goto done;
+        errno = 0;
+    }
+    if (errno) goto done;
+    if (has_pending && (read_reservation(transactions, "pending", generation,
+                                        pending_digest) != 1 ||
+                        fstatat(transactions, "pending", &pending_st,
+                                AT_SYMLINK_NOFOLLOW))) goto done;
+    if (!temp_name[0]) { result = has_pending ? 5 : 0; goto done; }
+    if (read_reservation(transactions, temp_name, generation, temp_digest) != 1 ||
+        fstatat(transactions, temp_name, &temp_st, AT_SYMLINK_NOFOLLOW)) goto done;
+    if (has_pending && (strcmp(pending_digest, temp_digest) ||
+        pending_st.st_dev != temp_st.st_dev ||
+        pending_st.st_ino != temp_st.st_ino)) goto done;
+    if (unlinkat(transactions, temp_name, 0) || fsync(transactions)) goto done;
+    printf("recovered temporary reservation %s\n", temp_digest);
+    result = has_pending ? 5 : 0;
+done:
+    if (result == 1) fprintf(stderr, "holypkg: reservation recovery failed\n");
+    if (listing) closedir(listing);
     if (transactions >= 0) close(transactions);
     if (dir >= 0) close(dir);
     return result;

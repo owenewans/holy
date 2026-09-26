@@ -85,6 +85,19 @@ grep -qx "artifact $digest" "$db/transactions/pending"
 if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
 grep -qx 'generation 7' "$tmp/out"
 grep -qx "pending $digest" "$tmp/out"
+temp_record="$db/transactions/.holy-tmp-00000000000000000000000000000000"
+ln "$db/transactions/pending" "$temp_record"
+if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+if "$bin" db recover --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
+grep -qx "recovered temporary reservation $digest" "$tmp/out"
+test ! -e "$temp_record"
+test -f "$db/transactions/pending"
+cp "$db/transactions/pending" "$tmp/reservation-record"
+cp "$tmp/reservation-record" "$temp_record"
+if "$bin" db recover --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test -e "$temp_record"
+test -e "$db/transactions/pending"
+rm "$temp_record"
 if "$bin" db reserve "$digest" --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
 if "$bin" db init --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 printf '8\n' > "$db/generation"
@@ -95,6 +108,15 @@ printf '7\n' > "$db/generation"
 "$bin" db cancel --root "$tmp/root" > "$tmp/out"
 grep -qx "cancelled $digest" "$tmp/out"
 test -f "$tmp/root/var/cache/holypkg/objects/sha256/$digest.holy"
+cp "$tmp/reservation-record" "$temp_record"
+if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+"$bin" db recover --root "$tmp/root" > "$tmp/out"
+grep -qx "recovered temporary reservation $digest" "$tmp/out"
+test ! -e "$temp_record"
+printf 'invalid\n' > "$temp_record"
+if "$bin" db recover --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test -e "$temp_record"
+rm "$temp_record"
 "$bin" db status --root "$tmp/root" > "$tmp/out"
 grep -qx 'generation 7' "$tmp/out"
 if "$bin" db cancel --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi

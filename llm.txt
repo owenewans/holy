@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=003d9b71ed1474f89a30df0a2919be6ab2fd5445cfe2b4509da0c7ef377b528c
+holypkg.8 source=holy version=development sha256=b603abd265b19dc09c71c0872a0888903e5f1e47e649a8e82e3b8d6f727ec8e0
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -79,6 +79,7 @@ SYNOPSIS
      holypkg db status --root DIRECTORY
      holypkg db reserve SHA256 --root DIRECTORY
      holypkg db cancel --root DIRECTORY
+     holypkg db recover --root DIRECTORY
      holypkg repo index DIRECTORY
      holypkg repo list DIRECTORY
      holypkg repo search DIRECTORY NAME
@@ -333,6 +334,16 @@ DESCRIPTION
      plan  or  committed  transaction.	No apply or recovery from an interrupted
      filesystem mutation exists. An unknown or malformed journal  entry	 remains
      an error; cancel will not discard it silently.
+
+     Database  recover	handles only interruption of reservation publication. It
+     accepts one .holy-tmp- followed by 32 lowercase hex  digits,  verifies  its
+     record  against the current generation and removes that directory entry. If
+     pending also exists, the temporary name must be a hardlink	 to  that  exact
+     pending  inode; recover preserves pending and returns 5. With no pending it
+     returns 0 after removing the orphan. Unknown  entries,  stale  generations,
+     different	inodes and malformed records fail without deletion. This command
+     does not recover hooks, installed files or	 arbitrary  incomplete	transac-
+     tions.
 
      The repository index command validates regular .holy files in DIRECTORY and
      writes  an	 unsigned, lexicographically ordered index through an atomic re-
