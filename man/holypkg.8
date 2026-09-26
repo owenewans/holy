@@ -274,7 +274,7 @@ version constraints, or successful execution. There is no source ranking or
 dependency solver yet; the prototype-2 query uses indexed claim lookup but
 still scans all index rows.
 .PP
-The separate make check-solver target exercises an internal libsolv interface
+The make check-solver target (also run by make check) exercises an internal libsolv interface
 with normalized, exact capability IDs and AND/OR, conflict and cyclic fixtures.
 The caller must
 pre-filter candidates using each source family's version semantics before it

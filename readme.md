@@ -22,8 +22,8 @@ make check
 `make install` installs the current `holypkg` prototype, man pages and generated
 `llm.txt`. Fixtures also need tar, lz4, sha256sum, GCC, setfattr, setfacl,
 objcopy, as and ld.
-`make check-solver` tests the internal libsolv boundary when libsolv development
-files are available through pkg-config. It returns an error if they are absent.
+`make check` includes the internal libsolv fixture. libsolv development files
+must be available through pkg-config; the check fails if they are absent.
 
 ## status
 
