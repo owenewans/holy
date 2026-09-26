@@ -2,6 +2,7 @@
 #include "verify.h"
 #include "config.h"
 #include "package.h"
+#include "stage.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -10,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 struct payload {
     char *path;
@@ -188,7 +190,8 @@ static int validate_manifest(const char *path, char *text, size_t size,
     return 1;
 }
 
-int holy_verify_with_output(const char *path, int emit)
+static int verify_archive(const char *path, int emit,
+                          holy_manifest_visit visitor, void *context)
 {
     struct archive *a = NULL;
     struct archive_entry *entry;
@@ -348,6 +351,14 @@ int holy_verify_with_output(const char *path, int emit)
         }
     if (!resolve_hardlinks(path, files, count)) goto done;
     ok = validate_manifest(path, manifest ? manifest : "", manifest_size, files, count);
+    if (ok && visitor) for (i = 0; i < count; ++i) {
+        const struct holy_manifest_entry entry = {
+            files[i].path, files[i].link, files[i].hardlink, files[i].group,
+            files[i].hash, files[i].size, files[i].mode, files[i].uid,
+            files[i].gid, files[i].directory
+        };
+        if (!visitor(context, &entry)) { ok = 0; break; }
+    }
     if (ok && emit) printf("verified %zu regular files, %zu symlinks, %zu directories, %zu hardlinks\n",
                    count - symlinks - directories - hardlinks, symlinks, directories, hardlinks);
 done:
@@ -360,6 +371,63 @@ done:
     free(files);
     free(manifest);
     if (a) archive_read_free(a);
+    return ok;
+}
+
+int holy_verify_with_output(const char *path, int emit)
+{
+    return verify_archive(path, emit, NULL, NULL);
+}
+
+int holy_verify_visit(const char *path, holy_manifest_visit visitor, void *context)
+{
+    return visitor && verify_archive(path, 0, visitor, context);
+}
+
+static void print_escaped(const char *text)
+{
+    const unsigned char *p = (const unsigned char *)text;
+    for (; *p; ++p)
+        if (*p == '\\' || *p <= 32 || *p >= 127)
+            printf("\\x%02x", (unsigned int)*p);
+        else putchar(*p);
+}
+
+static int print_manifest(void *context, const struct holy_manifest_entry *entry)
+{
+    size_t i;
+    (void)context;
+    printf("%s ", entry->directory ? "dir" : entry->link ? "symlink" :
+           entry->hardlink ? "hardlink" : "file");
+    print_escaped(entry->path);
+    printf(" mode=%04o uid=%lld gid=%lld size=%lld",
+           entry->mode, entry->uid, entry->gid, entry->size);
+    if (entry->link || entry->hardlink) {
+        fputs(" target=", stdout);
+        print_escaped(entry->link ? entry->link : entry->hardlink);
+    } else if (!entry->directory) {
+        fputs(" sha256=", stdout);
+        for (i = 0; i < 32; ++i) printf("%02x", entry->hash[i]);
+    }
+    if (entry->group) {
+        fputs(" hardlink-group=", stdout);
+        print_escaped(entry->group);
+    }
+    putchar('\n');
+    return !ferror(stdout);
+}
+
+int holy_manifest_local(const char *path)
+{
+    char *snapshot = holy_stage_local(path, "holy-manifest");
+    int ok;
+    if (!snapshot) {
+        fprintf(stderr, "holypkg: could not stage regular local input\n");
+        return 0;
+    }
+    ok = holy_verify_visit(snapshot, print_manifest, NULL);
+    unlink(snapshot);
+    free(snapshot);
     return ok;
 }
 

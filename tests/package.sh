@@ -35,6 +35,9 @@ grep -qx 'name fixture' "$tmp/out"
 grep -qx 'libc nolibc' "$tmp/out"
 expected=$(sha256sum "$tmp/package.holy" | cut -d ' ' -f 1)
 grep -qx "sha256 $expected" "$tmp/out"
+"$bin" manifest "local:$tmp/package.holy" > "$tmp/out"
+grep -qx "file usr/bin/hello mode=0$mode uid=$uid gid=$gid size=6 sha256=$digest" "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 3
 mkdir "$tmp/cache-root"
 "$bin" cache stage "local:$tmp/package.holy" --root "$tmp/cache-root" > "$tmp/out"
 cache="$tmp/cache-root/var/cache/holypkg/objects/sha256/$expected.holy"
@@ -554,6 +557,8 @@ tar -cf "$tmp/symlink.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/symlink.tar" "$tmp/symlink.holy"
 "$bin" verify "local:$tmp/symlink.holy" > "$tmp/out"
 grep -qx 'verified 1 regular files, 1 symlinks, 2 directories, 0 hardlinks' "$tmp/out"
+"$bin" manifest "local:$tmp/symlink.holy" > "$tmp/out"
+grep -q '^symlink usr/bin/link .* target=hello$' "$tmp/out"
 "$bin" fetch "local:$tmp/symlink.holy" --extract --output "$tmp/symlink-out" > "$tmp/out"
 test "$(readlink "$tmp/symlink-out/DATA/usr/bin/link")" = hello
 chmod "$(stat -c %a "$tmp/payload/DATA/usr")" "$tmp/symlink-out/DATA/usr"
@@ -592,6 +597,8 @@ tar -cf "$tmp/hard.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/hard.tar" "$tmp/hard.holy"
 "$bin" verify "local:$tmp/hard.holy" > "$tmp/out"
 grep -qx 'verified 1 regular files, 0 symlinks, 2 directories, 1 hardlinks' "$tmp/out"
+"$bin" manifest "local:$tmp/hard.holy" > "$tmp/out"
+grep -q '^hardlink usr/bin/hard .* target=usr/bin/hello hardlink-group=group1$' "$tmp/out"
 "$bin" fetch "local:$tmp/hard.holy" --extract --output "$tmp/hard-out" > "$tmp/out"
 test "$(stat -c %i "$tmp/hard-out/DATA/usr/bin/hard")" = \
     "$(stat -c %i "$tmp/hard-out/DATA/usr/bin/hello")"
@@ -629,6 +636,8 @@ chmod "$dmode" "$tmp/payload/DATA/usr/bin"
 cp "$tmp/package.holy" "$tmp/broken.holy"
 printf 'not a frame' > "$tmp/broken.holy"
 if "$bin" info "local:$tmp/broken.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+if "$bin" manifest "local:$tmp/broken.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
 grep -q 'expected LZ4 frame' "$tmp/err"
 sed 's/format holy-package-1/format future-format/' "$tmp/payload/HOLY/meta" > "$tmp/meta"
 mv "$tmp/meta" "$tmp/payload/HOLY/meta"

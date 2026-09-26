@@ -8,6 +8,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg verify local:FILE
 .br
+.B holypkg manifest local:FILE
+.br
 .B holypkg requirements local:FILE
 .br
 .B holypkg requirements local:FILE --json
@@ -94,6 +96,14 @@ The verify command checks regular DATA files against the supported HOLY/files
 records, including size, mode, numeric owner and SHA-256. It checks symlinks,
 directories and direct hardlinks, rejecting unsupported objects. It does not install or authenticate packages;
 the two read passes do not provide a stable filesystem snapshot.
+.PP
+The manifest command stages a local archive, verifies the entire supported
+payload and HOLY/files, then lists validated objects in path order. Each line
+contains type, escaped relative path, mode, numeric UID/GID and size; files
+include SHA-256, links include targets and grouped hardlinks include their
+group. Fields are borrowed from the verified snapshot during inspection.
+This read-only output does not prove that ownership can be mapped onto a
+target root or that a file can be installed without collision.
 .PP
 The requirements command stages and verifies a regular archive, then reads
 HOLY/deps using the holy.conf lexer. Its current typed subset accepts lines of
