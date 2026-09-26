@@ -229,6 +229,11 @@ assert [a['artifact'], b['artifact']] == sorted(sys.argv[2:])
 assert [a['state'], b['state']] == ['pass', 'pass']
 assert summary['pass'] == 2 and summary['fail'] == 0
 PY
+cp "$db/installed/$digest2/files" "$tmp/valid-installed-files"
+printf 'malformed\n' > "$db/installed/$digest2/files"
+if "$bin" db check --all --root "$tmp/system" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+grep -qx '{"schema":"holy-installed-check-1","type":"error","code":"invalid-state","status":1}' "$tmp/out"
+mv "$tmp/valid-installed-files" "$db/installed/$digest2/files"
 printf 'changed\n' > "$tmp/system/usr/bin/data"
 if "$bin" db check --all --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 grep -qx "changed $digest generation 2" "$tmp/out"
