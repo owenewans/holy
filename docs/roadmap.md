@@ -56,8 +56,12 @@ it does not mean a bootable distribution or general package support.
 - [x] Run current prototype fixtures under GCC, TCC and Clang ASan/UBSan.
 - [x] Run `make check-root` against disposable target-root install, check,
   remove and recovery fixtures; this gate does not boot a system.
-- [ ] Add real `make check-qemu`, `check-install` and
-  `check-hardware` targets; unavailable inputs must fail or report skip.
+- [x] Add a BIOS/TCG `make check-qemu ARCH=... ISO=... BOOT_PLAN=...` runner
+  with serial markers, ISO hash, QEMU argv, exit status, elapsed time and logs.
+  Missing images return a requirement error; blank ISO fails both architecture
+  fixtures via `make check-qemu-gate`. No Holy boot image has passed it.
+- [ ] Add real `make check-install` and `check-hardware` targets; extend the
+  QEMU runner to UEFI, qcow2 trial overlays, stage timeouts and result channels.
 - [ ] Boot both target architectures in QEMU and prove PID 1, shell, package
   install/removal and recovery after removing either or both dynamic libc runtimes.
 - [ ] Run compiler/SDK, language, GUI, graphics, gaming, workstation and foreign

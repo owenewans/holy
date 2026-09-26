@@ -27,6 +27,9 @@ objcopy, as and ld.
 must be available through pkg-config; the check fails if they are absent.
 `make check-root` exercises package mutations only inside disposable target
 directories. It does not test a booted system.
+`make check-qemu-gate` runs negative BIOS/TCG fixtures.
+`make check-qemu ARCH=x86_64 ISO=FILE BOOT_PLAN=SHA256` requires a Holy ISO and guest
+serial probes; the repository does not yet produce one.
 
 ## status
 
