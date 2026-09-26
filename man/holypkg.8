@@ -62,6 +62,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db plan --root DIRECTORY
 .br
+.B holypkg db approve PLAN_SHA256 --root DIRECTORY
+.br
 .B holypkg repo index DIRECTORY
 .br
 .B holypkg repo list DIRECTORY
@@ -97,6 +99,14 @@ SHA-256 over those identities and ordered manifest entries. This command does no
 reserve ownership, authorize apply or recheck the target root at mutation
 time. Concurrent changes can invalidate the collision check. A future apply
 command must revalidate all inputs and paths under its writer lock.
+.PP
+The db approve command recomputes the plan under an exclusive database lock.
+If its SHA-256 matches PLAN_SHA256, the command replaces the prepared
+reservation with an approved record bound to its artifact and generation.
+Status reports the approved digest; cancel removes the record. A mismatched
+plan returns decision-required without changing the reservation. Approval
+does not install files or authorize a future implementation to skip path,
+artifact and generation checks under the same writer lock at apply time.
 .PP
 The info command reads an LZ4-frame-compressed tar archive and prints the seven
 required fields from HOLY/meta. It reads archive data without extracting or
@@ -335,28 +345,32 @@ Database reserve checks a verified SHA-256 object in the target-root cache,
 locks the empty database at its current generation and publishes one
 fsynced prepared reservation in transactions/pending. Status validates the
 record and returns 5 while it is present. Reserve refuses a second pending
-record with status 5. Database cancel validates and removes only this prepared
-record; it leaves the cached archive and rootfs unchanged. The record has
-format holy-reservation-1, stage prepared, generation and artifact digest.
+record with status 5. Database cancel validates and removes a prepared or
+approved record; it leaves the cached archive and rootfs unchanged. The record
+has format holy-reservation-1, its stage, generation and artifact digest. An
+approved record also contains the plan digest.
 This is a reservation of inputs, not a dependency-resolved install plan or
 committed transaction. No apply or recovery from an interrupted filesystem
 mutation exists. An unknown or malformed journal entry remains an error;
 cancel will not discard it silently.
 .PP
 Status --json emits one holy-db-status-1 state event with numeric generation
-and pending null or a prepared SHA-256 object. A malformed database emits one
+and pending null or a prepared/approved SHA-256 object. An approved object
+also includes its plan digest. A malformed database emits one
 invalid-state event and returns 1, without partial state on stdout.
 .PP
 Database recover handles only interruption of reservation publication. It
 accepts one .holy-tmp- followed by 32 lowercase hex digits, verifies its
 record against the current generation and removes that directory entry. If
 pending also exists, the temporary name must be a hardlink to that exact
-pending inode; recover preserves pending and returns 5. With no pending it
-returns 0 after removing the orphan. Unknown entries, stale generations,
-different inodes and malformed records fail without deletion. This command
+pending inode. A valid unpublished approved record for the same artifact may
+instead be removed while leaving its prepared predecessor intact. Recover
+preserves pending and returns 5. With no pending it returns 0 after removing
+the orphan. Unknown entries, stale generations, unrelated inodes and malformed
+records fail without deletion. This command
 does not recover hooks, installed files or arbitrary incomplete transactions.
 .PP
-Database preflight holds a shared database lock, validates the one prepared
+Database preflight holds a shared database lock, validates the one pending
 reservation, reads a verified private snapshot of its cached artifact and runs
 the same target-root collision and dependency preview as preview local:FILE.
 It returns 0 for a zero-decision preview, 3 for unresolved requirements or

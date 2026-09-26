@@ -139,12 +139,14 @@ static int empty_child(int dir, const char *name)
 }
 
 static int read_reservation(int transactions, const char *name,
-                            unsigned long long generation, char digest[65])
+                            unsigned long long generation, char digest[65],
+                            char approved[65])
 {
-    char buffer[192], prefix[96];
+    char buffer[256], prefix[96];
     struct stat st;
     ssize_t got;
     size_t length, i;
+    int is_approved = 0;
     int fd = openat(transactions, name, O_RDONLY | O_NOFOLLOW |
                     O_CLOEXEC | O_NONBLOCK);
     if (fd < 0) return errno == ENOENT ? 0 : -1;
@@ -152,22 +154,40 @@ static int read_reservation(int transactions, const char *name,
         "format holy-reservation-1\nstage prepared\ngeneration %llu\nartifact ",
         generation);
     if (length >= sizeof prefix || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
-        st.st_size != (off_t)(length + 65) || (st.st_mode & 0022) ||
+        (st.st_size != (off_t)(length + 65) &&
+         st.st_size != (off_t)(length + 65 + 70)) || (st.st_mode & 0022) ||
         (st.st_uid != 0 && st.st_uid != geteuid())) { close(fd); return -1; }
     got = read(fd, buffer, sizeof buffer);
     close(fd);
-    if (got != st.st_size || memcmp(buffer, prefix, length) ||
-        buffer[length + 64] != '\n') return -1;
+    if (got != st.st_size || buffer[length + 64] != '\n') return -1;
+    if (memcmp(buffer, prefix, length)) {
+        is_approved = 1;
+        length = (size_t)snprintf(prefix, sizeof prefix,
+            "format holy-reservation-1\nstage approved\ngeneration %llu\nartifact ",
+            generation);
+        if (length >= sizeof prefix || memcmp(buffer, prefix, length) ||
+            st.st_size != (off_t)(length + 65 + 70)) return -1;
+    }
     for (i = 0; i < 64; ++i)
         if (!((buffer[length + i] >= '0' && buffer[length + i] <= '9') ||
               (buffer[length + i] >= 'a' && buffer[length + i] <= 'f')))
             return -1;
     memcpy(digest, buffer + length, 64);
     digest[64] = '\0';
+    approved[0] = '\0';
+    if (is_approved != (st.st_size != (off_t)(length + 65))) return -1;
+    if (st.st_size != (off_t)(length + 65)) {
+        if (memcmp(buffer + length + 65, "plan ", 5) ||
+            buffer[length + 65 + 5 + 64] != '\n') return -1;
+        memcpy(approved, buffer + length + 70, 64);
+        approved[64] = '\0';
+        if (!valid_digest(approved)) return -1;
+    }
     return 1;
 }
 
-static int pending_child(int dir, unsigned long long generation, char digest[65])
+static int pending_child(int dir, unsigned long long generation, char digest[65],
+                         char approved[65])
 {
     int child = child_dir(dir, "transactions", 0), result = -1;
     DIR *listing;
@@ -184,7 +204,7 @@ static int pending_child(int dir, unsigned long long generation, char digest[65]
         errno = 0;
     }
     if (!entry && !errno && count <= 1)
-        result = read_reservation(child, "pending", generation, digest);
+        result = read_reservation(child, "pending", generation, digest, approved);
     closedir(listing);
     close(child);
     if (result < 0) fprintf(stderr, "holypkg: unrecognized database entries in transactions\n");
@@ -224,24 +244,30 @@ done:
 int holy_state_status(const char *root_path, int json)
 {
     unsigned long long generation;
-    char digest[65];
+    char digest[65], approved[65];
     int dir = state_dir(root_path, 0), pending, result = 1;
     if (dir < 0) goto done;
     if (flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
         !empty_child(dir, "installed") ||
         !empty_child(dir, "index") ||
         !read_generation(dir, &generation)) goto done;
-    pending = pending_child(dir, generation, digest);
+    pending = pending_child(dir, generation, digest, approved);
     if (pending < 0) goto done;
     if (json) {
         printf("{\"schema\":\"holy-db-status-1\",\"type\":\"state\",\"generation\":%llu,\"pending\":",
                generation);
-        if (pending) printf("{\"stage\":\"prepared\",\"sha256\":\"%s\"}", digest);
+        if (pending) {
+            printf("{\"stage\":\"%s\",\"sha256\":\"%s\"",
+                   approved[0] ? "approved" : "prepared", digest);
+            if (approved[0]) printf(",\"plan\":\"%s\"", approved);
+            putchar('}');
+        }
         else fputs("null", stdout);
         puts("}");
     } else {
         printf("generation %llu\n", generation);
-        if (pending) printf("pending %s\n", digest);
+        if (pending) printf("pending %s%s%s\n", digest,
+                            approved[0] ? " approved " : "", approved);
     }
     if (pending) {
         result = 5;
@@ -258,7 +284,7 @@ done:
 int holy_state_reserve(const char *digest, const char *root_path)
 {
     unsigned long long generation;
-    char existing[65], temp_name[43] = {0}, record[192];
+    char existing[65], approved[65], temp_name[43] = {0}, record[192];
     int dir = -1, transactions = -1, temp = -1, result = 1;
     size_t length;
     if (!valid_digest(digest)) {
@@ -270,7 +296,7 @@ int holy_state_reserve(const char *digest, const char *root_path)
     if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
         !empty_child(dir, "installed") || !empty_child(dir, "index") ||
         !read_generation(dir, &generation)) goto done;
-    result = pending_child(dir, generation, existing);
+    result = pending_child(dir, generation, existing, approved);
     if (result < 0) { result = 1; goto done; }
     if (result) { result = 5; goto done; }
     result = 1;
@@ -299,12 +325,12 @@ done:
 int holy_state_cancel(const char *root_path)
 {
     unsigned long long generation;
-    char digest[65];
+    char digest[65], approved[65];
     int dir = state_dir(root_path, 0), transactions = -1, result = 1;
     if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
         !empty_child(dir, "installed") || !empty_child(dir, "index") ||
         !read_generation(dir, &generation) ||
-        pending_child(dir, generation, digest) != 1) goto done;
+        pending_child(dir, generation, digest, approved) != 1) goto done;
     transactions = child_dir(dir, "transactions", 0);
     if (transactions < 0 || unlinkat(transactions, "pending", 0) ||
         fsync(transactions)) goto done;
@@ -331,6 +357,7 @@ int holy_state_recover(const char *root_path)
 {
     unsigned long long generation;
     char temp_name[43] = {0}, pending_digest[65], temp_digest[65];
+    char pending_approved[65], temp_approved[65];
     struct stat pending_st, temp_st;
     DIR *listing = NULL;
     struct dirent *entry;
@@ -356,15 +383,17 @@ int holy_state_recover(const char *root_path)
     }
     if (errno) goto done;
     if (has_pending && (read_reservation(transactions, "pending", generation,
-                                        pending_digest) != 1 ||
+                                        pending_digest, pending_approved) != 1 ||
                         fstatat(transactions, "pending", &pending_st,
                                 AT_SYMLINK_NOFOLLOW))) goto done;
     if (!temp_name[0]) { result = has_pending ? 5 : 0; goto done; }
-    if (read_reservation(transactions, temp_name, generation, temp_digest) != 1 ||
+    if (read_reservation(transactions, temp_name, generation,
+                         temp_digest, temp_approved) != 1 ||
         fstatat(transactions, temp_name, &temp_st, AT_SYMLINK_NOFOLLOW)) goto done;
     if (has_pending && (strcmp(pending_digest, temp_digest) ||
-        pending_st.st_dev != temp_st.st_dev ||
-        pending_st.st_ino != temp_st.st_ino)) goto done;
+        ((pending_st.st_dev != temp_st.st_dev ||
+          pending_st.st_ino != temp_st.st_ino) &&
+         !(temp_approved[0] && !pending_approved[0])))) goto done;
     if (unlinkat(transactions, temp_name, 0) || fsync(transactions)) goto done;
     printf("recovered temporary reservation %s\n", temp_digest);
     result = has_pending ? 5 : 0;
@@ -379,14 +408,14 @@ done:
 int holy_state_preflight(const char *root_path, int json)
 {
     unsigned long long generation;
-    char digest[65], *snapshot = NULL;
+    char digest[65], approved[65], *snapshot = NULL;
     int dir = state_dir(root_path, 0), pending, result = 1;
     int inspected = 0;
     const char *code = "invalid-state";
     if (dir < 0 || flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
         !empty_child(dir, "installed") || !empty_child(dir, "index") ||
         !read_generation(dir, &generation)) goto done;
-    pending = pending_child(dir, generation, digest);
+    pending = pending_child(dir, generation, digest, approved);
     if (pending < 0) goto done;
     if (!pending) { result = 6; code = "unavailable-reservation"; goto done; }
     snapshot = holy_cache_snapshot(digest, root_path);
@@ -486,26 +515,20 @@ static int same_root(const char *root_path, const struct stat *before)
     return ok;
 }
 
-int holy_state_plan(const char *root_path)
+static int inspect_plan(const char *root_path, int root,
+                        unsigned long long generation, const char *digest,
+                        char output[65], size_t *paths)
 {
     struct holy_package_identity identity = {0};
     struct plan_hash plan = {0};
-    unsigned long long generation;
-    char digest[65], generation_text[32], root_id[128];
+    char generation_text[32], root_id[128];
     unsigned char checksum[32];
     unsigned int checksum_size;
     size_t i;
     struct stat root_st;
-    int root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    int dir = root < 0 ? -1 : state_dir_at(root, 0), pending, result = 1;
+    int result = 1;
     char *snapshot = NULL;
-    if (root < 0 || fstat(root, &root_st) || dir < 0 ||
-        flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
-        !empty_child(dir, "installed") || !empty_child(dir, "index") ||
-        !read_generation(dir, &generation)) goto done;
-    pending = pending_child(dir, generation, digest);
-    if (pending < 0) goto done;
-    if (!pending) { result = 6; goto done; }
+    if (fstat(root, &root_st)) goto done;
     snapshot = holy_cache_snapshot(digest, root_path);
     if (!snapshot) { result = 6; goto done; }
     result = holy_preview_local_format(snapshot, root_path, -1);
@@ -529,16 +552,87 @@ int holy_state_plan(const char *root_path)
     if (EVP_DigestFinal_ex(plan.hash, checksum, &checksum_size) != 1 ||
         checksum_size != sizeof checksum) { result = 1; goto done; }
     if (!same_root(root_path, &root_st)) { result = 4; goto done; }
-    printf("plan root %s generation %llu artifact %s paths %zu sha256 ",
-           root_id, generation, digest, plan.count);
-    for (i = 0; i < sizeof checksum; ++i) printf("%02x", checksum[i]);
-    puts(" read-only");
+    for (i = 0; i < sizeof checksum; ++i)
+        snprintf(output + i * 2, 3, "%02x", checksum[i]);
+    output[64] = '\0';
+    *paths = plan.count;
     result = 0;
 done:
     if (result) fprintf(stderr, "holypkg: cannot form install plan (status %d)\n", result);
     EVP_MD_CTX_free(plan.hash);
     holy_package_identity_free(&identity);
     if (snapshot) { unlink(snapshot); free(snapshot); }
+    return result;
+}
+
+int holy_state_plan(const char *root_path)
+{
+    struct stat root_st;
+    unsigned long long generation;
+    char digest[65], hash[65], approved[65];
+    size_t paths;
+    int root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int dir = root < 0 ? -1 : state_dir_at(root, 0), pending, result = 1;
+    if (root < 0 || dir < 0 || flock(dir, LOCK_SH) ||
+        !state_layout(dir, 0) || !empty_child(dir, "installed") ||
+        !empty_child(dir, "index") || !read_generation(dir, &generation)) goto done;
+    pending = pending_child(dir, generation, digest, approved);
+    if (pending < 0) goto done;
+    if (!pending) { result = 6; goto done; }
+    result = inspect_plan(root_path, root, generation, digest, hash, &paths);
+    if (result) goto done;
+    if (fstat(root, &root_st)) { result = 1; goto done; }
+    printf("plan root %ju:%ju generation %llu artifact %s paths %zu sha256 %s read-only\n",
+           (uintmax_t)root_st.st_dev, (uintmax_t)root_st.st_ino,
+           generation, digest, paths, hash);
+done:
+    if (dir >= 0) close(dir);
+    if (root >= 0) close(root);
+    return result;
+}
+
+int holy_state_approve(const char *hash, const char *root_path)
+{
+    unsigned long long generation;
+    char digest[65], approved[65], actual[65], record[256];
+    char temp_name[43] = {0};
+    size_t paths, length;
+    int root, dir = -1, transactions = -1, temp = -1, result = 1;
+    if (!valid_digest(hash)) return 2;
+    root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0) goto done;
+    dir = state_dir_at(root, 0);
+    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+        !empty_child(dir, "installed") || !empty_child(dir, "index") ||
+        !read_generation(dir, &generation)) goto done;
+    result = pending_child(dir, generation, digest, approved);
+    if (result < 0) { result = 1; goto done; }
+    if (!result) { result = 6; goto done; }
+    if (approved[0]) { result = 5; goto done; }
+    result = inspect_plan(root_path, root, generation, digest, actual, &paths);
+    if (result) goto done;
+    if (strcmp(hash, actual)) { result = 3; goto done; }
+    result = 1;
+    transactions = child_dir(dir, "transactions", 0);
+    if (transactions < 0) goto done;
+    length = (size_t)snprintf(record, sizeof record,
+        "format holy-reservation-1\nstage approved\ngeneration %llu\nartifact %s\nplan %s\n",
+        generation, digest, actual);
+    if (length >= sizeof record) goto done;
+    temp = holy_temporary_at(transactions, temp_name);
+    if (temp < 0 || write(temp, record, length) != (ssize_t)length ||
+        fsync(temp)) goto done;
+    if (close(temp)) { temp = -1; goto done; }
+    temp = -1;
+    if (renameat(transactions, temp_name, transactions, "pending") ||
+        fsync(transactions)) goto done;
+    printf("approved %s generation %llu artifact %s\n", actual, generation, digest);
+    result = 0;
+done:
+    if (result) fprintf(stderr, "holypkg: plan approval failed (status %d)\n", result);
+    if (temp >= 0) close(temp);
+    if (temp_name[0] && transactions >= 0) unlinkat(transactions, temp_name, 0);
+    if (transactions >= 0) close(transactions);
     if (dir >= 0) close(dir);
     if (root >= 0) close(root);
     return result;

@@ -15,5 +15,7 @@ int holy_state_recover(const char *root_path);
 int holy_state_preflight(const char *root_path, int json);
 /* validates a reserved cache object and emits a read-only, generation-bound plan. */
 int holy_state_plan(const char *root_path);
+/* persist approval only when the current writer-locked plan matches. */
+int holy_state_approve(const char *hash, const char *root_path);
 
 #endif
