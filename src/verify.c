@@ -340,7 +340,7 @@ int holy_verify_with_output(const char *path, int emit)
         fprintf(stderr, "%s: missing HOLY/files or truncated archive\n", path);
         goto done;
     }
-    qsort(files, count, sizeof *files, compare);
+    if (count) qsort(files, count, sizeof *files, compare);
     for (i = 1; i < count; ++i)
         if (!strcmp(files[i - 1].path, files[i].path)) {
             fprintf(stderr, "%s: duplicate payload path\n", path);

@@ -9,7 +9,7 @@ DESTDIR ?=
 .PHONY: all check check-fixtures man
 all: holypkg
 
-holypkg: src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o
+holypkg: src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 src/%.o: src/%.c src/config.h
@@ -20,6 +20,7 @@ check: holypkg
 	sh tests/package.sh ./holypkg
 	sh tests/docs.sh
 	CC="$(CC)" sh tests/elf.sh ./holypkg
+	sh tests/repo.sh ./holypkg
 
 check-fixtures: check
 
@@ -38,4 +39,4 @@ install: holypkg llm.txt
 	install -m 644 llm.txt "$(DESTDIR)$(PREFIX)/share/holy/llm.txt"
 
 clean:
-	rm -f holypkg src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o
+	rm -f holypkg src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o

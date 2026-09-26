@@ -5,9 +5,12 @@
 #include <archive.h>
 #include <archive_entry.h>
 #include <openssl/evp.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #define META_LIMIT (1024u * 1024u)
 
@@ -99,7 +102,7 @@ static int meta_line(char *line, size_t len, const char *path, size_t number,
 }
 
 static int read_meta(const char *path, const char *data, size_t length, int emit,
-                     char **arch, char **libc)
+                     char **arch, char **libc, struct holy_package_identity *identity)
 {
     size_t i, start = 0, line = 1;
     char *values[sizeof fields / sizeof *fields] = {0};
@@ -151,12 +154,21 @@ static int read_meta(const char *path, const char *data, size_t length, int emit
             ok = 0;
         }
     }
+    if (ok && identity) {
+        identity->name = values[1]; values[1] = NULL;
+        identity->version = values[2]; values[2] = NULL;
+        identity->release = values[3]; values[3] = NULL;
+        identity->os = values[4]; values[4] = NULL;
+        identity->arch = values[5]; values[5] = NULL;
+        identity->libc = values[6]; values[6] = NULL;
+    }
     for (i = 0; i < sizeof fields / sizeof *fields; ++i) free(values[i]);
     free(error);
     return ok;
 }
 
-static int inspect(const char *path, int emit, char **arch, char **libc)
+static int inspect(const char *path, int emit, char **arch, char **libc,
+                   struct holy_package_identity *identity)
 {
     static const unsigned char magic[] = {0x04, 0x22, 0x4d, 0x18};
     unsigned char head[4];
@@ -170,8 +182,11 @@ static int inspect(const char *path, int emit, char **arch, char **libc)
     size_t meta_size = 0, n, i;
     int status, ok = 0;
     unsigned char seen[sizeof members / sizeof *members] = {0};
+    struct stat input_stat;
     fp = fopen(path, "rb");
     if (!fp) { perror(path); return 0; }
+    if (identity && (fstat(fileno(fp), &input_stat) || !S_ISREG(input_stat.st_mode) ||
+                     input_stat.st_size < 0)) goto done;
     if (fread(head, 1, sizeof head, fp) != sizeof head ||
         memcmp(head, magic, sizeof head)) {
         fprintf(stderr, "%s: expected LZ4 frame\n", path);
@@ -253,7 +268,13 @@ static int inspect(const char *path, int emit, char **arch, char **libc)
             fprintf(stderr, "%s: missing %s\n", path, members[i]);
             goto done;
         }
-    ok = read_meta(path, meta ? meta : "", meta_size, emit, arch, libc);
+    ok = read_meta(path, meta ? meta : "", meta_size, emit, arch, libc, identity);
+    if (ok && identity) {
+        for (i = 0; i < digest_size; ++i)
+            snprintf(identity->digest + i * 2, 3, "%02x", digest[i]);
+        identity->digest[64] = '\0';
+        identity->size = (uint64_t)input_stat.st_size;
+    }
     if (ok && emit) {
         fputs("sha256 ", stdout);
         for (i = 0; i < digest_size; ++i) printf("%02x", digest[i]);
@@ -269,13 +290,30 @@ done:
 
 int holy_package_inspect(const char *path, int emit)
 {
-    return inspect(path, emit, NULL, NULL);
+    return inspect(path, emit, NULL, NULL, NULL);
 }
 
 int holy_package_tags(const char *path, char **arch, char **libc)
 {
     *arch = *libc = NULL;
-    return inspect(path, 0, arch, libc);
+    return inspect(path, 0, arch, libc, NULL);
+}
+
+int holy_package_identity(const char *path, struct holy_package_identity *out)
+{
+    memset(out, 0, sizeof *out);
+    return inspect(path, 0, NULL, NULL, out);
+}
+
+void holy_package_identity_free(struct holy_package_identity *info)
+{
+    free(info->name);
+    free(info->version);
+    free(info->release);
+    free(info->os);
+    free(info->arch);
+    free(info->libc);
+    memset(info, 0, sizeof *info);
 }
 
 int holy_package_info(const char *path)

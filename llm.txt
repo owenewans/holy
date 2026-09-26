@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=59b8c4e5e0ca0a4e3967c23e41e7f654d4c9b5096b1b302fc2144507e23ec134
+holypkg.8 source=holy version=development sha256=9bc089a0b82c60eb1da3d3f398bf070002146cc21193a85915aaf5ee6b793e40
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -64,6 +64,7 @@ SYNOPSIS
      holypkg check local:FILE --root DIRECTORY --json
      holypkg elf FILE
      holypkg scan local:FILE
+     holypkg repo index DIRECTORY
 
 DESCRIPTION
      The  config  check	 command  checks  source  and rule configuration without
@@ -147,10 +148,19 @@ DESCRIPTION
      terpreter remains unknown; scan does not infer  nolibc,  prove  plugin  re-
      quirements or resolve dependencies.
 
+     The repository index command validates regular .holy files in DIRECTORY and
+     writes  an	 unsigned, lexicographically ordered index through an atomic re-
+     name.  It refuses symlinked packages, duplicate package  identities  and  a
+     nonregular existing index. Records in format holy-index-prototype-1 contain
+     the  quoted  name,	 version,  release,  os,  arch, libc, relative filename,
+     SHA-256 and size.	This prototype omits dependencies, provides,  signatures
+     and  generation  binding;	source	adapters must not treat it as the native
+     repository format.
+
 EXIT STATUS
-     0	indicates success under the implemented checks; 1 indicates a failed lo-
-     cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
-     tion  or package inspection. Diagnostics go to standard error except --json
+     0 indicates success under the implemented checks; 1 indicates a failed  lo-
+     cal  fetch,  extraction or check; 2 indicates invalid arguments, configura-
+     tion or package inspection. Diagnostics go to standard error except  --json
      check events, which go to standard output.
 
 SEE ALSO

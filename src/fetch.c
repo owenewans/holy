@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "fetch.h"
+#include "stage.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -7,7 +8,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/random.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -59,32 +59,6 @@ static int copy_and_hash(int source, int target, unsigned char digest[32])
     return ok;
 }
 
-static int temporary_file(int dir, char name[43])
-{
-    unsigned char random_bytes[16];
-    size_t attempt, done, i;
-    for (attempt = 0; attempt < 16; ++attempt) {
-        done = 0;
-        while (done < sizeof random_bytes) {
-            ssize_t got = getrandom(random_bytes + done, sizeof random_bytes - done, 0);
-            if (got < 0 && errno == EINTR) continue;
-            if (got <= 0) return -1;
-            done += (size_t)got;
-        }
-        memcpy(name, ".holy-tmp-", 10);
-        for (i = 0; i < sizeof random_bytes; ++i)
-            snprintf(name + 10 + i * 2, 3, "%02x", random_bytes[i]);
-        name[42] = '\0';
-        {
-            int fd = openat(dir, name, O_WRONLY | O_CREAT | O_EXCL |
-                            O_NOFOLLOW | O_CLOEXEC, 0600);
-            if (fd >= 0 || errno != EEXIST) return fd;
-        }
-    }
-    errno = EEXIST;
-    return -1;
-}
-
 int holy_fetch_local(const char *source, const char *output)
 {
     int input = -1, dir = -1, temp = -1, existing = -1, ok = 0;
@@ -100,7 +74,7 @@ int holy_fetch_local(const char *source, const char *output)
     }
     dir = open(output, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dir < 0) { perror("holypkg: output directory"); goto done; }
-    temp = temporary_file(dir, temporary);
+    temp = holy_temporary_at(dir, temporary);
     if (temp < 0) { perror("holypkg: temporary file"); goto done; }
     if (!copy_and_hash(input, temp, digest) || fsync(temp)) {
         fprintf(stderr, "holypkg: local copy failed\n");

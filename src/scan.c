@@ -22,7 +22,7 @@ static void print_path(const char *path)
     }
 }
 
-int holy_scan_local(const char *path)
+int holy_scan_local_with_output(const char *path, int emit)
 {
     struct archive *a = NULL;
     struct archive_entry *entry;
@@ -89,17 +89,19 @@ int holy_scan_local(const char *path)
             holy_elf_free(&info);
             goto done;
         }
-        fputs("elf ", stdout);
-        print_path(name + 5);
-        printf(" class=ELF%d machine=%s e_machine=%u runtime=%s isa=%s\n",
-               info.elf_class == 1 ? 32 : 64, holy_elf_machine(&info),
-               (unsigned int)info.machine, holy_elf_runtime(&info),
-               holy_elf_isa(&info));
+        if (emit) {
+            fputs("elf ", stdout);
+            print_path(name + 5);
+            printf(" class=ELF%d machine=%s e_machine=%u runtime=%s isa=%s\n",
+                   info.elf_class == 1 ? 32 : 64, holy_elf_machine(&info),
+                   (unsigned int)info.machine, holy_elf_runtime(&info),
+                   holy_elf_isa(&info));
+        }
         holy_elf_free(&info);
         ++scanned;
     }
     if (status != ARCHIVE_EOF) goto done;
-    printf("scanned %zu ELF files\n", scanned);
+    if (emit) printf("scanned %zu ELF files\n", scanned);
     ok = 1;
 done:
     if (!ok) fprintf(stderr, "holypkg: payload ELF scan incomplete\n");
@@ -109,4 +111,9 @@ done:
     free(arch);
     free(libc);
     return ok;
+}
+
+int holy_scan_local(const char *path)
+{
+    return holy_scan_local_with_output(path, 1);
 }
