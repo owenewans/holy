@@ -158,8 +158,8 @@ int holy_check_local(const char *package, const char *root_path, int json)
 {
     struct archive *a = NULL;
     struct archive_entry *entry;
-    int root = -1, status, ok = 0, reported = 0;
-    size_t checked = 0;
+    int root = -1, status, ok = 0, completed = 0;
+    size_t checked = 0, findings = 0;
     if (!holy_verify_with_output(package, 0)) {
         if (json) puts("{\"schema\":\"holy-check-1\",\"code\":\"invalid-package\",\"severity\":\"error\",\"status\":\"unknown\"}");
         return 0;
@@ -184,11 +184,13 @@ int holy_check_local(const char *package, const char *root_path, int json)
             fprintf(stderr, "holypkg: unsafe payload path\n");
             goto done;
         }
+        ++checked;
         parent = parent_fd(root, path + 5, &storage, &name);
         if (parent < 0) {
             report_changed(path, json);
-            reported = 1;
-            goto done;
+            ++findings;
+            if (archive_read_data_skip(a) != ARCHIVE_OK) goto done;
+            continue;
         }
         matches = !fstatat(parent, name, &st, AT_SYMLINK_NOFOLLOW) &&
                   (st.st_mode & 07777) == archive_entry_perm(entry) &&
@@ -207,17 +209,21 @@ int holy_check_local(const char *package, const char *root_path, int json)
         free(storage);
         if (!matches) {
             report_changed(path, json);
-            reported = 1;
-            goto done;
+            ++findings;
         }
-        ++checked;
+        if (archive_read_data_skip(a) != ARCHIVE_OK) goto done;
     }
     if (status != ARCHIVE_EOF) goto done;
-    if (json) printf("{\"schema\":\"holy-check-1\",\"status\":\"pass\",\"coverage\":\"local-payload\",\"checked\":%zu}\n", checked);
+    if (json) {
+        if (findings)
+            printf("{\"schema\":\"holy-check-1\",\"status\":\"fail\",\"coverage\":\"local-payload\",\"checked\":%zu,\"findings\":%zu}\n", checked, findings);
+        else printf("{\"schema\":\"holy-check-1\",\"status\":\"pass\",\"coverage\":\"local-payload\",\"checked\":%zu}\n", checked);
+    } else if (findings) printf("checked %zu payload objects, %zu findings\n", checked, findings);
     else printf("checked %zu payload objects\n", checked);
-    ok = 1;
+    ok = findings == 0;
+    completed = 1;
 done:
-    if (!ok && json && !reported)
+    if (!completed && json)
         puts("{\"schema\":\"holy-check-1\",\"code\":\"check-error\",\"severity\":\"error\",\"status\":\"unknown\"}");
     if (a) archive_read_free(a);
     if (root >= 0) close(root);

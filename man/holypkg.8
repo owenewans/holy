@@ -60,16 +60,16 @@ The local check command first verifies the package, then compares its DATA
 members with a supplied filesystem root. It follows directory components
 through directory descriptors without following symlinks. It compares types,
 mode, numeric UID/GID, file size and SHA-256, symlink targets and hardlink
-inode identity. It reports the first changed path. Check does not run package
+inode identity. It reports each changed path. Check does not run package
 code, download files or modify the root. It does not consult an installed
 database, model ELF loaders, check unknown runtime dependencies or prove a
 stable snapshot if the package or root changes during checking.
 .PP
-With --json, check prints one JSON object on stdout: a pass summary or a
-finding with schema holy-check-1 and stable code changed-payload. Input or
-operational failures use invalid-package or check-error and status unknown.
-The byte-escaped path is included for changed-payload. Other commands do not
-yet implement --json. The local check reports only its first finding.
+With --json, check prints one JSON object per finding and a final pass/fail
+summary on stdout. The schema is holy-check-1; changed-payload is a stable
+finding code. Input or operational failures use invalid-package or check-error
+and status unknown. Paths use byte escapes. Other commands do not yet
+implement --json.
 .SH EXIT STATUS
 0 indicates success under the implemented checks; 1 indicates a failed local
 fetch, extraction or check; 2 indicates invalid arguments, configuration or
