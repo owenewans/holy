@@ -85,12 +85,19 @@ lz4 -q "$tmp/with-provides.tar" "$tmp/with-provides.holy"
 grep -qx 'provide "package" "fixture" "x86_64" "nolibc" "1.0" "metadata"' "$tmp/out"
 grep -qx 'provide "file" "/usr/bin/hello" "x86_64" "nolibc" "-" "payload"' "$tmp/out"
 grep -qx 'capabilities 2' "$tmp/out"
+"$bin" provides "local:$tmp/with-provides.holy" --json > "$tmp/out"
+grep -Fqx '{"schema":"holy-provides-1","type":"capability","kind":"package","name":"fixture","arch":"x86_64","libc":"nolibc","version":"1.0","evidence":"metadata"}' "$tmp/out"
+grep -Fqx '{"schema":"holy-provides-1","type":"capability","kind":"file","name":"/usr/bin/hello","arch":"x86_64","libc":"nolibc","version":"-","evidence":"payload"}' "$tmp/out"
+grep -Fqx '{"schema":"holy-provides-1","type":"summary","count":2}' "$tmp/out"
 printf 'provide file /usr/bin/hello x86_64 nolibc - duplicate\n' >> "$tmp/with-provides/HOLY/provides"
 tar -cf "$tmp/with-provides.tar" -C "$tmp/with-provides" HOLY DATA
 lz4 -q -f "$tmp/with-provides.tar" "$tmp/with-provides.holy"
 if "$bin" provides "local:$tmp/with-provides.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 grep -q 'duplicate capability' "$tmp/err"
+if "$bin" provides "local:$tmp/with-provides.holy" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -Fqx '{"schema":"holy-provides-1","type":"error","code":"invalid-provides"}' "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
 printf 'provide file relative x86_64 nolibc - metadata\n' > "$tmp/with-provides/HOLY/provides"
 tar -cf "$tmp/with-provides.tar" -C "$tmp/with-provides" HOLY DATA
 lz4 -q -f "$tmp/with-provides.tar" "$tmp/with-provides.holy"
@@ -99,6 +106,11 @@ test ! -s "$tmp/out"
 grep -q 'unsupported capability' "$tmp/err"
 if "$bin" cache stage "local:$tmp/with-provides.holy" --root "$tmp/cache-root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
+printf '%s\n' 'provide command "run\tme" any any - metadata' > "$tmp/with-provides/HOLY/provides"
+tar -cf "$tmp/with-provides.tar" -C "$tmp/with-provides" HOLY DATA
+lz4 -q -f "$tmp/with-provides.tar" "$tmp/with-provides.holy"
+"$bin" provides "local:$tmp/with-provides.holy" --json > "$tmp/out"
+grep -Fq '"name":"run\u0009me"' "$tmp/out"
 cp -a "$tmp/payload" "$tmp/with-deps"
 printf 'require libc-1 package soname libc.so.6 x86_64 glibc any - "libc.so.6" metadata\n' > "$tmp/with-deps/HOLY/deps"
 tar -cf "$tmp/with-deps.tar" -C "$tmp/with-deps" HOLY DATA

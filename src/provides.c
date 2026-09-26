@@ -102,6 +102,18 @@ static void print_token(const char *text)
     putchar('"');
 }
 
+static void json_string(const char *text)
+{
+    const unsigned char *p = (const unsigned char *)text;
+    putchar('"');
+    for (; *p; ++p) {
+        if (*p == '"' || *p == '\\') { putchar('\\'); putchar(*p); }
+        else if (*p >= 32 && *p < 127) putchar(*p);
+        else printf("\\u%04x", (unsigned int)*p);
+    }
+    putchar('"');
+}
+
 static int inspect(const char *package, int emit, const char *kind,
                    const char *name, int *matched)
 {
@@ -140,7 +152,7 @@ static int inspect(const char *package, int emit, const char *kind,
             if (!strcmp(items[i].fields[1], kind) &&
                 !strcmp(items[i].fields[2], name)) *matched = 1;
     }
-    if (emit) {
+    if (emit == 1) {
         for (i = 0; i < count; ++i) {
             fputs("provide", stdout);
             for (j = 1; j < 7; ++j) {
@@ -150,10 +162,27 @@ static int inspect(const char *package, int emit, const char *kind,
             putchar('\n');
         }
         printf("capabilities %zu\n", count);
+    } else if (emit == 2) {
+        static const char *const keys[] = {
+            "kind", "name", "arch", "libc", "version", "evidence"
+        };
+        for (i = 0; i < count; ++i) {
+            fputs("{\"schema\":\"holy-provides-1\",\"type\":\"capability\"", stdout);
+            for (j = 1; j < 7; ++j) {
+                printf(",\"%s\":", keys[j - 1]);
+                json_string(items[i].fields[j]);
+            }
+            puts("}");
+        }
+        printf("{\"schema\":\"holy-provides-1\",\"type\":\"summary\",\"count\":%zu}\n", count);
     }
     ok = 1;
 done:
-    if (!ok) fprintf(stderr, "holypkg: capabilities inspection failed\n");
+    if (!ok) {
+        fprintf(stderr, "holypkg: capabilities inspection failed\n");
+        if (emit == 2)
+            puts("{\"schema\":\"holy-provides-1\",\"type\":\"error\",\"code\":\"invalid-provides\"}");
+    }
     for (i = 0; i < count; ++i) holy_tokens_free(items[i].fields, 7);
     free(items);
     free(data);

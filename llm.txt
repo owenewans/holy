@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=d8499ba4d0811b5b305920f969672ea57bc88000a13a5732fde8149573d77d20
+holypkg.8 source=holy version=development sha256=4ee31e6dcb0b9809bc8732e39855b8eb472f1ea9f07a1a5f8521202509af765f
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -61,6 +61,7 @@ SYNOPSIS
      holypkg requirements local:FILE
      holypkg requirements local:FILE --json
      holypkg provides local:FILE
+     holypkg provides local:FILE --json
      holypkg fetch local:FILE --output DIRECTORY
      holypkg fetch local:FILE --extract --output DIRECTORY
      holypkg check local:FILE --root DIRECTORY
@@ -111,74 +112,79 @@ DESCRIPTION
      retain the source expression and basis as text.  Requirement  IDs	must  be
      unique.  The  command  rejects unsupported records and duplicate IDs rather
      than dropping them; it does not evaluate version constraints  or  choose  a
-     provider.
+     provider.	 With  --json,	stdout	contains holy-requirements-1 requirement
+     events and a summary, or one error event on invalid input. Each requirement
+     event has id, consumer, kind, name, arch, libc, relation, version, original
+     and evidence fields. The JSON encoder maps non-ASCII bytes	 to  \u00HH  es-
+     capes;  consumers	reconstruct  original bytes rather than treating them as
+     normalized text.
 
-     The  provides  command  stages  and  verifies  a native archive, then reads
+     The provides command stages and  verifies	a  native  archive,  then  reads
      HOLY/provides as typed claims. Each supported line has seven tokens:
      provide KIND NAME ARCH LIBC VERSION EVIDENCE
-     KIND accepts package, file, command, soname, symbol-version or build.  ARCH
-     accepts  any,  x86,  x86_64 or noarch; LIBC accepts any, glibc, musl or no-
-     libc.  VERSION is text or - for an unversioned claim. File	 names	must  be
-     absolute;	SONAME must have no slash. Duplicate KIND/NAME/ARCH/LIBC/VERSION
-     claims fail.  The parser does not prove a claimed file, command  or  SONAME
-     exists,  resolve  a requirement or compare foreign version schemes. Reposi-
-     tory and cache writers reject unrecognized capability records  rather  than
-     publishing	 them  as  parsed.   With  --json, stdout contains holy-require-
-     ments-1 requirement events and a summary, or one error event on invalid in-
-     put. Each requirement event has id, consumer, kind, name, arch, libc, rela-
-     tion, version, original and evidence fields. The  JSON  encoder  maps  non-
-     ASCII  bytes to \u00HH escapes; consumers reconstruct original bytes rather
-     than treating them as normalized text.
+     KIND  accepts package, file, command, soname, symbol-version or build. ARCH
+     accepts any, x86, x86_64 or noarch; LIBC accepts any, glibc,  musl	 or  no-
+     libc.   VERSION  is  text or - for an unversioned claim. File names must be
+     absolute; SONAME must have no slash. Duplicate  KIND/NAME/ARCH/LIBC/VERSION
+     claims  fail.   The parser does not prove a claimed file, command or SONAME
+     exists, resolve a requirement or compare foreign version  schemes.	 Reposi-
+     tory  and	cache writers reject unrecognized capability records rather than
+     publishing them as parsed.	 With --json,  stdout  contains	 holy-provides-1
+     capability events with kind, name, arch, libc, version and evidence, then a
+     count summary. A malformed archive or capability emits one structured error
+     event. Byte escapes in JSON map non-ASCII bytes to \u00HH; callers must re-
+     construct the original bytes.
 
      The local fetch command copies any regular input file to an existing direc-
-     tory as SHA256.holy. It copies bytes  without  interpreting  metadata,  ex-
+     tory  as  SHA256.holy.  It	 copies bytes without interpreting metadata, ex-
      tracting files or running hooks. It creates a mode 0600 temporary file rel-
-     ative  to the opened output directory and synchronizes it before a no-over-
-     write hardlink creates the object. Repeating the command checks the  exist-
-     ing  object's digest. A mismatched object is left untouched. Fetch does not
-     establish archive validity, provenance or a trusted root-owned cache.   Re-
+     ative to the opened output directory and synchronizes it before a	no-over-
+     write  hardlink creates the object. Repeating the command checks the exist-
+     ing object's digest. A mismatched object is left untouched. Fetch does  not
+     establish	archive validity, provenance or a trusted root-owned cache.  Re-
      mote source fetching is not implemented.
 
-     With  --extract,  DIRECTORY  must not exist. The command copies the regular
-     input into a private temporary file, verifies that	 copy  and  checks  that
-     every  entry  is  a  directory,  regular  file,  relative symlink or direct
-     hardlink. Before creating DIRECTORY, it rejects duplicate paths  and  paths
-     nested  under  any	 non-directory archive entry.  It then creates DIRECTORY
-     and writes HOLY and DATA  there  with  directory-relative	operations  that
-     refuse  symlink  traversal	 and  file  replacement.  It  does  not preserve
-     UID/GID, setuid bits, capabilities or xattrs. It refuses  absolute	 symlink
-     targets  and  special nodes; hardlink targets must resolve to regular files
-     within the output tree. Hooks never run. If an I/O error occurs  after  DI-
+     With --extract, DIRECTORY must not exist. The command  copies  the	 regular
+     input  into  a  private  temporary file, verifies that copy and checks that
+     every entry is a  directory,  regular  file,  relative  symlink  or  direct
+     hardlink.	Before	creating DIRECTORY, it rejects duplicate paths and paths
+     nested under any non-directory archive entry.  It	then  creates  DIRECTORY
+     and  writes  HOLY	and  DATA  there with directory-relative operations that
+     refuse symlink  traversal	and  file  replacement.	 It  does  not	preserve
+     UID/GID,  setuid  bits, capabilities or xattrs. It refuses absolute symlink
+     targets and special nodes; hardlink targets must resolve to  regular  files
+     within  the  output tree. Hooks never run. If an I/O error occurs after DI-
      RECTORY is created, partial output remains for inspection.	 This command is
      not a system installation or a root transaction.
 
-     The  local	 check	command	 copies the regular input to a private temporary
-     file, verifies that copy and checks known ELF  arch/libc  mismatches,  then
-     compares  its  DATA members with a supplied filesystem root. It follows di-
-     rectory components through directory  descriptors	without	 following  sym-
-     links.  It	 compares  types,  mode, numeric UID/GID, file size and SHA-256,
-     symlink targets and hardlink inode identity. It reports each changed  path.
+     The local check command copies the regular input  to  a  private  temporary
+     file,  verifies  that  copy and checks known ELF arch/libc mismatches, then
+     compares its DATA members with a supplied filesystem root. It  follows  di-
+     rectory  components  through  directory  descriptors without following sym-
+     links. It compares types, mode, numeric UID/GID,  file  size  and	SHA-256,
+     symlink  targets and hardlink inode identity. It reports each changed path.
      Check does not run package code, download files or modify the root. It does
-     not  consult  an installed database, model ELF loader search, check unknown
-     runtime dependencies or prove a stable snapshot if the root changes  during
+     not consult an installed database, model ELF loader search,  check	 unknown
+     runtime  dependencies or prove a stable snapshot if the root changes during
      checking.
 
-     For  matching regular ELF payloads, check reads PT_INTERP and tests whether
-     an executable ELF file with matching class and machine exists at  that  ab-
-     solute  path  inside the target root. Missing targets report missing-inter-
+     For matching regular ELF payloads, check reads PT_INTERP and tests	 whether
+     an	 executable  ELF file with matching class and machine exists at that ab-
+     solute path inside the target root. Missing targets  report  missing-inter-
      preter; the wrong class or machine reports incompatible-interpreter. A sym-
-     linked path component or final loader, an invalid ELF  or	an  inaccessible
-     path  reports  unknown-interpreter because check cannot prove the loader is
-     usable.  Presence and class alone do not prove dynamic linking,  compatible
+     linked  path  component  or final loader, an invalid ELF or an inaccessible
+     path reports unknown-interpreter because check cannot prove the  loader  is
+     usable.   Presence and class alone do not prove dynamic linking, compatible
      libc or nested library availability.  If all findings are unknown, the sum-
-     mary  status  is  unknown rather than fail; the check still returns nonzero
+     mary status is unknown rather than fail; the check	 still	returns	 nonzero
      because it cannot report pass.
 
      With --json, check prints one JSON object per finding and a final pass/fail
      summary on stdout. The schema is holy-check-1; changed-payload and missing-
-     payload are stable finding codes. Input or	 operational  failures	use  in-
-     valid-package  or	check-error  and status unknown. Paths use byte escapes.
-     Other commands besides requirements do not yet implement --json.
+     payload  are  stable  finding  codes. Input or operational failures use in-
+     valid-package or check-error and status unknown. Paths  use  byte	escapes.
+     Only  check,  requirements,  provides  and repo providers support --json in
+     this prototype.
 
      The developer-facing elf command reads a regular  ELF  through  libelf/GElf
      without  executing	 it  or invoking ldd. It prints ELF class, numeric e_ma-
