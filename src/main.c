@@ -36,6 +36,8 @@ int main(int argc, char **argv)
             for (i = 0; i < info.version_count; ++i)
                 printf("version %s %s%s\n", info.versions[i].provider,
                        info.versions[i].name, info.versions[i].weak ? " weak" : "");
+            for (i = 0; i < info.defined_version_count; ++i)
+                printf("version-def %s\n", info.defined_versions[i]);
         }
         else fprintf(stderr, "holypkg: %s ELF input\n", rc == 1 ? "not an" : "invalid");
         holy_elf_free(&info);

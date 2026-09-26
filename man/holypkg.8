@@ -80,7 +80,9 @@ and e_type, a recognized
 machine (x86, x86_64 or x32), the PT_INTERP path, and a libc runtime hint
 only for recognized glibc or musl interpreters. It reads PT_DYNAMIC to list
 DT_NEEDED, SONAME, RPATH and RUNPATH even without section headers. GNU
-DT_VERNEED records list provider SONAME, version and weak flag. GNU x86
+DT_VERNEED records list provider SONAME, version and weak flag. GNU DT_VERDEF
+records list version-definition names; these records do not prove that a
+specific symbol satisfies a consumer's versioned reference. GNU x86
 ISA-needed properties in PT_NOTE report x86-64-baseline/v2/v3/v4 when present;
 absent or unrecognized properties report unknown. No PT_INTERP yields unknown
 runtime. It does not inspect exported symbol versions or plugin loading;

@@ -22,6 +22,8 @@ struct holy_elf_info {
     char *runpath;
     struct holy_elf_version *versions;
     size_t version_count;
+    char **defined_versions;
+    size_t defined_version_count;
     uint32_t isa_needed;
     int isa_present;
 };

@@ -42,6 +42,18 @@ grep -q 'invalid ELF input' "$tmp/err"
 grep -qx 'runtime unknown' "$tmp/out"
 grep -qx 'soname libfixture.so.1' "$tmp/out"
 grep -qE '^(rpath|runpath) \$ORIGIN$' "$tmp/out"
+printf 'int holy_export(void) { return 1; }\n' > "$tmp/versioned.c"
+printf 'HOLY_1 { global: holy_export; local: *; };\n' > "$tmp/version.map"
+gcc -shared -fPIC -Wl,--version-script="$tmp/version.map" \
+    -Wl,-soname,libholyfixture.so.1 -o "$tmp/versioned.so" "$tmp/versioned.c"
+"$bin" elf "$tmp/versioned.so" > "$tmp/out"
+grep -qx 'version-def HOLY_1' "$tmp/out"
+objcopy --strip-section-headers "$tmp/versioned.so" "$tmp/versioned-no-sections.so"
+"$bin" elf "$tmp/versioned-no-sections.so" > "$tmp/out"
+grep -qx 'version-def HOLY_1' "$tmp/out"
+objcopy --remove-section .gnu.version_d "$tmp/versioned.so" "$tmp/missing-verdef.so"
+if "$bin" elf "$tmp/missing-verdef.so" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'invalid ELF input' "$tmp/err"
 objcopy --remove-section .dynstr "$tmp/plugin.so" "$tmp/missing-dynstr.so"
 if "$bin" elf "$tmp/missing-dynstr.so" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'invalid ELF input' "$tmp/err"

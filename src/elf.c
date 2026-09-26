@@ -203,6 +203,57 @@ static int version_needs(Elf *elf, uint64_t offset, uint64_t available,
     return 1;
 }
 
+static int version_definitions(Elf *elf, uint64_t offset, uint64_t available,
+                               uint64_t count, const char *strings,
+                               size_t string_length, struct holy_elf_info *info)
+{
+    Elf_Data *data;
+    size_t min_def = gelf_fsize(elf, ELF_T_VDEF, 1, EV_CURRENT);
+    size_t min_aux = gelf_fsize(elf, ELF_T_VDAUX, 1, EV_CURRENT);
+    uint64_t cursor = 0, i;
+    if (available > 16 * 1024 * 1024) available = 16 * 1024 * 1024;
+    if (!min_def || !min_aux || !count || available < min_aux ||
+        count > available / min_def) return 0;
+    data = elf_getdata_rawchunk(elf, (off_t)offset, (size_t)available, ELF_T_VDEF);
+    if (!data) return 0;
+    for (i = 0; i < count; ++i) {
+        GElf_Verdef def;
+        uint64_t aux_cursor, j;
+        if (cursor > available - min_def || cursor > INT_MAX ||
+            !gelf_getverdef(data, (int)cursor, &def) || def.vd_version != 1 ||
+            !def.vd_cnt || def.vd_cnt > available / min_aux ||
+            !def.vd_aux || def.vd_aux > available - cursor) return 0;
+        aux_cursor = cursor + def.vd_aux;
+        for (j = 0; j < def.vd_cnt; ++j) {
+            GElf_Verdaux aux;
+            char *name, **next;
+            if (aux_cursor > available - min_aux || aux_cursor > INT_MAX ||
+                !gelf_getverdaux(data, (int)aux_cursor, &aux)) return 0;
+            name = dynamic_string(strings, string_length, aux.vda_name, 0);
+            if (!name || info->defined_version_count ==
+                         (size_t)-1 / sizeof *info->defined_versions) {
+                free(name);
+                return 0;
+            }
+            next = realloc(info->defined_versions,
+                           (info->defined_version_count + 1) *
+                           sizeof *info->defined_versions);
+            if (!next) { free(name); return 0; }
+            info->defined_versions = next;
+            info->defined_versions[info->defined_version_count++] = name;
+            if (j + 1 < def.vd_cnt) {
+                if (!aux.vda_next || aux.vda_next > available - aux_cursor) return 0;
+                aux_cursor += aux.vda_next;
+            }
+        }
+        if (i + 1 < count) {
+            if (!def.vd_next || def.vd_next > available - cursor) return 0;
+            cursor += def.vd_next;
+        }
+    }
+    return 1;
+}
+
 static int dynamic_table(Elf *elf, int fd, uint64_t file_size,
                          size_t phdr_count, const GElf_Phdr *dynamic,
                          struct holy_elf_info *info)
@@ -210,10 +261,12 @@ static int dynamic_table(Elf *elf, int fd, uint64_t file_size,
     Elf_Data *data;
     uint64_t table_addr = 0, table_size = 0, soname = 0, rpath = 0, runpath = 0;
     uint64_t verneed_addr = 0, verneed_num = 0;
+    uint64_t verdef_addr = 0, verdef_num = 0;
     uint64_t *needed = NULL;
     size_t needed_count = 0, entry_size, entries, i, j;
     int has_addr = 0, has_size = 0, has_soname = 0, has_rpath = 0, has_runpath = 0;
     int has_verneed = 0, has_verneednum = 0;
+    int has_verdef = 0, has_verdefnum = 0;
     int ended = 0, ok = 0;
     char *strings = NULL;
     if (!dynamic->p_filesz || dynamic->p_filesz > 16 * 1024 * 1024 ||
@@ -257,11 +310,18 @@ static int dynamic_table(Elf *elf, int fd, uint64_t file_size,
         } else if (item.d_tag == DT_VERNEEDNUM) {
             if (has_verneednum++) goto done;
             verneed_num = item.d_un.d_val;
+        } else if (item.d_tag == DT_VERDEF) {
+            if (has_verdef++) goto done;
+            verdef_addr = item.d_un.d_ptr;
+        } else if (item.d_tag == DT_VERDEFNUM) {
+            if (has_verdefnum++) goto done;
+            verdef_num = item.d_un.d_val;
         }
     }
     if (!ended) goto done;
-    if (has_verneed != has_verneednum) goto done;
-    if (needed_count || has_soname || has_rpath || has_runpath || has_verneed) {
+    if (has_verneed != has_verneednum || has_verdef != has_verdefnum) goto done;
+    if (needed_count || has_soname || has_rpath || has_runpath || has_verneed ||
+        has_verdef) {
         uint64_t string_offset = 0, available = 0;
         if (!has_addr || !has_size || !table_size || table_size > 16 * 1024 * 1024)
             goto done;
@@ -296,6 +356,14 @@ static int dynamic_table(Elf *elf, int fd, uint64_t file_size,
                                          minimum, file_size, &need_offset, &need_available) ||
                 !version_needs(elf, need_offset, need_available, verneed_num,
                                strings, (size_t)table_size, info)) goto done;
+        }
+        if (has_verdef) {
+            uint64_t def_offset, def_available;
+            size_t minimum = gelf_fsize(elf, ELF_T_VDEF, 1, EV_CURRENT);
+            if (!minimum || !map_virtual(elf, phdr_count, verdef_addr,
+                                         minimum, file_size, &def_offset, &def_available) ||
+                !version_definitions(elf, def_offset, def_available, verdef_num,
+                                     strings, (size_t)table_size, info)) goto done;
         }
     }
     ok = 1;
@@ -392,6 +460,14 @@ void holy_elf_free(struct holy_elf_info *info)
     free(info->versions);
     info->versions = NULL;
     info->version_count = 0;
+    {
+        size_t i;
+        for (i = 0; i < info->defined_version_count; ++i)
+            free(info->defined_versions[i]);
+    }
+    free(info->defined_versions);
+    info->defined_versions = NULL;
+    info->defined_version_count = 0;
 }
 
 const char *holy_elf_machine(const struct holy_elf_info *info)
