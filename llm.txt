@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=4686c4c463f5359e02b8e50863fd22ad91ef727b9fe3115c74cfbe6ba225f11a
+holypkg.8 source=holy version=development sha256=e0b816c54cb2adc5d66a9e4b92968a8085d1aa420f7b9b95bc8da6a8042c18f6
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -62,6 +62,7 @@ SYNOPSIS
      holypkg fetch local:FILE --extract --output DIRECTORY
      holypkg check local:FILE --root DIRECTORY
      holypkg check local:FILE --root DIRECTORY --json
+     holypkg elf FILE
 
 DESCRIPTION
      The  config  check	 command  checks  source  and rule configuration without
@@ -120,10 +121,18 @@ DESCRIPTION
      valid-package  or	check-error  and status unknown. Paths use byte escapes.
      Other commands do not yet implement --json.
 
+     The developer-facing elf command reads a regular  ELF  through  libelf/GElf
+     without executing it or invoking ldd. It prints ELF class, a recognized ma-
+     chine  (x86,  x86_64  or  x32), the PT_INTERP path, and a libc runtime hint
+     only for recognized glibc or musl interpreters.  No  PT_INTERP  yields  un-
+     known.   It  does	not  inspect  DT_NEEDED, symbol versions, plugins or ISA
+     notes yet; its output is not a dependency resolution or  package  ABI  ver-
+     dict.
+
 EXIT STATUS
-     0 indicates success under the implemented checks; 1 indicates a failed  lo-
-     cal  fetch,  extraction or check; 2 indicates invalid arguments, configura-
-     tion or package inspection. Diagnostics go to standard error except  --json
+     0	indicates success under the implemented checks; 1 indicates a failed lo-
+     cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
+     tion  or package inspection. Diagnostics go to standard error except --json
      check events, which go to standard output.
 
 SEE ALSO
