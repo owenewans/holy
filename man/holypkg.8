@@ -145,7 +145,10 @@ as decisions still needed. It counts observed DT_NEEDED edges separately,
 including ones omitted from HOLY/deps; it does not deduplicate or select
 providers. It also counts executable payload files beginning with #! as
 unresolved script-interpreter edges. It does not parse env indirection or
-verify that an interpreter exists. Any of these counts requires resolution.
+verify that an interpreter exists. For each #! payload it reports the
+interpreter path from a bounded header read, or unknown for an incomplete
+header. An env shebang reports /usr/bin/env, not proof that its requested
+helper command exists. Any of these counts requires resolution.
 Preview refuses nonempty
 HOLY/hooks and privileged payload modes. A zero-conflict preview is not an
 installable plan: it has no installed database generation, dependency

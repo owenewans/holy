@@ -134,7 +134,21 @@ rc=0
 "$bin" preview "local:$tmp/script.holy" --root "$tmp/decision-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 3
 grep -q '^preview artifact=.* paths=3 conflicts=0 requirements=0 elf-needed=0 script-interpreters=1$' "$tmp/out"
+grep -qx 'interpreter usr/bin/hello /bin/sh' "$tmp/out"
 test ! -e "$tmp/decision-root/usr"
+printf '#!/usr/bin/env python3\nexit 0\n' > "$tmp/script-payload/DATA/usr/bin/hello"
+path="$tmp/script-payload/DATA/usr/bin/hello"
+grep -v '^file usr/bin/hello ' "$tmp/script-payload/HOLY/files" > "$tmp/script-files"
+printf 'file usr/bin/hello %s root root %s %s %s %s none - -\n' \
+    "$(stat -c %a "$path")" "$uid" "$gid" "$(stat -c %s "$path")" \
+    "$(sha256sum "$path" | cut -d ' ' -f 1)" >> "$tmp/script-files"
+mv "$tmp/script-files" "$tmp/script-payload/HOLY/files"
+tar -cf "$tmp/script-env.tar" -C "$tmp/script-payload" HOLY DATA
+lz4 -q "$tmp/script-env.tar" "$tmp/script-env.holy"
+rc=0
+"$bin" preview "local:$tmp/script-env.holy" --root "$tmp/decision-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
+test "$rc" -eq 3
+grep -qx 'interpreter usr/bin/hello /usr/bin/env' "$tmp/out"
 cp -a "$tmp/payload" "$tmp/privileged"
 chmod 4755 "$tmp/privileged/DATA/usr/bin/hello"
 sed 's/^file usr\/bin\/hello [^ ]*/file usr\/bin\/hello 4755/' \

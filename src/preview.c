@@ -19,6 +19,7 @@
 
 struct action {
     char *path;
+    char *interpreter;
     int state;
 };
 
@@ -114,6 +115,7 @@ int holy_preview_local(const char *package, const char *root_path)
         actions = next;
         actions[count].path = strdup(path + 5);
         if (!actions[count].path) { rc = 1; goto done; }
+        actions[count].interpreter = NULL;
         actions[count].state = state;
         ++count;
         if (state == 2) ++conflicts;
@@ -121,17 +123,31 @@ int holy_preview_local(const char *package, const char *root_path)
             !archive_entry_hardlink(entry) &&
             (archive_entry_perm(entry) & 0111) &&
             archive_entry_size(entry) >= 2) {
-            char prefix[2];
-            size_t used = 0;
-            while (used < sizeof prefix) {
+            char prefix[257];
+            size_t used = 0, limit = archive_entry_size(entry) < 256 ?
+                          (size_t)archive_entry_size(entry) : 256;
+            while (used < limit) {
                 la_ssize_t got = archive_read_data(archive, prefix + used,
-                                                  sizeof prefix - used);
+                                                  limit - used);
                 if (got <= 0) goto done;
                 used += (size_t)got;
             }
-            if (!memcmp(prefix, "#!", sizeof prefix)) {
+            if (!memcmp(prefix, "#!", 2)) {
+                size_t start = 2, end;
                 if (script_interpreters == (size_t)-1) goto done;
                 ++script_interpreters;
+                while (start < used && (prefix[start] == ' ' || prefix[start] == '\t'))
+                    ++start;
+                end = start;
+                while (end < used && prefix[end] != ' ' && prefix[end] != '\t' &&
+                       prefix[end] != '\r' && prefix[end] != '\n' && prefix[end])
+                    ++end;
+                if (end > start && prefix[start] == '/' &&
+                    (end < used || used < 256)) {
+                    prefix[end] = '\0';
+                    actions[count - 1].interpreter = strdup(prefix + start);
+                } else actions[count - 1].interpreter = strdup("unknown");
+                if (!actions[count - 1].interpreter) { rc = 1; goto done; }
             }
         }
         if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
@@ -145,6 +161,13 @@ int holy_preview_local(const char *package, const char *root_path)
                        actions[i].state == 1 ? "existing-dir" : "conflict");
         print_path(actions[i].path);
         putchar('\n');
+        if (actions[i].interpreter) {
+            fputs("interpreter ", stdout);
+            print_path(actions[i].path);
+            putchar(' ');
+            print_path(actions[i].interpreter);
+            putchar('\n');
+        }
     }
     rc = conflicts ? 4 :
          (requirements || elf_needed || script_interpreters) ? 3 : 0;
@@ -153,7 +176,10 @@ done:
     if (archive) archive_read_free(archive);
     if (root >= 0) close(root);
     if (snapshot) { unlink(snapshot); free(snapshot); }
-    for (i = 0; i < count; ++i) free(actions[i].path);
+    for (i = 0; i < count; ++i) {
+        free(actions[i].path);
+        free(actions[i].interpreter);
+    }
     free(actions);
     holy_package_identity_free(&identity);
     return rc;
