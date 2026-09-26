@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=a0f6e399dbe4581ceaeb2a84f5451a55de41460c379d7065f4781e983bf9d637
+holypkg.8 source=holy version=development sha256=df16620679fd7e27408e5b4ec9cdbddf88853a409ff1ea66600e98263eb61592
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -115,14 +115,15 @@ DESCRIPTION
      not a system installation or a root transaction.
 
      The  local	 check	command	 copies the regular input to a private temporary
-     file, verifies that copy, then compares its DATA members  with  a	supplied
-     filesystem root. It follows directory components through directory descrip-
-     tors  without following symlinks. It compares types, mode, numeric UID/GID,
-     file size and SHA-256, symlink targets and hardlink inode identity. It  re-
-     ports each changed path. Check does not run package code, download files or
-     modify the root. It does not consult an installed database, model ELF load-
-     ers,  check  unknown runtime dependencies or prove a stable snapshot if the
-     root changes during checking.
+     file, verifies that copy and checks known ELF  arch/libc  mismatches,  then
+     compares  its  DATA members with a supplied filesystem root. It follows di-
+     rectory components through directory  descriptors	without	 following  sym-
+     links.  It	 compares  types,  mode, numeric UID/GID, file size and SHA-256,
+     symlink targets and hardlink inode identity. It reports each changed  path.
+     Check does not run package code, download files or modify the root. It does
+     not consult an installed database, model ELF loaders, check unknown runtime
+     dependencies  or  prove a stable snapshot if the root changes during check-
+     ing.
 
      With --json, check prints one JSON object per finding and a final pass/fail
      summary on stdout. The schema is holy-check-1; changed-payload and missing-

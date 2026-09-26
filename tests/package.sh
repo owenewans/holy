@@ -118,6 +118,8 @@ for tag in nolibc musl; do
     "$bin" verify "local:$tmp/plugin-only.holy" > "$tmp/out"
     if "$bin" scan "local:$tmp/plugin-only.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
     grep -q 'ELF requires libc.so.6 but package libc differs' "$tmp/err"
+    if "$bin" check "local:$tmp/plugin-only.holy" --root "$tmp/preview-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+    grep -qx '{"schema":"holy-check-1","code":"invalid-package","severity":"error","status":"unknown"}' "$tmp/out"
 done
 cp "$tmp/elf-payload/HOLY/meta" "$tmp/elf-meta"
 for mismatch in arch libc noarch; do
@@ -131,6 +133,8 @@ for mismatch in arch libc noarch; do
     lz4 -q -f "$tmp/elf-mismatch.tar" "$tmp/elf-mismatch.holy"
     "$bin" verify "local:$tmp/elf-mismatch.holy" > "$tmp/out"
     if "$bin" scan "local:$tmp/elf-mismatch.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+    if "$bin" check "local:$tmp/elf-mismatch.holy" --root "$tmp/preview-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+    grep -qx '{"schema":"holy-check-1","code":"invalid-package","severity":"error","status":"unknown"}' "$tmp/out"
     if test "$mismatch" = libc; then
         grep -q 'libc differs\|arch/libc mismatch' "$tmp/err"
     else

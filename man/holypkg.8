@@ -74,7 +74,7 @@ occurs after DIRECTORY is created, partial output remains for inspection.
 This command is not a system installation or a root transaction.
 .PP
 The local check command copies the regular input to a private temporary file,
-verifies that copy, then compares its DATA
+verifies that copy and checks known ELF arch/libc mismatches, then compares its DATA
 members with a supplied filesystem root. It follows directory components
 through directory descriptors without following symlinks. It compares types,
 mode, numeric UID/GID, file size and SHA-256, symlink targets and hardlink

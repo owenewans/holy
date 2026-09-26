@@ -2,6 +2,7 @@
 #include "check.h"
 #include "package.h"
 #include "stage.h"
+#include "scan.h"
 #include "verify.h"
 
 #include <archive.h>
@@ -170,7 +171,8 @@ int holy_check_local(const char *package, const char *root_path, int json)
     int root = -1, status, ok = 0, completed = 0;
     size_t checked = 0, findings = 0;
     if (!snapshot) fprintf(stderr, "holypkg: could not stage regular local input\n");
-    if (!snapshot || !holy_verify_with_output(snapshot, 0)) {
+    if (!snapshot || !holy_verify_with_output(snapshot, 0) ||
+        !holy_scan_local_with_output(snapshot, 0)) {
         if (json) puts("{\"schema\":\"holy-check-1\",\"code\":\"invalid-package\",\"severity\":\"error\",\"status\":\"unknown\"}");
         if (snapshot) { unlink(snapshot); free(snapshot); }
         return 0;
