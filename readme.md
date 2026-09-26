@@ -48,3 +48,4 @@ The [Slackware holypkg](https://github.com/owenewans/holypkg) is a separate proj
 
 Read [holypkg(8)](man/holypkg.8), [holy-package(5)](man/holy-package.5) and
 [holy.conf(5)](man/holy.conf.5) for the implemented interface.
+See [roadmap](docs/roadmap.md) for remaining work and acceptance gates.
