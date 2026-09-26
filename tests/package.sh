@@ -210,6 +210,21 @@ rc=0
 test "$rc" -eq 3
 grep -q '^preview artifact=.* paths=5 conflicts=0 requirements=0 elf-needed=2 script-interpreters=0 helper-commands=0$' "$tmp/out"
 test ! -e "$tmp/elf-preview-root/usr"
+cp -a "$tmp/elf-payload/DATA" "$tmp/elf-root"
+loader=$("$bin" elf "$tmp/elf-payload/DATA/usr/bin/probe" | sed -n 's/^interpreter //p')
+case "$loader" in /*) ;; *) exit 1 ;; esac
+if "$bin" check "local:$tmp/elf.holy" --root "$tmp/elf-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q '"code":"missing-interpreter"' "$tmp/out"
+mkdir -p "$tmp/elf-root$(dirname "$loader")"
+printf 'loader fixture\n' > "$tmp/elf-root$loader"
+chmod 755 "$tmp/elf-root$loader"
+"$bin" check "local:$tmp/elf.holy" --root "$tmp/elf-root" --json > "$tmp/out"
+grep -q '"status":"pass","coverage":"local-payload"' "$tmp/out"
+rm "$tmp/elf-root$loader"
+ln -s nowhere "$tmp/elf-root$loader"
+if "$bin" check "local:$tmp/elf.holy" --root "$tmp/elf-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q '"code":"unknown-interpreter"' "$tmp/out"
+grep -q '"status":"unknown","coverage":"local-payload"' "$tmp/out"
 test -z "$(find "$tmp" -maxdepth 1 -name 'holy-scan-*' -print)"
 cp -a "$tmp/elf-payload" "$tmp/plugin-only"
 rm "$tmp/plugin-only/DATA/usr/bin/probe"
@@ -299,14 +314,14 @@ if "$bin" check "local:$tmp/package.holy" --root "$tmp/empty-root" --json > "$tm
 test "$(wc -l < "$tmp/out")" -eq 4
 grep -qx '{"schema":"holy-check-1","code":"missing-payload","severity":"error","status":"fail","path":"DATA/usr/"}' "$tmp/out"
 grep -qx '{"schema":"holy-check-1","code":"missing-payload","severity":"error","status":"fail","path":"DATA/usr/bin/hello"}' "$tmp/out"
-grep -qx '{"schema":"holy-check-1","status":"fail","coverage":"local-payload","checked":3,"findings":3}' "$tmp/out"
+grep -qx '{"schema":"holy-check-1","status":"fail","coverage":"local-payload","checked":3,"findings":3,"unknowns":0}' "$tmp/out"
 printf 'world\n' > "$tmp/unpacked/DATA/usr/bin/hello"
 if "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'changed payload: DATA/usr/bin/hello' "$tmp/err"
 if "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test "$(wc -l < "$tmp/out")" -eq 2
 grep -qx '{"schema":"holy-check-1","code":"changed-payload","severity":"error","status":"fail","path":"DATA/usr/bin/hello"}' "$tmp/out"
-grep -qx '{"schema":"holy-check-1","status":"fail","coverage":"local-payload","checked":3,"findings":1}' "$tmp/out"
+grep -qx '{"schema":"holy-check-1","status":"fail","coverage":"local-payload","checked":3,"findings":1,"unknowns":0}' "$tmp/out"
 rm "$tmp/unpacked/DATA/usr/bin/hello"
 ln -s /etc/passwd "$tmp/unpacked/DATA/usr/bin/hello"
 if "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
@@ -318,7 +333,7 @@ chmod 700 "$tmp/unpacked/DATA/usr"
 if "$bin" check "local:$tmp/package.holy" --root "$tmp/unpacked/DATA" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test "$(wc -l < "$tmp/out")" -eq 3
 grep -qx '{"schema":"holy-check-1","code":"changed-payload","severity":"error","status":"fail","path":"DATA/usr/"}' "$tmp/out"
-grep -qx '{"schema":"holy-check-1","status":"fail","coverage":"local-payload","checked":3,"findings":2}' "$tmp/out"
+grep -qx '{"schema":"holy-check-1","status":"fail","coverage":"local-payload","checked":3,"findings":2,"unknowns":0}' "$tmp/out"
 if "$bin" fetch "local:$tmp/package.holy" --extract --output "$tmp/unpacked" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'create extraction directory' "$tmp/err"
 cp "$tmp/payload/HOLY/meta" "$tmp/original-meta"

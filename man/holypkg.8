@@ -102,8 +102,17 @@ through directory descriptors without following symlinks. It compares types,
 mode, numeric UID/GID, file size and SHA-256, symlink targets and hardlink
 inode identity. It reports each changed path. Check does not run package
 code, download files or modify the root. It does not consult an installed
-database, model ELF loaders, check unknown runtime dependencies or prove a
+database, model ELF loader search, check unknown runtime dependencies or prove a
 stable snapshot if the root changes during checking.
+.PP
+For matching regular ELF payloads, check reads PT_INTERP and tests whether an
+executable regular file exists at that absolute path inside the target root.
+Missing targets report missing-interpreter. A symlinked path component or final
+loader is unknown-interpreter because check does not resolve it across a
+potential root boundary. Presence alone does not prove successful dynamic
+linking, compatible libc or nested library availability.
+If all findings are unknown, the summary status is unknown rather than fail;
+the check still returns nonzero because it cannot report pass.
 .PP
 With --json, check prints one JSON object per finding and a final pass/fail
 summary on stdout. The schema is holy-check-1; changed-payload and

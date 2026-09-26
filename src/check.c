@@ -3,6 +3,7 @@
 #include "package.h"
 #include "stage.h"
 #include "scan.h"
+#include "elf.h"
 #include "verify.h"
 
 #include <archive.h>
@@ -70,7 +71,7 @@ static int hash_file(int fd, unsigned char digest[32])
 }
 
 static int compare_file(struct archive *a, struct archive_entry *entry, int parent,
-                        const char *name, const struct stat *st)
+                        const char *name, const struct stat *st, char **interpreter)
 {
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
     char buffer[65536];
@@ -80,6 +81,7 @@ static int compare_file(struct archive *a, struct archive_entry *entry, int pare
     la_int64_t total = 0;
     struct stat opened;
     int fd = -1, ok = 0;
+    *interpreter = NULL;
     if (!ctx || EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
         !S_ISREG(st->st_mode) || st->st_size != archive_entry_size(entry)) goto done;
     fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
@@ -95,11 +97,52 @@ static int compare_file(struct archive *a, struct archive_entry *entry, int pare
     if (got < 0 || total != archive_entry_size(entry) ||
         EVP_DigestFinal_ex(ctx, expected, &length) != 1 || length != 32 ||
         !hash_file(fd, actual) || memcmp(expected, actual, 32)) goto done;
+    if (st->st_size >= 4) {
+        unsigned char magic[4];
+        if (pread(fd, magic, sizeof magic, 0) != sizeof magic) goto done;
+        if (!memcmp(magic, "\177ELF", sizeof magic)) {
+            struct holy_elf_info info;
+            int result = holy_elf_read_fd(fd, &info);
+            int has_interpreter = info.interpreter != NULL;
+            if (result == 0 && info.interpreter)
+                *interpreter = strdup(info.interpreter);
+            holy_elf_free(&info);
+            if (result || (has_interpreter && !*interpreter))
+                goto done;
+        }
+    }
     ok = 1;
 done:
+    if (!ok) { free(*interpreter); *interpreter = NULL; }
     if (fd >= 0) close(fd);
     EVP_MD_CTX_free(ctx);
     return ok;
+}
+
+/* 1: present regular executable, 0: missing, -1: path or loader unknown. */
+static int interpreter_status(int root, const char *interpreter)
+{
+    char *storage = NULL;
+    char *path;
+    const char *name;
+    struct stat st;
+    int parent, result = -1;
+    size_t length = strlen(interpreter);
+    if (interpreter[0] != '/' || !interpreter[1] ||
+        length > (size_t)-1 - 6) return -1;
+    path = malloc(length + 6);
+    if (!path) return -1;
+    snprintf(path, length + 6, "DATA%s", interpreter);
+    if (!holy_safe_archive_path(path)) { free(path); return -1; }
+    free(path);
+    parent = parent_fd(root, interpreter + 1, &storage, &name);
+    if (parent < 0) return errno == ENOENT ? 0 : -1;
+    if (fstatat(parent, name, &st, AT_SYMLINK_NOFOLLOW) == 0)
+        result = S_ISREG(st.st_mode) && (st.st_mode & 0111) ? 1 : -1;
+    else if (errno == ENOENT) result = 0;
+    if (parent != root) close(parent);
+    free(storage);
+    return result;
 }
 
 static int compare_link(struct archive_entry *entry, int parent, const char *name)
@@ -163,13 +206,29 @@ static void report_changed(const char *path, const char *code, int json)
     }
 }
 
+static void report_interpreter(const char *consumer, const char *interpreter,
+                               int status, int json)
+{
+    const char *code = status == 0 ? "missing-interpreter" : "unknown-interpreter";
+    if (!json) fprintf(stderr, "holypkg: %s %s for %s\n", code,
+                       interpreter, consumer);
+    else {
+        printf("{\"schema\":\"holy-check-1\",\"code\":\"%s\",\"severity\":\"%s\",\"status\":\"%s\",\"consumer\":",
+               code, status == 0 ? "error" : "warning", status == 0 ? "fail" : "unknown");
+        json_string(consumer);
+        fputs(",\"path\":", stdout);
+        json_string(interpreter);
+        puts("}");
+    }
+}
+
 int holy_check_local(const char *package, const char *root_path, int json)
 {
     struct archive *a = NULL;
     struct archive_entry *entry;
     char *snapshot = holy_stage_local(package, "holy-check");
     int root = -1, status, ok = 0, completed = 0;
-    size_t checked = 0, findings = 0;
+    size_t checked = 0, findings = 0, unknowns = 0;
     if (!snapshot) fprintf(stderr, "holypkg: could not stage regular local input\n");
     if (!snapshot || !holy_verify_with_output(snapshot, 0) ||
         !holy_scan_local_with_output(snapshot, 0)) {
@@ -187,6 +246,7 @@ int holy_check_local(const char *package, const char *root_path, int json)
         const char *path = archive_entry_pathname(entry);
         const char *name;
         char *storage = NULL;
+        char *interpreter = NULL;
         struct stat st;
         int parent, matches;
         if (!path || strncmp(path, "DATA/", 5) || !path[5]) {
@@ -226,7 +286,7 @@ int holy_check_local(const char *package, const char *root_path, int json)
         if (matches && archive_entry_hardlink(entry))
             matches = S_ISREG(st.st_mode) && compare_hardlink(root, entry, &st);
         else if (matches && archive_entry_filetype(entry) == AE_IFREG)
-            matches = compare_file(a, entry, parent, name, &st);
+            matches = compare_file(a, entry, parent, name, &st, &interpreter);
         else if (matches && archive_entry_filetype(entry) == AE_IFLNK)
             matches = S_ISLNK(st.st_mode) && compare_link(entry, parent, name);
         else if (matches && archive_entry_filetype(entry) == AE_IFDIR)
@@ -237,15 +297,25 @@ int holy_check_local(const char *package, const char *root_path, int json)
         if (!matches) {
             report_changed(path, "changed-payload", json);
             ++findings;
+        } else if (interpreter) {
+            int loader = interpreter_status(root, interpreter);
+            if (loader != 1) {
+                report_interpreter(path, interpreter, loader, json);
+                ++findings;
+                if (loader < 0) ++unknowns;
+            }
         }
+        free(interpreter);
         if (archive_read_data_skip(a) != ARCHIVE_OK) goto done;
     }
     if (status != ARCHIVE_EOF) goto done;
     if (json) {
         if (findings)
-            printf("{\"schema\":\"holy-check-1\",\"status\":\"fail\",\"coverage\":\"local-payload\",\"checked\":%zu,\"findings\":%zu}\n", checked, findings);
+            printf("{\"schema\":\"holy-check-1\",\"status\":\"%s\",\"coverage\":\"local-payload\",\"checked\":%zu,\"findings\":%zu,\"unknowns\":%zu}\n",
+                   findings == unknowns ? "unknown" : "fail", checked, findings, unknowns);
         else printf("{\"schema\":\"holy-check-1\",\"status\":\"pass\",\"coverage\":\"local-payload\",\"checked\":%zu}\n", checked);
-    } else if (findings) printf("checked %zu payload objects, %zu findings\n", checked, findings);
+    } else if (findings) printf("checked %zu payload objects, %zu findings, %zu unknown\n",
+                                checked, findings, unknowns);
     else printf("checked %zu payload objects\n", checked);
     ok = findings == 0;
     completed = 1;
