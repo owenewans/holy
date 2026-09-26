@@ -281,6 +281,11 @@ pre-filter candidates using each source family's version semantics before it
 can use that interface. The fixture is not a holypkg solve command or an
 installed-system test. A missing libsolv development package makes the target
 fail rather than reporting a passed fixture.
+The internal unique-solution check returns decision-required when excluding a
+selected provider permits a second solution. It does not rank sources or ask
+the user for a choice. This detects differing package sets, not multiple
+provider edges within one set. A plain solve returns one proposed set, not a
+reviewed installation plan.
 With --json it emits holy-repo-candidates-1 candidate events (package identity,
 filename, SHA-256 and byte size), then a count summary. Invalid catalogs emit
 one error event without partial candidates; invalid KIND/NAME emits an

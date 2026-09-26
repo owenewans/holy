@@ -8,8 +8,8 @@
 
 #include <string.h>
 
-int holy_solve_exact(const struct holy_solver_item *items, size_t count,
-                     const char *requested_id, int *selected)
+static int solve(const struct holy_solver_item *items, size_t count,
+                 const char *requested_id, int *selected, int unique)
 {
     Pool *pool = NULL;
     Repo *repo;
@@ -86,10 +86,37 @@ int holy_solve_exact(const struct holy_solver_item *items, size_t count,
         for (i = 0; i < count; ++i)
             selected[i] = solver_get_decisionlevel(solver, repo->start + (Id)i) > 0;
         rc = 1;
+        if (unique) for (i = 0; i < count; ++i) {
+            Solver *trial;
+            int problems;
+            if (!selected[i] || repo->start + (Id)i == requested) continue;
+            queue_push2(&jobs, SOLVER_ERASE | SOLVER_SOLVABLE,
+                        repo->start + (Id)i);
+            trial = solver_create(pool);
+            if (!trial) { rc = 0; queue_pop(&jobs); queue_pop(&jobs); break; }
+            problems = solver_solve(trial, &jobs);
+            solver_free(trial);
+            queue_pop(&jobs);
+            queue_pop(&jobs);
+            if (!problems) { rc = 3; break; }
+        }
+        if (rc != 1) memset(selected, 0, count * sizeof *selected);
     }
     queue_free(&jobs);
 done:
     if (solver) solver_free(solver);
     if (pool) pool_free(pool);
     return rc;
+}
+
+int holy_solve_exact(const struct holy_solver_item *items, size_t count,
+                     const char *requested_id, int *selected)
+{
+    return solve(items, count, requested_id, selected, 0);
+}
+
+int holy_solve_exact_unique(const struct holy_solver_item *items, size_t count,
+                            const char *requested_id, int *selected)
+{
+    return solve(items, count, requested_id, selected, 1);
 }

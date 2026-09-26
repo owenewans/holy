@@ -23,5 +23,9 @@ struct holy_solver_item {
    solution, 2 on a conflict and 0 for invalid input or operational failure. */
 int holy_solve_exact(const struct holy_solver_item *items, size_t count,
                      const char *requested_id, int *selected);
+/* returns 3 and clears selected if another selected package set exists.
+   provider edges within the same set can still be ambiguous. */
+int holy_solve_exact_unique(const struct holy_solver_item *items, size_t count,
+                            const char *requested_id, int *selected);
 
 #endif
