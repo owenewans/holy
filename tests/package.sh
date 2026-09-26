@@ -70,7 +70,7 @@ grep -Fq '"original":"line\u000afeed"' "$tmp/out"
 grep -Fqx '{"schema":"holy-requirements-1","type":"summary","count":1}' "$tmp/out"
 mkdir "$tmp/preview-root"
 "$bin" preview "local:$tmp/package.holy" --root "$tmp/preview-root" > "$tmp/out"
-grep -qx "preview artifact=$expected paths=3 conflicts=0 requirements=0 elf-needed=0 script-interpreters=0" "$tmp/out"
+grep -qx "preview artifact=$expected paths=3 conflicts=0 requirements=0 elf-needed=0 script-interpreters=0 helper-commands=0" "$tmp/out"
 grep -qx 'new usr/bin/hello' "$tmp/out"
 test ! -e "$tmp/preview-root/usr"
 mkdir "$tmp/preview-root/usr"
@@ -78,7 +78,7 @@ ln -s "$tmp/payload/DATA/usr/bin" "$tmp/preview-root/usr/bin"
 rc=0
 "$bin" preview "local:$tmp/package.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 4
-grep -qx "preview artifact=$expected paths=3 conflicts=2 requirements=0 elf-needed=0 script-interpreters=0" "$tmp/out"
+grep -qx "preview artifact=$expected paths=3 conflicts=2 requirements=0 elf-needed=0 script-interpreters=0 helper-commands=0" "$tmp/out"
 grep -qx 'conflict usr/bin/hello' "$tmp/out"
 test -L "$tmp/preview-root/usr/bin"
 rm "$tmp/preview-root/usr/bin"
@@ -87,7 +87,7 @@ printf 'keep\n' > "$tmp/preview-root/usr/bin/hello"
 rc=0
 "$bin" preview "local:$tmp/package.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 4
-grep -qx "preview artifact=$expected paths=3 conflicts=1 requirements=0 elf-needed=0 script-interpreters=0" "$tmp/out"
+grep -qx "preview artifact=$expected paths=3 conflicts=1 requirements=0 elf-needed=0 script-interpreters=0 helper-commands=0" "$tmp/out"
 grep -qx 'conflict usr/bin/hello' "$tmp/out"
 grep -qx 'keep' "$tmp/preview-root/usr/bin/hello"
 cp -a "$tmp/payload" "$tmp/with-hook"
@@ -114,12 +114,12 @@ mkdir "$tmp/decision-root"
 rc=0
 "$bin" preview "local:$tmp/with-hook.holy" --root "$tmp/decision-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 3
-grep -q '^preview artifact=.* paths=3 conflicts=0 requirements=1 elf-needed=0 script-interpreters=0$' "$tmp/out"
+grep -q '^preview artifact=.* paths=3 conflicts=0 requirements=1 elf-needed=0 script-interpreters=0 helper-commands=0$' "$tmp/out"
 test ! -e "$tmp/decision-root/usr"
 rc=0
 "$bin" preview "local:$tmp/with-hook.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 4
-grep -q '^preview artifact=.* paths=3 conflicts=1 requirements=1 elf-needed=0 script-interpreters=0$' "$tmp/out"
+grep -q '^preview artifact=.* paths=3 conflicts=1 requirements=1 elf-needed=0 script-interpreters=0 helper-commands=0$' "$tmp/out"
 cp -a "$tmp/payload" "$tmp/script-payload"
 printf '#!/bin/sh\nexit 0\n' > "$tmp/script-payload/DATA/usr/bin/hello"
 chmod 755 "$tmp/script-payload/DATA/usr/bin/hello"
@@ -133,7 +133,7 @@ lz4 -q "$tmp/script.tar" "$tmp/script.holy"
 rc=0
 "$bin" preview "local:$tmp/script.holy" --root "$tmp/decision-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 3
-grep -q '^preview artifact=.* paths=3 conflicts=0 requirements=0 elf-needed=0 script-interpreters=1$' "$tmp/out"
+grep -q '^preview artifact=.* paths=3 conflicts=0 requirements=0 elf-needed=0 script-interpreters=1 helper-commands=0$' "$tmp/out"
 grep -qx 'interpreter usr/bin/hello /bin/sh' "$tmp/out"
 test ! -e "$tmp/decision-root/usr"
 printf '#!/usr/bin/env python3\nexit 0\n' > "$tmp/script-payload/DATA/usr/bin/hello"
@@ -149,6 +149,27 @@ rc=0
 "$bin" preview "local:$tmp/script-env.holy" --root "$tmp/decision-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 3
 grep -qx 'interpreter usr/bin/hello /usr/bin/env' "$tmp/out"
+grep -qx 'helper-command usr/bin/hello python3' "$tmp/out"
+grep -q '^preview artifact=.* paths=3 conflicts=0 requirements=0 elf-needed=0 script-interpreters=1 helper-commands=1$' "$tmp/out"
+for spec in '-S python3 -O' '-i python3'; do
+    printf '#!/usr/bin/env %s\nexit 0\n' "$spec" > "$tmp/script-payload/DATA/usr/bin/hello"
+    path="$tmp/script-payload/DATA/usr/bin/hello"
+    grep -v '^file usr/bin/hello ' "$tmp/script-payload/HOLY/files" > "$tmp/script-files"
+    printf 'file usr/bin/hello %s root root %s %s %s %s none - -\n' \
+        "$(stat -c %a "$path")" "$uid" "$gid" "$(stat -c %s "$path")" \
+        "$(sha256sum "$path" | cut -d ' ' -f 1)" >> "$tmp/script-files"
+    mv "$tmp/script-files" "$tmp/script-payload/HOLY/files"
+    tar -cf "$tmp/script-env.tar" -C "$tmp/script-payload" HOLY DATA
+    lz4 -q -f "$tmp/script-env.tar" "$tmp/script-env.holy"
+    rc=0
+    "$bin" preview "local:$tmp/script-env.holy" --root "$tmp/decision-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
+    test "$rc" -eq 3
+    if test "$spec" = '-S python3 -O'; then
+        grep -qx 'helper-command usr/bin/hello python3' "$tmp/out"
+    else
+        grep -qx 'helper-command usr/bin/hello unknown' "$tmp/out"
+    fi
+done
 cp -a "$tmp/payload" "$tmp/privileged"
 chmod 4755 "$tmp/privileged/DATA/usr/bin/hello"
 sed 's/^file usr\/bin\/hello [^ ]*/file usr\/bin\/hello 4755/' \
@@ -187,7 +208,7 @@ mkdir "$tmp/elf-preview-root"
 rc=0
 "$bin" preview "local:$tmp/elf.holy" --root "$tmp/elf-preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 3
-grep -q '^preview artifact=.* paths=5 conflicts=0 requirements=0 elf-needed=2 script-interpreters=0$' "$tmp/out"
+grep -q '^preview artifact=.* paths=5 conflicts=0 requirements=0 elf-needed=2 script-interpreters=0 helper-commands=0$' "$tmp/out"
 test ! -e "$tmp/elf-preview-root/usr"
 test -z "$(find "$tmp" -maxdepth 1 -name 'holy-scan-*' -print)"
 cp -a "$tmp/elf-payload" "$tmp/plugin-only"

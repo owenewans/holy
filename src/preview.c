@@ -20,6 +20,7 @@
 struct action {
     char *path;
     char *interpreter;
+    char *helper;
     int state;
 };
 
@@ -30,6 +31,32 @@ static void print_path(const char *path)
         if (*p == '\\' || *p <= 32 || *p >= 127)
             printf("\\x%02x", (unsigned int)*p);
         else putchar(*p);
+}
+
+static char *env_helper(const char *text, size_t used, size_t position)
+{
+    size_t start, end;
+    while (position < used && (text[position] == ' ' || text[position] == '\t'))
+        ++position;
+    if (position + 2 < used && text[position] == '-' &&
+        text[position + 1] == 'S' &&
+        (text[position + 2] == ' ' || text[position + 2] == '\t')) {
+        position += 2;
+        while (position < used && (text[position] == ' ' || text[position] == '\t'))
+            ++position;
+    }
+    start = position;
+    while (position < used && text[position] != ' ' && text[position] != '\t' &&
+           text[position] != '\r' && text[position] != '\n' && text[position])
+        ++position;
+    end = position;
+    if (end > start && (end < used || used < 256) && text[start] != '-') {
+        for (position = start; position < end; ++position)
+            if (text[position] == '"' || text[position] == '\'' ||
+                text[position] == '\\') break;
+        if (position == end) return strndup(text + start, end - start);
+    }
+    return strdup("unknown");
 }
 
 /* 0: new, 1: existing directory, 2: conflict, -1: I/O failure. */
@@ -73,7 +100,7 @@ int holy_preview_local(const char *package, const char *root_path)
     struct action *actions = NULL;
     char *snapshot = holy_stage_local(package, "holy-preview");
     size_t count = 0, i, conflicts = 0, requirements = 0, elf_needed = 0;
-    size_t script_interpreters = 0;
+    size_t script_interpreters = 0, helper_commands = 0;
     int root = -1, status, rc = 2;
     if (!snapshot || !holy_verify_with_output(snapshot, 0) ||
         !holy_extract_preflight(snapshot) ||
@@ -116,6 +143,7 @@ int holy_preview_local(const char *package, const char *root_path)
         actions[count].path = strdup(path + 5);
         if (!actions[count].path) { rc = 1; goto done; }
         actions[count].interpreter = NULL;
+        actions[count].helper = NULL;
         actions[count].state = state;
         ++count;
         if (state == 2) ++conflicts;
@@ -144,18 +172,27 @@ int holy_preview_local(const char *package, const char *root_path)
                     ++end;
                 if (end > start && prefix[start] == '/' &&
                     (end < used || used < 256)) {
+                    char separator = end < used ? prefix[end] : '\0';
                     prefix[end] = '\0';
                     actions[count - 1].interpreter = strdup(prefix + start);
+                    prefix[end] = separator;
                 } else actions[count - 1].interpreter = strdup("unknown");
                 if (!actions[count - 1].interpreter) { rc = 1; goto done; }
+                if (!strcmp(actions[count - 1].interpreter, "/usr/bin/env") ||
+                    !strcmp(actions[count - 1].interpreter, "/bin/env")) {
+                    if (helper_commands == (size_t)-1) goto done;
+                    actions[count - 1].helper = env_helper(prefix, used, end);
+                    if (!actions[count - 1].helper) { rc = 1; goto done; }
+                    ++helper_commands;
+                }
             }
         }
         if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
     }
     if (status != ARCHIVE_EOF) goto done;
-    printf("preview artifact=%s paths=%zu conflicts=%zu requirements=%zu elf-needed=%zu script-interpreters=%zu\n",
+    printf("preview artifact=%s paths=%zu conflicts=%zu requirements=%zu elf-needed=%zu script-interpreters=%zu helper-commands=%zu\n",
            identity.digest, count, conflicts, requirements, elf_needed,
-           script_interpreters);
+           script_interpreters, helper_commands);
     for (i = 0; i < count; ++i) {
         printf("%s ", actions[i].state == 0 ? "new" :
                        actions[i].state == 1 ? "existing-dir" : "conflict");
@@ -166,6 +203,13 @@ int holy_preview_local(const char *package, const char *root_path)
             print_path(actions[i].path);
             putchar(' ');
             print_path(actions[i].interpreter);
+            putchar('\n');
+        }
+        if (actions[i].helper) {
+            fputs("helper-command ", stdout);
+            print_path(actions[i].path);
+            putchar(' ');
+            print_path(actions[i].helper);
             putchar('\n');
         }
     }
@@ -179,6 +223,7 @@ done:
     for (i = 0; i < count; ++i) {
         free(actions[i].path);
         free(actions[i].interpreter);
+        free(actions[i].helper);
     }
     free(actions);
     holy_package_identity_free(&identity);

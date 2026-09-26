@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=76954b694f4f09e7b790b4f94bfb8f0a0aebebada70039cef48509efbe87818d
+holypkg.8 source=holy version=development sha256=4a38ce051bdbdbbe2374381fc60061e9249403f88716f8c7a58d93579f36fd44
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -187,57 +187,59 @@ DESCRIPTION
      resolved  script-interpreter  edges.  It  does not parse env indirection or
      verify that an interpreter exists. For each #! payload it reports	the  in-
      terpreter	path  from  a  bounded header read, or unknown for an incomplete
-     header. An env shebang reports /usr/bin/env, not proof that  its  requested
-     helper  command  exists.  Any of these counts requires resolution.	 Preview
-     refuses nonempty HOLY/hooks and privileged payload modes.	A  zero-conflict
-     preview  is  not  an installable plan: it has no installed database genera-
-     tion, dependency resolution, ownership decisions,	transaction  journal  or
-     apply command.  Changes to the root after preview invalidate the result.
+     header. Simple /usr/bin/env and /usr/bin/env -S forms also show  a	 helper-
+     command candidate. Quoted, escaped or option-heavy env arguments report un-
+     known; no helper's existence is inferred. Any of these counts requires res-
+     olution.  Preview refuses nonempty HOLY/hooks and privileged payload modes.
+     A	zero-conflict  preview	is  not an installable plan: it has no installed
+     database generation, dependency resolution, ownership  decisions,	transac-
+     tion  journal  or apply command.  Changes to the root after preview invali-
+     date the result.
 
      The repository index command validates regular .holy files in DIRECTORY and
-     writes  an	 unsigned, lexicographically ordered index through an atomic re-
-     name.  It refuses symlinked packages, duplicate package  identities  and  a
+     writes an unsigned, lexicographically ordered index through an  atomic  re-
+     name.   It	 refuses  symlinked packages, duplicate package identities and a
      nonregular	 existing  index.  It  rejects	unsupported  HOLY/deps	records.
-     Records in format holy-index-prototype-1 contain the quoted name,	version,
-     release,  os, arch, libc, relative filename, SHA-256 and size.  This proto-
-     type omits dependencies, provides and signatures; source adapters must  not
+     Records  in format holy-index-prototype-1 contain the quoted name, version,
+     release, os, arch, libc, relative filename, SHA-256 and size.  This  proto-
+     type  omits dependencies, provides and signatures; source adapters must not
      treat it as the native repository format.
 
-     The  seal command validates the entire local index, creates an index.SHA256
-     generation and atomically publishes a current pointer  containing	its  di-
-     gest.   The  list	and search commands require current and check its digest
-     before reading the generation. Indexing creates a draft index;  publish  it
+     The seal command validates the entire local index, creates an  index.SHA256
+     generation	 and  atomically  publishes a current pointer containing its di-
+     gest.  The list and search commands require current and  check  its  digest
+     before  reading  the generation. Indexing creates a draft index; publish it
      with seal after reviewing changes. Removing current makes the directory un-
-     available	to  list and search rather than exposing an unsealed draft.  The
-     pointer and artifacts remain unsigned and can be changed  by  someone  with
+     available to list and search rather than exposing an unsealed  draft.   The
+     pointer  and  artifacts  remain unsigned and can be changed by someone with
      write access to the directory. Existing generation files remain in place.
 
-     The  repository  list command reads that prototype index with the holy.conf
+     The repository list command reads that prototype index with  the  holy.conf
      lexer and checks each referenced regular archive's size, SHA-256, identity,
      payload and known ELF ABI facts before printing records. An index without a
-     signature carries no provenance guarantee. Neither command	 installs  pack-
+     signature	carries	 no provenance guarantee. Neither command installs pack-
      ages or activates this directory as a package source.
 
-     The  repository  search  command verifies the same complete local index and
+     The repository search command verifies the same complete  local  index  and
      returns exact name matches. No match prints a zero-count summary. This pro-
      totype does not perform fuzzy search, dependency resolution or provider se-
      lection.
 
-     The repository fetch command requires a lowercase SHA-256 from  the  sealed
-     index.  It	 verifies  the complete index and artifacts, then copies the se-
-     lected snapshot to an existing output directory as SHA256.holy. It	 rejects
+     The  repository  fetch command requires a lowercase SHA-256 from the sealed
+     index. It verifies the complete index and artifacts, then	copies	the  se-
+     lected  snapshot to an existing output directory as SHA256.holy. It rejects
      a missing digest or a changed unrelated artifact. The copy does not install
-     or	 grant	trust to the package; repository metadata and objects remain un-
+     or grant trust to the package; repository metadata and objects  remain  un-
      signed.
 
 EXIT STATUS
-     0 indicates success under the implemented checks; 1 indicates a failed  lo-
-     cal  fetch,  extraction or check; 2 indicates invalid arguments, configura-
-     tion or package inspection. Diagnostics go to standard error except  --json
+     0	indicates success under the implemented checks; 1 indicates a failed lo-
+     cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
+     tion  or package inspection. Diagnostics go to standard error except --json
      check events, which go to standard output.
 
-     Preview  returns  3  when valid requirements need provider decisions, 4 for
-     path conflicts and 6 when hooks or privileged modes  need	unsupported  re-
+     Preview returns 3 when valid requirements need provider  decisions,  4  for
+     path  conflicts  and  6 when hooks or privileged modes need unsupported re-
      view. It returns 1 on target-root I/O failure.
 
 SEE ALSO
