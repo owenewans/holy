@@ -78,6 +78,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db check SHA256 --root DIRECTORY
 .br
+.B holypkg db check --all --root DIRECTORY
+.br
 .B holypkg db rm SHA256 --root DIRECTORY
 .br
 .B holypkg db owner PATH --root DIRECTORY
@@ -182,7 +184,10 @@ and SHA-256. It checks that listed directories remain safe and rejects
 symlinked parent paths. It returns 4 for changed or missing files, 6 when
 the instance is absent, and 5 while a file transaction is incomplete. The
 command neither downloads an archive nor repairs a file. This restricted
-check does not model dynamic linking, scripts or runtime behavior.
+check does not model dynamic linking, scripts or runtime behavior. --all walks
+every installed data manifest under the same shared lock and reports each
+artifact as intact or changed in digest order. It returns 4 if any artifact
+has changed. An empty installed set reports zero checked packages.
 .PP
 Database owner reads installed data manifests and lists the artifact digest
 and kind for an exact relative or root-absolute path. Multiple packages may

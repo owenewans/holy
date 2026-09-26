@@ -85,6 +85,8 @@ test -L "$tmp/root/usr/bin"
 cmp "$tmp/payload/DATA/usr/bin/data" "$tmp/root/usr/bin/data"
 mkdir -p "$tmp/system/usr/bin"
 "$bin" db init --root "$tmp/system" > "$tmp/out"
+"$bin" db check --all --root "$tmp/system" > "$tmp/out"
+grep -qx 'checked 0 installed packages' "$tmp/out"
 "$bin" cache stage "local:$tmp/data.holy" --root "$tmp/system" > "$tmp/out"
 digest=$(sha256sum "$tmp/data.holy")
 digest=${digest%% *}
@@ -182,6 +184,15 @@ test -f "$tmp/system/usr/bin/data2"
 "$bin" db status --root "$tmp/system" > "$tmp/out"
 grep -qx 'generation 2' "$tmp/out"
 "$bin" db check "$digest2" --root "$tmp/system" > "$tmp/out"
+"$bin" db check --all --root "$tmp/system" > "$tmp/out"
+grep -qx "intact $digest generation 2" "$tmp/out"
+grep -qx "intact $digest2 generation 2" "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 2
+printf 'changed\n' > "$tmp/system/usr/bin/data"
+if "$bin" db check --all --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+grep -qx "changed $digest generation 2" "$tmp/out"
+grep -qx "intact $digest2 generation 2" "$tmp/out"
+cp "$tmp/payload/DATA/usr/bin/data2" "$tmp/system/usr/bin/data"
 "$bin" db owner usr/bin --root "$tmp/system" > "$tmp/out"
 grep -qx "$digest directory usr/bin" "$tmp/out"
 grep -qx "$digest2 directory usr/bin" "$tmp/out"
@@ -223,6 +234,7 @@ if "$bin" db apply --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1
 test -f "$tmp/failure/var/lib/holypkg/transactions/journal"
 if "$bin" db status --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
 grep -qx 'incomplete transaction; inspect journal' "$tmp/out"
+if "$bin" db check --all --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
 if "$bin" db recover --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
 test ! -e "$tmp/failure/usr/bin/data"
 chmod 0755 "$tmp/failure/usr/bin"

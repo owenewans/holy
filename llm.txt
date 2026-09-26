@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=eca254c2df954e2283b396035dd29fad1ca2a0c370e0f374b225e852bcf9ff7a
+holypkg.8 source=holy version=development sha256=a7511d87d12c4e08ffb6d989de8a6a6136f71fd98def93494dab709089c80464
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -94,6 +94,7 @@ SYNOPSIS
      holypkg db recheck --root DIRECTORY
      holypkg db apply --root DIRECTORY
      holypkg db check SHA256 --root DIRECTORY
+     holypkg db check --all --root DIRECTORY
      holypkg db rm SHA256 --root DIRECTORY
      holypkg db owner PATH --root DIRECTORY
      holypkg repo index DIRECTORY
@@ -190,7 +191,10 @@ DESCRIPTION
      linked parent paths. It returns 4 for changed or missing files, 6 when  the
      instance  is absent, and 5 while a file transaction is incomplete. The com-
      mand neither downloads an archive nor repairs a file. This restricted check
-     does not model dynamic linking, scripts or runtime behavior.
+     does not model dynamic linking, scripts or runtime	 behavior.  --all  walks
+     every  installed  data manifest under the same shared lock and reports each
+     artifact as intact or changed in digest order. It returns 4 if any artifact
+     has changed. An empty installed set reports zero checked packages.
 
      Database owner reads installed data manifests and lists the artifact digest
      and kind for an exact relative or root-absolute path. Multiple packages may

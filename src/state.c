@@ -1118,12 +1118,75 @@ done:
     return result;
 }
 
+struct check_result {
+    char digest[65];
+    int intact;
+};
+
+static int compare_check_result(const void *a, const void *b)
+{
+    const struct check_result *left = a, *right = b;
+    return strcmp(left->digest, right->digest);
+}
+
+static int check_all(int installed, int root, unsigned long long generation)
+{
+    struct check_result *records = NULL;
+    DIR *list = NULL;
+    struct dirent *entry;
+    size_t count = 0, capacity = 0, i;
+    int copy = dup(installed), result = 1;
+    if (copy < 0) return 1;
+    list = fdopendir(copy);
+    if (!list) { close(copy); return 1; }
+    errno = 0;
+    while ((entry = readdir(list))) {
+        int item, files, status;
+        struct check_result *grown;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        if (count == capacity) {
+            size_t next = capacity ? capacity * 2 : 8;
+            if (next < capacity || next > SIZE_MAX / sizeof *records) goto done;
+            grown = realloc(records, next * sizeof *records);
+            if (!grown) goto done;
+            records = grown;
+            capacity = next;
+        }
+        item = child_dir(installed, entry->d_name, 0);
+        if (item < 0) goto done;
+        files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+        close(item);
+        if (files < 0) goto done;
+        status = holy_install_check_manifest(files, root);
+        close(files);
+        if (status < 0) goto done;
+        memcpy(records[count].digest, entry->d_name, 65);
+        records[count].intact = status;
+        ++count;
+        errno = 0;
+    }
+    if (errno) goto done;
+    if (count) qsort(records, count, sizeof *records, compare_check_result);
+    result = 0;
+    for (i = 0; i < count; ++i) {
+        if (printf("%s %s generation %llu\n",
+                   records[i].intact ? "intact" : "changed",
+                   records[i].digest, generation) < 0) { result = 1; break; }
+        if (!records[i].intact) result = 4;
+    }
+    if (count == 0 && puts("checked 0 installed packages") == EOF) result = 1;
+done:
+    free(records);
+    closedir(list);
+    return result;
+}
+
 int holy_state_check(const char *digest, const char *root_path)
 {
     unsigned long long generation;
     int root, dir = -1, installed = -1, item = -1, files = -1, result = 1;
-    int checked;
-    if (!valid_digest(digest)) return 2;
+    int checked, all = !strcmp(digest, "--all");
+    if (!all && !valid_digest(digest)) return 2;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0) goto done;
     dir = state_dir_at(root, 0);
@@ -1135,6 +1198,7 @@ int holy_state_check(const char *digest, const char *root_path)
     if (!installed_valid(dir)) goto done;
     installed = child_dir(dir, "installed", 0);
     if (installed < 0) goto done;
+    if (all) { result = check_all(installed, root, generation); goto done; }
     item = child_dir(installed, digest, 0);
     if (item < 0) { result = 6; goto done; }
     files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
