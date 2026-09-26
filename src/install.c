@@ -155,7 +155,7 @@ static int decimal(const char *text, int base, unsigned long long *value)
     return !errno && !*end;
 }
 
-static int check_file(int root, char **v)
+static int check_file(int root, char **v, struct stat *observed)
 {
     unsigned long long mode, uid, gid, size;
     struct stat st;
@@ -203,6 +203,7 @@ static int check_file(int root, char **v)
         snprintf(hex, sizeof hex, "%02x", digest[i]);
         if (v[8][i * 2] != hex[0] || v[8][i * 2 + 1] != hex[1]) result = 0;
     }
+    if (result && observed) *observed = st;
 done:
     EVP_MD_CTX_free(hash);
     if (fd >= 0) close(fd);
@@ -222,13 +223,32 @@ static void report_changed(const char *path)
     fputc('\n', stderr);
 }
 
-int holy_install_check_manifest(int files_fd, int root)
+static int remove_file(int root, const char *path, const struct stat *observed)
+{
+    char *storage = NULL;
+    const char *base;
+    struct stat st;
+    int parent = parent_fd(root, path, &storage, &base), ok = 0;
+    if (parent < 0) return 0;
+    if (!fstatat(parent, base, &st, AT_SYMLINK_NOFOLLOW) &&
+        S_ISREG(st.st_mode) &&
+        st.st_dev == observed->st_dev && st.st_ino == observed->st_ino &&
+        st.st_size == observed->st_size && st.st_mode == observed->st_mode &&
+        st.st_uid == observed->st_uid && st.st_gid == observed->st_gid &&
+        !unlinkat(parent, base, 0) && !fsync(parent)) ok = 1;
+    close(parent);
+    free(storage);
+    return ok;
+}
+
+static int walk_manifest(int files_fd, int root, int remove)
 {
     struct stat st;
     char *text = NULL;
     size_t length, used = 0, start = 0, i, line = 0;
     int result = 1;
-    if (fstat(files_fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+    if (lseek(files_fd, 0, SEEK_SET) != 0 ||
+        fstat(files_fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
         st.st_size > 16 * 1024 * 1024) return -1;
     length = (size_t)st.st_size;
     text = malloc(length + 1);
@@ -244,6 +264,7 @@ int holy_install_check_manifest(int files_fd, int root)
         char **v = NULL, *error = NULL;
         size_t count = 0;
         int checked;
+        struct stat observed;
         if (i < length && text[i] != '\n') continue;
         ++line;
         if (memchr(text + start, '\0', i - start) ||
@@ -259,16 +280,30 @@ int holy_install_check_manifest(int files_fd, int root)
             result = -1;
             goto done;
         }
-        checked = check_file(root, v);
+        checked = check_file(root, v, &observed);
         if (checked < 0) result = -1;
         else if (!checked) {
             report_changed(v[1]);
             if (result == 1) result = 0;
+        } else if (remove && !strcmp(v[0], "file") &&
+                   !remove_file(root, v[1], &observed)) {
+            result = 0;
         }
         holy_tokens_free(v, count);
-        if (result < 0) goto done;
+        if (result < 0 || (remove && result != 1)) goto done;
     }
 done:
     free(text);
     return result;
+}
+
+int holy_install_check_manifest(int files_fd, int root)
+{
+    return walk_manifest(files_fd, root, 0);
+}
+
+int holy_install_remove_manifest(int files_fd, int root)
+{
+    if (holy_install_check_manifest(files_fd, root) != 1) return 0;
+    return walk_manifest(files_fd, root, 1) == 1;
 }

@@ -25,5 +25,7 @@ int holy_state_apply(const char *root_path);
 int holy_state_abort_empty(const char *root_path);
 /* compare one installed data manifest to the target root without repair. */
 int holy_state_check(const char *digest, const char *root_path);
+/* remove one intact data-only installed instance; shared directories remain. */
+int holy_state_remove(const char *digest, const char *root_path);
 
 #endif

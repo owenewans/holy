@@ -34,7 +34,8 @@ It can initialize an empty target-root package database and reserve or cancel
 one verified cached artifact at a fixed generation. `db preflight` checks that
 reservation against the target root. `db plan`, `db approve` and `db apply`
 install a restricted, data-only package into existing directories with a
-journal. Incomplete transactions require manual inspection.
+journal. `db check` compares installed data with rootfs; `db rm` removes an
+intact instance. Incomplete mutations require inspection.
 It can build, seal, search exact provider claims and fetch an unsigned local
 repository catalog. The catalog records package capability claims; candidate
 lookup validates matching artifacts against those claims.

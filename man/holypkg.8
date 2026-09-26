@@ -72,6 +72,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db check SHA256 --root DIRECTORY
 .br
+.B holypkg db rm SHA256 --root DIRECTORY
+.br
 .B holypkg repo index DIRECTORY
 .br
 .B holypkg repo list DIRECTORY
@@ -153,6 +155,16 @@ symlinked parent paths. It returns 4 for changed or missing files, 6 when
 the instance is absent, and 5 while a file transaction is incomplete. The
 command neither downloads an archive nor repairs a file. This restricted
 check does not model dynamic linking, scripts or runtime behavior.
+.PP
+Database rm removes one intact data-only installed instance by artifact
+SHA-256. It verifies all listed files before mutation, refuses changed files
+and pending reservations, then writes a removing journal. It unlinks only
+listed regular files and the instance record; shared directories and the
+cached artifact remain. The database generation advances after removal. If
+an I/O failure interrupts deletion, db status reports an incomplete journal
+and db recover requires manual inspection. --abort-empty applies only to an
+installing journal, never to removal. This command does not resolve reverse
+dependencies or remove general packages.
 .PP
 The info command reads an LZ4-frame-compressed tar archive and prints the seven
 required fields from HOLY/meta. It reads archive data without extracting or

@@ -241,14 +241,15 @@ static int journal_exists(int dir)
 
 static int journal_valid(int dir, unsigned long long generation,
                          unsigned long long *original,
-                         char artifact[65], char plan_digest[65])
+                         char artifact[65], char plan_digest[65], int *removing)
 {
     int transactions = child_dir(dir, "transactions", 0), fd = -1, result = -1;
     struct stat st;
     char buffer[256], prefix[96], digest[65], plan[65];
     ssize_t got;
     size_t length;
-    unsigned long long recorded;
+    unsigned long long recorded = 0;
+    int is_removing = 0, attempt;
     if (transactions < 0) return -1;
     fd = openat(transactions, "journal", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0) { result = errno == ENOENT ? 0 : -1; goto done; }
@@ -257,17 +258,17 @@ static int journal_valid(int dir, unsigned long long generation,
         (st.st_uid != 0 && st.st_uid != geteuid())) goto done;
     got = read(fd, buffer, sizeof buffer);
     if (got != st.st_size) goto done;
-    recorded = generation;
-    length = (size_t)snprintf(prefix, sizeof prefix,
-        "format holy-journal-1\nstage applying\ngeneration %llu\nartifact ", recorded);
-    if (length >= sizeof prefix) goto done;
-    if (memcmp(buffer, prefix, length)) {
-        if (!generation) goto done;
-        recorded = generation - 1;
+    for (attempt = 0; attempt < 4; ++attempt) {
+        if (attempt >= 2 && !generation) break;
+        recorded = generation - (unsigned long long)(attempt / 2);
+        is_removing = attempt % 2;
         length = (size_t)snprintf(prefix, sizeof prefix,
-            "format holy-journal-1\nstage applying\ngeneration %llu\nartifact ", recorded);
-        if (length >= sizeof prefix || memcmp(buffer, prefix, length)) goto done;
+            "format holy-journal-1\nstage %s\ngeneration %llu\nartifact ",
+            is_removing ? "removing" : "applying", recorded);
+        if (length >= sizeof prefix) goto done;
+        if (!memcmp(buffer, prefix, length)) break;
     }
+    if (attempt == 4 || (attempt >= 2 && !generation)) goto done;
     if (st.st_size != (off_t)(length + 65 + 5 + 65) ||
         buffer[length + 64] != '\n' ||
         memcmp(buffer + length + 65, "plan ", 5) ||
@@ -280,6 +281,7 @@ static int journal_valid(int dir, unsigned long long generation,
     if (original) *original = recorded;
     if (artifact) memcpy(artifact, digest, 65);
     if (plan_digest) memcpy(plan_digest, plan, 65);
+    if (removing) *removing = is_removing;
     result = 1;
 done:
     if (fd >= 0) close(fd);
@@ -398,7 +400,7 @@ int holy_state_status(const char *root_path, int json)
     if (dir < 0) goto done;
     if (flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation)) goto done;
-    pending = journal_valid(dir, generation, NULL, NULL, NULL);
+    pending = journal_valid(dir, generation, NULL, NULL, NULL, NULL);
     if (pending < 0) goto done;
     if (pending) {
         if (json) printf("{\"schema\":\"holy-db-status-1\",\"type\":\"incomplete\",\"generation\":%llu}\n", generation);
@@ -521,7 +523,7 @@ int holy_state_recover(const char *root_path)
     int has_pending = 0, result = 1;
     if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation)) goto done;
-    result = journal_valid(dir, generation, NULL, NULL, NULL);
+    result = journal_valid(dir, generation, NULL, NULL, NULL, NULL);
     if (result < 0) { result = 1; goto done; }
     if (result) {
         fprintf(stderr, "holypkg: incomplete file transaction requires manual inspection\n");
@@ -1013,14 +1015,14 @@ int holy_state_abort_empty(const char *root_path)
     char *snapshot = NULL;
     int root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     int dir = root < 0 ? -1 : state_dir_at(root, 0);
-    int transactions = -1, installed = -1, result = 1;
+    int transactions = -1, installed = -1, result = 1, removing = 0;
     if (dir < 0 || fstat(root, &root_st) || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation)) goto done;
-    result = journal_valid(dir, generation, &recorded, digest, plan);
+    result = journal_valid(dir, generation, &recorded, digest, plan, &removing);
     if (result < 0) { result = 1; goto done; }
     if (!result) { result = 5; goto done; }
     result = 5;
-    if (recorded != generation || !installed_valid(dir)) goto done;
+    if (removing || recorded != generation || !installed_valid(dir)) goto done;
     transactions = child_dir(dir, "transactions", 0);
     installed = child_dir(dir, "installed", 0);
     if (transactions < 0 || installed < 0 ||
@@ -1054,7 +1056,7 @@ int holy_state_check(const char *digest, const char *root_path)
     dir = state_dir_at(root, 0);
     if (dir < 0 || flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation)) goto done;
-    checked = journal_valid(dir, generation, NULL, NULL, NULL);
+    checked = journal_valid(dir, generation, NULL, NULL, NULL, NULL);
     if (checked < 0) goto done;
     if (checked) { result = 5; goto done; }
     if (!installed_valid(dir)) goto done;
@@ -1072,6 +1074,81 @@ done:
     if (files >= 0) close(files);
     if (item >= 0) close(item);
     if (installed >= 0) close(installed);
+    if (dir >= 0) close(dir);
+    if (root >= 0) close(root);
+    return result;
+}
+
+int holy_state_remove(const char *digest, const char *root_path)
+{
+    static const char *const names[] = { "meta", "files", "deps", "origin", "state" };
+    unsigned long long generation;
+    char journal[256], generation_record[32], temp_name[43] = {0};
+    char reserved[65], approved[65];
+    size_t length, i;
+    int root, dir = -1, installed = -1, item = -1, files = -1;
+    int transactions = -1, temp = -1, journaled = 0, result = 1, pending;
+    if (!valid_digest(digest)) return 2;
+    root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0) goto done;
+    dir = state_dir_at(root, 0);
+    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+        !empty_child(dir, "index") || !read_generation(dir, &generation) ||
+        generation == ULLONG_MAX) goto done;
+    pending = journal_valid(dir, generation, NULL, NULL, NULL, NULL);
+    if (pending < 0) goto done;
+    if (pending) { result = 5; goto done; }
+    if (!installed_valid(dir)) goto done;
+    pending = pending_child(dir, generation, reserved, approved);
+    if (pending < 0) goto done;
+    if (pending) { result = 5; goto done; }
+    installed = child_dir(dir, "installed", 0);
+    transactions = child_dir(dir, "transactions", 0);
+    if (installed < 0 || transactions < 0) goto done;
+    item = child_dir(installed, digest, 0);
+    if (item < 0) { result = 6; goto done; }
+    files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (files < 0) goto done;
+    pending = holy_install_check_manifest(files, root);
+    if (pending != 1) { result = pending == 0 ? 4 : 1; goto done; }
+    length = (size_t)snprintf(journal, sizeof journal,
+        "format holy-journal-1\nstage removing\ngeneration %llu\nartifact %s\nplan %064d\n",
+        generation, digest, 0);
+    if (length >= sizeof journal || !record_file(transactions, "journal", journal, length)) {
+        result = journal_exists(dir) ? 5 : 1;
+        goto done;
+    }
+    journaled = 1;
+    result = 5;
+    if (!holy_install_remove_manifest(files, root)) goto done;
+    if (close(files)) { files = -1; goto done; }
+    files = -1;
+    for (i = 0; i < sizeof names / sizeof *names; ++i)
+        if (unlinkat(item, names[i], 0)) goto done;
+    if (fsync(item)) goto done;
+    if (close(item)) { item = -1; goto done; }
+    item = -1;
+    if (unlinkat(installed, digest, AT_REMOVEDIR) || fsync(installed)) goto done;
+    length = (size_t)snprintf(generation_record, sizeof generation_record,
+                              "%llu\n", generation + 1);
+    if (length >= sizeof generation_record) goto done;
+    temp = holy_temporary_at(dir, temp_name);
+    if (temp < 0 || !write_all(temp, generation_record, length) || fsync(temp)) goto done;
+    if (close(temp)) { temp = -1; goto done; }
+    temp = -1;
+    if (renameat(dir, temp_name, dir, "generation") || fsync(dir) ||
+        unlinkat(transactions, "journal", 0) || fsync(transactions)) goto done;
+    printf("removed %s generation %llu\n", digest, generation + 1);
+    result = 0;
+done:
+    if (result) fprintf(stderr, "holypkg: remove failed (status %d)%s\n", result,
+                        journaled ? "; inspect incomplete transaction" : "");
+    if (temp >= 0) close(temp);
+    if (temp_name[0] && dir >= 0) unlinkat(dir, temp_name, 0);
+    if (files >= 0) close(files);
+    if (item >= 0) close(item);
+    if (installed >= 0) close(installed);
+    if (transactions >= 0) close(transactions);
     if (dir >= 0) close(dir);
     if (root >= 0) close(root);
     return result;
