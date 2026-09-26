@@ -149,6 +149,9 @@ cp "$tmp/repo/index" "$tmp/index-before-forgery"
 sed 's/"helper-alias"/"forged-alias"/' "$tmp/index-before-forgery" > "$tmp/repo/index"
 if "$bin" repo seal "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
+sed 's/"noarch" "nolibc" "2.0" "metadata"/"broken" "nolibc" "2.0" "metadata"/' "$tmp/index-before-forgery" > "$tmp/repo/index"
+if "$bin" repo seal "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
 cp "$tmp/index-before-forgery" "$tmp/repo/index"
 "$bin" repo list "$tmp/repo" > "$tmp/out"
 grep -qx 'listed 2 packages' "$tmp/out"
@@ -183,6 +186,10 @@ test ! -s "$tmp/out"
 if "$bin" repo providers "$tmp/repo" command helper --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -Fqx '{"schema":"holy-repo-candidates-1","type":"error","code":"invalid-catalog"}' "$tmp/out"
 test "$(wc -l < "$tmp/out")" -eq 1
+"$bin" repo providers "$tmp/repo" package fixture --json > "$tmp/out"
+grep -Fqx '{"schema":"holy-repo-candidates-1","type":"summary","count":1}' "$tmp/out"
+"$bin" repo providers "$tmp/repo" command absent --json > "$tmp/out"
+grep -Fqx '{"schema":"holy-repo-candidates-1","type":"summary","count":0}' "$tmp/out"
 if "$bin" repo fetch "$tmp/repo" "$hash" --output "$tmp/fetched" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 cp "$tmp/variant-original" "$tmp/repo/variant.holy"

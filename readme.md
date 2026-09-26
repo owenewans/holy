@@ -31,8 +31,8 @@ conflicts without installing.
 It stages verified archives in a target-root cache.
 It can initialize and inspect an empty target-root package database.
 It can build, seal, search exact provider claims and fetch an unsigned local
-repository catalog. The catalog now records and checks package capability
-claims; candidate lookup still scans the catalog's artifacts per query.
+repository catalog. The catalog records package capability claims; candidate
+lookup validates matching artifacts against those claims.
 Installed-state transactions, a bootable image and QEMU acceptance are pending.
 The [Slackware holypkg](https://github.com/owenewans/holypkg) is a separate project.
 

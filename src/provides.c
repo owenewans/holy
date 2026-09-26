@@ -46,6 +46,19 @@ static int valid(char **v, size_t n)
     return 1;
 }
 
+int holy_provides_claim_valid(const char *kind, const char *name,
+                              const char *arch, const char *libc,
+                              const char *version, const char *evidence)
+{
+    char *v[7];
+    if (!kind || !name || !arch || !libc || !version || !evidence) return 0;
+    v[0] = "provide";
+    v[1] = (char *)kind; v[2] = (char *)name; v[3] = (char *)arch;
+    v[4] = (char *)libc; v[5] = (char *)version;
+    v[6] = (char *)evidence;
+    return valid(v, 7);
+}
+
 static int parse(char *data, size_t size, struct capability **items, size_t *count)
 {
     size_t start = 0, pos, line = 0;

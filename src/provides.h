@@ -7,6 +7,9 @@ int holy_provides_local(const char *package, int emit);
 int holy_provides_match(const char *package, const char *kind,
                         const char *name, int *matched);
 int holy_provides_kind(const char *kind);
+int holy_provides_claim_valid(const char *kind, const char *name,
+    const char *arch, const char *libc, const char *version,
+    const char *evidence);
 typedef int (*holy_capability_visit)(void *opaque, const char *kind,
     const char *name, const char *arch, const char *libc,
     const char *version, const char *evidence);

@@ -359,10 +359,17 @@ static int parse_record(char **v, size_t n, struct object *object)
 
 static int parse_claim(char **v, size_t n, struct object *object)
 {
+    size_t i;
     if (n != 8 || strcmp(v[0], "claim") ||
         strcmp(v[1], object->identity.digest) ||
-        !holy_provides_kind(v[2]) || !v[3][0] || !v[4][0] ||
-        !v[5][0] || !v[6][0] || !v[7][0]) return 0;
+        !holy_provides_claim_valid(v[2], v[3], v[4], v[5], v[6], v[7]))
+        return 0;
+    for (i = 0; i < object->claim_count; ++i) {
+        const struct claim *c = &object->claims[i];
+        if (!strcmp(c->kind, v[2]) && !strcmp(c->name, v[3]) &&
+            !strcmp(c->arch, v[4]) && !strcmp(c->libc, v[5]) &&
+            !strcmp(c->version, v[6])) return 0;
+    }
     return add_claim(object, v[2], v[3], v[4], v[5], v[6], v[7]);
 }
 
@@ -449,9 +456,20 @@ static int list(const char *directory, const char *query,
     for (i = 0; i < count; ++i) {
         struct holy_package_identity actual;
         char *snapshot;
-        int input = openat(dir, objects[i].filename,
-                           O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
-        int matches;
+        int input, matches;
+        if (indexed && provider_kind) {
+            size_t k;
+            objects[i].provider_match =
+                !strcmp(provider_kind, "package") &&
+                !strcmp(provider_name, objects[i].identity.name);
+            for (k = 0; k < objects[i].claim_count; ++k)
+                if (!strcmp(objects[i].claims[k].kind, provider_kind) &&
+                    !strcmp(objects[i].claims[k].name, provider_name))
+                    objects[i].provider_match = 1;
+            if (!objects[i].provider_match) continue;
+        }
+        input = openat(dir, objects[i].filename,
+                            O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
         if (input < 0) goto done;
         snapshot = holy_stage_fd(input, "holy-list");
         close(input);
@@ -481,20 +499,13 @@ static int list(const char *directory, const char *query,
                 goto done;
             }
         }
-        if (provider_kind) {
+        if (provider_kind && !indexed) {
             int claim = 0;
-            if (indexed) {
-                size_t k;
-                for (k = 0; k < objects[i].claim_count; ++k)
-                    if (!strcmp(objects[i].claims[k].kind, provider_kind) &&
-                        !strcmp(objects[i].claims[k].name, provider_name)) claim = 1;
-            } else {
-                if (!holy_provides_match(snapshot, provider_kind,
-                                         provider_name, &claim)) {
-                    unlink(snapshot);
-                    free(snapshot);
-                    goto done;
-                }
+            if (!holy_provides_match(snapshot, provider_kind,
+                                     provider_name, &claim)) {
+                unlink(snapshot);
+                free(snapshot);
+                goto done;
             }
             objects[i].provider_match = claim ||
                 (!strcmp(provider_kind, "package") &&

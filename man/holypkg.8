@@ -262,12 +262,17 @@ prototype does not perform fuzzy search, dependency resolution or provider
 selection.
 .PP
 Repository providers searches the sealed local catalog for an exact KIND and
-NAME match. It finds claims in HOLY/provides and the package's own metadata
-name for KIND=package. It validates the full generation and objects before
-printing matching package records and a candidate count. Listed claims are
+NAME match. It finds indexed claims from HOLY/provides and the package's own
+metadata name for KIND=package. For prototype-2, it validates the complete
+index and verifies only candidate artifacts and their full claim sets before
+printing package records and a count. An unselected object can change without
+invalidating this query; no match describes the sealed index generation, not
+every file in the repository directory. Prototype-1 queries still verify all
+artifacts. Listed claims are
 unverified: an exact name does not prove file presence, ABI compatibility,
 version constraints, or successful execution. There is no source ranking or
-dependency solver yet; this command scans the verified local objects per query.
+dependency solver yet; the prototype-2 query uses indexed claim lookup but
+still scans all index rows.
 With --json it emits holy-repo-candidates-1 candidate events (package identity,
 filename, SHA-256 and byte size), then a count summary. Invalid catalogs emit
 one error event without partial candidates; invalid KIND/NAME emits an
