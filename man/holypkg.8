@@ -7,6 +7,8 @@ holypkg \- Holy package tooling (configuration checker prototype)
 .B holypkg info local:FILE
 .br
 .B holypkg verify local:FILE
+.br
+.B holypkg fetch local:FILE --output DIRECTORY
 .SH DESCRIPTION
 Checks syntax, includes, sections and duplicate scalar keys of a configuration
 file without changing the system. No package installation, import, fetch,
@@ -26,6 +28,14 @@ The verify command checks regular DATA files against the supported HOLY/files
 records, including size, mode, numeric owner and SHA-256. It checks symlinks,
 directories and direct hardlinks, rejecting unsupported objects. It does not install or authenticate packages;
 the two read passes do not provide a stable filesystem snapshot.
+.PP
+The local fetch command copies any regular input file to an existing directory
+as SHA256.holy. It copies bytes without interpreting metadata, extracting files
+or running hooks. A temporary file receives mode 0600 and is synchronized
+before a no-overwrite hardlink creates the object. Repeating the command checks
+the existing object's digest. A mismatched object is left untouched. Fetch
+does not establish archive validity, provenance or a trusted root-owned cache.
+Remote source fetching is not implemented.
 .SH EXIT STATUS
 0 indicates a valid file under the implemented checks; 2 indicates invalid
 arguments or invalid configuration. Diagnostics go to standard error.

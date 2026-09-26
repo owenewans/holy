@@ -1,6 +1,7 @@
 #include "config.h"
 #include "package.h"
 #include "verify.h"
+#include "fetch.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,8 +20,12 @@ int main(int argc, char **argv)
     if (argc == 3 && !strcmp(argv[1], "verify") &&
         !strncmp(argv[2], "local:", 6) && argv[2][6])
         return holy_verify(argv[2] + 6) ? 0 : 2;
+    if (argc == 5 && !strcmp(argv[1], "fetch") &&
+        !strncmp(argv[2], "local:", 6) && argv[2][6] &&
+        !strcmp(argv[3], "--output"))
+        return holy_fetch_local(argv[2] + 6, argv[4]) ? 0 : 1;
     if (argc != 4 || strcmp(argv[1], "config") || strcmp(argv[2], "check")) {
-        fprintf(stderr, "usage: holypkg config check FILE | holypkg info local:FILE | holypkg verify local:FILE\n");
+        fprintf(stderr, "usage: holypkg config check FILE | holypkg info local:FILE | holypkg verify local:FILE | holypkg fetch local:FILE --output DIRECTORY\n");
         return 2;
     }
     path = argv[3];

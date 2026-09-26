@@ -35,6 +35,27 @@ grep -qx 'name fixture' "$tmp/out"
 grep -qx 'libc nolibc' "$tmp/out"
 expected=$(sha256sum "$tmp/package.holy" | cut -d ' ' -f 1)
 grep -qx "sha256 $expected" "$tmp/out"
+mkdir "$tmp/fetched"
+fetched=$("$bin" fetch "local:$tmp/package.holy" --output "$tmp/fetched")
+test "$fetched" = "$tmp/fetched/$expected.holy"
+cmp "$tmp/package.holy" "$fetched"
+test "$("$bin" fetch "local:$tmp/package.holy" --output "$tmp/fetched")" = "$fetched"
+printf 'damaged\n' > "$fetched"
+if "$bin" fetch "local:$tmp/package.holy" --output "$tmp/fetched" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'existing object differs' "$tmp/err"
+grep -qx damaged "$fetched"
+rm "$fetched"
+ln -s "$tmp/package.holy" "$fetched"
+if "$bin" fetch "local:$tmp/package.holy" --output "$tmp/fetched" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'existing object differs' "$tmp/err"
+test -L "$fetched"
+rm "$fetched"
+ln -s "$tmp/fetched" "$tmp/fetched-link"
+if "$bin" fetch "local:$tmp/package.holy" --output "$tmp/fetched-link" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'output directory' "$tmp/err"
+mkfifo "$tmp/pipe"
+if "$bin" fetch "local:$tmp/pipe" --output "$tmp/fetched" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'input must be a regular file' "$tmp/err"
 rm "$tmp/payload/HOLY/origin"
 tar -cf "$tmp/missing-member.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/missing-member.tar" "$tmp/missing-member.holy"
