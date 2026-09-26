@@ -35,6 +35,57 @@ grep -qx 'name fixture' "$tmp/out"
 grep -qx 'libc nolibc' "$tmp/out"
 expected=$(sha256sum "$tmp/package.holy" | cut -d ' ' -f 1)
 grep -qx "sha256 $expected" "$tmp/out"
+mkdir "$tmp/preview-root"
+"$bin" preview "local:$tmp/package.holy" --root "$tmp/preview-root" > "$tmp/out"
+grep -qx "preview artifact=$expected paths=3 conflicts=0" "$tmp/out"
+grep -qx 'new usr/bin/hello' "$tmp/out"
+test ! -e "$tmp/preview-root/usr"
+mkdir "$tmp/preview-root/usr"
+ln -s "$tmp/payload/DATA/usr/bin" "$tmp/preview-root/usr/bin"
+rc=0
+"$bin" preview "local:$tmp/package.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
+test "$rc" -eq 4
+grep -qx "preview artifact=$expected paths=3 conflicts=2" "$tmp/out"
+grep -qx 'conflict usr/bin/hello' "$tmp/out"
+test -L "$tmp/preview-root/usr/bin"
+rm "$tmp/preview-root/usr/bin"
+mkdir "$tmp/preview-root/usr/bin"
+printf 'keep\n' > "$tmp/preview-root/usr/bin/hello"
+rc=0
+"$bin" preview "local:$tmp/package.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
+test "$rc" -eq 4
+grep -qx "preview artifact=$expected paths=3 conflicts=1" "$tmp/out"
+grep -qx 'conflict usr/bin/hello' "$tmp/out"
+grep -qx 'keep' "$tmp/preview-root/usr/bin/hello"
+cp -a "$tmp/payload" "$tmp/with-hook"
+printf 'run /bin/sh script\n' > "$tmp/with-hook/HOLY/hooks"
+tar -cf "$tmp/with-hook.tar" -C "$tmp/with-hook" HOLY DATA
+lz4 -q "$tmp/with-hook.tar" "$tmp/with-hook.holy"
+rc=0
+"$bin" preview "local:$tmp/with-hook.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
+test "$rc" -eq 6
+test ! -s "$tmp/out"
+grep -q 'requires empty hooks and deps' "$tmp/err"
+: > "$tmp/with-hook/HOLY/hooks"
+printf 'require unknown\n' > "$tmp/with-hook/HOLY/deps"
+tar -cf "$tmp/with-hook.tar" -C "$tmp/with-hook" HOLY DATA
+lz4 -q -f "$tmp/with-hook.tar" "$tmp/with-hook.holy"
+rc=0
+"$bin" preview "local:$tmp/with-hook.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
+test "$rc" -eq 6
+test ! -s "$tmp/out"
+cp -a "$tmp/payload" "$tmp/privileged"
+chmod 4755 "$tmp/privileged/DATA/usr/bin/hello"
+sed 's/^file usr\/bin\/hello [^ ]*/file usr\/bin\/hello 4755/' \
+    "$tmp/payload/HOLY/files" > "$tmp/privileged/HOLY/files"
+tar -cf "$tmp/privileged.tar" -C "$tmp/privileged" HOLY DATA
+lz4 -q "$tmp/privileged.tar" "$tmp/privileged.holy"
+"$bin" verify "local:$tmp/privileged.holy" > "$tmp/out"
+rc=0
+"$bin" preview "local:$tmp/privileged.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
+test "$rc" -eq 6
+test ! -s "$tmp/out"
+grep -q 'privileged payload mode requires review' "$tmp/err"
 cp -a "$tmp/payload" "$tmp/elf-payload"
 sed 's/^libc nolibc$/libc glibc/' "$tmp/payload/HOLY/meta" > "$tmp/elf-payload/HOLY/meta"
 printf '#include <stdio.h>\nint main(void) { return puts("probe") < 0; }\n' > "$tmp/probe.c"

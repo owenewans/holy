@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=e7f4f195b380aedd418fe263cb9e7d5b8b7f7abab600f661b31d7512b973a910
+holypkg.8 source=holy version=development sha256=a0f6e399dbe4581ceaeb2a84f5451a55de41460c379d7065f4781e983bf9d637
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -64,6 +64,7 @@ SYNOPSIS
      holypkg check local:FILE --root DIRECTORY --json
      holypkg elf FILE
      holypkg scan local:FILE
+     holypkg preview local:FILE --root DIRECTORY
      holypkg repo index DIRECTORY
      holypkg repo list DIRECTORY
      holypkg repo search DIRECTORY NAME
@@ -156,6 +157,15 @@ DESCRIPTION
      initions,	when  present.	These  file-scoped  facts  do  not  prove that a
      provider exists or that a versioned symbol resolves.
 
+     The preview command stages and verifies a native archive,	checks	ELF  ABI
+     facts, preflights extraction and inspects each DATA path in a supplied root
+     by	 directory  descriptor.	 It  reports new paths, existing directories and
+     conflicts without writing to the root. It	refuses	 nonempty  HOLY/deps  or
+     HOLY/hooks	 and privileged payload modes. A zero-conflict preview is not an
+     installable plan: it has no installed database generation, dependency reso-
+     lution, ownership decisions, transaction journal or apply command.	 Changes
+     to the root after preview invalidate the result.
+
      The repository index command validates regular .holy files in DIRECTORY and
      writes an unsigned, lexicographically ordered index through an  atomic  re-
      name.   It	 refuses  symlinked packages, duplicate package identities and a
@@ -196,6 +206,10 @@ EXIT STATUS
      cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
      tion  or package inspection. Diagnostics go to standard error except --json
      check events, which go to standard output.
+
+     Preview returns 4 for path conflicts and 6 when hooks or  dependencies  re-
+     quire  an	unsupported planning step. It returns 1 on target-root I/O fail-
+     ure.
 
 SEE ALSO
      holy.conf(5), holy-package(5)

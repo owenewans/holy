@@ -7,6 +7,7 @@
 #include "elf.h"
 #include "scan.h"
 #include "repo.h"
+#include "preview.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -82,12 +83,16 @@ int main(int argc, char **argv)
         !strncmp(argv[2], "local:", 6) && argv[2][6] &&
         !strcmp(argv[3], "--root"))
         return holy_check_local(argv[2] + 6, argv[4], 0) ? 0 : 1;
+    if (argc == 5 && !strcmp(argv[1], "preview") &&
+        !strncmp(argv[2], "local:", 6) && argv[2][6] &&
+        !strcmp(argv[3], "--root"))
+        return holy_preview_local(argv[2] + 6, argv[4]);
     if (argc == 6 && !strcmp(argv[1], "check") &&
         !strncmp(argv[2], "local:", 6) && argv[2][6] &&
         !strcmp(argv[3], "--root") && !strcmp(argv[5], "--json"))
         return holy_check_local(argv[2] + 6, argv[4], 1) ? 0 : 1;
     if (argc != 4 || strcmp(argv[1], "config") || strcmp(argv[2], "check")) {
-        fprintf(stderr, "usage: holypkg config check FILE | holypkg info local:FILE | holypkg verify local:FILE | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg check local:FILE --root DIRECTORY [--json] | holypkg elf FILE | holypkg scan local:FILE | holypkg repo index DIRECTORY | holypkg repo list DIRECTORY | holypkg repo search DIRECTORY NAME | holypkg repo seal DIRECTORY | holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY\n");
+        fprintf(stderr, "usage: holypkg config check FILE | holypkg info local:FILE | holypkg verify local:FILE | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg check local:FILE --root DIRECTORY [--json] | holypkg preview local:FILE --root DIRECTORY | holypkg elf FILE | holypkg scan local:FILE | holypkg repo index DIRECTORY | holypkg repo list DIRECTORY | holypkg repo search DIRECTORY NAME | holypkg repo seal DIRECTORY | holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY\n");
         return 2;
     }
     path = argv[3];

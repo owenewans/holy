@@ -20,6 +20,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg scan local:FILE
 .br
+.B holypkg preview local:FILE --root DIRECTORY
+.br
 .B holypkg repo index DIRECTORY
 .br
 .B holypkg repo list DIRECTORY
@@ -113,6 +115,15 @@ For each ELF it also prints SONAME, DT_NEEDED, GNU version needs with weak or
 required status, and version definitions, when present. These file-scoped
 facts do not prove that a provider exists or that a versioned symbol resolves.
 .PP
+The preview command stages and verifies a native archive, checks ELF ABI facts,
+preflights extraction and inspects each DATA path in a supplied root by
+directory descriptor. It reports new paths, existing directories and
+conflicts without writing to the root. It refuses nonempty HOLY/deps or
+HOLY/hooks and privileged payload modes. A zero-conflict preview is not an
+installable plan: it has no installed database generation, dependency
+resolution, ownership decisions, transaction journal or apply command.
+Changes to the root after preview invalidate the result.
+.PP
 The repository index command validates regular .holy files in DIRECTORY and
 writes an unsigned, lexicographically ordered index through an atomic rename.
 It refuses symlinked packages, duplicate package identities and a nonregular
@@ -151,6 +162,9 @@ trust to the package; repository metadata and objects remain unsigned.
 fetch, extraction or check; 2 indicates invalid arguments, configuration or
 package inspection. Diagnostics go to standard error except --json check
 events, which go to standard output.
+.PP
+Preview returns 4 for path conflicts and 6 when hooks or dependencies require
+an unsupported planning step. It returns 1 on target-root I/O failure.
 .SH SEE ALSO
 .BR holy.conf (5),
 .BR holy-package (5)

@@ -98,7 +98,7 @@ static int supported(struct archive_entry *entry)
     return 1;
 }
 
-static int preflight(const char *source)
+int holy_extract_preflight(const char *source)
 {
     struct archive *a = reader(source);
     struct archive_entry *entry;
@@ -255,7 +255,7 @@ int holy_extract_local(const char *source, const char *output)
         fprintf(stderr, "holypkg: could not stage regular local input\n");
         return 0;
     }
-    if (!holy_verify(snapshot) || !preflight(snapshot)) goto done;
+    if (!holy_verify(snapshot) || !holy_extract_preflight(snapshot)) goto done;
     if (mkdir(output, 0700)) {
         perror("holypkg: create extraction directory");
         goto done;
