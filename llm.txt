@@ -48,7 +48,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=1ecc3f4e1bee1baab2aad9ef0b14432b946b67ba270b13bee40d22a9ec9de075
+holypkg.8 source=holy version=development sha256=da8cd59dbb41bbe4b58a350223527f39802adcd3f2d9b4bdc83c36aa4eb6f063
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -75,6 +75,7 @@ SYNOPSIS
      holypkg repo index DIRECTORY
      holypkg repo list DIRECTORY
      holypkg repo search DIRECTORY NAME
+     holypkg repo providers DIRECTORY KIND NAME
      holypkg repo seal DIRECTORY
      holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 
@@ -281,6 +282,15 @@ DESCRIPTION
      returns exact name matches. No match prints a zero-count summary. This pro-
      totype does not perform fuzzy search, dependency resolution or provider se-
      lection.
+
+     Repository providers searches the sealed local catalog for	 an  exact  KIND
+     and  NAME	match.	It  finds  claims in HOLY/provides and the package's own
+     metadata name for KIND=package. It validates the full  generation	and  ob-
+     jects  before  printing  matching	package	 records  and a candidate count.
+     Listed claims are unverified: an exact name does not prove	 file  presence,
+     ABI  compatibility,  version constraints, or successful execution. There is
+     no source ranking or dependency solver yet; this command scans the verified
+     local objects per query.
 
      The repository fetch command requires a lowercase SHA-256 from  the  sealed
      index.  It	 verifies  the complete index and artifacts, then copies the se-

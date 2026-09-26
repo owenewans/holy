@@ -33,6 +33,7 @@ static int same_identity(const struct holy_package_identity *a,
 struct object {
     char *filename;
     struct holy_package_identity identity;
+    int provider_match;
 };
 
 static int compare_names(const void *left, const void *right)
@@ -242,8 +243,9 @@ static int parse_record(char **v, size_t n, struct object *object)
 }
 
 static int list(const char *directory, const char *query,
-                const char *forced_index, int lock, int emit,
-                const char *fetch_digest, const char *output)
+                 const char *forced_index, int lock, int emit,
+                 const char *fetch_digest, const char *output,
+                 const char *provider_kind, const char *provider_name)
 {
     struct object *objects = NULL;
     struct stat st;
@@ -338,6 +340,18 @@ static int list(const char *directory, const char *query,
             free(snapshot);
             goto done;
         }
+        if (provider_kind) {
+            int claim = 0;
+            if (!holy_provides_match(snapshot, provider_kind,
+                                     provider_name, &claim)) {
+                unlink(snapshot);
+                free(snapshot);
+                goto done;
+            }
+            objects[i].provider_match = claim ||
+                (!strcmp(provider_kind, "package") &&
+                 !strcmp(provider_name, objects[i].identity.name));
+        }
         if (fetch_digest && !strcmp(fetch_digest, objects[i].identity.digest))
             chosen = snapshot;
         else {
@@ -350,10 +364,12 @@ static int list(const char *directory, const char *query,
         size_t matches = 0;
         for (j = 0; j < count; ++j) {
             if (query && strcmp(objects[j].identity.name, query)) continue;
+            if (provider_kind && !objects[j].provider_match) continue;
             if (emit && !record(stdout, &objects[j])) goto done;
             ++matches;
         }
-        if (emit) printf("listed %zu packages\n", matches);
+        if (emit) printf("listed %zu %s\n", matches,
+                         provider_kind ? "candidates" : "packages");
     }
     ok = 1;
 done:
@@ -376,7 +392,7 @@ done:
 
 int holy_repo_list(const char *directory)
 {
-    return list(directory, NULL, NULL, 1, 1, NULL, NULL);
+    return list(directory, NULL, NULL, 1, 1, NULL, NULL, NULL, NULL);
 }
 
 int holy_repo_search(const char *directory, const char *query)
@@ -385,7 +401,16 @@ int holy_repo_search(const char *directory, const char *query)
         fprintf(stderr, "holypkg: package name required\n");
         return 0;
     }
-    return list(directory, query, NULL, 1, 1, NULL, NULL);
+    return list(directory, query, NULL, 1, 1, NULL, NULL, NULL, NULL);
+}
+
+int holy_repo_providers(const char *directory, const char *kind, const char *name)
+{
+    if (!holy_provides_kind(kind) || !name || !*name) {
+        fprintf(stderr, "holypkg: provider kind and exact name required\n");
+        return 0;
+    }
+    return list(directory, NULL, NULL, 1, 1, NULL, NULL, kind, name);
 }
 
 int holy_repo_fetch(const char *directory, const char *digest, const char *output)
@@ -395,7 +420,7 @@ int holy_repo_fetch(const char *directory, const char *digest, const char *outpu
     for (i = 0; i < 64; ++i)
         if (!((digest[i] >= '0' && digest[i] <= '9') ||
               (digest[i] >= 'a' && digest[i] <= 'f'))) goto invalid;
-    return list(directory, NULL, NULL, 1, 0, digest, output);
+    return list(directory, NULL, NULL, 1, 0, digest, output, NULL, NULL);
 invalid:
     fprintf(stderr, "holypkg: expected a lowercase SHA-256 digest\n");
     return 0;
@@ -443,7 +468,7 @@ int holy_repo_seal(const char *directory)
     output = -1;
     close(input);
     input = -1;
-    if (!list(directory, NULL, temporary, 0, 0, NULL, NULL)) goto done;
+    if (!list(directory, NULL, temporary, 0, 0, NULL, NULL, NULL, NULL)) goto done;
     input = openat(dir, temporary, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (input < 0) goto done;
     snapshot = holy_stage_fd(input, "holy-seal");

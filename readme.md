@@ -30,7 +30,8 @@ requirements and capability claims, checks files and previews root path
 conflicts without installing.
 It stages verified archives in a target-root cache.
 It can initialize and inspect an empty target-root package database.
-It can build, seal, search and fetch an unsigned local repository catalog.
+It can build, seal, search exact provider claims and fetch an unsigned local
+repository catalog.
 Installed-state transactions, a bootable image and QEMU acceptance are pending.
 The [Slackware holypkg](https://github.com/owenewans/holypkg) is a separate project.
 

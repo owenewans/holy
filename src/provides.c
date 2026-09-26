@@ -15,6 +15,10 @@
 
 struct capability { char **fields; };
 
+static const char *const capability_kinds[] = {
+    "package", "file", "command", "soname", "symbol-version", "build"
+};
+
 static int one_of(const char *value, const char *const *options, size_t count)
 {
     size_t i;
@@ -22,15 +26,18 @@ static int one_of(const char *value, const char *const *options, size_t count)
     return 0;
 }
 
+int holy_provides_kind(const char *kind)
+{
+    return kind && one_of(kind, capability_kinds,
+                          sizeof capability_kinds / sizeof *capability_kinds);
+}
+
 static int valid(char **v, size_t n)
 {
-    static const char *const kinds[] = {
-        "package", "file", "command", "soname", "symbol-version", "build"
-    };
     static const char *const arches[] = {"any", "x86", "x86_64", "noarch"};
     static const char *const libcs[] = {"any", "glibc", "musl", "nolibc"};
     if (n != 7 || strcmp(v[0], "provide")) return 0;
-    if (!one_of(v[1], kinds, sizeof kinds / sizeof *kinds) ||
+    if (!holy_provides_kind(v[1]) ||
         !one_of(v[3], arches, sizeof arches / sizeof *arches) ||
         !one_of(v[4], libcs, sizeof libcs / sizeof *libcs) ||
         !v[2][0] || !v[5][0] || !v[6][0]) return 0;
@@ -95,7 +102,8 @@ static void print_token(const char *text)
     putchar('"');
 }
 
-int holy_provides_local(const char *package, int emit)
+static int inspect(const char *package, int emit, const char *kind,
+                   const char *name, int *matched)
 {
     char *snapshot = holy_stage_local(package, "holy-provides");
     char *data = NULL;
@@ -127,6 +135,11 @@ int holy_provides_local(const char *package, int emit)
         } else if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
     }
     if (status != ARCHIVE_EOF || !seen) goto done;
+    if (matched) {
+        for (i = 0; i < count; ++i)
+            if (!strcmp(items[i].fields[1], kind) &&
+                !strcmp(items[i].fields[2], name)) *matched = 1;
+    }
     if (emit) {
         for (i = 0; i < count; ++i) {
             fputs("provide", stdout);
@@ -147,4 +160,17 @@ done:
     if (archive) archive_read_free(archive);
     if (snapshot) { unlink(snapshot); free(snapshot); }
     return ok;
+}
+
+int holy_provides_local(const char *package, int emit)
+{
+    return inspect(package, emit, NULL, NULL, NULL);
+}
+
+int holy_provides_match(const char *package, const char *kind,
+                        const char *name, int *matched)
+{
+    if (!matched || !holy_provides_kind(kind) || !name || !*name) return 0;
+    *matched = 0;
+    return inspect(package, 0, kind, name, matched);
 }
