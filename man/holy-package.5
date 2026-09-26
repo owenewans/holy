@@ -14,9 +14,11 @@ file PATH MODE OWNER GROUP UID GID SIZE SHA256 FLAGS XATTRS HARDLINK-GROUP
 .fi
 MODE is octal; UID, GID and SIZE are decimal. PATH is relative to DATA. SHA256
 has 64 hexadecimal digits. The current verifier accepts FLAGS=none,
-XATTRS=- and HARDLINK-GROUP=- only. The text lexer follows holy.conf(5), so
+XATTRS=- and HARDLINK-GROUP=- only. A symlink uses one additional TARGET token,
+SIZE=0 and SHA256=-. The verifier checks the target and rejects links that
+escape the root by lexical traversal. The text lexer follows holy.conf(5), so
 quotes and escapes can preserve spaces in paths. Archive directories are
-implicit; symlinks, hardlinks, special files and extended attributes are not
+implicit; hardlinks, special files and extended attributes are not
 supported by the verifier. Rejecting them is not proof they are invalid in the
 planned full format.
 .PP

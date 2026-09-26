@@ -42,7 +42,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=07e88aa11e1d0ceaa6a15e4cf61f1846e155faa18be7b4fde2aa94890c79aee4
+holypkg.8 source=holy version=development sha256=5feee4a8da83d954c70e1bee3728c5fb0f9e1c469ae7467906a1222ee8b84c07
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -68,10 +68,10 @@ DESCRIPTION
      ity.
 
      The  verify  command  checks  regular  DATA  files	 against  the  supported
-     HOLY/files records, including size, mode, numeric owner and SHA-256. It re-
-     fuses unsupported record types and payload objects. It does not install  or
-     authenticate packages; the two read passes do not provide a stable filesys-
-     tem snapshot.
+     HOLY/files records, including size, mode, numeric	owner  and  SHA-256.  It
+     checks  symlink  targets  and refuses hardlinks and unsupported objects. It
+     does not install or authenticate packages; the two read passes do not  pro-
+     vide a stable filesystem snapshot.
 
 EXIT STATUS
      0	indicates a valid file under the implemented checks; 2 indicates invalid
@@ -81,7 +81,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-package.5 source=holy version=development sha256=56cf98cd792e1661afa209ef9ece16a0b1a2962f2bf9b92cc7057f019bf4c261
+holy-package.5 source=holy version=development sha256=c7724673f641be1357669b863fc1efd36ef480bf3ab4816349bdc0d9e1797d16
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -98,13 +98,15 @@ DESCRIPTION
      file PATH MODE OWNER GROUP UID GID SIZE SHA256 FLAGS XATTRS HARDLINK-GROUP
      MODE  is  octal;  UID,  GID and SIZE are decimal. PATH is relative to DATA.
      SHA256 has 64 hexadecimal digits. The current verifier accepts  FLAGS=none,
-     XATTRS=- and HARDLINK-GROUP=- only. The text lexer follows holy.conf(5), so
-     quotes  and  escapes  can preserve spaces in paths. Archive directories are
-     implicit; symlinks, hardlinks, special files and  extended	 attributes  are
-     not supported by the verifier. Rejecting them is not proof they are invalid
-     in the planned full format.
+     XATTRS=-  and  HARDLINK-GROUP=-  only. A symlink uses one additional TARGET
+     token, SIZE=0 and SHA256=-. The verifier  checks  the  target  and	 rejects
+     links  that  escape  the  root by lexical traversal. The text lexer follows
+     holy.conf(5), so quotes and escapes can preserve spaces in	 paths.	 Archive
+     directories  are implicit; hardlinks, special files and extended attributes
+     are not supported by the verifier. Rejecting them is not proof they are in-
+     valid in the planned full format.
 
-     The  prototype  cannot  install  archives. It does not verify dependencies,
+     The prototype cannot install archives. It	does  not  verify  dependencies,
      signatures, symbolic owner names or the installed filesystem. A full format
      implementation must verify file ownership, links, xattrs, hooks, origin and
      transaction semantics before accepting an artifact for installation.

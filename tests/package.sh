@@ -28,7 +28,7 @@ grep -qx 'libc nolibc' "$tmp/out"
 expected=$(sha256sum "$tmp/package.holy" | cut -d ' ' -f 1)
 grep -qx "sha256 $expected" "$tmp/out"
 "$bin" verify "local:$tmp/package.holy" > "$tmp/out"
-grep -qx 'verified 1 regular files' "$tmp/out"
+grep -qx 'verified 1 regular files, 0 symlinks' "$tmp/out"
 printf 'world\n' > "$tmp/payload/DATA/usr/bin/hello"
 tar -cf "$tmp/payload.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q -f "$tmp/payload.tar" "$tmp/changed.holy"
@@ -40,12 +40,29 @@ tar -rf "$tmp/duplicate.tar" -C "$tmp/payload" DATA/usr/bin/hello
 lz4 -q "$tmp/duplicate.tar" "$tmp/duplicate.holy"
 if "$bin" verify "local:$tmp/duplicate.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'duplicate payload path' "$tmp/err"
+cp "$tmp/payload/HOLY/files" "$tmp/files-original"
 ln -s hello "$tmp/payload/DATA/usr/bin/link"
+linkmode=$(stat -c %a "$tmp/payload/DATA/usr/bin/link")
+printf 'symlink usr/bin/link %s root root %s %s 0 - none - - hello\n' \
+    "$linkmode" "$uid" "$gid" >> "$tmp/payload/HOLY/files"
 tar -cf "$tmp/symlink.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/symlink.tar" "$tmp/symlink.holy"
-if "$bin" verify "local:$tmp/symlink.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
-grep -q 'unsupported payload type' "$tmp/err"
+"$bin" verify "local:$tmp/symlink.holy" > "$tmp/out"
+grep -qx 'verified 1 regular files, 1 symlinks' "$tmp/out"
 rm "$tmp/payload/DATA/usr/bin/link"
+ln -s ../../../escape "$tmp/payload/DATA/usr/bin/link"
+tar -cf "$tmp/symlink.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q -f "$tmp/symlink.tar" "$tmp/unsafe-link.holy"
+if "$bin" verify "local:$tmp/unsafe-link.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'unsafe symlink target' "$tmp/err"
+rm "$tmp/payload/DATA/usr/bin/link"
+mv "$tmp/files-original" "$tmp/payload/HOLY/files"
+ln "$tmp/payload/DATA/usr/bin/hello" "$tmp/payload/DATA/usr/bin/hard"
+tar -cf "$tmp/hard.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/hard.tar" "$tmp/hard.holy"
+if "$bin" verify "local:$tmp/hard.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'unsupported payload type' "$tmp/err"
+rm "$tmp/payload/DATA/usr/bin/hard"
 cp "$tmp/package.holy" "$tmp/broken.holy"
 printf 'not a frame' > "$tmp/broken.holy"
 if "$bin" info "local:$tmp/broken.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
