@@ -113,7 +113,8 @@ static void json_string(const char *value)
     putchar('"');
 }
 
-static int inspect_local(const char *package, int emit, size_t *result_count)
+static int inspect_local(const char *package, int emit, size_t *result_count,
+                         holy_requirement_visit visitor, void *opaque)
 {
     char *snapshot = holy_stage_local(package, "holy-deps");
     char *data = NULL;
@@ -145,6 +146,11 @@ static int inspect_local(const char *package, int emit, size_t *result_count)
         } else if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
     }
     if (status != ARCHIVE_EOF || !seen) goto done;
+    if (visitor) for (i = 0; i < count; ++i) {
+        char **v = items[i].fields;
+        if (!visitor(opaque, v[1], v[2], v[3], v[4], v[5], v[6],
+                     v[7], v[8], v[9], v[10])) goto done;
+    }
     if (result_count) *result_count = count;
     if (emit == 1) {
         for (i = 0; i < count; ++i) {
@@ -193,11 +199,17 @@ int holy_deps_local(const char *package)
 
 int holy_deps_local_with_output(const char *package, int emit)
 {
-    return inspect_local(package, emit, NULL);
+    return inspect_local(package, emit, NULL, NULL, NULL);
 }
 
 int holy_deps_count(const char *package, size_t *count)
 {
     *count = 0;
-    return inspect_local(package, 0, count);
+    return inspect_local(package, 0, count, NULL, NULL);
+}
+
+int holy_deps_visit(const char *package, holy_requirement_visit visitor,
+                    void *opaque)
+{
+    return visitor && inspect_local(package, 0, NULL, visitor, opaque);
 }

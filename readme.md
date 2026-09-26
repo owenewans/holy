@@ -12,7 +12,7 @@ independent linux distribution in development.
 
 ## build
 
-Requires libarchive, libelf and OpenSSL:
+Requires libarchive, libelf, OpenSSL and libsolv development files:
 
 ```sh
 make
@@ -35,8 +35,8 @@ It can initialize and inspect an empty target-root package database.
 It can build, seal, search exact provider claims and fetch an unsigned local
 repository catalog. The catalog records package capability claims; candidate
 lookup validates matching artifacts against those claims.
-An internal libsolv fixture solves exact prefiltered capability IDs; no CLI
-dependency resolver or version-family comparator is implemented yet.
+`holypkg solve` checks a narrow, read-only local package graph; source
+resolution and version-family comparators are pending.
 Installed-state transactions, a bootable image and QEMU acceptance are pending.
 The [Slackware holypkg](https://github.com/owenewans/holypkg) is a separate project.
 

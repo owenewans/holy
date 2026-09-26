@@ -16,6 +16,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg provides local:FILE --json
 .br
+.B holypkg solve local:ROOT [local:CANDIDATE ...]
+.br
 .B holypkg fetch local:FILE --output DIRECTORY
 .br
 .B holypkg fetch local:FILE --extract --output DIRECTORY
@@ -53,8 +55,8 @@ holypkg \- Holy local package tooling prototype
 .B holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 .SH DESCRIPTION
 The config check command checks source and rule configuration without changing
-the system. Package installation, foreign import, remote fetch, dependency
-resolution and indexing are not available yet. This executable is independent
+the system. Package installation, foreign import, remote fetch and
+multi-source resolution are not available yet. This executable is independent
 of the separate owenewans/holypkg project.
 .PP
 The info command reads an LZ4-frame-compressed tar archive and prints the seven
@@ -88,6 +90,27 @@ summary, or one error event on invalid input. Each requirement event has
 id, consumer, kind, name, arch, libc, relation, version, original and evidence
 fields. The JSON encoder maps non-ASCII bytes to \eu00HH escapes; consumers
 reconstruct original bytes rather than treating them as normalized text.
+.PP
+The solve command verifies and scans each explicitly supplied local archive,
+with the first archive as the requested root. Its supported subset accepts only
+linux/noarch/nolibc packages, empty HOLY/hooks and HOLY/transform, and
+HOLY/deps package requirements with arch=any, libc=any and relation=any.
+Each consumer must equal its package name. Only the package's own metadata
+name supplies a capability; declared aliases in HOLY/provides are parsed but
+do not satisfy requirements here. Every other dependency form, version
+constraint or package ABI fails closed with status 6. There are no source
+IDs, installed packages, architecture overrides, file providers or runtime
+guarantees in this command.
+.PP
+The command prints selected artifact SHA-256 digests only after a unique
+package set is found. It returns 3 for multiple package sets, 4 for an
+unsatisfied requirement, and 6 for unsupported or invalid input. No plan,
+install or mutation follows. Equal package names from two different artifacts
+remain separate candidates; the caller must choose when both could satisfy a
+requirement. The solver checks package-set uniqueness, not ambiguous provider
+edges inside an identical set. Script interpreter and plugin requirements are
+not inferred from payload in this subset, so selection is not an
+installability verdict.
 .PP
 The provides command stages and verifies a native archive, then reads
 HOLY/provides as typed claims. Each supported line has seven tokens:
