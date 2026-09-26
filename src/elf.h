@@ -22,6 +22,8 @@ struct holy_elf_info {
     char *runpath;
     struct holy_elf_version *versions;
     size_t version_count;
+    uint32_t isa_needed;
+    int isa_present;
 };
 
 /* returns 0 on parsed ELF, 1 on non-ELF, 2 on malformed/unsupported ELF.
@@ -30,5 +32,6 @@ int holy_elf_read(const char *path, struct holy_elf_info *info);
 void holy_elf_free(struct holy_elf_info *info);
 const char *holy_elf_machine(const struct holy_elf_info *info);
 const char *holy_elf_runtime(const struct holy_elf_info *info);
+const char *holy_elf_isa(const struct holy_elf_info *info);
 
 #endif

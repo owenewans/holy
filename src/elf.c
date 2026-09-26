@@ -25,6 +25,73 @@ static int read_exact(int fd, char *out, size_t length, off_t offset)
     return 1;
 }
 
+static uint32_t word32(const unsigned char *p, int little_endian)
+{
+    if (little_endian)
+        return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+               ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
+           ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+}
+
+static int read_property_note(const unsigned char *desc, size_t size,
+                              int elf_class, int little_endian,
+                              struct holy_elf_info *info)
+{
+    size_t cursor = 0, align = elf_class == ELFCLASS64 ? 8 : 4;
+    while (cursor < size) {
+        uint32_t type, length;
+        size_t consumed, padded;
+        if (size - cursor < 8) return 0;
+        type = word32(desc + cursor, little_endian);
+        length = word32(desc + cursor + 4, little_endian);
+        if ((size_t)length > size - cursor - 8) return 0;
+        if (type == GNU_PROPERTY_X86_ISA_1_NEEDED) {
+            if (length != 4 || info->isa_present) return 0;
+            info->isa_needed = word32(desc + cursor + 8, little_endian);
+            info->isa_present = 1;
+        }
+        consumed = 8 + (size_t)length;
+        if (consumed > (size_t)-1 - (align - 1)) return 0;
+        padded = (consumed + align - 1) & ~(align - 1);
+        if (padded > size - cursor) return 0;
+        cursor += padded;
+    }
+    return 1;
+}
+
+static int read_notes(Elf *elf, const GElf_Phdr *phdr, uint64_t file_size,
+                      int elf_class, int little_endian,
+                      struct holy_elf_info *info)
+{
+    Elf_Data *data;
+    size_t cursor = 0;
+    if (phdr->p_offset > file_size || phdr->p_filesz > file_size - phdr->p_offset ||
+        phdr->p_filesz > 16 * 1024 * 1024) return 0;
+    if (!phdr->p_filesz) return 1;
+    data = elf_getdata_rawchunk(elf, (off_t)phdr->p_offset,
+                                 (size_t)phdr->p_filesz,
+                                 elf_class == ELFCLASS64 && phdr->p_align >= 8 ?
+                                 ELF_T_NHDR8 : ELF_T_NHDR);
+    if (!data) return 0;
+    while (cursor < data->d_size) {
+        GElf_Nhdr note;
+        size_t name_offset, desc_offset;
+        size_t next = gelf_getnote(data, cursor, &note, &name_offset, &desc_offset);
+        const unsigned char *bytes = data->d_buf;
+        if (!next || next <= cursor || next > data->d_size ||
+            name_offset > data->d_size || note.n_namesz > data->d_size - name_offset ||
+            desc_offset > data->d_size || note.n_descsz > data->d_size - desc_offset)
+            return 0;
+        if (note.n_type == NT_GNU_PROPERTY_TYPE_0 && note.n_namesz == 4 &&
+            !memcmp(bytes + name_offset, "GNU\0", 4) &&
+            !read_property_note(bytes + desc_offset, note.n_descsz,
+                                elf_class, little_endian, info)) return 0;
+        cursor = next;
+    }
+    return 1;
+}
+
 static char *dynamic_string(const char *table, size_t length, uint64_t offset,
                             int allow_empty)
 {
@@ -268,6 +335,10 @@ int holy_elf_read(const char *path, struct holy_elf_info *info)
             if (seen_dynamic++) goto done;
             dynamic = phdr;
         }
+        if (phdr.p_type == PT_NOTE &&
+            !read_notes(elf, &phdr, (uint64_t)st.st_size,
+                        info->elf_class, ehdr.e_ident[EI_DATA] == ELFDATA2LSB,
+                        info)) goto done;
         if (phdr.p_type != PT_INTERP) continue;
         if (seen++ || !phdr.p_filesz || phdr.p_filesz > 1024 * 1024 ||
             phdr.p_offset > (uint64_t)st.st_size ||
@@ -341,5 +412,20 @@ const char *holy_elf_runtime(const struct holy_elf_info *info)
         return "glibc";
     if (!strcmp(base, "ld-musl-x86_64.so.1") || !strcmp(base, "ld-musl-i386.so.1"))
         return "musl";
+    return "unknown";
+}
+
+const char *holy_elf_isa(const struct holy_elf_info *info)
+{
+    uint32_t mask = info->isa_needed;
+    if (!info->isa_present || info->machine != EM_X86_64 ||
+        info->elf_class != ELFCLASS64 ||
+        (mask & ~(GNU_PROPERTY_X86_ISA_1_BASELINE | GNU_PROPERTY_X86_ISA_1_V2 |
+                  GNU_PROPERTY_X86_ISA_1_V3 | GNU_PROPERTY_X86_ISA_1_V4)))
+        return "unknown";
+    if (mask & GNU_PROPERTY_X86_ISA_1_V4) return "x86-64-v4";
+    if (mask & GNU_PROPERTY_X86_ISA_1_V3) return "x86-64-v3";
+    if (mask & GNU_PROPERTY_X86_ISA_1_V2) return "x86-64-v2";
+    if (mask & GNU_PROPERTY_X86_ISA_1_BASELINE) return "x86-64-baseline";
     return "unknown";
 }

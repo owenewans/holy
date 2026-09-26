@@ -21,9 +21,10 @@ int main(int argc, char **argv)
         struct holy_elf_info info;
         int rc = holy_elf_read(argv[2], &info);
         if (!rc)
-            printf("class ELF%d\nmachine %s\nruntime %s\ninterpreter %s\n",
+            printf("class ELF%d\nmachine %s\nisa %s\nruntime %s\ninterpreter %s\n",
                    info.elf_class == 1 ? 32 : 64,
-                   holy_elf_machine(&info), holy_elf_runtime(&info),
+                   holy_elf_machine(&info), holy_elf_isa(&info),
+                   holy_elf_runtime(&info),
                    info.interpreter ? info.interpreter : "unknown");
         if (!rc) {
             size_t i;
