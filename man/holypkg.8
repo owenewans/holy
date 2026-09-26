@@ -108,11 +108,13 @@ database, model ELF loader search, check unknown runtime dependencies or prove a
 stable snapshot if the root changes during checking.
 .PP
 For matching regular ELF payloads, check reads PT_INTERP and tests whether an
-executable regular file exists at that absolute path inside the target root.
-Missing targets report missing-interpreter. A symlinked path component or final
-loader is unknown-interpreter because check does not resolve it across a
-potential root boundary. Presence alone does not prove successful dynamic
-linking, compatible libc or nested library availability.
+executable ELF file with matching class and machine exists at that absolute
+path inside the target root. Missing targets report missing-interpreter;
+the wrong class or machine reports incompatible-interpreter. A symlinked path
+component or final loader, an invalid ELF or an inaccessible path reports
+unknown-interpreter because check cannot prove the loader is usable.
+Presence and class alone do not prove dynamic linking, compatible libc or
+nested library availability.
 If all findings are unknown, the summary status is unknown rather than fail;
 the check still returns nonzero because it cannot report pass.
 .PP

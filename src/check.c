@@ -71,7 +71,8 @@ static int hash_file(int fd, unsigned char digest[32])
 }
 
 static int compare_file(struct archive *a, struct archive_entry *entry, int parent,
-                        const char *name, const struct stat *st, char **interpreter)
+                        const char *name, const struct stat *st, char **interpreter,
+                        int *elf_class, uint16_t *machine)
 {
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
     char buffer[65536];
@@ -82,6 +83,8 @@ static int compare_file(struct archive *a, struct archive_entry *entry, int pare
     struct stat opened;
     int fd = -1, ok = 0;
     *interpreter = NULL;
+    *elf_class = 0;
+    *machine = 0;
     if (!ctx || EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
         !S_ISREG(st->st_mode) || st->st_size != archive_entry_size(entry)) goto done;
     fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
@@ -104,8 +107,11 @@ static int compare_file(struct archive *a, struct archive_entry *entry, int pare
             struct holy_elf_info info;
             int result = holy_elf_read_fd(fd, &info);
             int has_interpreter = info.interpreter != NULL;
-            if (result == 0 && info.interpreter)
+            if (result == 0 && info.interpreter) {
                 *interpreter = strdup(info.interpreter);
+                *elf_class = info.elf_class;
+                *machine = info.machine;
+            }
             holy_elf_free(&info);
             if (result || (has_interpreter && !*interpreter))
                 goto done;
@@ -119,14 +125,15 @@ done:
     return ok;
 }
 
-/* 1: present regular executable, 0: missing, -1: path or loader unknown. */
-static int interpreter_status(int root, const char *interpreter)
+/* 1: compatible ELF found, 0: missing, 2: wrong arch, -1: unknown. */
+static int interpreter_status(int root, const char *interpreter,
+                              int elf_class, uint16_t machine)
 {
     char *storage = NULL;
     char *path;
     const char *name;
     struct stat st;
-    int parent, result = -1;
+    int parent, fd = -1, result = -1;
     size_t length = strlen(interpreter);
     if (interpreter[0] != '/' || !interpreter[1] ||
         length > (size_t)-1 - 6) return -1;
@@ -137,9 +144,17 @@ static int interpreter_status(int root, const char *interpreter)
     free(path);
     parent = parent_fd(root, interpreter + 1, &storage, &name);
     if (parent < 0) return errno == ENOENT ? 0 : -1;
-    if (fstatat(parent, name, &st, AT_SYMLINK_NOFOLLOW) == 0)
-        result = S_ISREG(st.st_mode) && (st.st_mode & 0111) ? 1 : -1;
-    else if (errno == ENOENT) result = 0;
+    fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0) {
+        if (errno == ENOENT) result = 0;
+    } else if (!fstat(fd, &st) && S_ISREG(st.st_mode) && (st.st_mode & 0111)) {
+        struct holy_elf_info info;
+        int parsed = holy_elf_read_fd(fd, &info);
+        if (!parsed)
+            result = info.elf_class == elf_class && info.machine == machine ? 1 : 2;
+        holy_elf_free(&info);
+    }
+    if (fd >= 0) close(fd);
     if (parent != root) close(parent);
     free(storage);
     return result;
@@ -209,12 +224,13 @@ static void report_changed(const char *path, const char *code, int json)
 static void report_interpreter(const char *consumer, const char *interpreter,
                                int status, int json)
 {
-    const char *code = status == 0 ? "missing-interpreter" : "unknown-interpreter";
+    const char *code = status == 0 ? "missing-interpreter" :
+                       status == 2 ? "incompatible-interpreter" : "unknown-interpreter";
     if (!json) fprintf(stderr, "holypkg: %s %s for %s\n", code,
                        interpreter, consumer);
     else {
         printf("{\"schema\":\"holy-check-1\",\"code\":\"%s\",\"severity\":\"%s\",\"status\":\"%s\",\"consumer\":",
-               code, status == 0 ? "error" : "warning", status == 0 ? "fail" : "unknown");
+                code, status >= 0 ? "error" : "warning", status >= 0 ? "fail" : "unknown");
         json_string(consumer);
         fputs(",\"path\":", stdout);
         json_string(interpreter);
@@ -247,6 +263,8 @@ int holy_check_local(const char *package, const char *root_path, int json)
         const char *name;
         char *storage = NULL;
         char *interpreter = NULL;
+        int elf_class = 0;
+        uint16_t machine = 0;
         struct stat st;
         int parent, matches;
         if (!path || strncmp(path, "DATA/", 5) || !path[5]) {
@@ -286,7 +304,8 @@ int holy_check_local(const char *package, const char *root_path, int json)
         if (matches && archive_entry_hardlink(entry))
             matches = S_ISREG(st.st_mode) && compare_hardlink(root, entry, &st);
         else if (matches && archive_entry_filetype(entry) == AE_IFREG)
-            matches = compare_file(a, entry, parent, name, &st, &interpreter);
+            matches = compare_file(a, entry, parent, name, &st, &interpreter,
+                                   &elf_class, &machine);
         else if (matches && archive_entry_filetype(entry) == AE_IFLNK)
             matches = S_ISLNK(st.st_mode) && compare_link(entry, parent, name);
         else if (matches && archive_entry_filetype(entry) == AE_IFDIR)
@@ -298,7 +317,7 @@ int holy_check_local(const char *package, const char *root_path, int json)
             report_changed(path, "changed-payload", json);
             ++findings;
         } else if (interpreter) {
-            int loader = interpreter_status(root, interpreter);
+            int loader = interpreter_status(root, interpreter, elf_class, machine);
             if (loader != 1) {
                 report_interpreter(path, interpreter, loader, json);
                 ++findings;

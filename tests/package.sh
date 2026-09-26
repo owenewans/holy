@@ -246,8 +246,17 @@ grep -q '"code":"missing-interpreter"' "$tmp/out"
 mkdir -p "$tmp/elf-root$(dirname "$loader")"
 printf 'loader fixture\n' > "$tmp/elf-root$loader"
 chmod 755 "$tmp/elf-root$loader"
+if "$bin" check "local:$tmp/elf.holy" --root "$tmp/elf-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q '"code":"unknown-interpreter"' "$tmp/out"
+cp -L "$loader" "$tmp/elf-root$loader"
 "$bin" check "local:$tmp/elf.holy" --root "$tmp/elf-root" --json > "$tmp/out"
 grep -q '"status":"pass","coverage":"local-payload"' "$tmp/out"
+printf '.globl entry\nentry: ret\n' | as --32 -o "$tmp/loader32.o"
+ld -m elf_i386 -shared -o "$tmp/loader32" "$tmp/loader32.o"
+cp "$tmp/loader32" "$tmp/elf-root$loader"
+chmod 755 "$tmp/elf-root$loader"
+if "$bin" check "local:$tmp/elf.holy" --root "$tmp/elf-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q '"code":"incompatible-interpreter"' "$tmp/out"
 rm "$tmp/elf-root$loader"
 ln -s nowhere "$tmp/elf-root$loader"
 if "$bin" check "local:$tmp/elf.holy" --root "$tmp/elf-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
