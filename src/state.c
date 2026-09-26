@@ -139,7 +139,8 @@ static int empty_child(int dir, const char *name)
     return empty;
 }
 
-static int instance_state_valid(int item, const char *digest)
+static int instance_state_generation(int item, const char *digest,
+                                     unsigned long long *recorded)
 {
     char buffer[256], prefix[160], *end;
     struct stat st;
@@ -163,9 +164,9 @@ static int instance_state_valid(int item, const char *digest)
     if (buffer[length] < '0' || buffer[length] > '9') return 0;
     errno = 0;
     generation = strtoull(buffer + length, &end, 10);
-    (void)generation;
-    return !errno && !*end &&
-           (buffer[length] != '0' || !buffer[length + 1]);
+    if (errno || *end || (buffer[length] == '0' && buffer[length + 1])) return 0;
+    if (recorded) *recorded = generation;
+    return 1;
 }
 
 static int installed_valid(int dir)
@@ -191,7 +192,7 @@ static int installed_valid(int dir)
                 !S_ISREG(st.st_mode) || (st.st_mode & 0022) ||
                 (st.st_uid != 0 && st.st_uid != geteuid())) { ok = 0; break; }
         }
-        if (ok && !instance_state_valid(item, entry->d_name)) ok = 0;
+        if (ok && !instance_state_generation(item, entry->d_name, NULL)) ok = 0;
         if (ok) {
             DIR *members = fdopendir(dup(item));
             struct dirent *member;
@@ -1193,6 +1194,49 @@ int holy_state_continue_remove(const char *root_path)
     result = 0;
 done:
     if (result) fprintf(stderr, "holypkg: removal recovery requires manual inspection (status %d)\n", result);
+    if (files >= 0) close(files);
+    if (item >= 0) close(item);
+    if (installed >= 0) close(installed);
+    if (transactions >= 0) close(transactions);
+    if (dir >= 0) close(dir);
+    if (root >= 0) close(root);
+    return result;
+}
+
+int holy_state_finish_apply(const char *root_path)
+{
+    unsigned long long generation, recorded, instance_generation;
+    char digest[65], plan[65], reserved[65], approved[65];
+    int root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int dir = root < 0 ? -1 : state_dir_at(root, 0);
+    int transactions = -1, installed = -1, item = -1, files = -1;
+    int result = 5, removing = 0, found;
+    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+        !empty_child(dir, "index") || !read_generation(dir, &generation)) {
+        result = 1;
+        goto done;
+    }
+    found = journal_valid(dir, generation, &recorded, digest, plan, &removing);
+    if (found < 0) { result = 1; goto done; }
+    if (!found || removing || !generation || recorded != generation - 1 ||
+        !installed_valid(dir)) goto done;
+    transactions = child_dir(dir, "transactions", 0);
+    installed = child_dir(dir, "installed", 0);
+    if (transactions < 0 || installed < 0) { result = 1; goto done; }
+    found = read_reservation(transactions, "pending", recorded, reserved, approved);
+    if (found < 0 || (found && (strcmp(reserved, digest) || strcmp(approved, plan))))
+        goto done;
+    item = child_dir(installed, digest, 0);
+    if (item < 0 || !instance_state_generation(item, digest, &instance_generation) ||
+        instance_generation != generation) goto done;
+    files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (files < 0 || holy_install_check_manifest(files, root) != 1) goto done;
+    if (found && (unlinkat(transactions, "pending", 0) || fsync(transactions))) goto done;
+    if (unlinkat(transactions, "journal", 0) || fsync(transactions)) goto done;
+    printf("recovered install %s generation %llu\n", digest, generation);
+    result = 0;
+done:
+    if (result) fprintf(stderr, "holypkg: install recovery requires manual inspection (status %d)\n", result);
     if (files >= 0) close(files);
     if (item >= 0) close(item);
     if (installed >= 0) close(installed);

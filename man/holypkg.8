@@ -60,6 +60,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db recover --continue --root DIRECTORY
 .br
+.B holypkg db recover --finish-apply --root DIRECTORY
+.br
 .B holypkg db preflight --root DIRECTORY
 .br
 .B holypkg db preflight --root DIRECTORY --json
@@ -145,6 +147,11 @@ mutations. db recover --abort-empty can clear an incomplete journal only at
 its original generation, with the same approved artifact and no installed
 instance or payload files. It retains approval for a later apply or cancel.
 Otherwise the operator must inspect the rootfs and journal manually.
+A crash after publishing the next generation can leave the journal and
+approved reservation behind. db recover --finish-apply verifies the installed
+instance, its generation, all listed payload files and any remaining approval
+before clearing those records. It refuses an incomplete payload and does not
+resume file extraction.
 A regular successful return requires both the installed record and
 generation publication. General ownership replacement, file removal and
 automatic rollback are not implemented. The command is not an installer for
@@ -435,7 +442,8 @@ preserves pending and returns 5. With no pending it returns 0 after removing
 the orphan. Unknown entries, stale generations, unrelated inodes and malformed
 records fail without deletion. For an incomplete applying transaction, recover
 returns 5 unless --abort-empty proves that none of its payload files or
-installed instance has appeared. For an incomplete removing transaction,
+installed instance has appeared. --finish-apply clears a completed applying
+transaction after validating the new generation and installed payload. For an incomplete removing transaction,
 --continue verifies and removes any remaining listed files. It does not replay
 hooks or undo installed files.
 .PP

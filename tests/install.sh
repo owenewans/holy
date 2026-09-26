@@ -49,6 +49,7 @@ digest=${digest%% *}
 plan=$(sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
 test "${#plan}" -eq 64
 "$bin" db approve "$plan" --root "$tmp/system" > "$tmp/out"
+cp "$tmp/system/var/lib/holypkg/transactions/pending" "$tmp/approved-pending"
 "$bin" db apply --root "$tmp/system" > "$tmp/out"
 grep -qx "installed $digest generation 1 paths 3" "$tmp/out"
 cmp "$tmp/system/usr/bin/data" "$tmp/payload/DATA/usr/bin/data"
@@ -57,6 +58,22 @@ for file in meta files deps origin state; do test -f "$db/installed/$digest/$fil
 grep -qx "artifact $digest" "$db/installed/$digest/state"
 "$bin" db status --root "$tmp/system" > "$tmp/out"
 grep -qx 'generation 1' "$tmp/out"
+printf 'format holy-journal-1\nstage applying\ngeneration 0\nartifact %s\nplan %s\n' \
+    "$digest" "$plan" > "$db/transactions/journal"
+cp "$tmp/approved-pending" "$db/transactions/pending"
+printf 'changed\n' > "$tmp/system/usr/bin/data"
+if "$bin" db recover --finish-apply --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
+test -f "$db/transactions/journal"
+cp "$tmp/payload/DATA/usr/bin/data" "$tmp/system/usr/bin/data"
+"$bin" db recover --finish-apply --root "$tmp/system" > "$tmp/out"
+grep -qx "recovered install $digest generation 1" "$tmp/out"
+test ! -e "$db/transactions/pending"
+test ! -e "$db/transactions/journal"
+printf 'format holy-journal-1\nstage applying\ngeneration 0\nartifact %s\nplan %s\n' \
+    "$digest" "$plan" > "$db/transactions/journal"
+"$bin" db recover --finish-apply --root "$tmp/system" > "$tmp/out"
+grep -qx "recovered install $digest generation 1" "$tmp/out"
+test ! -e "$db/transactions/journal"
 "$bin" db check "$digest" --root "$tmp/system" > "$tmp/out"
 grep -qx "intact $digest generation 1" "$tmp/out"
 printf 'changed\n' > "$tmp/system/usr/bin/data"
