@@ -205,7 +205,7 @@ int holy_preview_local_format(const char *package, const char *root_path,
         if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
     }
     if (status != ARCHIVE_EOF) goto done;
-    if (json) {
+    if (json > 0) {
         for (i = 0; i < count; ++i) {
             fputs("{\"schema\":\"holy-preview-1\",\"type\":\"path\",\"path\":", stdout);
             json_string(actions[i].path);
@@ -222,7 +222,7 @@ int holy_preview_local_format(const char *package, const char *root_path,
         printf("{\"schema\":\"holy-preview-1\",\"type\":\"summary\",\"artifact\":\"%s\",\"paths\":%zu,\"conflicts\":%zu,\"requirements\":%zu,\"elf_needed\":%zu,\"script_interpreters\":%zu,\"helper_commands\":%zu}\n",
                identity.digest, count, conflicts, requirements, elf_needed,
                script_interpreters, helper_commands);
-    } else {
+    } else if (json == 0) {
         printf("preview artifact=%s paths=%zu conflicts=%zu requirements=%zu elf-needed=%zu script-interpreters=%zu helper-commands=%zu\n",
                identity.digest, count, conflicts, requirements, elf_needed,
                script_interpreters, helper_commands);
@@ -251,7 +251,7 @@ int holy_preview_local_format(const char *package, const char *root_path,
          (requirements || elf_needed || script_interpreters) ? 3 : 0;
 done:
     if (rc == 2) fprintf(stderr, "holypkg: cannot preview package\n");
-    if (json && rc != 0 && rc != 3 && rc != 4)
+    if (json > 0 && rc != 0 && rc != 3 && rc != 4)
         printf("{\"schema\":\"holy-preview-1\",\"type\":\"error\",\"code\":\"%s\"}\n",
                rc == 6 ? "unsupported-input" :
                rc == 1 ? "operational-error" : "invalid-preview");

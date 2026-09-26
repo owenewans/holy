@@ -13,5 +13,7 @@ int holy_state_cancel(const char *root_path);
 int holy_state_recover(const char *root_path);
 /* read-only preview of the one prepared cache object against target root. */
 int holy_state_preflight(const char *root_path, int json);
+/* validates a reserved cache object and emits a read-only, generation-bound plan. */
+int holy_state_plan(const char *root_path);
 
 #endif

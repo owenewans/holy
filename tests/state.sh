@@ -87,12 +87,20 @@ grep -qx "reserved $digest generation 7" "$tmp/out"
 "$bin" db preflight --root "$tmp/root" > "$tmp/out"
 grep -qx "preview artifact=$digest paths=0 conflicts=0 requirements=0 elf-needed=0 script-interpreters=0 helper-commands=0" "$tmp/out"
 grep -qx "reservation generation 7 artifact $digest" "$tmp/out"
+"$bin" db plan --root "$tmp/root" > "$tmp/out"
+grep -Eq "^plan root [0-9]+:[0-9]+ generation 7 artifact $digest paths 0 sha256 [0-9a-f]{64} read-only$" "$tmp/out"
+cp "$tmp/out" "$tmp/plan"
+"$bin" db plan --root "$tmp/root" > "$tmp/out"
+cmp "$tmp/out" "$tmp/plan"
+test ! -e "$db/transactions/plan"
 "$bin" db preflight --root "$tmp/root" --json > "$tmp/out"
 grep -Fqx "{\"schema\":\"holy-preview-1\",\"type\":\"summary\",\"artifact\":\"$digest\",\"paths\":0,\"conflicts\":0,\"requirements\":0,\"elf_needed\":0,\"script_interpreters\":0,\"helper_commands\":0}" "$tmp/out"
 grep -Fqx "{\"schema\":\"holy-preview-1\",\"type\":\"reservation\",\"generation\":7,\"artifact\":\"$digest\"}" "$tmp/out"
 test "$(wc -l < "$tmp/out")" -eq 2
 object="$tmp/root/var/cache/holypkg/objects/sha256/$digest.holy"
 mv "$object" "$tmp/cache-held"
+if "$bin" db plan --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+test ! -s "$tmp/out"
 if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 test ! -s "$tmp/out"
 if "$bin" db preflight --root "$tmp/root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
@@ -125,6 +133,8 @@ if "$bin" db reserve "$digest" --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; th
 if "$bin" db init --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 printf '8\n' > "$db/generation"
 if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+if "$bin" db plan --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
 test ! -s "$tmp/out"
 if "$bin" db cancel --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 printf '7\n' > "$db/generation"
@@ -153,6 +163,8 @@ needs=${needs%% *}
 "$bin" db reserve "$needs" --root "$tmp/root" > "$tmp/out"
 if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 grep -qx "preview artifact=$needs paths=0 conflicts=0 requirements=1 elf-needed=0 script-interpreters=0 helper-commands=0" "$tmp/out"
+if "$bin" db plan --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+test ! -s "$tmp/out"
 if "$bin" db preflight --root "$tmp/root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 grep -Fq '"requirements":1' "$tmp/out"
 grep -Fqx "{\"schema\":\"holy-preview-1\",\"type\":\"reservation\",\"generation\":7,\"artifact\":\"$needs\"}" "$tmp/out"
@@ -181,9 +193,17 @@ collision=${collision%% *}
 "$bin" db reserve "$collision" --root "$tmp/root" > "$tmp/out"
 if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 grep -qx "preview artifact=$collision paths=3 conflicts=1 requirements=0 elf-needed=0 script-interpreters=0 helper-commands=0" "$tmp/out"
+if "$bin" db plan --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+test ! -s "$tmp/out"
 if "$bin" db preflight --root "$tmp/root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 grep -Fqx '{"schema":"holy-preview-1","type":"path","path":"usr/bin/hello","state":"conflict","interpreter":null,"helper":null}' "$tmp/out"
 grep -qx 'keep' "$tmp/root/usr/bin/hello"
+"$bin" db cancel --root "$tmp/root" > "$tmp/out"
+rm "$tmp/root/usr/bin/hello"
+"$bin" db reserve "$collision" --root "$tmp/root" > "$tmp/out"
+"$bin" db plan --root "$tmp/root" > "$tmp/out"
+grep -Eq "^plan root [0-9]+:[0-9]+ generation 7 artifact $collision paths 3 sha256 [0-9a-f]{64} read-only$" "$tmp/out"
+test ! -e "$tmp/root/usr/bin/hello"
 "$bin" db cancel --root "$tmp/root" > "$tmp/out"
 printf 'postinstall /bin/sh script\n' > "$tmp/payload/HOLY/hooks"
 tar -cf "$tmp/hooks.tar" -C "$tmp/payload" HOLY DATA
@@ -193,10 +213,45 @@ hooks=${hooks%% *}
 "$bin" cache stage "local:$tmp/hooks.holy" --root "$tmp/root" > "$tmp/out"
 "$bin" db reserve "$hooks" --root "$tmp/root" > "$tmp/out"
 if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+if "$bin" db plan --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+test ! -s "$tmp/out"
 test ! -s "$tmp/out"
 if "$bin" db preflight --root "$tmp/root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 grep -Fqx '{"schema":"holy-preview-1","type":"error","code":"unsupported-input"}' "$tmp/out"
 test "$(wc -l < "$tmp/out")" -eq 1
+"$bin" db cancel --root "$tmp/root" > "$tmp/out"
+: > "$tmp/payload/HOLY/hooks"
+printf 'changed\n' > "$tmp/payload/HOLY/transform"
+tar -cf "$tmp/transform.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/transform.tar" "$tmp/transform.holy"
+transform=$(sha256sum "$tmp/transform.holy")
+transform=${transform%% *}
+"$bin" cache stage "local:$tmp/transform.holy" --root "$tmp/root" > "$tmp/out"
+"$bin" db reserve "$transform" --root "$tmp/root" > "$tmp/out"
+if "$bin" db plan --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+test ! -s "$tmp/out"
+"$bin" db cancel --root "$tmp/root" > "$tmp/out"
+: > "$tmp/payload/HOLY/transform"
+mkdir -p "$tmp/payload/DATA/var/lib/holypkg"
+printf 'blocked\n' > "$tmp/payload/DATA/var/lib/holypkg/owned"
+for dir in var var/lib var/lib/holypkg; do
+    mode=$(stat -c %a "$tmp/payload/DATA/$dir")
+    printf 'dir %s %s root root %s %s 0 - none - -\n' \
+        "$dir" "$mode" "$uid" "$gid" >> "$tmp/payload/HOLY/files"
+done
+filehash=$(sha256sum "$tmp/payload/DATA/var/lib/holypkg/owned")
+filehash=${filehash%% *}
+mode=$(stat -c %a "$tmp/payload/DATA/var/lib/holypkg/owned")
+printf 'file var/lib/holypkg/owned %s root root %s %s 8 %s none - -\n' \
+    "$mode" "$uid" "$gid" "$filehash" >> "$tmp/payload/HOLY/files"
+tar -cf "$tmp/owned.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/owned.tar" "$tmp/owned.holy"
+owned=$(sha256sum "$tmp/owned.holy")
+owned=${owned%% *}
+"$bin" cache stage "local:$tmp/owned.holy" --root "$tmp/root" > "$tmp/out"
+"$bin" db reserve "$owned" --root "$tmp/root" > "$tmp/out"
+if "$bin" db plan --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+test ! -s "$tmp/out"
 "$bin" db cancel --root "$tmp/root" > "$tmp/out"
 printf 'bad\n' > "$db/transactions/pending"
 if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi

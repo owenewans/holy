@@ -3,10 +3,17 @@
 #include "stage.h"
 #include "cache.h"
 #include "preview.h"
+#include "verify.h"
+#include "extract.h"
+#include "package.h"
 
+#include <archive.h>
+#include <archive_entry.h>
+#include <openssl/evp.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -47,10 +54,10 @@ static int child_dir(int parent, const char *name, int create)
     return fd;
 }
 
-static int state_dir(const char *root_path, int create)
+static int state_dir_at(int root, int create)
 {
     static const char *const path[] = { "var", "lib", "holypkg" };
-    int fd = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int fd = dup(root);
     size_t i;
     if (fd < 0) return -1;
     if (!safe_directory(fd)) { close(fd); errno = EPERM; return -1; }
@@ -61,6 +68,14 @@ static int state_dir(const char *root_path, int create)
         fd = next;
     }
     return fd;
+}
+
+static int state_dir(const char *root_path, int create)
+{
+    int root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int dir = root < 0 ? -1 : state_dir_at(root, create);
+    if (root >= 0) close(root);
+    return dir;
 }
 
 static int read_generation(int dir, unsigned long long *generation)
@@ -390,5 +405,141 @@ done:
         printf("{\"schema\":\"holy-preview-1\",\"type\":\"error\",\"code\":\"%s\"}\n", code);
     if (snapshot) { unlink(snapshot); free(snapshot); }
     if (dir >= 0) close(dir);
+    return result;
+}
+
+struct plan_hash {
+    EVP_MD_CTX *hash;
+    size_t count;
+};
+
+static int hash_text(EVP_MD_CTX *hash, const char *text)
+{
+    char length[32];
+    size_t size = strlen(text);
+    int written = snprintf(length, sizeof length, "%zu:", size);
+    return written > 0 && (size_t)written < sizeof length &&
+           EVP_DigestUpdate(hash, length, (size_t)written) == 1 &&
+           EVP_DigestUpdate(hash, text, size) == 1;
+}
+
+static int plan_entry(void *context, const struct holy_manifest_entry *entry)
+{
+    struct plan_hash *plan = context;
+    char attributes[128];
+    int written;
+    if (entry->link || entry->hardlink || entry->group ||
+        !entry->path[0] || entry->path[0] == '/' ||
+        !strcmp(entry->path, "var/lib/holypkg") ||
+        !strncmp(entry->path, "var/lib/holypkg/", 16) ||
+        !strcmp(entry->path, "var/cache/holypkg") ||
+        !strncmp(entry->path, "var/cache/holypkg/", 18) ||
+        (entry->mode & 07000) ||
+        (!entry->directory && (entry->mode & 0111)) ||
+        entry->uid != (long long)geteuid() ||
+        entry->gid != (long long)getegid()) {
+        fprintf(stderr, "holypkg: plan requires ordinary files and local ownership; unsupported path: %s\n",
+                entry->path);
+        return 0;
+    }
+    written = snprintf(attributes, sizeof attributes, "%c:%o:%lld:%lld:%lld:",
+                       entry->directory ? 'd' : 'f', entry->mode,
+                       entry->uid, entry->gid, entry->size);
+    if (written <= 0 || (size_t)written >= sizeof attributes ||
+        !hash_text(plan->hash, entry->path) ||
+        !hash_text(plan->hash, attributes) ||
+        (!entry->directory &&
+         EVP_DigestUpdate(plan->hash, entry->hash, 32) != 1)) return 0;
+    ++plan->count;
+    return 1;
+}
+
+static int empty_transform(const char *snapshot)
+{
+    struct archive *archive = archive_read_new();
+    struct archive_entry *entry;
+    int status, ok = 0, found = 0;
+    if (!archive) return 0;
+    if (archive_read_support_filter_lz4(archive) != ARCHIVE_OK ||
+        archive_read_support_format_tar(archive) != ARCHIVE_OK ||
+        archive_read_open_filename(archive, snapshot, 8192) != ARCHIVE_OK)
+        goto done;
+    while ((status = archive_read_next_header(archive, &entry)) == ARCHIVE_OK) {
+        if (!strcmp(archive_entry_pathname(entry), "HOLY/transform")) {
+            if (found++ || archive_entry_size(entry) != 0) goto done;
+        }
+        if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
+    }
+    ok = status == ARCHIVE_EOF && found == 1;
+done:
+    archive_read_free(archive);
+    return ok;
+}
+
+static int same_root(const char *root_path, const struct stat *before)
+{
+    struct stat after;
+    int fd = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int ok = fd >= 0 && !fstat(fd, &after) &&
+             before->st_dev == after.st_dev && before->st_ino == after.st_ino;
+    if (fd >= 0) close(fd);
+    return ok;
+}
+
+int holy_state_plan(const char *root_path)
+{
+    struct holy_package_identity identity = {0};
+    struct plan_hash plan = {0};
+    unsigned long long generation;
+    char digest[65], generation_text[32], root_id[128];
+    unsigned char checksum[32];
+    unsigned int checksum_size;
+    size_t i;
+    struct stat root_st;
+    int root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int dir = root < 0 ? -1 : state_dir_at(root, 0), pending, result = 1;
+    char *snapshot = NULL;
+    if (root < 0 || fstat(root, &root_st) || dir < 0 ||
+        flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
+        !empty_child(dir, "installed") || !empty_child(dir, "index") ||
+        !read_generation(dir, &generation)) goto done;
+    pending = pending_child(dir, generation, digest);
+    if (pending < 0) goto done;
+    if (!pending) { result = 6; goto done; }
+    snapshot = holy_cache_snapshot(digest, root_path);
+    if (!snapshot) { result = 6; goto done; }
+    result = holy_preview_local_format(snapshot, root_path, -1);
+    if (result) goto done;
+    result = 6;
+    if (!holy_extract_preflight(snapshot) || !empty_transform(snapshot) ||
+        !holy_package_identity(snapshot, &identity) ||
+        strcmp(identity.os, "linux") || strcmp(identity.arch, "noarch") ||
+        strcmp(identity.libc, "nolibc") || strcmp(identity.digest, digest)) goto done;
+    plan.hash = EVP_MD_CTX_new();
+    if (!plan.hash) { result = 1; goto done; }
+    snprintf(generation_text, sizeof generation_text, "%llu", generation);
+    if (snprintf(root_id, sizeof root_id, "%ju:%ju",
+                 (uintmax_t)root_st.st_dev, (uintmax_t)root_st.st_ino) >=
+        (int)sizeof root_id) { result = 1; goto done; }
+    if (EVP_DigestInit_ex(plan.hash, EVP_sha256(), NULL) != 1 ||
+        !hash_text(plan.hash, "holy-readonly-plan-1") ||
+        !hash_text(plan.hash, root_id) ||
+        !hash_text(plan.hash, generation_text) || !hash_text(plan.hash, digest) ||
+        !holy_verify_visit(snapshot, plan_entry, &plan)) goto done;
+    if (EVP_DigestFinal_ex(plan.hash, checksum, &checksum_size) != 1 ||
+        checksum_size != sizeof checksum) { result = 1; goto done; }
+    if (!same_root(root_path, &root_st)) { result = 4; goto done; }
+    printf("plan root %s generation %llu artifact %s paths %zu sha256 ",
+           root_id, generation, digest, plan.count);
+    for (i = 0; i < sizeof checksum; ++i) printf("%02x", checksum[i]);
+    puts(" read-only");
+    result = 0;
+done:
+    if (result) fprintf(stderr, "holypkg: cannot form install plan (status %d)\n", result);
+    EVP_MD_CTX_free(plan.hash);
+    holy_package_identity_free(&identity);
+    if (snapshot) { unlink(snapshot); free(snapshot); }
+    if (dir >= 0) close(dir);
+    if (root >= 0) close(root);
     return result;
 }

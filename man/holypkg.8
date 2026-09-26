@@ -60,6 +60,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db preflight --root DIRECTORY --json
 .br
+.B holypkg db plan --root DIRECTORY
+.br
 .B holypkg repo index DIRECTORY
 .br
 .B holypkg repo list DIRECTORY
@@ -82,6 +84,19 @@ The config check command checks source and rule configuration without changing
 the system. Package installation, foreign import, remote fetch and
 multi-source resolution are not available yet. This executable is independent
 of the separate owenewans/holypkg project.
+.PP
+The db plan command reads the prepared reservation at the current database
+generation. It verifies a private snapshot of the cached artifact, checks
+root-path collisions and refuses unresolved requirements, interpreters and
+ELF dependencies. The supported planning subset is linux/noarch/nolibc with
+empty hooks and transform, ordinary directories and non-executable regular
+files owned by the current UID/GID. Symlinks, hardlinks, privileged modes
+and writes inside holypkg state or cache trees are excluded. Output includes
+target-root device/inode, generation, artifact SHA-256, path count and a
+SHA-256 over those identities and ordered manifest entries. This command does not persist a plan,
+reserve ownership, authorize apply or recheck the target root at mutation
+time. Concurrent changes can invalidate the collision check. A future apply
+command must revalidate all inputs and paths under its writer lock.
 .PP
 The info command reads an LZ4-frame-compressed tar archive and prints the seven
 required fields from HOLY/meta. It reads archive data without extracting or
