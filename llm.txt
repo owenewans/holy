@@ -42,7 +42,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=5feee4a8da83d954c70e1bee3728c5fb0f9e1c469ae7467906a1222ee8b84c07
+holypkg.8 source=holy version=development sha256=816f98e82d8cde48b49b435b0a75b7f306a50cd7b7244365025fe846cfc3742c
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -69,9 +69,9 @@ DESCRIPTION
 
      The  verify  command  checks  regular  DATA  files	 against  the  supported
      HOLY/files records, including size, mode, numeric	owner  and  SHA-256.  It
-     checks  symlink  targets  and refuses hardlinks and unsupported objects. It
-     does not install or authenticate packages; the two read passes do not  pro-
-     vide a stable filesystem snapshot.
+     checks  symlink and directory targets and refuses hardlinks and unsupported
+     objects. It does not install or authenticate packages; the two read  passes
+     do not provide a stable filesystem snapshot.
 
 EXIT STATUS
      0	indicates a valid file under the implemented checks; 2 indicates invalid
@@ -81,11 +81,11 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-package.5 source=holy version=development sha256=c7724673f641be1357669b863fc1efd36ef480bf3ab4816349bdc0d9e1797d16
+holy-package.5 source=holy version=development sha256=acd62a4f59c619254eb47d4b8cd4888211c3fe3d5fc5327007ae70b49ff801d0
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
-     holy-package - prototype native archive and regular-file manifest
+     holy-package - prototype native archive and payload manifest
 
 DESCRIPTION
      A	.holy  archive	is  a  POSIX tar/PAX stream compressed as a standard LZ4
@@ -99,12 +99,13 @@ DESCRIPTION
      MODE  is  octal;  UID,  GID and SIZE are decimal. PATH is relative to DATA.
      SHA256 has 64 hexadecimal digits. The current verifier accepts  FLAGS=none,
      XATTRS=-  and  HARDLINK-GROUP=-  only. A symlink uses one additional TARGET
-     token, SIZE=0 and SHA256=-. The verifier  checks  the  target  and	 rejects
-     links  that  escape  the  root by lexical traversal. The text lexer follows
-     holy.conf(5), so quotes and escapes can preserve spaces in	 paths.	 Archive
-     directories  are implicit; hardlinks, special files and extended attributes
-     are not supported by the verifier. Rejecting them is not proof they are in-
-     valid in the planned full format.
+     token, SIZE=0 and SHA256=-. A directory uses the same twelve  tokens  as  a
+     file, with TYPE=dir, SIZE=0 and SHA256=-. The verifier rejects symlink tar-
+     gets  that	 escape	 the  root  by lexical traversal. The text lexer follows
+     holy.conf(5), so quotes and escapes can preserve  spaces  in  paths.  Every
+     archived directory except DATA itself needs a manifest record. The verifier
+     does  not	support	 hardlinks,  special  files  or extended attributes. The
+     planned full format includes these objects.
 
      The prototype cannot install archives. It	does  not  verify  dependencies,
      signatures, symbolic owner names or the installed filesystem. A full format

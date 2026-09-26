@@ -14,6 +14,7 @@
 struct payload {
     char *path;
     char *link;
+    int directory;
     unsigned char hash[32];
     long long size;
     unsigned int mode;
@@ -70,7 +71,7 @@ static int validate_manifest(const char *path, char *text, size_t size,
         struct payload key, *found;
         unsigned long long mode, uid, gid, length;
         size_t j;
-        int symlink;
+        int symlink, directory;
         if (i < size && text[i] != '\n') continue;
         ++line;
         if (memchr(text + start, '\0', i - start) ||
@@ -83,10 +84,13 @@ static int validate_manifest(const char *path, char *text, size_t size,
         start = i + 1;
         if (!n) { holy_tokens_free(v, n); continue; }
         symlink = n && !strcmp(v[0], "symlink");
-        if ((symlink ? n != 13 : n != 12 || strcmp(v[0], "file")) ||
+        directory = n && !strcmp(v[0], "dir");
+        if ((symlink ? n != 13 : n != 12 ||
+             (strcmp(v[0], "file") && !directory)) ||
             !number(v[2], 8, &mode) || !number(v[5], 10, &uid) ||
             !number(v[6], 10, &gid) || !number(v[7], 10, &length) ||
-            (symlink ? strcmp(v[8], "-") || length != 0 : strlen(v[8]) != 64) ||
+            ((symlink || directory) ? strcmp(v[8], "-") || length != 0 :
+                                     strlen(v[8]) != 64) ||
             strcmp(v[9], "none") ||
             strcmp(v[10], "-") || strcmp(v[11], "-") ||
             (symlink && (!v[12][0] || !safe_link(v[1], v[12]))) ||
@@ -99,6 +103,7 @@ static int validate_manifest(const char *path, char *text, size_t size,
         key.path = v[1];
         found = count ? bsearch(&key, files, count, sizeof *files, compare) : NULL;
         if (!found || found->matched || !!found->link != !!symlink ||
+            found->directory != directory ||
             (symlink && strcmp(found->link, v[12])) ||
             (unsigned long long)found->size != length ||
             found->mode != mode || (unsigned long long)found->uid != uid ||
@@ -107,7 +112,7 @@ static int validate_manifest(const char *path, char *text, size_t size,
             holy_tokens_free(v, n);
             return 0;
         }
-        if (!symlink) {
+        if (!symlink && !directory) {
             for (j = 0; j < 32; ++j) {
                 char byte[3] = {v[8][j * 2], v[8][j * 2 + 1], 0};
                 unsigned long long hex;
@@ -124,7 +129,7 @@ static int validate_manifest(const char *path, char *text, size_t size,
         holy_tokens_free(v, n);
     }
     if (seen != count) {
-        fprintf(stderr, "%s: unlisted payload file\n", path);
+        fprintf(stderr, "%s: unlisted payload object\n", path);
         return 0;
     }
     return 1;
@@ -135,7 +140,7 @@ int holy_verify(const char *path)
     struct archive *a = NULL;
     struct archive_entry *entry;
     struct payload *files = NULL;
-    size_t count = 0, i, manifest_size = 0, symlinks = 0;
+    size_t count = 0, i, manifest_size = 0, symlinks = 0, directories = 0;
     char *manifest = NULL;
     char buffer[8192];
     int status, seen = 0, ok = 0;
@@ -150,14 +155,19 @@ int holy_verify(const char *path)
     while ((status = archive_read_next_header(a, &entry)) == ARCHIVE_OK) {
         const char *name = archive_entry_pathname(entry);
         int is_manifest = name && !strcmp(name, "HOLY/files");
-        int is_data = name && !strncmp(name, "DATA/", 5) &&
-                      archive_entry_filetype(entry) != AE_IFDIR;
+        int is_data = name && !strncmp(name, "DATA/", 5) && name[5];
         EVP_MD_CTX *hash = NULL;
         la_ssize_t got;
         unsigned int digest_size;
         unsigned long long actual = 0;
         if (!holy_safe_archive_path(name)) {
             fprintf(stderr, "%s: unsafe archive path\n", path);
+            goto done;
+        }
+        if ((!strcmp(name, "HOLY") || !strcmp(name, "HOLY/") ||
+             !strcmp(name, "DATA") || !strcmp(name, "DATA/")) &&
+            archive_entry_filetype(entry) != AE_IFDIR) {
+            fprintf(stderr, "%s: archive root marker is not a directory\n", path);
             goto done;
         }
         if (is_manifest) {
@@ -169,8 +179,10 @@ int holy_verify(const char *path)
         }
         if (is_data) {
             struct payload *next;
-            if (!name[5] || (archive_entry_filetype(entry) != AE_IFREG &&
-                             archive_entry_filetype(entry) != AE_IFLNK) ||
+            size_t pathlen = strlen(name + 5);
+            if ((archive_entry_filetype(entry) != AE_IFREG &&
+                 archive_entry_filetype(entry) != AE_IFLNK &&
+                 archive_entry_filetype(entry) != AE_IFDIR) ||
                 archive_entry_hardlink(entry) ||
                 archive_entry_size(entry) < 0 || count == (size_t)-1 / sizeof *files) {
                 fprintf(stderr, "%s: unsupported payload type\n", path);
@@ -181,13 +193,29 @@ int holy_verify(const char *path)
             files = next;
             files[count].path = strdup(name + 5);
             if (!files[count].path) goto done;
+            if (files[count].path[pathlen - 1] == '/' &&
+                archive_entry_filetype(entry) != AE_IFDIR) {
+                free(files[count].path);
+                fprintf(stderr, "%s: non-directory path ends in slash\n", path);
+                goto done;
+            }
+            if (files[count].path[pathlen - 1] == '/')
+                files[count].path[pathlen - 1] = '\0';
             files[count].link = NULL;
+            files[count].directory = archive_entry_filetype(entry) == AE_IFDIR;
             files[count].size = archive_entry_size(entry);
             files[count].mode = archive_entry_perm(entry);
             files[count].uid = archive_entry_uid(entry);
             files[count].gid = archive_entry_gid(entry);
             files[count].matched = 0;
-            if (archive_entry_filetype(entry) == AE_IFLNK) {
+            if (files[count].directory) {
+                if (files[count].size != 0) {
+                    free(files[count].path);
+                    fprintf(stderr, "%s: directory contains archive data\n", path);
+                    goto done;
+                }
+                ++directories;
+            } else if (archive_entry_filetype(entry) == AE_IFLNK) {
                 const char *target = archive_entry_symlink(entry);
                 if (!safe_link(files[count].path, target)) {
                     free(files[count].path);
@@ -207,7 +235,7 @@ int holy_verify(const char *path)
             }
         }
         while ((got = archive_read_data(a, buffer, sizeof buffer)) > 0) {
-            if (hash) actual += (unsigned long long)got;
+            if (is_data) actual += (unsigned long long)got;
             if (hash && EVP_DigestUpdate(hash, buffer, (size_t)got) != 1) break;
             if (is_manifest) {
                 char *next;
@@ -221,7 +249,7 @@ int holy_verify(const char *path)
             }
         }
         if (got < 0 || got > 0 ||
-            (hash && actual != (unsigned long long)files[count].size) ||
+            (is_data && actual != (unsigned long long)files[count].size) ||
             (hash && (EVP_DigestFinal_ex(hash, files[count].hash, &digest_size) != 1 ||
                       digest_size != 32))) {
             EVP_MD_CTX_free(hash);
@@ -243,7 +271,8 @@ int holy_verify(const char *path)
             goto done;
         }
     ok = validate_manifest(path, manifest ? manifest : "", manifest_size, files, count);
-    if (ok) printf("verified %zu regular files, %zu symlinks\n", count - symlinks, symlinks);
+    if (ok) printf("verified %zu regular files, %zu symlinks, %zu directories\n",
+                   count - symlinks - directories, symlinks, directories);
 done:
     for (i = 0; i < count; ++i) { free(files[i].path); free(files[i].link); }
     free(files);

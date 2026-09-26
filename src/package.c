@@ -170,6 +170,12 @@ int holy_package_info(const char *path)
             fprintf(stderr, "%s: unsafe or unexpected archive path\n", path);
             goto done;
         }
+        if ((!strcmp(name, "HOLY") || !strcmp(name, "HOLY/") ||
+             !strcmp(name, "DATA") || !strcmp(name, "DATA/")) &&
+            archive_entry_filetype(entry) != AE_IFDIR) {
+            fprintf(stderr, "%s: archive root marker is not a directory\n", path);
+            goto done;
+        }
         if (is_meta && (seen++ || archive_entry_filetype(entry) != AE_IFREG ||
                         archive_entry_size(entry) < 0 ||
                         archive_entry_size(entry) > META_LIMIT)) {

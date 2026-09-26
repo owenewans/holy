@@ -21,7 +21,7 @@ It rejects archive entries outside HOLY and DATA, including dot segments.
 It does not validate the payload manifest, hashes, signatures or installability.
 .PP
 The verify command checks regular DATA files against the supported HOLY/files
-records, including size, mode, numeric owner and SHA-256. It checks symlink
+records, including size, mode, numeric owner and SHA-256. It checks symlink and directory
 targets and refuses hardlinks and unsupported objects. It does not install or authenticate packages;
 the two read passes do not provide a stable filesystem snapshot.
 .SH EXIT STATUS

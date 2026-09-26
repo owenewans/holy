@@ -20,6 +20,11 @@ uid=$(stat -c %u "$tmp/payload/DATA/usr/bin/hello")
 gid=$(stat -c %g "$tmp/payload/DATA/usr/bin/hello")
 printf 'file usr/bin/hello %s root root %s %s 6 %s none - -\n' \
     "$mode" "$uid" "$gid" "$digest" > "$tmp/payload/HOLY/files"
+for dir in usr usr/bin; do
+    dmode=$(stat -c %a "$tmp/payload/DATA/$dir")
+    printf 'dir %s %s root root %s %s 0 - none - -\n' \
+        "$dir" "$dmode" "$uid" "$gid" >> "$tmp/payload/HOLY/files"
+done
 tar -cf "$tmp/payload.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/payload.tar" "$tmp/package.holy"
 "$bin" info "local:$tmp/package.holy" > "$tmp/out"
@@ -28,7 +33,7 @@ grep -qx 'libc nolibc' "$tmp/out"
 expected=$(sha256sum "$tmp/package.holy" | cut -d ' ' -f 1)
 grep -qx "sha256 $expected" "$tmp/out"
 "$bin" verify "local:$tmp/package.holy" > "$tmp/out"
-grep -qx 'verified 1 regular files, 0 symlinks' "$tmp/out"
+grep -qx 'verified 1 regular files, 0 symlinks, 2 directories' "$tmp/out"
 printf 'world\n' > "$tmp/payload/DATA/usr/bin/hello"
 tar -cf "$tmp/payload.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q -f "$tmp/payload.tar" "$tmp/changed.holy"
@@ -48,7 +53,7 @@ printf 'symlink usr/bin/link %s root root %s %s 0 - none - - hello\n' \
 tar -cf "$tmp/symlink.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/symlink.tar" "$tmp/symlink.holy"
 "$bin" verify "local:$tmp/symlink.holy" > "$tmp/out"
-grep -qx 'verified 1 regular files, 1 symlinks' "$tmp/out"
+grep -qx 'verified 1 regular files, 1 symlinks, 2 directories' "$tmp/out"
 rm "$tmp/payload/DATA/usr/bin/link"
 ln -s ../../../escape "$tmp/payload/DATA/usr/bin/link"
 tar -cf "$tmp/symlink.tar" -C "$tmp/payload" HOLY DATA
@@ -63,6 +68,20 @@ lz4 -q "$tmp/hard.tar" "$tmp/hard.holy"
 if "$bin" verify "local:$tmp/hard.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'unsupported payload type' "$tmp/err"
 rm "$tmp/payload/DATA/usr/bin/hard"
+sed '/^dir usr\/bin /d' "$tmp/payload/HOLY/files" > "$tmp/files-without-dir"
+cp "$tmp/payload/HOLY/files" "$tmp/files-original"
+mv "$tmp/files-without-dir" "$tmp/payload/HOLY/files"
+tar -cf "$tmp/omitted-dir.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/omitted-dir.tar" "$tmp/omitted-dir.holy"
+if "$bin" verify "local:$tmp/omitted-dir.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'unlisted payload object' "$tmp/err"
+mv "$tmp/files-original" "$tmp/payload/HOLY/files"
+chmod 700 "$tmp/payload/DATA/usr/bin"
+tar -cf "$tmp/changed-dir.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/changed-dir.tar" "$tmp/changed-dir.holy"
+if "$bin" verify "local:$tmp/changed-dir.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'payload or attributes mismatch' "$tmp/err"
+chmod "$dmode" "$tmp/payload/DATA/usr/bin"
 cp "$tmp/package.holy" "$tmp/broken.holy"
 printf 'not a frame' > "$tmp/broken.holy"
 if "$bin" info "local:$tmp/broken.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi

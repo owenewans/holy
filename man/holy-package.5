@@ -1,6 +1,6 @@
 .TH HOLY-PACKAGE 5 "September 2026" "Holy" "File Formats"
 .SH NAME
-holy-package \- prototype native archive and regular-file manifest
+holy-package \- prototype native archive and payload manifest
 .SH DESCRIPTION
 A .holy archive is a POSIX tar/PAX stream compressed as a standard LZ4 frame.
 HOLY/meta contains one key and one value per line. The required fields are
@@ -15,12 +15,13 @@ file PATH MODE OWNER GROUP UID GID SIZE SHA256 FLAGS XATTRS HARDLINK-GROUP
 MODE is octal; UID, GID and SIZE are decimal. PATH is relative to DATA. SHA256
 has 64 hexadecimal digits. The current verifier accepts FLAGS=none,
 XATTRS=- and HARDLINK-GROUP=- only. A symlink uses one additional TARGET token,
-SIZE=0 and SHA256=-. The verifier checks the target and rejects links that
+SIZE=0 and SHA256=-. A directory uses the same twelve tokens as a file, with
+TYPE=dir, SIZE=0 and SHA256=-. The verifier rejects symlink targets that
 escape the root by lexical traversal. The text lexer follows holy.conf(5), so
-quotes and escapes can preserve spaces in paths. Archive directories are
-implicit; hardlinks, special files and extended attributes are not
-supported by the verifier. Rejecting them is not proof they are invalid in the
-planned full format.
+quotes and escapes can preserve spaces in paths. Every archived directory
+except DATA itself needs a manifest record. The verifier does not support
+hardlinks, special files or extended attributes. The planned full format
+includes these objects.
 .PP
 The prototype cannot install archives. It does not verify dependencies,
 signatures, symbolic owner names or the installed filesystem. A full format

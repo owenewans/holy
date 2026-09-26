@@ -2,7 +2,7 @@
 
 Holy is a planned independent Linux distribution. This repository starts with
 the C99 configuration parser and read-only local package inspector/verifier.
-The verifier handles regular files and symlinks. This repository does not contain a
+The verifier handles regular files, symlinks and directories. Holy does not contain a
 bootable distribution yet.
 
 Run `make` to build `holypkg` and `make check` to test it. Read
