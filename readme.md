@@ -10,7 +10,8 @@ Local extract handles regular files, directories and safe links in a new output 
 Local check compares a package payload against a chosen root without changing it.
 Holy does not contain a bootable distribution yet.
 
-Run `make` to build `holypkg` and `make check` to test it. Read
+Run `make` to build `holypkg` and `make check` to test it. `make install`
+installs the binary, man pages and generated `llm.txt`. Read
 `man/holy.conf.5`, `man/holy-package.5` and `man/holypkg.8` for the implemented
 interface. Builds require libarchive and OpenSSL; fixtures also require tar,
 lz4, sha256sum, setfattr and setfacl. Package installation, ISO images and runtime acceptance
