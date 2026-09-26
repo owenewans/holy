@@ -28,18 +28,19 @@ must be available through pkg-config; the check fails if they are absent.
 ## status
 
 The C99 prototype verifies local `.holy` archives, inspects ELF, typed
-requirements and capability claims, checks files and previews root path
-conflicts without installing.
+requirements and capability claims, and checks root path conflicts.
 It stages verified archives in a target-root cache.
 It can initialize an empty target-root package database and reserve or cancel
 one verified cached artifact at a fixed generation. `db preflight` checks that
-reservation against the target root without installing it.
+reservation against the target root. `db plan`, `db approve` and `db apply`
+install a restricted, data-only package into existing directories with a
+journal. Incomplete transactions require manual inspection.
 It can build, seal, search exact provider claims and fetch an unsigned local
 repository catalog. The catalog records package capability claims; candidate
 lookup validates matching artifacts against those claims.
 `holypkg solve` and `repo solve` check narrow, read-only package graphs; source
 resolution and version-family comparators are pending.
-Installed-state transactions, a bootable image and QEMU acceptance are pending.
+General installed-state transactions, a bootable image and QEMU acceptance are pending.
 The [Slackware holypkg](https://github.com/owenewans/holypkg) is a separate project.
 
 ## documentation

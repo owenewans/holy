@@ -19,5 +19,7 @@ int holy_state_plan(const char *root_path);
 int holy_state_approve(const char *hash, const char *root_path);
 /* revalidate an approved plan; no rootfs or database mutation. */
 int holy_state_recheck(const char *root_path);
+/* narrow, journaled installation of one approved data-only artifact. */
+int holy_state_apply(const char *root_path);
 
 #endif

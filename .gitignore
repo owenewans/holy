@@ -1,3 +1,4 @@
 /holypkg
 /src/*.o
 /tests/solver
+/tests/install-helper

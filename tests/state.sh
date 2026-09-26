@@ -36,7 +36,11 @@ for area in installed transactions index; do
     printf 'unrecognized\n' > "$db/$area/unknown"
     if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
     test ! -s "$tmp/out"
-    grep -q "unrecognized database entries in $area" "$tmp/err"
+    if test "$area" = installed; then
+        grep -q 'invalid installed entries' "$tmp/err"
+    else
+        grep -q "unrecognized database entries in $area" "$tmp/err"
+    fi
     if "$bin" db init --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
     rm "$db/$area/unknown"
 done

@@ -66,6 +66,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db recheck --root DIRECTORY
 .br
+.B holypkg db apply --root DIRECTORY
+.br
 .B holypkg repo index DIRECTORY
 .br
 .B holypkg repo list DIRECTORY
@@ -85,7 +87,7 @@ holypkg \- Holy local package tooling prototype
 .B holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 .SH DESCRIPTION
 The config check command checks source and rule configuration without changing
-the system. Package installation, foreign import, remote fetch and
+the system. General package installation, foreign import, remote fetch and
 multi-source resolution are not available yet. This executable is independent
 of the separate owenewans/holypkg project.
 .PP
@@ -116,6 +118,25 @@ It returns 5 without an approved record, 3 if the plan digest differs and 4
 for a path conflict. The check changes neither database nor rootfs. Other
 processes can change rootfs paths after recheck; it cannot replace the
 writer-locked validation required by apply.
+.PP
+Database apply installs only an approved linux/noarch/nolibc data package
+with empty hooks, transform and requirements. Its payload may contain
+ordinary non-executable regular files and directory entries; every directory
+must already exist in the target root. No symlink, hardlink, privileged mode
+or file collision is accepted. The caller must review the db plan digest and
+invoke db approve first. Apply holds the database writer lock, recomputes the
+approved plan and rechecks every path against opened directory descriptors.
+It creates each file with O_EXCL, then synchronizes it and its parent. It
+records a journal before changing the rootfs and publishes installed metadata
+and the next database generation after copying payload files. The installed
+record contains meta, files, deps, origin and state; local delivery has no
+trusted source-id. Apply does not run package hooks or configure services.
+An I/O failure after journal publication leaves an incomplete transaction
+for manual inspection; db status returns 5 and db recover does not retry file
+mutations. A regular successful return requires both the installed record and
+generation publication. General ownership replacement, file removal and
+automatic rollback are not implemented. The command is not an installer for
+arbitrary .holy packages.
 .PP
 The info command reads an LZ4-frame-compressed tar archive and prints the seven
 required fields from HOLY/meta. It reads archive data without extracting or
@@ -343,15 +364,15 @@ file plus link for exclusive generation creation; repeating init retains the
 existing generation. Init checks existing records and generation before
 publishing a new generation file; unknown entries cannot turn a partial
 database into an apparently initialized one. Status holds a shared lock while
-validating the same layout and reading the generation. It recognizes one
-pending reservation; other entries fail validation. Init rejects any nonempty
+validating the layout and reading the generation. It recognizes installed
+instance directories and one pending reservation. Init rejects any nonempty
 installed, transactions or index directory. Both
 commands reject symlinked,
 group-writable or world-writable ancestor directories inside the target root.
-Init does not register packages, create a transaction journal or install files.
+Init does not register packages or install files.
 .PP
 Database reserve checks a verified SHA-256 object in the target-root cache,
-locks the empty database at its current generation and publishes one
+locks the database at its current generation and publishes one
 fsynced prepared reservation in transactions/pending. Status validates the
 record and returns 5 while it is present. Reserve refuses a second pending
 record with status 5. Database cancel validates and removes a prepared or
@@ -359,16 +380,19 @@ approved record; it leaves the cached archive and rootfs unchanged. The record
 has format holy-reservation-1, its stage, generation and artifact digest. An
 approved record also contains the plan digest.
 This is a reservation of inputs, not a dependency-resolved install plan or
-committed transaction. No apply or recovery from an interrupted filesystem
-mutation exists. An unknown or malformed journal entry remains an error;
+committed transaction. Incomplete file mutation requires manual inspection.
+An unknown or malformed journal entry remains an error;
 cancel will not discard it silently.
 .PP
 Status --json emits one holy-db-status-1 state event with numeric generation
 and pending null or a prepared/approved SHA-256 object. An approved object
 also includes its plan digest. A malformed database emits one
-invalid-state event and returns 1, without partial state on stdout.
+invalid-state event and returns 1, without partial state on stdout. A valid
+file-mutation journal produces an incomplete event and exit code 5. Status
+checks the installed record layout; it does not replace holypkg check's
+comparison of installed manifests against the actual rootfs.
 .PP
-Database recover handles only interruption of reservation publication. It
+Database recover handles interruption of reservation publication. It
 accepts one .holy-tmp- followed by 32 lowercase hex digits, verifies its
 record against the current generation and removes that directory entry. If
 pending also exists, the temporary name must be a hardlink to that exact
@@ -376,8 +400,9 @@ pending inode. A valid unpublished approved record for the same artifact may
 instead be removed while leaving its prepared predecessor intact. Recover
 preserves pending and returns 5. With no pending it returns 0 after removing
 the orphan. Unknown entries, stale generations, unrelated inodes and malformed
-records fail without deletion. This command
-does not recover hooks, installed files or arbitrary incomplete transactions.
+records fail without deletion. For an incomplete file transaction, recover
+returns 5 and requires manual inspection. It does not replay hooks or undo
+installed files.
 .PP
 Database preflight holds a shared database lock, validates the one pending
 reservation, reads a verified private snapshot of its cached artifact and runs
@@ -386,9 +411,9 @@ It returns 0 for a zero-decision preview, 3 for unresolved requirements or
 runtime edges, 4 for path conflicts and 6 if the reservation, cached input or
 supported payload profile is unavailable. The output names the database
 generation and artifact digest.
-It does not turn the reservation into an install plan. File changes outside
-the database lock can invalidate the preview before a future apply command;
-such a command must recheck paths and the artifact.
+It does not turn the reservation into an approved plan. File changes outside
+the database lock can invalidate the preview before apply; apply rechecks
+paths and the artifact under its writer lock.
 With --json, both preview and database preflight emit holy-preview-1 path
 events and a summary only after the full archive walk. Path events include
 state new, existing-dir or conflict and optional interpreter and helper

@@ -8,10 +8,10 @@ DESTDIR ?=
 SOLV_CFLAGS ?= $(patsubst -I%,-isystem %,$(shell pkg-config --cflags-only-I libsolv 2>/dev/null)) $(shell pkg-config --cflags-only-other libsolv 2>/dev/null)
 SOLV_LIBS ?= $(shell pkg-config --libs libsolv 2>/dev/null) -lz
 
-.PHONY: all check check-fixtures check-solver man
+.PHONY: all check check-fixtures check-solver check-install-payload man
 all: holypkg
 
-holypkg: src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o
+holypkg: src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(SOLV_LIBS)
 
 src/solve.o: src/solve.c src/solve.h
@@ -20,7 +20,7 @@ src/solve.o: src/solve.c src/solve.h
 src/%.o: src/%.c src/config.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -c -o $@ $<
 
-check: holypkg check-solver
+check: holypkg check-solver check-install-payload
 	sh tests/config.sh ./holypkg
 	sh tests/package.sh ./holypkg
 	sh tests/docs.sh
@@ -30,6 +30,10 @@ check: holypkg check-solver
 	sh tests/resolve.sh ./holypkg
 
 check-fixtures: check
+
+check-install-payload:
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o tests/install-helper tests/install.c src/install.c src/verify.c src/package.c src/stage.c src/config.c $(LDFLAGS) -larchive -lcrypto
+	sh tests/install.sh ./tests/install-helper ./holypkg
 
 check-solver:
 	@pkg-config --exists libsolv || { echo 'libsolv development files required' >&2; exit 6; }
@@ -51,4 +55,4 @@ install: holypkg llm.txt
 	install -m 644 llm.txt "$(DESTDIR)$(PREFIX)/share/holy/llm.txt"
 
 clean:
-	rm -f holypkg tests/solver src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o
+	rm -f holypkg tests/solver tests/install-helper src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o
