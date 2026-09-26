@@ -49,7 +49,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=6108510d4e21193cd04e3a1d51d6be19a05e22569c837abdbf04e269ecc4d799
+holypkg.8 source=holy version=development sha256=e3d63f1d13241813074c182a27eaaad6da2edb1df70a79eaad2efca4478ec341
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -73,6 +73,7 @@ SYNOPSIS
      holypkg fetch https://URL --sha256	 SHA256	 --output  DIRECTORY  [--ca-file
      FILE]
      holypkg pack DIRECTORY --output FILE.holy
+     holypkg manifest generate DIRECTORY --output FILE
      holypkg check local:FILE --root DIRECTORY
      holypkg check local:FILE --root DIRECTORY --json
      holypkg elf FILE
@@ -142,465 +143,477 @@ DESCRIPTION
      manifest fails without publishing a package; recipes and foreign conversion
      are separate work.
 
-     The  db plan command reads the prepared reservation at the current database
-     generation. It verifies a private snapshot of the cached  artifact,  checks
-     root-path	collisions and refuses unresolved requirements, interpreters and
+     Manifest generate reads DATA/ below DIRECTORY and writes HOLY/files records
+     to a new output path outside the input tree. It emits directories and ordi-
+     nary  files  in sorted order, numeric UID/GID, modes, sizes and SHA-256 di-
+     gests.  Symbolic owner/group names are placeholders; the numeric values re-
+     main the source tree's ownership. The command refuses  symlinks,  hardlinks
+     and  xattrs, escapes paths with whitespace or non-ASCII bytes, and does not
+     replace an existing output. Copy the generated file to HOLY/files	and  run
+     pack;  neither  command infers package arch/libc or dependencies from arbi-
+     trary data files.	Archive pack and inspection use the active LC_CTYPE  lo-
+     cale  for libarchive pathname conversion. Use an available UTF-8 locale for
+     UTF-8 filenames.
+
+     The db plan command reads the prepared reservation at the current	database
+     generation.  It  verifies a private snapshot of the cached artifact, checks
+     root-path collisions and refuses unresolved requirements, interpreters  and
      ELF dependencies. The supported planning subset is linux/noarch/nolibc with
-     empty hooks and transform, ordinary directories and non-executable	 regular
-     files  owned  by the current UID/GID. Symlinks, hardlinks, privileged modes
-     and writes inside holypkg state or cache trees  are  excluded.  Output  in-
-     cludes  target-root  device/inode, generation, artifact SHA-256, path count
-     and a SHA-256 over those identities and ordered manifest entries. The  nar-
-     row  local	 planner  rejects a second installed package with the same name,
-     even when its payload paths differ; general source-ID and ABI slot	 manage-
-     ment  is pending.	This command does not persist a plan, reserve ownership,
-     authorize apply or recheck the target root	 at  mutation  time.  Concurrent
-     changes  can  invalidate  the collision check. Apply revalidates inputs and
+     empty  hooks and transform, ordinary directories and non-executable regular
+     files owned by the current UID/GID. Symlinks, hardlinks,  privileged  modes
+     and  writes  inside  holypkg  state or cache trees are excluded. Output in-
+     cludes target-root device/inode, generation, artifact SHA-256,  path  count
+     and  a SHA-256 over those identities and ordered manifest entries. The nar-
+     row local planner rejects a second installed package with	the  same  name,
+     even  when its payload paths differ; general source-ID and ABI slot manage-
+     ment is pending.  This command does not persist a plan, reserve  ownership,
+     authorize	apply  or  recheck  the target root at mutation time. Concurrent
+     changes can invalidate the collision check. Apply	revalidates  inputs  and
      paths under its writer lock.
 
-     The db approve command recomputes the  plan  under	 an  exclusive	database
-     lock.   If	 its  SHA-256 matches PLAN_SHA256, the command replaces the pre-
+     The  db  approve  command	recomputes  the plan under an exclusive database
+     lock.  If its SHA-256 matches PLAN_SHA256, the command  replaces  the  pre-
      pared reservation with an approved record bound to its artifact and genera-
-     tion.  Status reports the approved digest; cancel	removes	 the  record.  A
+     tion.   Status  reports  the  approved digest; cancel removes the record. A
      mismatched plan returns decision-required without changing the reservation.
-     Approval  does  not  install  files or authorize a future implementation to
+     Approval does not install files or authorize  a  future  implementation  to
      skip path, artifact and generation checks under the same writer lock at ap-
      ply time.
 
-     Database recheck compares an approved record with a  fresh	 verified  cache
-     snapshot  and  target-root	 collision preview under a shared database lock.
+     Database  recheck	compares  an approved record with a fresh verified cache
+     snapshot and target-root collision preview under a	 shared	 database  lock.
      It returns 5 without an approved record, 3 if the plan digest differs and 4
-     for a path conflict. The check changes neither database nor  rootfs.  Other
-     processes	can  change  rootfs  paths  after recheck; it cannot replace the
+     for  a  path conflict. The check changes neither database nor rootfs. Other
+     processes can change rootfs paths after  recheck;	it  cannot  replace  the
      writer-locked validation required by apply.
 
-     Database apply installs only an approved linux/noarch/nolibc  data	 package
+     Database  apply  installs only an approved linux/noarch/nolibc data package
      with empty hooks, transform and requirements. Its payload may contain ordi-
-     nary  non-executable  regular  files and directory entries; every directory
-     must already exist in the target root.  No	 symlink,  hardlink,  privileged
-     mode  or file collision is accepted. The caller must review the db plan di-
+     nary non-executable regular files and directory  entries;	every  directory
+     must  already  exist  in  the target root. No symlink, hardlink, privileged
+     mode or file collision is accepted. The caller must review the db plan  di-
      gest and invoke db approve first. Apply holds the database writer lock, re-
      computes the approved plan and rechecks every path against opened directory
-     descriptors.  It creates each file with O_EXCL, then  synchronizes	 it  and
-     its  parent.  It records a journal before changing the rootfs and publishes
-     installed metadata and the next database generation after	copying	 payload
-     files.  The  installed record contains meta, files, deps, origin and state;
-     local delivery has no trusted source-id. Apply does not run  package  hooks
-     or	 configure services.  An I/O failure after journal publication leaves an
-     incomplete transaction for inspection; db status returns 5 and  db	 recover
+     descriptors.   It	creates	 each file with O_EXCL, then synchronizes it and
+     its parent. It records a journal before changing the rootfs  and  publishes
+     installed	metadata  and the next database generation after copying payload
+     files. The installed record contains meta, files, deps, origin  and  state;
+     local  delivery  has no trusted source-id. Apply does not run package hooks
+     or configure services.  An I/O failure after journal publication leaves  an
+     incomplete	 transaction  for inspection; db status returns 5 and db recover
      does not retry file mutations. db recover --abort-empty can clear an incom-
      plete journal only at its original generation, with the same approved arti-
-     fact  and no installed instance or payload files. It retains approval for a
-     later apply or cancel.  Otherwise the operator must inspect the rootfs  and
-     journal  manually.	  A crash after publishing the next generation can leave
+     fact and no installed instance or payload files. It retains approval for  a
+     later  apply or cancel.  Otherwise the operator must inspect the rootfs and
+     journal manually.	A crash after publishing the next generation  can  leave
      the journal and approved reservation behind. db recover --finish-apply ver-
-     ifies the installed instance, its generation, all listed payload files  and
-     any  remaining approval before clearing those records. It refuses an incom-
-     plete payload and does not resume file extraction.	  A  regular  successful
-     return  requires both the installed record and generation publication. Gen-
-     eral ownership replacement and automatic rollback are not implemented.  The
+     ifies  the installed instance, its generation, all listed payload files and
+     any remaining approval before clearing those records. It refuses an  incom-
+     plete  payload  and  does not resume file extraction.  A regular successful
+     return requires both the installed record and generation publication.  Gen-
+     eral  ownership replacement and automatic rollback are not implemented. The
      command is not an installer for arbitrary .holy packages.
 
-     Database  check  reads one installed data manifest and compares its regular
-     files against the target root by path, type, size, mode, numeric  ownership
+     Database check reads one installed data manifest and compares  its	 regular
+     files  against the target root by path, type, size, mode, numeric ownership
      and SHA-256. It checks that listed directories remain safe and rejects sym-
-     linked  parent paths. It returns 4 for changed or missing files, 6 when the
-     instance is absent, and 5 while a file transaction is incomplete. The  com-
+     linked parent paths. It returns 4 for changed or missing files, 6 when  the
+     instance  is absent, and 5 while a file transaction is incomplete. The com-
      mand neither downloads an archive nor repairs a file. This restricted check
-     does  not	model  dynamic linking, scripts or runtime behavior. --all walks
-     every installed data manifest under the same shared lock and  reports  each
+     does not model dynamic linking, scripts or runtime	 behavior.  --all  walks
+     every  installed  data manifest under the same shared lock and reports each
      artifact as intact or changed in digest order. It returns 4 if any artifact
-     has  changed.  An empty installed set reports zero checked packages. --json
-     emits one holy-installed-check-1 JSON line per artifact followed by a  sum-
-     mary  of  passes  and  failures,  or one error line on an invalid database,
+     has changed. An empty installed set reports zero checked  packages.  --json
+     emits  one holy-installed-check-1 JSON line per artifact followed by a sum-
+     mary of passes and failures, or one error	line  on  an  invalid  database,
      missing instance or incomplete transaction. This reports only data-manifest
-     coverage; changed-file does not identify which path  changed  in  the  JSON
+     coverage;	changed-file  does  not	 identify which path changed in the JSON
      schema.
 
      Database owner reads installed data manifests and lists the artifact digest
      and kind for an exact relative or root-absolute path. Multiple packages may
-     list  the	same  directory. If multiple records claim one regular file, the
-     command returns conflict status 4 without listing an  arbitrary  owner.  An
+     list the same directory. If multiple records claim one  regular  file,  the
+     command  returns  conflict	 status 4 without listing an arbitrary owner. An
      absent path returns 6. It holds a shared database lock and does not require
      the path to exist in the live rootfs; db check compares actual contents.
 
-     Database  rm  removes  one	 intact data-only installed instance by artifact
-     SHA-256. It verifies all listed  files  before  mutation,	refuses	 changed
-     files  and pending reservations, then writes a removing journal. It unlinks
-     only listed regular files and the instance record; shared	directories  and
+     Database rm removes one intact data-only  installed  instance  by	artifact
+     SHA-256.  It  verifies  all  listed  files before mutation, refuses changed
+     files and pending reservations, then writes a removing journal. It	 unlinks
+     only  listed  regular files and the instance record; shared directories and
      the cached artifact remain. The database generation advances after removal.
-     If	 an  I/O  failure  interrupts  deletion, db status reports an incomplete
-     journal.  db recover --continue accepts a removing journal at its	original
-     generation	 with  an intact installed record, treats absent listed files as
+     If an I/O failure interrupts deletion,  db	 status	 reports  an  incomplete
+     journal.	db recover --continue accepts a removing journal at its original
+     generation with an intact installed record, treats absent listed  files  as
      removed, verifies every remaining file and completes removal. Changed files
-     or partial installed records require manual inspection.  --abort-empty  ap-
-     plies  only  to  an installing journal, never to removal. This command does
+     or	 partial  installed records require manual inspection. --abort-empty ap-
+     plies only to an installing journal, never to removal.  This  command  does
      not resolve reverse dependencies or remove general packages.
 
-     The info command reads an LZ4-frame-compressed tar archive and  prints  the
-     seven  required  fields  from  HOLY/meta. It reads archive data without ex-
-     tracting or executing it. It checks for repeated metadata	and  unsupported
-     format  versions.	 It  prints the SHA-256 digest of the input archive.  It
-     rejects archive entries outside HOLY and DATA, including dot segments.   It
-     requires  all  seven HOLY metadata members as regular files and rejects du-
+     The  info	command reads an LZ4-frame-compressed tar archive and prints the
+     seven required fields from HOLY/meta. It reads  archive  data  without  ex-
+     tracting  or  executing it. It checks for repeated metadata and unsupported
+     format versions.  It prints the SHA-256 digest of the  input  archive.   It
+     rejects  archive entries outside HOLY and DATA, including dot segments.  It
+     requires all seven HOLY metadata members as regular files and  rejects  du-
      plicate members.  It does not validate the payload manifest, hashes, signa-
      tures or installability.
 
      The  verify  command  checks  regular  DATA  files	 against  the  supported
-     HOLY/files	 records,  including  size,  mode, numeric owner and SHA-256. It
-     checks symlinks, directories and direct  hardlinks,  rejecting  unsupported
-     objects.  It does not install or authenticate packages; the two read passes
+     HOLY/files records, including size, mode, numeric	owner  and  SHA-256.  It
+     checks  symlinks,	directories  and direct hardlinks, rejecting unsupported
+     objects. It does not install or authenticate packages; the two read  passes
      do not provide a stable filesystem snapshot.
 
-     The manifest command stages a local archive, verifies the entire  supported
-     payload  and  HOLY/files,	then lists validated objects in path order. Each
-     line contains type, escaped relative path, mode, numeric UID/GID and  size;
-     files  include SHA-256, links include targets and grouped hardlinks include
-     their group. Fields are borrowed from the verified snapshot during	 inspec-
-     tion.   This  read-only  output does not prove that ownership can be mapped
+     The  manifest command stages a local archive, verifies the entire supported
+     payload and HOLY/files, then lists validated objects in  path  order.  Each
+     line  contains type, escaped relative path, mode, numeric UID/GID and size;
+     files include SHA-256, links include targets and grouped hardlinks	 include
+     their  group. Fields are borrowed from the verified snapshot during inspec-
+     tion.  This read-only output does not prove that ownership	 can  be  mapped
      onto a target root or that a file can be installed without collision.
 
-     The requirements command stages and verifies a regular archive, then  reads
+     The  requirements command stages and verifies a regular archive, then reads
      HOLY/deps using the holy.conf lexer. Its current typed subset accepts lines
      of eleven tokens:
      require ID CONSUMER KIND NAME ARCH LIBC RELATION VERSION ORIGINAL EVIDENCE
-     KIND  is  package,	 file, command, soname, symbol-version or build. ARCH is
+     KIND is package, file, command, soname, symbol-version or	build.	ARCH  is
      any, x86, x86_64 or noarch; LIBC is any, glibc, musl or nolibc. RELATION is
      any, eq, ge, le, gt or lt. VERSION is - only for any. ORIGINAL and EVIDENCE
-     retain the source expression and basis as text.  Requirement  IDs	must  be
-     unique.  The  command  rejects unsupported records and duplicate IDs rather
-     than dropping them; it does not evaluate version constraints  or  choose  a
-     provider.	 With  --json,	stdout	contains holy-requirements-1 requirement
+     retain  the  source  expression  and basis as text. Requirement IDs must be
+     unique. The command rejects unsupported records and  duplicate  IDs  rather
+     than  dropping  them;  it does not evaluate version constraints or choose a
+     provider.	With --json,  stdout  contains	holy-requirements-1  requirement
      events and a summary, or one error event on invalid input. Each requirement
      event has id, consumer, kind, name, arch, libc, relation, version, original
-     and evidence fields. The JSON encoder maps non-ASCII bytes	 to  \u00HH  es-
-     capes;  consumers	reconstruct  original bytes rather than treating them as
+     and  evidence  fields.  The JSON encoder maps non-ASCII bytes to \u00HH es-
+     capes; consumers reconstruct original bytes rather than  treating	them  as
      normalized text.
 
-     The solve	command	 verifies  and	scans  each  explicitly	 supplied  local
+     The  solve	 command  verifies  and	 scans	each  explicitly  supplied local
      archive, with the first archive as the requested root. Its supported subset
      accepts only linux/noarch/nolibc packages, empty HOLY/hooks and HOLY/trans-
-     form,  and HOLY/deps package requirements with arch=any, libc=any and rela-
-     tion=any.	Each consumer must equal its package name.  Only  the  package's
-     own  metadata name supplies a capability; declared aliases in HOLY/provides
-     are parsed but do not satisfy requirements	 here.	Every  other  dependency
-     form,  version  constraint or package ABI fails closed with status 6. There
+     form, and HOLY/deps package requirements with arch=any, libc=any and  rela-
+     tion=any.	 Each  consumer	 must equal its package name. Only the package's
+     own metadata name supplies a capability; declared aliases in  HOLY/provides
+     are  parsed  but  do  not satisfy requirements here. Every other dependency
+     form, version constraint or package ABI fails closed with status  6.  There
      are  no  source  IDs,  installed  packages,  architecture	overrides,  file
      providers or runtime guarantees in this command.
 
-     The  command  prints  selected artifact SHA-256 digests only after a unique
-     package set is found. It returns 3 for multiple package sets, 4 for an  un-
+     The command prints selected artifact SHA-256 digests only	after  a  unique
+     package  set is found. It returns 3 for multiple package sets, 4 for an un-
      satisfied requirement, and 6 for unsupported or invalid input. No plan, in-
      stall or mutation follows. Equal package names from two different artifacts
-     remain  separate candidates; the caller must choose when both could satisfy
-     a requirement. The solver	checks	package-set  uniqueness,  not  ambiguous
-     provider  edges  inside an identical set. Script interpreter and plugin re-
-     quirements are not inferred from payload in this subset,  so  selection  is
-     not  an  installability  verdict.	 For a direct root requirement, --choose
+     remain separate candidates; the caller must choose when both could	 satisfy
+     a	requirement.  The  solver  checks  package-set uniqueness, not ambiguous
+     provider edges inside an identical set. Script interpreter and  plugin  re-
+     quirements	 are  not  inferred from payload in this subset, so selection is
+     not an installability verdict.  For a  direct  root  requirement,	--choose
      pins a named requirement ID to the exact candidate artifact digest supplied
-     on the command line. The candidate must provide the required package  name;
+     on	 the command line. The candidate must provide the required package name;
      otherwise the command returns decision-required. The choice applies to this
-     solve  only  and  does  not assign a source ID or rewrite ABI facts. Unsup-
-     ported syntax returns 2. Transitive requirements and multiple choices  can-
+     solve only and does not assign a source ID or  rewrite  ABI  facts.  Unsup-
+     ported  syntax returns 2. Transitive requirements and multiple choices can-
      not yet be pinned by this option.	With --json, stdout contains holy-local-
      solve-1 selected events carrying artifact digests and a count summary after
-     a	unique	solution. Errors emit one structured error event without partial
-     selected events; malformed arguments use invalid-query. Diagnostics  remain
-     on	 stderr.  For a missing provider on a path of uniquely determined candi-
+     a unique solution. Errors emit one structured error event	without	 partial
+     selected  events; malformed arguments use invalid-query. Diagnostics remain
+     on stderr.	 For a missing provider on a path of uniquely determined  candi-
      dates, the error event also carries the validated requirement-id and stderr
      names it. If a transitive edge has multiple candidate providers, this diag-
      nosis stops at that edge rather than blaming an unselected candidate.
 
-     Repository solve accepts a package name in a sealed  local	 repository.  It
+     Repository	 solve	accepts	 a package name in a sealed local repository. It
      validates the entire catalog and every artifact, freezes those artifacts in
      temporary snapshots, then invokes the same restricted read-only solver with
      the unique exact-name root first. Two versions of the requested name return
-     decision-required.	 A missing name returns unavailable-artifact. An invalid
+     decision-required. A missing name returns unavailable-artifact. An	 invalid
      generation returns invalid-catalog without partial results. --json uses the
-     same holy-local-solve-1 events as solve. This  command  reads  all	 archive
-     payloads  per query; it does not import remote sources, install packages or
-     interpret	typed  HOLY/provides  aliases  as  dependency  providers.    The
-     --choose  form  applies the same one-operation, direct-root requirement se-
-     lection after validating the sealed index and matching the selected  digest
+     same  holy-local-solve-1  events  as  solve. This command reads all archive
+     payloads per query; it does not import remote sources, install packages  or
+     interpret	 typed	HOLY/provides  aliases	as  dependency	providers.   The
+     --choose form applies the same one-operation, direct-root	requirement  se-
+     lection  after validating the sealed index and matching the selected digest
      to an artifact in that generation. It does not write a saved rule.	 On suc-
-     cess,  the	 text  output ends with the sealed index SHA-256 generation; the
-     --json summary includes the same digest. A later index generation	requires
+     cess, the text output ends with the sealed index  SHA-256	generation;  the
+     --json  summary includes the same digest. A later index generation requires
      a new query before treating the result as current. The digest binds the lo-
      cal index bytes, not an authenticated publisher or a future installed plan.
 
-     The  provides  command  stages  and  verifies  a native archive, then reads
+     The provides command stages and  verifies	a  native  archive,  then  reads
      HOLY/provides as typed claims. Each supported line has seven tokens:
      provide KIND NAME ARCH LIBC VERSION EVIDENCE
-     KIND accepts package, file, command, soname, symbol-version or build.  ARCH
-     accepts  any,  x86,  x86_64 or noarch; LIBC accepts any, glibc, musl or no-
-     libc.  VERSION is text or - for an unversioned claim. File	 names	must  be
-     absolute;	SONAME must have no slash. Duplicate KIND/NAME/ARCH/LIBC/VERSION
-     claims fail.  The parser does not prove a claimed file, command  or  SONAME
-     exists,  resolve  a requirement or compare foreign version schemes. Reposi-
-     tory and cache writers reject unrecognized capability records  rather  than
-     publishing	 them  as  parsed.  With --json, stdout contains holy-provides-1
+     KIND  accepts package, file, command, soname, symbol-version or build. ARCH
+     accepts any, x86, x86_64 or noarch; LIBC accepts any, glibc,  musl	 or  no-
+     libc.   VERSION  is  text or - for an unversioned claim. File names must be
+     absolute; SONAME must have no slash. Duplicate  KIND/NAME/ARCH/LIBC/VERSION
+     claims  fail.   The parser does not prove a claimed file, command or SONAME
+     exists, resolve a requirement or compare foreign version  schemes.	 Reposi-
+     tory  and	cache writers reject unrecognized capability records rather than
+     publishing them as parsed.	 With --json,  stdout  contains	 holy-provides-1
      capability events with kind, name, arch, libc, version and evidence, then a
      count summary. A malformed archive or capability emits one structured error
      event. Byte escapes in JSON map non-ASCII bytes to \u00HH; callers must re-
      construct the original bytes.
 
      The local fetch command copies any regular input file to an existing direc-
-     tory as SHA256.holy. It copies bytes  without  interpreting  metadata,  ex-
+     tory  as  SHA256.holy.  It	 copies bytes without interpreting metadata, ex-
      tracting files or running hooks. It creates a mode 0600 temporary file rel-
-     ative  to the opened output directory and synchronizes it before a no-over-
-     write hardlink creates the object. Repeating the command checks the  exist-
-     ing  object's digest. A mismatched object is left untouched. Fetch does not
-     establish archive validity, provenance or a trusted root-owned cache.   Re-
+     ative to the opened output directory and synchronizes it before a	no-over-
+     write  hardlink creates the object. Repeating the command checks the exist-
+     ing object's digest. A mismatched object is left untouched. Fetch does  not
+     establish	archive validity, provenance or a trusted root-owned cache.  Re-
      mote source fetching is not implemented.
 
-     With  --extract,  DIRECTORY  must not exist. The command copies the regular
-     input into a private temporary file, verifies that	 copy  and  checks  that
-     every  entry  is  a  directory,  regular  file,  relative symlink or direct
-     hardlink. Before creating DIRECTORY, it rejects duplicate paths  and  paths
-     nested  under  any	 non-directory archive entry.  It then creates DIRECTORY
-     and writes HOLY and DATA  there  with  directory-relative	operations  that
-     refuse  symlink  traversal	 and  file  replacement.  It  does  not preserve
-     UID/GID, setuid bits, capabilities or xattrs. It refuses  absolute	 symlink
-     targets  and  special nodes; hardlink targets must resolve to regular files
-     within the output tree. Hooks never run. If an I/O error occurs  after  DI-
+     With --extract, DIRECTORY must not exist. The command  copies  the	 regular
+     input  into  a  private  temporary file, verifies that copy and checks that
+     every entry is a  directory,  regular  file,  relative  symlink  or  direct
+     hardlink.	Before	creating DIRECTORY, it rejects duplicate paths and paths
+     nested under any non-directory archive entry.  It	then  creates  DIRECTORY
+     and  writes  HOLY	and  DATA  there with directory-relative operations that
+     refuse symlink  traversal	and  file  replacement.	 It  does  not	preserve
+     UID/GID,  setuid  bits, capabilities or xattrs. It refuses absolute symlink
+     targets and special nodes; hardlink targets must resolve to  regular  files
+     within  the  output tree. Hooks never run. If an I/O error occurs after DI-
      RECTORY is created, partial output remains for inspection.	 This command is
      not a system installation or a root transaction.
 
-     The  local	 check	command	 copies the regular input to a private temporary
-     file, verifies that copy and checks known ELF  arch/libc  mismatches,  then
-     compares  its  DATA members with a supplied filesystem root. It follows di-
-     rectory components through directory  descriptors	without	 following  sym-
-     links.  It	 compares  types,  mode, numeric UID/GID, file size and SHA-256,
-     symlink targets and hardlink inode identity. It reports each changed  path.
+     The local check command copies the regular input  to  a  private  temporary
+     file,  verifies  that  copy and checks known ELF arch/libc mismatches, then
+     compares its DATA members with a supplied filesystem root. It  follows  di-
+     rectory  components  through  directory  descriptors without following sym-
+     links. It compares types, mode, numeric UID/GID,  file  size  and	SHA-256,
+     symlink  targets and hardlink inode identity. It reports each changed path.
      Check does not run package code, download files or modify the root. It does
-     not  consult  an installed database, model ELF loader search, check unknown
-     runtime dependencies or prove a stable snapshot if the root changes  during
+     not consult an installed database, model ELF loader search,  check	 unknown
+     runtime  dependencies or prove a stable snapshot if the root changes during
      checking.
 
-     For  matching regular ELF payloads, check reads PT_INTERP and tests whether
-     an executable ELF file with matching class and machine exists at  that  ab-
-     solute  path  inside the target root. Missing targets report missing-inter-
+     For matching regular ELF payloads, check reads PT_INTERP and tests	 whether
+     an	 executable  ELF file with matching class and machine exists at that ab-
+     solute path inside the target root. Missing targets  report  missing-inter-
      preter; the wrong class or machine reports incompatible-interpreter. A sym-
-     linked path component or final loader, an invalid ELF  or	an  inaccessible
-     path  reports  unknown-interpreter because check cannot prove the loader is
-     usable.  Presence and class alone do not prove dynamic linking,  compatible
+     linked  path  component  or final loader, an invalid ELF or an inaccessible
+     path reports unknown-interpreter because check cannot prove the  loader  is
+     usable.   Presence and class alone do not prove dynamic linking, compatible
      libc or nested library availability.  If all findings are unknown, the sum-
-     mary  status  is  unknown rather than fail; the check still returns nonzero
+     mary status is unknown rather than fail; the check	 still	returns	 nonzero
      because it cannot report pass.
 
      With --json, check prints one JSON object per finding and a final pass/fail
      summary on stdout. The schema is holy-check-1; changed-payload and missing-
-     payload are stable finding codes. Input or	 operational  failures	use  in-
-     valid-package  or	check-error  and status unknown. Paths use byte escapes.
+     payload  are  stable  finding  codes. Input or operational failures use in-
+     valid-package or check-error and status unknown. Paths  use  byte	escapes.
      Only check, requirements, provides repo providers, solve, preview and data-
      base preflight support --json in this prototype.
 
-     The developer-facing elf command reads a regular  ELF  through  libelf/GElf
-     without  executing	 it  or invoking ldd. It prints ELF class, numeric e_ma-
-     chine and e_type, a recognized machine (x86, x86_64 or x32), the  PT_INTERP
-     path,  and	 a  libc  runtime  hint only for recognized glibc or musl inter-
-     preters. It reads PT_DYNAMIC to list DT_NEEDED, SONAME, RPATH  and	 RUNPATH
-     even  without section headers. GNU DT_VERNEED records list provider SONAME,
+     The  developer-facing  elf	 command reads a regular ELF through libelf/GElf
+     without executing it or invoking ldd. It prints ELF  class,  numeric  e_ma-
+     chine  and e_type, a recognized machine (x86, x86_64 or x32), the PT_INTERP
+     path, and a libc runtime hint only for  recognized	 glibc	or  musl  inter-
+     preters.  It  reads PT_DYNAMIC to list DT_NEEDED, SONAME, RPATH and RUNPATH
+     even without section headers. GNU DT_VERNEED records list provider	 SONAME,
      version and weak flag. GNU DT_VERDEF records list version-definition names;
-     these records do not prove that a specific symbol	satisfies  a  consumer's
-     versioned	reference.  GNU	 x86  ISA-needed  properties  in  PT_NOTE report
-     x86-64-baseline/v2/v3/v4 when present; absent  or	unrecognized  properties
-     report  unknown.  No  PT_INTERP yields unknown runtime. It does not inspect
-     exported symbol versions or plugin loading; its output is not a  dependency
+     these  records  do	 not prove that a specific symbol satisfies a consumer's
+     versioned reference.  GNU	x86  ISA-needed	 properties  in	 PT_NOTE  report
+     x86-64-baseline/v2/v3/v4  when  present;  absent or unrecognized properties
+     report unknown. No PT_INTERP yields unknown runtime. It  does  not	 inspect
+     exported  symbol versions or plugin loading; its output is not a dependency
      resolution or package ABI verdict.
 
      The local scan command stages a regular .holy input in a private file, ver-
-     ifies  that copy, then copies ELF payload files to unnamed temporary files.
-     It reports each file's class, machine, runtime hint and ISA using the  same
-     reader.  It  does	not execute payloads. It rejects a machine mismatch with
-     the package arch, including ELF in noarch, and a recognized glibc/musl  in-
-     terpreter	that  disagrees with the libc tag. A missing or unrecognized in-
-     terpreter remains unknown; an exact DT_NEEDED libc.so.6 on	 a  plugin  also
-     rejects  a non-glibc package tag.	scan does not infer nolibc, prove plugin
-     requirements or resolve dependencies.  For each ELF it also prints	 SONAME,
+     ifies that copy, then copies ELF payload files to unnamed temporary  files.
+     It	 reports each file's class, machine, runtime hint and ISA using the same
+     reader. It does not execute payloads. It rejects a	 machine  mismatch  with
+     the  package arch, including ELF in noarch, and a recognized glibc/musl in-
+     terpreter that disagrees with the libc tag. A missing or  unrecognized  in-
+     terpreter	remains	 unknown;  an exact DT_NEEDED libc.so.6 on a plugin also
+     rejects a non-glibc package tag.  scan does not infer nolibc, prove  plugin
+     requirements  or resolve dependencies.  For each ELF it also prints SONAME,
      DT_NEEDED, GNU version needs with weak or required status, and version def-
-     initions,	when  present.	These  file-scoped  facts  do  not  prove that a
+     initions, when present.  These  file-scoped  facts	 do  not  prove	 that  a
      provider exists or that a versioned symbol resolves.
 
-     The preview command stages and verifies a native archive,	checks	ELF  ABI
+     The  preview  command  stages and verifies a native archive, checks ELF ABI
      facts, preflights extraction and inspects each DATA path in a supplied root
-     by	 directory  descriptor.	 It  reports new paths, existing directories and
-     conflicts without writing to the root. Parsed HOLY/deps requirements  count
-     as	 decisions  still needed. It counts observed DT_NEEDED edges separately,
-     including ones omitted from HOLY/deps; it does not	 deduplicate  or  select
+     by directory descriptor. It reports new  paths,  existing	directories  and
+     conflicts	without writing to the root. Parsed HOLY/deps requirements count
+     as decisions still needed. It counts observed DT_NEEDED  edges  separately,
+     including	ones  omitted  from HOLY/deps; it does not deduplicate or select
      providers. It also counts executable payload files beginning with #! as un-
-     resolved  script-interpreter  edges.  It  does not parse env indirection or
-     verify that an interpreter exists. For each #! payload it reports	the  in-
-     terpreter	path  from  a  bounded header read, or unknown for an incomplete
-     header. Simple /usr/bin/env and /usr/bin/env -S forms also show  a	 helper-
+     resolved script-interpreter edges. It does not  parse  env	 indirection  or
+     verify  that  an interpreter exists. For each #! payload it reports the in-
+     terpreter path from a bounded header read, or  unknown  for  an  incomplete
+     header.  Simple  /usr/bin/env and /usr/bin/env -S forms also show a helper-
      command candidate. Quoted, escaped or option-heavy env arguments report un-
      known; no helper's existence is inferred. Any of these counts requires res-
      olution.  Preview refuses nonempty HOLY/hooks and privileged payload modes.
-     A	zero-conflict  preview	is  not an installable plan: it has no installed
-     database generation, dependency resolution, ownership  decisions,	transac-
-     tion  journal  or apply command.  Changes to the root after preview invali-
+     A zero-conflict preview is not an installable plan:  it  has  no  installed
+     database  generation,  dependency resolution, ownership decisions, transac-
+     tion journal or apply command.  Changes to the root after	preview	 invali-
      date the result.
 
-     The  cache	  stage	  command   copies   a	 verified   local   archive   to
-     ROOT/var/cache/holypkg/objects/sha256/SHA256.holy.	 It  validates known ELF
+     The   cache   stage   command   copies   a	  verified   local   archive  to
+     ROOT/var/cache/holypkg/objects/sha256/SHA256.holy. It validates  known  ELF
      ABI facts and the supported HOLY/deps and HOLY/provides subsets before pub-
-     lication. It opens cache directories relative to the  target  root	 without
-     following	symlinks and rejects a same-name object with a different digest.
-     Existing target cache directories must allow writes by the caller and  must
-     not  be group- or world-writable; each directory must belong to root or the
+     lication.	It  opens  cache directories relative to the target root without
+     following symlinks and rejects a same-name object with a different	 digest.
+     Existing  target cache directories must allow writes by the caller and must
+     not be group- or world-writable; each directory must belong to root or  the
      caller. The command creates cache directories and the object, not installed
-     state or payload files; it does not resolve providers  or	run  hooks.  The
+     state  or	payload	 files;	 it does not resolve providers or run hooks. The
      cache remains local and unsigned.
 
      Cache verify opens the object named by a lowercase SHA-256 through the same
-     target-root  directory  chain, stages a private snapshot and checks the di-
-     gest, payload, known ELF ABI facts and supported requirements.  It	 reports
-     the  verified  name,  arch	 and libc. It does not mutate the cache or prove
+     target-root directory chain, stages a private snapshot and checks	the  di-
+     gest,  payload,  known ELF ABI facts and supported requirements. It reports
+     the verified name, arch and libc. It does not mutate  the	cache  or  prove
      that other package dependencies can be satisfied.
 
-     Database init creates an empty ROOT/var/lib/holypkg with installed,  trans-
-     actions  and  index  directories,	and  a generation file containing 0.  It
+     Database  init creates an empty ROOT/var/lib/holypkg with installed, trans-
+     actions and index directories, and a  generation  file  containing	 0.   It
      locks the database directory for this operation and uses a synced temporary
-     file plus link for exclusive generation creation;	repeating  init	 retains
+     file  plus	 link  for exclusive generation creation; repeating init retains
      the existing generation. Init checks existing records and generation before
-     publishing	 a  new	 generation  file; unknown entries cannot turn a partial
-     database into an apparently initialized one. Status  holds	 a  shared  lock
-     while  validating	the layout and reading the generation. It recognizes in-
-     stalled instance directories and one pending reservation. Init rejects  any
-     nonempty  installed,  transactions or index directory. Both commands reject
+     publishing a new generation file; unknown entries	cannot	turn  a	 partial
+     database  into  an	 apparently  initialized one. Status holds a shared lock
+     while validating the layout and reading the generation. It	 recognizes  in-
+     stalled  instance directories and one pending reservation. Init rejects any
+     nonempty installed, transactions or index directory. Both	commands  reject
      symlinked, group-writable or world-writable ancestor directories inside the
      target root.  Init does not register packages or install files.
 
      Database reserve checks a verified SHA-256 object in the target-root cache,
      locks the database at its current generation and publishes one fsynced pre-
-     pared reservation in transactions/pending. Status validates the record  and
+     pared  reservation in transactions/pending. Status validates the record and
      returns 5 while it is present. Reserve refuses a second pending record with
-     status  5.	 Database  cancel  validates  and removes a prepared or approved
-     record; it leaves the cached archive and rootfs unchanged. The  record  has
-     format  holy-reservation-1,  its  stage, generation and artifact digest. An
-     approved record also contains the plan digest.  This is  a	 reservation  of
-     inputs,  not  a  dependency-resolved install plan or committed transaction.
-     Incomplete file mutation requires manual inspection.  An  unknown	or  mal-
+     status 5. Database cancel validates and  removes  a  prepared  or	approved
+     record;  it  leaves the cached archive and rootfs unchanged. The record has
+     format holy-reservation-1, its stage, generation and  artifact  digest.  An
+     approved  record  also  contains the plan digest.	This is a reservation of
+     inputs, not a dependency-resolved install plan  or	 committed  transaction.
+     Incomplete	 file  mutation	 requires manual inspection.  An unknown or mal-
      formed journal entry remains an error; cancel will not discard it silently.
 
-     Status  --json  emits one holy-db-status-1 state event with numeric genera-
-     tion and pending null or a prepared/approved SHA-256  object.  An	approved
-     object  also  includes  its plan digest. A malformed database emits one in-
-     valid-state event and returns 1, without partial state on stdout.	A  valid
-     file-mutation  journal produces an incomplete event and exit code 5. Status
-     checks the installed record layout; it does  not  replace	holypkg	 check's
+     Status --json emits one holy-db-status-1 state event with	numeric	 genera-
+     tion  and	pending	 null or a prepared/approved SHA-256 object. An approved
+     object also includes its plan digest. A malformed database	 emits	one  in-
+     valid-state  event	 and returns 1, without partial state on stdout. A valid
+     file-mutation journal produces an incomplete event and exit code 5.  Status
+     checks  the  installed  record  layout; it does not replace holypkg check's
      comparison of installed manifests against the actual rootfs.
 
-     Database  recover	handles	 interruption of reservation publication. It ac-
-     cepts one .holy-tmp- followed by 32  lowercase  hex  digits,  verifies  its
-     record  against the current generation and removes that directory entry. If
-     pending also exists, the temporary name must be a hardlink	 to  that  exact
-     pending  inode.  A	 valid unpublished approved record for the same artifact
-     may instead be removed while leaving its prepared predecessor  intact.  Re-
-     cover  preserves  pending and returns 5. With no pending it returns 0 after
-     removing the orphan. Unknown entries, stale generations,  unrelated  inodes
-     and  malformed  records  fail  without deletion. For an incomplete applying
+     Database recover handles interruption of reservation  publication.	 It  ac-
+     cepts  one	 .holy-tmp-  followed  by  32 lowercase hex digits, verifies its
+     record against the current generation and removes that directory entry.  If
+     pending  also  exists,  the temporary name must be a hardlink to that exact
+     pending inode. A valid unpublished approved record for  the  same	artifact
+     may  instead  be removed while leaving its prepared predecessor intact. Re-
+     cover preserves pending and returns 5. With no pending it returns	0  after
+     removing  the  orphan. Unknown entries, stale generations, unrelated inodes
+     and malformed records fail without deletion.  For	an  incomplete	applying
      transaction, recover returns 5 unless --abort-empty proves that none of its
-     payload files or installed instance has appeared. --finish-apply  clears  a
-     completed	applying transaction after validating the new generation and in-
-     stalled payload. For an incomplete removing transaction,  --continue  veri-
-     fies  and	removes	 any remaining listed files. It does not replay hooks or
+     payload  files  or installed instance has appeared. --finish-apply clears a
+     completed applying transaction after validating the new generation and  in-
+     stalled  payload.	For an incomplete removing transaction, --continue veri-
+     fies and removes any remaining listed files. It does not  replay  hooks  or
      undo installed files.
 
-     Database preflight holds a shared database lock, validates the one	 pending
-     reservation,  reads  a verified private snapshot of its cached artifact and
-     runs the same target-root collision and dependency preview as  preview  lo-
-     cal:FILE.	 It  returns 0 for a zero-decision preview, 3 for unresolved re-
+     Database  preflight holds a shared database lock, validates the one pending
+     reservation, reads a verified private snapshot of its cached  artifact  and
+     runs  the	same target-root collision and dependency preview as preview lo-
+     cal:FILE.	It returns 0 for a zero-decision preview, 3 for	 unresolved  re-
      quirements or runtime edges, 4 for path conflicts and 6 if the reservation,
-     cached input or supported payload profile is unavailable. The output  names
+     cached  input or supported payload profile is unavailable. The output names
      the database generation and artifact digest.  It does not turn the reserva-
-     tion  into an approved plan. File changes outside the database lock can in-
-     validate the preview before apply; apply rechecks paths  and  the	artifact
-     under  its	 writer	 lock.	With --json, both preview and database preflight
-     emit holy-preview-1 path events and a summary only after the  full	 archive
-     walk.  Path events include state new, existing-dir or conflict and optional
+     tion into an approved plan. File changes outside the database lock can  in-
+     validate  the  preview  before apply; apply rechecks paths and the artifact
+     under its writer lock.  With --json, both preview	and  database  preflight
+     emit  holy-preview-1  path events and a summary only after the full archive
+     walk. Path events include state new, existing-dir or conflict and	optional
      interpreter and helper fields. A completed database preflight adds a reser-
      vation event with generation and artifact. Invalid input, unsupported hooks
-     and unavailable reservations produce one structured  error	 event,	 without
+     and  unavailable  reservations  produce one structured error event, without
      partial path output.
 
      The repository index command validates regular .holy files in DIRECTORY and
-     writes  an	 unsigned, lexicographically ordered index through an atomic re-
-     name.  It refuses symlinked packages, duplicate package  identities  and  a
+     writes an unsigned, lexicographically ordered index through an  atomic  re-
+     name.   It	 refuses  symlinked packages, duplicate package identities and a
      nonregular	 existing  index.  It  rejects	unsupported  HOLY/deps	records.
-     Records in format holy-index-prototype-2 contain the quoted name,	version,
-     release,  os,  arch,  libc, relative filename, SHA-256 and size.  Following
-     package records include typed claim lines bound  to  the  package	SHA-256,
+     Records  in format holy-index-prototype-2 contain the quoted name, version,
+     release, os, arch, libc, relative filename, SHA-256  and  size.   Following
+     package  records  include	typed  claim lines bound to the package SHA-256,
      copied from validated HOLY/provides. Readers compare every indexed claim to
-     the  artifact  before returning records. Old holy-index-prototype-1 genera-
+     the artifact before returning records. Old	 holy-index-prototype-1	 genera-
      tions remain readable. This prototype omits indexed dependencies and signa-
      tures; source adapters must not treat it as the native repository format.
 
-     The seal command validates the entire local index, creates an  index.SHA256
-     generation	 and  atomically  publishes a current pointer containing its di-
-     gest.  The list and search commands require current and  check  its  digest
-     before  reading  the generation. Indexing creates a draft index; publish it
+     The  seal command validates the entire local index, creates an index.SHA256
+     generation and atomically publishes a current pointer  containing	its  di-
+     gest.   The  list	and search commands require current and check its digest
+     before reading the generation. Indexing creates a draft index;  publish  it
      with seal after reviewing changes. Removing current makes the directory un-
-     available to list and search rather than exposing an unsealed  draft.   The
-     pointer  and  artifacts  remain unsigned and can be changed by someone with
+     available	to  list and search rather than exposing an unsealed draft.  The
+     pointer and artifacts remain unsigned and can be changed  by  someone  with
      write access to the directory. Existing generation files remain in place.
 
-     The repository list command reads that prototype index with  the  holy.conf
+     The  repository  list command reads that prototype index with the holy.conf
      lexer and checks each referenced regular archive's size, SHA-256, identity,
      payload and known ELF ABI facts before printing records. An index without a
-     signature	carries	 no provenance guarantee. Neither command installs pack-
+     signature carries no provenance guarantee. Neither command	 installs  pack-
      ages or activates this directory as a package source.
 
-     The repository search command verifies the same complete  local  index  and
+     The  repository  search  command verifies the same complete local index and
      returns exact name matches. No match prints a zero-count summary. This pro-
      totype does not perform fuzzy search, dependency resolution or provider se-
      lection.
 
-     Repository	 providers  searches  the sealed local catalog for an exact KIND
-     and NAME match. It finds indexed claims from HOLY/provides	 and  the  pack-
+     Repository providers searches the sealed local catalog for	 an  exact  KIND
+     and  NAME	match.	It finds indexed claims from HOLY/provides and the pack-
      age's own metadata name for KIND=package. For prototype-2, it validates the
-     complete  index  and verifies only candidate artifacts and their full claim
-     sets before printing package records and a count. An unselected object  can
+     complete index and verifies only candidate artifacts and their  full  claim
+     sets  before printing package records and a count. An unselected object can
      change without invalidating this query; no match describes the sealed index
      generation, not every file in the repository directory. Prototype-1 queries
-     still  verify  all	 artifacts.  Listed claims are unverified: an exact name
-     does not prove file presence, ABI compatibility,  version	constraints,  or
-     successful	 execution. There is no source ranking or dependency solver yet;
-     the prototype-2 query uses indexed claim lookup but still scans  all  index
+     still verify all artifacts. Listed claims are  unverified:	 an  exact  name
+     does  not	prove  file presence, ABI compatibility, version constraints, or
+     successful execution. There is no source ranking or dependency solver  yet;
+     the  prototype-2  query uses indexed claim lookup but still scans all index
      rows.
 
      The make check-solver target (also run by make check) exercises an internal
-     libsolv  interface	 with  normalized, exact capability IDs and AND/OR, con-
-     flict and cyclic fixtures.	 The caller  must  pre-filter  candidates  using
-     each  source  family's  version semantics before it can use that interface.
-     The fixture is not a holypkg solve command or an installed-system	test.  A
-     missing  libsolv  development package makes the target fail rather than re-
+     libsolv interface with normalized, exact capability IDs  and  AND/OR,  con-
+     flict  and	 cyclic	 fixtures.   The caller must pre-filter candidates using
+     each source family's version semantics before it can  use	that  interface.
+     The  fixture  is not a holypkg solve command or an installed-system test. A
+     missing libsolv development package makes the target fail rather  than  re-
      porting a passed fixture.	The internal unique-solution check returns deci-
      sion-required when excluding a selected provider permits a second solution.
      It does not rank sources or ask the user for a choice. This detects differ-
      ing package sets, not multiple provider edges within one set. A plain solve
      returns one proposed set, not a reviewed installation plan.  With --json it
-     emits holy-repo-candidates-1 candidate events (package identity,  filename,
+     emits  holy-repo-candidates-1 candidate events (package identity, filename,
      SHA-256 and byte size), then a count summary. Invalid catalogs emit one er-
-     ror  event	 without partial candidates; invalid KIND/NAME emits an invalid-
-     query event. The JSON candidate identifies	 an  artifact,	not  a	selected
+     ror event without partial candidates; invalid KIND/NAME emits  an	invalid-
+     query  event.  The	 JSON  candidate  identifies an artifact, not a selected
      provider edge or an ABI compatibility verdict.
 
-     The  repository  fetch command requires a lowercase SHA-256 from the sealed
-     index. It verifies the complete index and artifacts, then	copies	the  se-
-     lected  snapshot to an existing output directory as SHA256.holy. It rejects
+     The repository fetch command requires a lowercase SHA-256 from  the  sealed
+     index.  It	 verifies  the complete index and artifacts, then copies the se-
+     lected snapshot to an existing output directory as SHA256.holy. It	 rejects
      a missing digest or a changed unrelated artifact. The copy does not install
-     or grant trust to the package; repository metadata and objects  remain  un-
+     or	 grant	trust to the package; repository metadata and objects remain un-
      signed.
 
 EXIT STATUS
-     0	indicates success under the implemented checks; 1 indicates a failed lo-
-     cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
-     tion  or package inspection. Diagnostics go to standard error except --json
+     0 indicates success under the implemented checks; 1 indicates a failed  lo-
+     cal  fetch,  extraction or check; 2 indicates invalid arguments, configura-
+     tion or package inspection. Diagnostics go to standard error except  --json
      check events, which go to standard output.
 
-     Preview returns 3 when valid requirements need provider  decisions,  4  for
-     path  conflicts  and  6 when hooks or privileged modes need unsupported re-
+     Preview  returns  3  when valid requirements need provider decisions, 4 for
+     path conflicts and 6 when hooks or privileged modes  need	unsupported  re-
      view. It returns 1 on target-root I/O failure.
 
 SEE ALSO

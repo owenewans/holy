@@ -7,6 +7,7 @@
 
 #include <archive.h>
 #include <archive_entry.h>
+#include <openssl/evp.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -20,14 +21,32 @@
 
 struct writer {
     struct archive *archive;
+    FILE *manifest;
 };
+
+static int write_manifest_path(FILE *file, const char *path)
+{
+    const unsigned char *p = (const unsigned char *)path;
+    if (fputc('"', file) == EOF) return 0;
+    for (; *p; ++p) {
+        if (*p == '"' || *p == '\\') {
+            if (fputc('\\', file) == EOF || fputc(*p, file) == EOF) return 0;
+        } else if (*p < 0x21 || *p >= 0x7f) {
+            if (fprintf(file, "\\x%02x", (unsigned)*p) < 0) return 0;
+        } else if (fputc(*p, file) == EOF) return 0;
+    }
+    return fputc('"', file) != EOF;
+}
 
 static int write_entry(struct writer *writer, int parent, const char *name,
                        const char *archive_path, int directory)
 {
     struct archive_entry *entry = NULL;
-    struct stat st;
+    struct stat st, original;
     char buffer[65536];
+    EVP_MD_CTX *hash = NULL;
+    unsigned char digest[32];
+    unsigned int digest_size;
     int fd = -1, ok = 0;
     ssize_t got;
     fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC |
@@ -36,16 +55,23 @@ static int write_entry(struct writer *writer, int parent, const char *name,
         (directory ? !S_ISDIR(st.st_mode) : !S_ISREG(st.st_mode)) ||
         (!directory && (st.st_nlink != 1 || st.st_size < 0)) ||
         flistxattr(fd, NULL, 0) != 0) goto done;
-    entry = archive_entry_new();
-    if (!entry) goto done;
-    archive_entry_set_pathname(entry, archive_path);
-    archive_entry_set_filetype(entry, directory ? AE_IFDIR : AE_IFREG);
-    archive_entry_set_perm(entry, st.st_mode & 07777);
-    archive_entry_set_uid(entry, st.st_uid);
-    archive_entry_set_gid(entry, st.st_gid);
-    archive_entry_set_mtime(entry, 0, 0);
-    archive_entry_set_size(entry, directory ? 0 : st.st_size);
-    if (archive_write_header(writer->archive, entry) != ARCHIVE_OK) goto done;
+    original = st;
+    if (writer->archive) {
+        entry = archive_entry_new();
+        if (!entry) goto done;
+        archive_entry_set_pathname(entry, archive_path);
+        archive_entry_set_filetype(entry, directory ? AE_IFDIR : AE_IFREG);
+        archive_entry_set_perm(entry, st.st_mode & 07777);
+        archive_entry_set_uid(entry, st.st_uid);
+        archive_entry_set_gid(entry, st.st_gid);
+        archive_entry_set_mtime(entry, 0, 0);
+        archive_entry_set_size(entry, directory ? 0 : st.st_size);
+        if (archive_write_header(writer->archive, entry) != ARCHIVE_OK) goto done;
+    }
+    if (writer->manifest && !directory) {
+        hash = EVP_MD_CTX_new();
+        if (!hash || EVP_DigestInit_ex(hash, EVP_sha256(), NULL) != 1) goto done;
+    }
     if (!directory) {
         off_t offset = 0;
         while (offset < st.st_size) {
@@ -53,17 +79,42 @@ static int write_entry(struct writer *writer, int parent, const char *name,
                           (size_t)(st.st_size - offset) : sizeof buffer;
             got = read(fd, buffer, want);
             if (got < 0 && errno == EINTR) continue;
-            if (got <= 0 || archive_write_data(writer->archive, buffer, (size_t)got) != got)
-                goto done;
+            if (got <= 0 || (writer->archive &&
+                archive_write_data(writer->archive, buffer, (size_t)got) != got) ||
+                (hash && EVP_DigestUpdate(hash, buffer, (size_t)got) != 1)) goto done;
             offset += got;
         }
-        if (fstat(fd, &st) || st.st_size != offset) goto done;
+        if (fstat(fd, &st) || st.st_size != offset ||
+            st.st_dev != original.st_dev || st.st_ino != original.st_ino ||
+            st.st_mode != original.st_mode || st.st_uid != original.st_uid ||
+            st.st_gid != original.st_gid ||
+            st.st_mtim.tv_sec != original.st_mtim.tv_sec ||
+            st.st_mtim.tv_nsec != original.st_mtim.tv_nsec) goto done;
+        if (hash && (EVP_DigestFinal_ex(hash, digest, &digest_size) != 1 ||
+                     digest_size != sizeof digest)) goto done;
+    }
+    if (writer->manifest) {
+        size_t i;
+        if (fprintf(writer->manifest, "%s ", directory ? "dir" : "file") < 0 ||
+            !write_manifest_path(writer->manifest, archive_path + 5) ||
+            fprintf(writer->manifest, " %o - - %lu %lu %lld ",
+                    (unsigned)(st.st_mode & 07777), (unsigned long)st.st_uid,
+                    (unsigned long)st.st_gid, directory ? 0LL : (long long)st.st_size) < 0)
+            goto done;
+        if (directory) {
+            if (fputs("-", writer->manifest) == EOF) goto done;
+        } else for (i = 0; i < sizeof digest; ++i)
+            if (fprintf(writer->manifest, "%02x", (unsigned)digest[i]) < 0) goto done;
+        if (fputs(" none - -\n", writer->manifest) == EOF) goto done;
     }
     ok = 1;
 done:
     archive_entry_free(entry);
+    EVP_MD_CTX_free(hash);
     if (fd >= 0) close(fd);
-    if (!ok) fprintf(stderr, "holypkg: cannot pack %s\n", archive_path);
+    if (!ok) fprintf(stderr, "holypkg: cannot pack %s: %s\n", archive_path,
+                     writer->archive && archive_error_string(writer->archive) ?
+                     archive_error_string(writer->archive) : "unsupported input");
     return ok;
 }
 
@@ -156,7 +207,7 @@ static int walk_data(struct writer *writer, int parent, const char *relative,
     size_t count = 0, capacity = 0, i;
     if (depth > 128) return 0;
     dir = openat(parent, relative, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    if (dir < 0) goto done;
+    if (dir < 0 || flistxattr(dir, NULL, 0) != 0) goto done;
     scan = dup(dir);
     if (scan < 0 || !(list = fdopendir(scan))) goto done;
     scan = -1;
@@ -240,6 +291,7 @@ int holy_pack(const char *tree, const char *output)
     writer.archive = archive_write_new();
     if (!writer.archive || archive_write_add_filter_lz4(writer.archive) != ARCHIVE_OK ||
         archive_write_set_format_pax_restricted(writer.archive) != ARCHIVE_OK ||
+        archive_write_set_options(writer.archive, "hdrcharset=UTF-8") != ARCHIVE_OK ||
         archive_write_open_fd(writer.archive, archive_fd) != ARCHIVE_OK) goto done;
     if (!write_entry(&writer, root, "HOLY", "HOLY", 1)) goto done;
     for (i = 0; i < sizeof meta / sizeof *meta; ++i) {
@@ -275,6 +327,43 @@ done:
     if (temporary) { unlink(temporary); free(temporary); }
     if (data >= 0) close(data);
     if (holy >= 0) close(holy);
+    if (root >= 0) close(root);
+    return ok;
+}
+
+int holy_generate_files(const char *tree, const char *output)
+{
+    struct writer writer = {0};
+    char *temporary = NULL;
+    size_t length = strlen(output);
+    int root = -1, fd = -1, ok = 0;
+    if (length > SIZE_MAX - 20) return 0;
+    temporary = malloc(length + 20);
+    if (!temporary) return 0;
+    snprintf(temporary, length + 20, "%s.holy-tmp-XXXXXX", output);
+    root = open(tree, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0 || !outside_tree(root, output)) goto done;
+    fd = mkstemp(temporary);
+    if (fd < 0) goto done;
+    writer.manifest = fdopen(fd, "w");
+    if (!writer.manifest) goto done;
+    fd = -1;
+    if (!walk_data(&writer, root, "DATA", "DATA", 0) ||
+        fflush(writer.manifest) || fsync(fileno(writer.manifest))) goto done;
+    if (fclose(writer.manifest)) { writer.manifest = NULL; goto done; }
+    writer.manifest = NULL;
+    if (link(temporary, output)) goto done;
+    if (!sync_parent(output)) {
+        fprintf(stderr, "holypkg: manifest published but directory sync failed: %s\n", output);
+        goto done;
+    }
+    printf("manifest %s\n", output);
+    ok = 1;
+done:
+    if (!ok) fprintf(stderr, "holypkg: manifest generation failed\n");
+    if (writer.manifest) fclose(writer.manifest);
+    if (fd >= 0) close(fd);
+    if (temporary) { unlink(temporary); free(temporary); }
     if (root >= 0) close(root);
     return ok;
 }

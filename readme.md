@@ -37,6 +37,8 @@ The C99 prototype verifies local `.holy` archives, inspects ELF, typed
 requirements and capability claims, and checks root path conflicts.
 `holypkg pack` writes a verified `.holy` from a prepared tree of ordinary
 files and directories; recipes and foreign conversion remain open.
+`holypkg manifest generate TREE --output FILE` computes HOLY/files records
+for TREE/DATA without changing the tree.
 It stages verified archives in a target-root cache.
 It can download a pinned native `.holy` over verified HTTPS to a local directory.
 It can initialize an empty target-root package database and reserve or cancel

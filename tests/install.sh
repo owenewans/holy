@@ -32,9 +32,22 @@ lz4 -q "$tmp/data.tar" "$tmp/data.holy"
 "$bin" pack "$tmp/payload" --output "$tmp/written.holy" > "$tmp/out"
 grep -qx "packed $tmp/written.holy" "$tmp/out"
 "$bin" verify "local:$tmp/written.holy" > "$tmp/out"
+"$bin" manifest generate "$tmp/payload" --output "$tmp/generated-files" > "$tmp/out"
+grep -qx "manifest $tmp/generated-files" "$tmp/out"
+cp "$tmp/payload/HOLY/files" "$tmp/handwritten-files"
+cp "$tmp/generated-files" "$tmp/payload/HOLY/files"
+"$bin" pack "$tmp/payload" --output "$tmp/generated.holy" > "$tmp/out"
+"$bin" verify "local:$tmp/generated.holy" > "$tmp/out"
+mv "$tmp/handwritten-files" "$tmp/payload/HOLY/files"
+if "$bin" manifest generate "$tmp/payload" --output "$tmp/generated-files" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+test ! -s "$tmp/out"
+if "$bin" manifest generate "$tmp/payload" --output "$tmp/payload/HOLY/files2" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+test ! -e "$tmp/payload/HOLY/files2"
 mkdir -p "$tmp/empty/HOLY" "$tmp/empty/DATA"
 cp "$tmp/payload/HOLY/"* "$tmp/empty/HOLY/"
 : > "$tmp/empty/HOLY/files"
+"$bin" manifest generate "$tmp/empty" --output "$tmp/empty-files" > "$tmp/out"
+test ! -s "$tmp/empty-files"
 "$bin" pack "$tmp/empty" --output "$tmp/empty.holy" > "$tmp/out"
 "$bin" verify "local:$tmp/empty.holy" > "$tmp/out"
 touch -m -d '2001-01-01 00:00:00 UTC' "$tmp/payload/DATA/usr/bin/data"
@@ -46,10 +59,24 @@ if "$bin" pack "$tmp/payload" --output "$tmp/written.holy" > "$tmp/out" 2> "$tmp
 test ! -s "$tmp/out"
 test "$(find "$tmp" -name '*.holy-tmp-*' | wc -l)" -eq 0
 ln -s "$tmp/payload/DATA/usr/bin/data" "$tmp/payload/DATA/usr/bin/extra"
+if "$bin" manifest generate "$tmp/payload" --output "$tmp/refused-files" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+test ! -e "$tmp/refused-files"
 if "$bin" pack "$tmp/payload" --output "$tmp/refused.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
 test ! -e "$tmp/refused.holy"
 rm "$tmp/payload/DATA/usr/bin/extra"
+printf 'spaced\n' > "$tmp/payload/DATA/usr/bin/a b"
+printf 'unicode\n' > "$tmp/payload/DATA/usr/bin/é"
+"$bin" manifest generate "$tmp/payload" --output "$tmp/spaced-files" > "$tmp/out"
+cp "$tmp/payload/HOLY/files" "$tmp/handwritten-files"
+cp "$tmp/spaced-files" "$tmp/payload/HOLY/files"
+"$bin" pack "$tmp/payload" --output "$tmp/spaced.holy" > "$tmp/out"
+"$bin" verify "local:$tmp/spaced.holy" > "$tmp/out"
+mv "$tmp/handwritten-files" "$tmp/payload/HOLY/files"
+rm "$tmp/payload/DATA/usr/bin/a b"
+rm "$tmp/payload/DATA/usr/bin/é"
 ln "$tmp/payload/DATA/usr/bin/data" "$tmp/payload/DATA/usr/bin/extra"
+if "$bin" manifest generate "$tmp/payload" --output "$tmp/refused-files" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+test ! -e "$tmp/refused-files"
 if "$bin" pack "$tmp/payload" --output "$tmp/refused.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
 test ! -e "$tmp/refused.holy"
 rm "$tmp/payload/DATA/usr/bin/extra"
@@ -59,6 +86,8 @@ test ! -e "$tmp/refused.holy"
 rm "$tmp/payload/HOLY/extra"
 if command -v setfattr > /dev/null 2>&1; then
     setfattr -n user.holy-fixture -v value "$tmp/payload/DATA/usr/bin/data"
+    if "$bin" manifest generate "$tmp/payload" --output "$tmp/refused-files" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+    test ! -e "$tmp/refused-files"
     if "$bin" pack "$tmp/payload" --output "$tmp/refused.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
     test ! -e "$tmp/refused.holy"
     setfattr -x user.holy-fixture "$tmp/payload/DATA/usr/bin/data"

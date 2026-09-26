@@ -13,6 +13,8 @@ it does not mean a bootable distribution or general package support.
 - [x] Verify local LZ4-frame `.holy` archives, file manifests, hashes and basic ELF facts.
 - [x] Pack a prepared regular-file/dir tree into a verified native `.holy`;
   reject unlisted inputs and unsupported file types before publication.
+- [x] Generate a prepared DATA tree's regular-file/dir HOLY/files manifest
+  with numeric ownership and SHA-256; reject unsupported objects.
 - [x] Stage verified objects in a target-root cache; preview collisions.
 - [x] Fetch a pinned native `.holy` over HTTPS with certificate checks and a
   local CA fixture; configured source sync and signatures remain open.

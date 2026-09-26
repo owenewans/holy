@@ -32,6 +32,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg pack DIRECTORY --output FILE.holy
 .br
+.B holypkg manifest generate DIRECTORY --output FILE
+.br
 .B holypkg check local:FILE --root DIRECTORY
 .br
 .B holypkg check local:FILE --root DIRECTORY --json
@@ -133,6 +135,17 @@ checks known ELF ABI facts and supported dependency/provider records, and
 publishes it only when the destination does not exist. Pack neither
 generates HOLY/files nor infers ABI facts. A mismatched manifest fails without
 publishing a package; recipes and foreign conversion are separate work.
+.PP
+Manifest generate reads DATA/ below DIRECTORY and writes HOLY/files records
+to a new output path outside the input tree. It emits directories and ordinary
+files in sorted order, numeric UID/GID, modes, sizes and SHA-256 digests.
+Symbolic owner/group names are placeholders; the numeric values remain the
+source tree's ownership. The command refuses symlinks, hardlinks and xattrs,
+escapes paths with whitespace or non-ASCII bytes, and does not replace an
+existing output. Copy the generated file to HOLY/files and run pack; neither
+command infers package arch/libc or dependencies from arbitrary data files.
+Archive pack and inspection use the active LC_CTYPE locale for libarchive
+pathname conversion. Use an available UTF-8 locale for UTF-8 filenames.
 .PP
 The db plan command reads the prepared reservation at the current database
 generation. It verifies a private snapshot of the cached artifact, checks
