@@ -21,7 +21,7 @@ struct pending_link {
 
 struct archive_path {
     char *name;
-    int symlink;
+    int blocks_children;
 };
 
 static int compare_paths(const void *left, const void *right)
@@ -38,7 +38,7 @@ static int path_conflicts(struct archive_path *paths, size_t count)
         size_t low, high, len;
         char *prefix;
         if (i && !strcmp(paths[i - 1].name, paths[i].name)) return 1;
-        if (!paths[i].symlink) continue;
+        if (!paths[i].blocks_children) continue;
         len = strlen(paths[i].name);
         if (len > (size_t)-1 - 2) return 1;
         prefix = malloc(len + 2);
@@ -121,7 +121,8 @@ static int supported(struct archive_entry *entry)
     const char *name = archive_entry_pathname(entry);
     const char *target = archive_entry_hardlink(entry);
     mode_t type = archive_entry_filetype(entry);
-    if (!holy_safe_archive_path(name) || archive_entry_size(entry) < 0)
+    if (!holy_safe_archive_path(name) || archive_entry_size(entry) < 0 ||
+        archive_entry_xattr_count(entry) > 0 || archive_entry_acl_types(entry))
         return 0;
     if (target) {
         if ((type != AE_IFREG && type != 0) ||
@@ -160,7 +161,7 @@ static int preflight(const char *source)
         length = strlen(paths[count].name);
         if (length > 1 && paths[count].name[length - 1] == '/')
             paths[count].name[length - 1] = '\0';
-        paths[count].symlink = archive_entry_filetype(entry) == AE_IFLNK;
+        paths[count].blocks_children = archive_entry_filetype(entry) != AE_IFDIR;
         ++count;
         if (archive_read_data_skip(a) != ARCHIVE_OK) { ok = 0; break; }
     }

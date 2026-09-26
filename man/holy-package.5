@@ -29,7 +29,9 @@ TYPE=dir, SIZE=0 and SHA256=-. The verifier rejects symlink targets that
 escape the root by lexical traversal. The text lexer follows holy.conf(5), so
 quotes and escapes can preserve spaces in paths. Every archived directory
 except DATA itself needs a manifest record. The verifier does not support
-special files or extended attributes. The planned full format includes them.
+special files, ACLs or extended attributes. The verifier rejects DATA entries
+that carry archive xattrs or ACLs, even if HOLY/files says XATTRS=-. The
+planned full format includes those attributes.
 .PP
 The prototype cannot install archives. It does not verify dependencies,
 signatures, symbolic owner names or the installed filesystem. A full format

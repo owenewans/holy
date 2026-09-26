@@ -62,6 +62,19 @@ cmp "$tmp/payload/DATA/usr/bin/hello" "$tmp/unpacked/DATA/usr/bin/hello"
 test -z "$(find "$tmp" -maxdepth 1 -name 'holy-extract-*' -print)"
 if "$bin" fetch "local:$tmp/package.holy" --extract --output "$tmp/unpacked" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'create extraction directory' "$tmp/err"
+setfattr -n user.holy -v probe "$tmp/payload/DATA/usr/bin/hello"
+tar --xattrs --format=pax -cf "$tmp/xattr.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/xattr.tar" "$tmp/xattr.holy"
+if "$bin" verify "local:$tmp/xattr.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'unsupported payload xattrs' "$tmp/err"
+"$bin" fetch "local:$tmp/xattr.holy" --output "$tmp/fetched" > "$tmp/out"
+setfattr -x user.holy "$tmp/payload/DATA/usr/bin/hello"
+setfacl -m u:12345:r-- "$tmp/payload/DATA/usr/bin/hello"
+tar --acls --format=pax -cf "$tmp/acl.tar" -C "$tmp/payload" HOLY DATA
+lz4 -q "$tmp/acl.tar" "$tmp/acl.holy"
+if "$bin" verify "local:$tmp/acl.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'unsupported payload ACL' "$tmp/err"
+setfacl -b "$tmp/payload/DATA/usr/bin/hello"
 mkdir -p "$tmp/alias-payload/DATA/usr/bin"
 cp -a "$tmp/payload/HOLY" "$tmp/alias-payload/HOLY"
 cp "$tmp/payload/DATA/usr/bin/hello" "$tmp/alias-payload/DATA/usr/bin/hello"
@@ -79,6 +92,24 @@ lz4 -q "$tmp/alias.tar" "$tmp/alias.holy"
 if "$bin" fetch "local:$tmp/alias.holy" --extract --output "$tmp/alias-out" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'unsupported or damaged extraction input' "$tmp/err"
 test ! -e "$tmp/alias-out"
+cp -a "$tmp/alias-payload" "$tmp/file-parent-payload"
+rm "$tmp/file-parent-payload/DATA/alias"
+printf 'block\n' > "$tmp/file-parent-payload/DATA/alias"
+parent_hash=$(sha256sum "$tmp/file-parent-payload/DATA/alias" | cut -d ' ' -f 1)
+sed '/^symlink alias /d' "$tmp/file-parent-payload/HOLY/files" > "$tmp/parent-files"
+printf 'file alias %s root root %s %s 6 %s none - -\n' \
+    "$mode" "$uid" "$gid" "$parent_hash" >> "$tmp/parent-files"
+mv "$tmp/parent-files" "$tmp/file-parent-payload/HOLY/files"
+tar -cf "$tmp/file-parent.tar" -C "$tmp/file-parent-payload" HOLY
+tar -rf "$tmp/file-parent.tar" --no-recursion -C "$tmp/file-parent-payload" \
+    DATA DATA/alias DATA/usr DATA/usr/bin
+tar -rf "$tmp/file-parent.tar" --transform='s@^DATA/usr/bin/hello$@DATA/alias/evil@' \
+    -C "$tmp/file-parent-payload" DATA/usr/bin/hello
+lz4 -q "$tmp/file-parent.tar" "$tmp/file-parent.holy"
+"$bin" verify "local:$tmp/file-parent.holy" > "$tmp/out"
+if "$bin" fetch "local:$tmp/file-parent.holy" --extract --output "$tmp/file-parent-out" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'unsupported or damaged extraction input' "$tmp/err"
+test ! -e "$tmp/file-parent-out"
 : > "$tmp/payload/HOLY/extra"
 tar -cf "$tmp/duplicate-extra.tar" -C "$tmp/payload" HOLY DATA
 tar -rf "$tmp/duplicate-extra.tar" -C "$tmp/payload" HOLY/extra

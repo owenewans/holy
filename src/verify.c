@@ -217,6 +217,14 @@ int holy_verify(const char *path)
             fprintf(stderr, "%s: unsafe archive path\n", path);
             goto done;
         }
+        if (is_data && archive_entry_xattr_count(entry) > 0) {
+            fprintf(stderr, "%s: unsupported payload xattrs\n", path);
+            goto done;
+        }
+        if (is_data && archive_entry_acl_types(entry)) {
+            fprintf(stderr, "%s: unsupported payload ACL\n", path);
+            goto done;
+        }
         if ((!strcmp(name, "HOLY") || !strcmp(name, "HOLY/") ||
              !strcmp(name, "DATA") || !strcmp(name, "DATA/")) &&
             archive_entry_filetype(entry) != AE_IFDIR) {
