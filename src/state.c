@@ -1128,10 +1128,67 @@ done:
     return result;
 }
 
+struct check_finding {
+    char *path;
+    char *code;
+};
+
 struct check_result {
     char digest[65];
     int intact;
+    struct check_finding *findings;
+    size_t count;
 };
+
+static void free_check_result(struct check_result *record)
+{
+    size_t i;
+    for (i = 0; i < record->count; ++i) {
+        free(record->findings[i].path);
+        free(record->findings[i].code);
+    }
+    free(record->findings);
+}
+
+static int collect_finding(void *context, const char *path, const char *code)
+{
+    struct check_result *record = context;
+    struct check_finding *grown;
+    char *copy, *code_copy;
+    if (record->count >= SIZE_MAX / sizeof *grown) return 0;
+    copy = strdup(path);
+    if (!copy) return 0;
+    code_copy = strdup(code);
+    if (!code_copy) { free(copy); return 0; }
+    grown = realloc(record->findings, (record->count + 1) * sizeof *grown);
+    if (!grown) { free(copy); free(code_copy); return 0; }
+    record->findings = grown;
+    grown[record->count].path = copy;
+    grown[record->count++].code = code_copy;
+    return 1;
+}
+
+static int print_check_result(const struct check_result *record,
+                               unsigned long long generation)
+{
+    size_t i;
+    printf("{\"schema\":\"holy-installed-check-1\",\"type\":\"artifact\",\"artifact\":\"%s\",\"state\":\"%s\",\"code\":%s,\"generation\":%llu,\"findings\":[",
+           record->digest, record->intact ? "pass" : "fail",
+           record->intact ? "null" : "\"changed-file\"", generation);
+    for (i = 0; i < record->count; ++i) {
+        const unsigned char *p = (const unsigned char *)record->findings[i].path;
+        printf("%s{\"code\":\"%s\",\"severity\":\"error\",\"path\":\"",
+               i ? "," : "", record->findings[i].code);
+        for (; *p; ++p) {
+            if (*p == '"' || *p == '\\') printf("\\%c", *p);
+            else if (*p < 32 || *p >= 127) printf("\\u%04x", (unsigned)*p);
+            else putchar(*p);
+        }
+        fputs("\"}", stdout);
+    }
+    puts("]}");
+    return !ferror(stdout);
+}
 
 static int compare_check_result(const void *a, const void *b)
 {
@@ -1166,12 +1223,14 @@ static int check_all(int installed, int root, unsigned long long generation, int
         files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
         close(item);
         if (files < 0) goto done;
-        status = holy_install_check_manifest(files, root);
+        memset(&records[count], 0, sizeof records[count]);
+        memcpy(records[count].digest, entry->d_name, 65);
+        ++count;
+        status = holy_install_check_report(files, root,
+                    json ? collect_finding : NULL, &records[count - 1]);
         close(files);
         if (status < 0) goto done;
-        memcpy(records[count].digest, entry->d_name, 65);
-        records[count].intact = status;
-        ++count;
+        records[count - 1].intact = status;
         errno = 0;
     }
     if (errno) goto done;
@@ -1182,9 +1241,7 @@ static int check_all(int installed, int root, unsigned long long generation, int
         if (records[i].intact) ++passed;
         else { ++failed; result = 4; }
         if (json)
-            written = printf("{\"schema\":\"holy-installed-check-1\",\"type\":\"artifact\",\"artifact\":\"%s\",\"state\":\"%s\",\"code\":%s,\"generation\":%llu}\n",
-                             records[i].digest, records[i].intact ? "pass" : "fail",
-                             records[i].intact ? "null" : "\"changed-file\"", generation);
+            written = print_check_result(&records[i], generation) ? 0 : -1;
         else
             written = printf("%s %s generation %llu\n",
                              records[i].intact ? "intact" : "changed",
@@ -1199,6 +1256,7 @@ static int check_all(int installed, int root, unsigned long long generation, int
             result = 1;
     }
 done:
+    for (i = 0; i < count; ++i) free_check_result(&records[i]);
     free(records);
     closedir(list);
     return result;
@@ -1206,6 +1264,7 @@ done:
 
 int holy_state_check(const char *digest, const char *root_path, int json)
 {
+    struct check_result record = {0};
     unsigned long long generation;
     int root, dir = -1, installed = -1, item = -1, files = -1, result = 1;
     int checked, all = !strcmp(digest, "--all");
@@ -1229,16 +1288,18 @@ int holy_state_check(const char *digest, const char *root_path, int json)
     if (item < 0) { result = 6; goto done; }
     files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (files < 0) goto done;
-    checked = holy_install_check_manifest(files, root);
+    checked = holy_install_check_report(files, root,
+                json ? collect_finding : NULL, &record);
     result = checked > 0 ? 0 : checked == 0 ? 4 : 1;
     if (json && (result == 0 || result == 4)) {
-        printf("{\"schema\":\"holy-installed-check-1\",\"type\":\"artifact\",\"artifact\":\"%s\",\"state\":\"%s\",\"code\":%s,\"generation\":%llu}\n",
-               digest, result ? "fail" : "pass",
-               result ? "\"changed-file\"" : "null", generation);
+        memcpy(record.digest, digest, 65);
+        record.intact = !result;
+        if (!print_check_result(&record, generation)) { result = 1; goto done; }
         printf("{\"schema\":\"holy-installed-check-1\",\"type\":\"summary\",\"pass\":%d,\"fail\":%d,\"coverage\":\"data-manifest\"}\n",
                result ? 0 : 1, result ? 1 : 0);
     } else if (!result) printf("intact %s generation %llu\n", digest, generation);
 done:
+    free_check_result(&record);
     if (result) fprintf(stderr, "holypkg: installed check failed (status %d)\n", result);
     if (json && result != 0 && result != 4) {
         const char *code = result == 5 ? "incomplete-transaction" :

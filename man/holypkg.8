@@ -223,8 +223,14 @@ artifact as intact or changed in digest order. It returns 4 if any artifact
 has changed. An empty installed set reports zero checked packages. --json
 emits one holy-installed-check-1 JSON line per artifact followed by a summary
 of passes and failures, or one error line on an invalid database, missing
-instance or incomplete transaction. This reports only data-manifest coverage;
-changed-file does not identify which path changed in the JSON schema.
+instance or incomplete transaction. Each artifact includes a findings array
+with code, severity and relative path for each mismatch. missing-file identifies
+an absent regular file under accessible parents; changed-file covers other
+manifest mismatches, including inaccessible or symlinked parents. Paths encode
+non-ASCII bytes as \eu00HH; consumers reconstruct the original bytes. Findings
+follow manifest order; intact artifacts have an empty array. The artifact-level
+changed-file code remains the aggregate failure indicator. This reports only
+data-manifest coverage.
 .PP
 Database owner reads installed data manifests and lists the artifact digest
 and kind for an exact relative or root-absolute path. Multiple packages may

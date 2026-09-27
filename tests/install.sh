@@ -183,7 +183,7 @@ with open(sys.argv[1], encoding='utf-8') as stream:
     artifact, summary = [json.loads(line) for line in stream]
 assert artifact == {'schema': 'holy-installed-check-1', 'type': 'artifact',
                     'artifact': sys.argv[2], 'state': 'pass', 'code': None,
-                    'generation': 1}
+                    'generation': 1, 'findings': []}
 assert summary == {'schema': 'holy-installed-check-1', 'type': 'summary',
                    'pass': 1, 'fail': 0, 'coverage': 'data-manifest'}
 PY
@@ -205,10 +205,39 @@ with open(sys.argv[1], encoding='utf-8') as stream:
     artifact, summary = [json.loads(line) for line in stream]
 assert artifact['artifact'] == sys.argv[2] and artifact['code'] == 'changed-file'
 assert artifact['state'] == 'fail' and summary['fail'] == 1
+assert artifact['findings'] == [{'code': 'changed-file', 'severity': 'error',
+                                'path': 'usr/bin/data'}]
 PY
 cp "$tmp/payload/DATA/usr/bin/data" "$tmp/system/usr/bin/data"
 "$bin" db check "$digest" --root "$tmp/system" > "$tmp/out"
 rm "$tmp/system/usr/bin/data"
+if "$bin" db check "$digest" --root "$tmp/system" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+python3 - "$tmp/out" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as stream:
+    artifact, summary = [json.loads(line) for line in stream]
+assert artifact['findings'] == [{'code': 'missing-file', 'severity': 'error',
+                                'path': 'usr/bin/data'}]
+assert summary['fail'] == 1
+PY
+cp "$db/installed/$digest/files" "$tmp/unescaped-files"
+python3 - "$db/installed/$digest/files" <<'PY'
+import sys
+path = sys.argv[1]
+with open(path, encoding='utf-8') as stream:
+    text = stream.read()
+with open(path, 'w', encoding='utf-8') as stream:
+    stream.write(text.replace('usr/bin/data', r'"usr/bin/a\"b\\c\n\xff"'))
+PY
+if "$bin" db check "$digest" --root "$tmp/system" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+python3 - "$tmp/out" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as stream:
+    artifact, summary = [json.loads(line) for line in stream]
+assert artifact['findings'][0]['path'].encode('latin1') == b'usr/bin/a"b\\c\n\xff'
+assert artifact['findings'][0]['code'] == 'missing-file'
+PY
+mv "$tmp/unescaped-files" "$db/installed/$digest/files"
 ln -s "$tmp/payload/DATA/usr/bin/data" "$tmp/system/usr/bin/data"
 if "$bin" db check "$digest" --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 rm "$tmp/system/usr/bin/data"
@@ -287,6 +316,10 @@ with open(sys.argv[1], encoding='utf-8') as stream:
 assert {item['artifact']: item['state'] for item in records[:-1]} == {
     sys.argv[2]: 'fail', sys.argv[3]: 'pass'}
 assert records[-1]['fail'] == 1 and records[-1]['pass'] == 1
+findings = {item['artifact']: item['findings'] for item in records[:-1]}
+assert findings[sys.argv[2]] == [{'code': 'changed-file', 'severity': 'error',
+                                 'path': 'usr/bin/data'}]
+assert findings[sys.argv[3]] == []
 PY
 cp "$tmp/payload/DATA/usr/bin/data2" "$tmp/system/usr/bin/data"
 "$bin" db owner usr/bin --root "$tmp/system" > "$tmp/out"

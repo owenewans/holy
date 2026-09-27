@@ -219,10 +219,10 @@ done:
     return result;
 }
 
-static void report_changed(const char *path)
+static void report_changed(const char *path, const char *code)
 {
     const unsigned char *p = (const unsigned char *)path;
-    fputs("holypkg: changed-file ", stderr);
+    fprintf(stderr, "holypkg: %s ", code);
     for (; *p; ++p)
         if (*p == '\\' || *p <= 32 || *p >= 127)
             fprintf(stderr, "\\x%02x", (unsigned int)*p);
@@ -248,7 +248,8 @@ static int remove_file(int root, const char *path, const struct stat *observed)
     return ok;
 }
 
-static int walk_manifest(int files_fd, int root, int mode)
+static int walk_manifest(int files_fd, int root, int mode,
+                          holy_install_finding finding, void *context)
 {
     struct stat st;
     char *text = NULL;
@@ -291,15 +292,18 @@ static int walk_manifest(int files_fd, int root, int mode)
         if (checked < 0) result = -1;
         else if (checked == 2) {
             if (mode != 2 && result == 1) result = 0;
-            if (mode != 2) report_changed(v[1]);
+            if (mode != 2) report_changed(v[1], "missing-file");
         }
         else if (!checked) {
-            report_changed(v[1]);
+            report_changed(v[1], "changed-file");
             if (result == 1) result = 0;
         } else if (mode && !strcmp(v[0], "file") &&
                    !remove_file(root, v[1], &observed)) {
             result = 0;
         }
+        if (finding && (checked == 0 || checked == 2) &&
+            !finding(context, v[1], checked == 2 ? "missing-file" : "changed-file"))
+            result = -1;
         holy_tokens_free(v, count);
         if (result < 0 || (mode && result != 1)) goto done;
     }
@@ -310,19 +314,25 @@ done:
 
 int holy_install_check_manifest(int files_fd, int root)
 {
-    return walk_manifest(files_fd, root, 0);
+    return walk_manifest(files_fd, root, 0, NULL, NULL);
+}
+
+int holy_install_check_report(int files_fd, int root,
+                              holy_install_finding finding, void *context)
+{
+    return walk_manifest(files_fd, root, 0, finding, context);
 }
 
 int holy_install_remove_manifest(int files_fd, int root)
 {
     if (holy_install_check_manifest(files_fd, root) != 1) return 0;
-    return walk_manifest(files_fd, root, 1) == 1;
+    return walk_manifest(files_fd, root, 1, NULL, NULL) == 1;
 }
 
 int holy_install_finish_remove_manifest(int files_fd, int root)
 {
-    if (walk_manifest(files_fd, root, 2) != 1) return 0;
-    return walk_manifest(files_fd, root, 2) == 1;
+    if (walk_manifest(files_fd, root, 2, NULL, NULL) != 1) return 0;
+    return walk_manifest(files_fd, root, 2, NULL, NULL) == 1;
 }
 
 int holy_install_manifest_owns(int files_fd, const char *path)
