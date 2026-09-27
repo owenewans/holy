@@ -83,6 +83,12 @@
   foreign-architecture approval remains open.
 - [ ] Handle hooks, service consent, modified configs, overrides, rollback and
   recovery of each interrupted mutation phase.
+- [x] Prepare regular-file and relative-symlink replacements beside their target,
+  verify bytes and metadata before publication, and retry individual add/replace/
+  remove transitions after interruption. Reject drift and preserve complete old
+  or new files across injected rename failure and process termination. These
+  internal primitives still require the update planner, ownership decisions and
+  durable transaction journal before a package-update command can use them.
 - [ ] Implement native HTTPS/Git source synchronization, signed generations and
   cache retention with provenance.
 - [ ] Implement foreign binary adapters and file indexes with real fixtures:

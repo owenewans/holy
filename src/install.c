@@ -1,3 +1,4 @@
+#define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include "install.h"
 #include "verify.h"
@@ -13,6 +14,7 @@
 #include <string.h>
 #include <limits.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 static int parent_fd(int root, const char *path, char **storage, const char **base)
@@ -319,6 +321,15 @@ static void report_changed(const char *path, const char *code)
     fputc('\n', stderr);
 }
 
+static int same_object(const struct stat *before, const struct stat *after)
+{
+    return before->st_dev == after->st_dev && before->st_ino == after->st_ino &&
+           before->st_mode == after->st_mode && before->st_uid == after->st_uid &&
+           before->st_gid == after->st_gid && before->st_size == after->st_size &&
+           before->st_mtim.tv_sec == after->st_mtim.tv_sec && before->st_mtim.tv_nsec == after->st_mtim.tv_nsec &&
+           before->st_ctim.tv_sec == after->st_ctim.tv_sec && before->st_ctim.tv_nsec == after->st_ctim.tv_nsec;
+}
+
 static int remove_file(int root, const char *path, const struct stat *observed)
 {
     char *storage = NULL;
@@ -328,9 +339,7 @@ static int remove_file(int root, const char *path, const struct stat *observed)
     if (parent < 0) return 0;
     if (!fstatat(parent, base, &st, AT_SYMLINK_NOFOLLOW) &&
         (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) &&
-        st.st_dev == observed->st_dev && st.st_ino == observed->st_ino &&
-        st.st_size == observed->st_size && st.st_mode == observed->st_mode &&
-        st.st_uid == observed->st_uid && st.st_gid == observed->st_gid &&
+        same_object(&st, observed) &&
         !unlinkat(parent, base, 0) && !fsync(parent)) ok = 1;
     close(parent);
     free(storage);
@@ -493,4 +502,177 @@ int holy_install_manifest_owns(int files_fd, const char *path)
 int holy_install_manifests_conflict(int left_fd, int right_fd)
 {
     return manifest_claims(left_fd, NULL, right_fd);
+}
+
+static int transition_entry_valid(const struct holy_manifest_entry *entry)
+{
+    return entry && entry->path && entry->path[0] && entry->path[0] != '/' &&
+           entry->path[strlen(entry->path) - 1] != '/' &&
+           !entry->directory && !entry->hardlink && !entry->group &&
+           !(entry->mode & ~0777u) && entry->uid == (long long)geteuid() &&
+           entry->gid == (long long)getegid() && entry->size >= 0 &&
+           (entry->link ? entry->mode == 0777 && !entry->size &&
+                          entry->link[0] != '/' && holy_safe_link(entry->path, entry->link) :
+                          entry->hash != NULL);
+}
+
+static int transition_matches(int root, const struct holy_manifest_entry *entry,
+                               struct stat *observed)
+{
+    char numbers[4][32], hash[65], *v[13];
+    size_t i;
+    if (!transition_entry_valid(entry)) return -1;
+    snprintf(numbers[0], sizeof numbers[0], "%o", entry->mode);
+    snprintf(numbers[1], sizeof numbers[1], "%lld", entry->uid);
+    snprintf(numbers[2], sizeof numbers[2], "%lld", entry->gid);
+    snprintf(numbers[3], sizeof numbers[3], "%lld", entry->size);
+    if (!entry->link) for (i = 0; i < 32; ++i)
+        snprintf(hash + i * 2, 3, "%02x", entry->hash[i]);
+    v[0] = entry->link ? "symlink" : "file";
+    v[1] = (char *)entry->path; v[2] = numbers[0]; v[3] = v[4] = "-";
+    v[5] = numbers[1]; v[6] = numbers[2]; v[7] = numbers[3];
+    v[8] = entry->link ? "-" : hash; v[9] = "none"; v[10] = v[11] = "-";
+    v[12] = (char *)entry->link;
+    return check_file(root, v, observed);
+}
+
+static int transition_absent(int root, const char *path)
+{
+    char *storage = NULL;
+    const char *base;
+    struct stat st;
+    int parent = parent_fd(root, path, &storage, &base), absent = 0;
+    if (parent >= 0) {
+        absent = fstatat(parent, base, &st, AT_SYMLINK_NOFOLLOW) && errno == ENOENT;
+        close(parent);
+    }
+    free(storage);
+    return absent;
+}
+
+static char *transition_temporary(const char *path, const char *name)
+{
+    const char *slash = strrchr(path, '/'), *base = slash ? slash + 1 : path;
+    size_t prefix = slash ? (size_t)(slash - path + 1) : 0, length;
+    char *result;
+    if (!name || strncmp(name, ".holy-update-", 13) || !name[13] ||
+        strchr(name, '/') || !strcmp(base, name)) return NULL;
+    length = strlen(name);
+    if (length > (size_t)-1 - prefix - 1) return NULL;
+    result = malloc(prefix + length + 1);
+    if (result) { memcpy(result, path, prefix); memcpy(result + prefix, name, length + 1); }
+    return result;
+}
+
+int holy_install_transition_check(int root, const struct holy_manifest_entry *before,
+                                  const struct holy_manifest_entry *after, int recovering)
+{
+    const char *path;
+    if ((!before && !after) || (before && !transition_entry_valid(before)) ||
+        (after && !transition_entry_valid(after)) ||
+        (before && after && strcmp(before->path, after->path))) return 0;
+    path = before ? before->path : after->path;
+    if (before ? transition_matches(root, before, NULL) == 1 : transition_absent(root, path)) return 1;
+    return recovering && (after ? transition_matches(root, after, NULL) == 1 : transition_absent(root, path));
+}
+
+int holy_install_prepare_file(int root, const struct holy_manifest_entry *next,
+                              int content_fd, const char *temporary)
+{
+    struct holy_manifest_entry staged;
+    char *path = NULL, *storage = NULL;
+    const char *base;
+    char buffer[65536];
+    struct stat input;
+    int parent = -1, fd = -1, created = 0, ok = 0;
+    long long offset = 0;
+    if (!transition_entry_valid(next) || !(path = transition_temporary(next->path, temporary))) goto done;
+    staged = *next; staged.path = path;
+    parent = parent_fd(root, path, &storage, &base);
+    if (parent < 0) goto done;
+    if (next->link) {
+        if (symlinkat(next->link, parent, base)) goto done;
+        created = 1;
+    } else {
+        if (fstat(content_fd, &input) || !S_ISREG(input.st_mode) || input.st_size != next->size) goto done;
+        fd = openat(parent, base, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+        if (fd < 0) goto done;
+        created = 1;
+        while (offset < next->size) {
+            size_t used = 0, amount = (unsigned long long)(next->size - offset) < sizeof buffer ?
+                                     (size_t)(next->size - offset) : sizeof buffer;
+            ssize_t got = pread(content_fd, buffer, amount, (off_t)offset);
+            if (got < 0 && errno == EINTR) continue;
+            if (got <= 0) goto done;
+            while (used < (size_t)got) {
+                ssize_t sent = write(fd, buffer + used, (size_t)got - used);
+                if (sent < 0 && errno == EINTR) continue;
+                if (sent <= 0) goto done;
+                used += (size_t)sent;
+            }
+            offset += got;
+        }
+        if (fchmod(fd, next->mode) || fsync(fd)) goto done;
+    }
+    if (transition_matches(root, &staged, NULL) != 1 || fsync(parent)) goto done;
+    ok = 1;
+done:
+    if (fd >= 0) close(fd);
+    if (!ok && created) { unlinkat(parent, base, 0); fsync(parent); }
+    if (parent >= 0) close(parent);
+    free(storage); free(path);
+    return ok;
+}
+
+
+int holy_install_transition(int root, const struct holy_manifest_entry *before,
+                            const struct holy_manifest_entry *after, const char *temporary)
+{
+    struct holy_manifest_entry staged;
+    struct stat original, ready, current;
+    char *path = NULL, *storage = NULL;
+    const char *target = before ? before->path : after ? after->path : NULL, *base;
+    int parent = -1, ready_state, completed, ok = 0;
+    if (!holy_install_transition_check(root, before, after, 1)) return 0;
+    parent = parent_fd(root, target, &storage, &base);
+    if (parent < 0) goto done;
+    if (!after) {
+        if (transition_absent(root, target)) ok = !fsync(parent);
+        else if (transition_matches(root, before, &original) == 1) ok = remove_file(root, target, &original);
+        goto done;
+    }
+    path = transition_temporary(target, temporary);
+    if (!path) goto done;
+    staged = *after; staged.path = path;
+    completed = transition_matches(root, after, NULL) == 1;
+    ready_state = transition_matches(root, &staged, &ready);
+    if (completed) {
+        if (ready_state == 2) ok = !fsync(parent);
+        else if (ready_state == 1) ok = remove_file(root, path, &ready);
+        goto done;
+    }
+    if (ready_state != 1 || (before && transition_matches(root, before, &original) != 1)) goto done;
+    if (fstatat(parent, temporary, &current, AT_SYMLINK_NOFOLLOW) || !same_object(&ready, &current)) goto done;
+    if (before) {
+        if (fstatat(parent, base, &current, AT_SYMLINK_NOFOLLOW) || !same_object(&original, &current) ||
+            renameat(parent, temporary, parent, base)) goto done;
+    } else {
+#ifdef SYS_renameat2
+        /* rename_noreplace also works on filesystems without hard links. */
+        if (syscall(SYS_renameat2, parent, temporary, parent, base, 1u)) {
+            if (errno == ENOSYS || errno == EINVAL || errno == EOPNOTSUPP)
+                fputs("holypkg: renameat2(RENAME_NOREPLACE) unavailable\n", stderr);
+            goto done;
+        }
+#else
+        errno = ENOSYS;
+        fputs("holypkg: renameat2(RENAME_NOREPLACE) unavailable\n", stderr);
+        goto done;
+#endif
+    }
+    ok = !fsync(parent);
+done:
+    if (parent >= 0) close(parent);
+    free(storage); free(path);
+    return ok;
 }

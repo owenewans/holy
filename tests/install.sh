@@ -490,4 +490,76 @@ test ! -e "$tmp/failure/usr/bin/data"
 test ! -e "$tmp/failure/var/lib/holypkg/transactions/journal"
 "$bin" db status --root "$tmp/failure" > "$tmp/out"
 grep -qx 'generation 2' "$tmp/out"
+mkdir "$tmp/transitions"
+"$helper" --transitions "$tmp/transitions"
+cat > "$tmp/transition-fault.c" <<'C'
+#define _POSIX_C_SOURCE 200809L
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+int fstatat(int dir, const char *path, struct stat *st, int flags)
+{
+    int (*actual)(int, const char *, struct stat *, int);
+    const char *phase = getenv("HOLY_TRANSITION_FAULT");
+    void *symbol = dlsym(RTLD_NEXT, "fstatat");
+    memcpy(&actual, &symbol, sizeof actual);
+    if (!actual) abort();
+    if (phase && !strcmp(phase, "race") && !strcmp(path, ".holy-update-first")) {
+        int fd = openat(dir, "current", O_WRONLY | O_CREAT | O_EXCL, 0600);
+        if (fd < 0 || write(fd, "intruder", 8) != 8 || close(fd)) abort();
+    }
+    return actual(dir, path, st, flags);
+}
+int renameat(int olddir, const char *old, int newdir, const char *next)
+{
+    int (*actual)(int, const char *, int, const char *), result;
+    const char *phase = getenv("HOLY_TRANSITION_FAULT");
+    void *symbol = dlsym(RTLD_NEXT, "renameat");
+    memcpy(&actual, &symbol, sizeof actual);
+    if (!actual) abort();
+    if (phase && !strcmp(old, ".holy-update-next")) {
+        if (!strcmp(phase, "fail")) { errno = ENOSPC; return -1; }
+        if (!strcmp(phase, "before")) kill(getpid(), SIGKILL);
+        result = actual(olddir, old, newdir, next);
+        if (!result && !strcmp(phase, "after")) kill(getpid(), SIGKILL);
+        return result;
+    }
+    return actual(olddir, old, newdir, next);
+}
+C
+gcc -shared -fPIC -o "$tmp/transition-fault.so" "$tmp/transition-fault.c" -ldl
+for phase in fail before after; do
+    mkdir "$tmp/transition-$phase"
+    rc=0
+    env LD_PRELOAD="$tmp/transition-fault.so" HOLY_TRANSITION_FAULT="$phase" \
+        "$helper" --transitions "$tmp/transition-$phase" > "$tmp/out" 2> "$tmp/err" || rc=$?
+    if test "$phase" = fail; then test "$rc" -eq 4; else test "$rc" -eq 137; fi
+    if test "$phase" = after; then
+        test "$(cat "$tmp/transition-$phase/data/current")" = 'new payload'
+    else
+        test "$(cat "$tmp/transition-$phase/data/current")" = old
+        test "$(cat "$tmp/transition-$phase/data/.holy-update-next")" = 'new payload'
+    fi
+    "$helper" --resume-transition "$tmp/transition-$phase"
+    "$helper" --resume-transition "$tmp/transition-$phase"
+    test "$(cat "$tmp/transition-$phase/data/current")" = 'new payload'
+    test ! -e "$tmp/transition-$phase/data/.holy-update-next"
+done
+mkdir "$tmp/transition-race"
+rc=0
+env LD_PRELOAD="$tmp/transition-fault.so" HOLY_TRANSITION_FAULT=race \
+    "$helper" --transitions "$tmp/transition-race" > "$tmp/out" 2> "$tmp/err" || rc=$?
+test "$rc" -eq 4
+test "$(cat "$tmp/transition-race/data/current")" = intruder
+test "$(cat "$tmp/transition-race/data/.holy-update-first")" = old
+rc=0
+"$helper" --resume-addition "$tmp/transition-race" || rc=$?
+test "$rc" -eq 4
+rm "$tmp/transition-race/data/current"
+"$helper" --resume-addition "$tmp/transition-race"
 printf 'install payload fixtures passed\n'
