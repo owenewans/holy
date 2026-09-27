@@ -3,6 +3,12 @@
 
 ## Package manager
 
+- [x] Install direct hardlinks after their regular payload, validate inode groups,
+  restore missing anchors from surviving members, and recover interrupted link
+  creation/removal. Scan ELF facts at every hardlink path and retain hardlinked
+  manual names in documentation bundles. Cached update transitions
+  involving hardlink groups and native tree writer hardlink detection remain open.
+
 - [x] Resolve pacman package version constraints before passing exact candidate
   identities to libsolv. Preserve the comparator family, apply arch/libc scopes,
   reject cross-family constraint satisfaction, and validate updates against
@@ -69,7 +75,7 @@
   artifacts into existing or explicitly declared safe directories. Recovery covers empty aborted installs,
   completed installs and interrupted removals under documented conditions.
 - [x] Install relative symlinks with recorded targets and ownership; check, remove
-  and recover them without following the links. Absolute links and hardlinks
+  and recover them without following the links. Absolute links
   remain outside the transaction subset.
 - [x] Query exact installed data-file ownership; report duplicate regular-file
   claims as conflicts while permitting shared directory entries.

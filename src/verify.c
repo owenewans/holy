@@ -75,6 +75,31 @@ static int valid_group(const char *s)
     return 1;
 }
 
+static int payload_group_order(const void *a, const void *b)
+{
+    return strcmp((*(const struct payload *const *)a)->group,
+                  (*(const struct payload *const *)b)->group);
+}
+
+static int unique_group_anchors(const char *path, const struct payload *files, size_t count)
+{
+    const struct payload **anchors;
+    size_t i, used = 0;
+    int ok = 1;
+    if (count > (size_t)-1 / sizeof *anchors) return 0;
+    anchors = calloc(count ? count : 1, sizeof *anchors);
+    if (!anchors) return 0;
+    for (i = 0; i < count; ++i)
+        if (files[i].group && !files[i].hardlink) anchors[used++] = &files[i];
+    qsort(anchors, used, sizeof *anchors, payload_group_order);
+    for (i = 1; i < used; ++i) if (!strcmp(anchors[i-1]->group, anchors[i]->group)) {
+        fprintf(stderr, "%s: hardlink group has multiple regular anchors\n", path);
+        ok = 0; break;
+    }
+    free(anchors);
+    return ok;
+}
+
 static int resolve_hardlinks(const char *path, struct payload *files, size_t count)
 {
     size_t i;
@@ -187,7 +212,7 @@ static int validate_manifest(const char *path, char *text, size_t size,
             return 0;
         }
     }
-    return 1;
+    return unique_group_anchors(path, files, count);
 }
 
 static int verify_archive(const char *path, int emit,

@@ -13,7 +13,7 @@ int holy_install_preflight_resume(const char *snapshot, int root);
    existing directories are never chmodded, removed or replaced. */
 int holy_install_directory_plan(int root, const struct holy_manifest_entry *entries,
                                  size_t count, int create, int recovering);
-/* writes new files/relative symlinks; partial payload remains for journal recovery. */
+/* writes files, relative symlinks and direct hardlinks; partial payload remains journaled. */
 int holy_install_payload(const char *snapshot, int root);
 /* 1 intact, 0 changed/missing, -1 invalid installed manifest. */
 int holy_install_check_manifest(int files_fd, int root);

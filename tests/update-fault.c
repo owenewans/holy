@@ -12,17 +12,25 @@
 extern int __real_fsync(int);
 extern int __real_renameat(int, const char *, int, const char *);
 extern ssize_t __real_write(int, const void *, size_t);
+extern int __real_linkat(int, const char *, int, const char *, int);
+extern int __real_unlinkat(int, const char *, int);
 #define next_fsync __real_fsync
 #define next_renameat __real_renameat
 #define next_write __real_write
+#define next_linkat __real_linkat
+#define next_unlinkat __real_unlinkat
 #define fsync __wrap_fsync
 #define renameat __wrap_renameat
 #define write __wrap_write
+#define linkat __wrap_linkat
+#define unlinkat __wrap_unlinkat
 #else
 #include <dlfcn.h>
 static int (*next_fsync)(int);
 static int (*next_renameat)(int, const char *, int, const char *);
 static ssize_t (*next_write)(int, const void *, size_t);
+static int (*next_linkat)(int, const char *, int, const char *, int);
+static int (*next_unlinkat)(int, const char *, int);
 #endif
 
 static int fault(const char *name)
@@ -46,6 +54,30 @@ static int fd_path(int fd, char path[4096])
     if (length < 0) return 0;
     path[length] = 0;
     return 1;
+}
+
+int linkat(int from, const char *old, int to, const char *name, int flags)
+{
+    int result;
+#ifndef HOLY_STATIC_FAULT
+    if (!next_linkat) *(void **)(&next_linkat) = dlsym(RTLD_NEXT, "linkat");
+#endif
+    if (fault("hardlink-before")) stop();
+    if (fault("hardlink-no-space")) { errno = ENOSPC; return -1; }
+    result = next_linkat(from, old, to, name, flags);
+    if (!result && fault("hardlink-after")) stop();
+    return result;
+}
+
+int unlinkat(int dir, const char *name, int flags)
+{
+    int result;
+#ifndef HOLY_STATIC_FAULT
+    if (!next_unlinkat) *(void **)(&next_unlinkat) = dlsym(RTLD_NEXT, "unlinkat");
+#endif
+    result = next_unlinkat(dir, name, flags);
+    if (!result && fault("hardlink-remove") && !strcmp(name, "a-first")) stop();
+    return result;
 }
 
 int renameat(int from, const char *old, int to, const char *name)

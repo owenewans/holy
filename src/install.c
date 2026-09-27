@@ -19,6 +19,55 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+static int transition_matches(int root, const struct holy_manifest_entry *entry,
+                               struct stat *observed);
+
+struct group_observation { char *group; struct stat state; };
+struct observed_groups { struct group_observation *items; size_t count; };
+
+static int observe_group(struct observed_groups *groups, const char *group,
+                          const struct stat *state)
+{
+    struct group_observation *next;
+    if (!group || !strcmp(group, "-")) return 1;
+    if (groups->count == SIZE_MAX / sizeof *next) return 0;
+    next = realloc(groups->items, (groups->count + 1) * sizeof *next);
+    if (!next) return 0;
+    groups->items = next;
+    next[groups->count].group = strdup(group);
+    if (!next[groups->count].group) return 0;
+    next[groups->count++].state = *state;
+    return 1;
+}
+
+static int group_order(const void *left, const void *right)
+{
+    return strcmp(((const struct group_observation *)left)->group,
+                  ((const struct group_observation *)right)->group);
+}
+
+static int groups_intact(struct observed_groups *groups)
+{
+    size_t i;
+    if (groups->count) qsort(groups->items, groups->count, sizeof *groups->items, group_order);
+    for (i = 1; i < groups->count; ++i) {
+        const struct group_observation *a = &groups->items[i-1], *b = &groups->items[i];
+        if (!strcmp(a->group, b->group) &&
+            (a->state.st_dev != b->state.st_dev || a->state.st_ino != b->state.st_ino)) {
+            fputs("holypkg: changed-hardlink-group\n", stderr);
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void groups_free(struct observed_groups *groups)
+{
+    size_t i;
+    for (i = 0; i < groups->count; ++i) free(groups->items[i].group);
+    free(groups->items);
+}
+
 static int parent_fd(int root, const char *path, char **storage, const char **base)
 {
     char *cursor, *slash;
@@ -225,6 +274,7 @@ struct root_check {
     struct holy_manifest_entry *directories;
     size_t count;
     struct directory_list parents;
+    struct observed_groups groups;
 };
 
 static int collect_directory(void *context, const struct holy_manifest_entry *entry)
@@ -247,12 +297,13 @@ static int check_entry(void *context, const struct holy_manifest_entry *entry)
 {
     struct root_check *check = context;
     int state;
-    if (entry->hardlink || entry->group ||
-        (entry->link && (entry->mode != 0777 || entry->link[0] == '/')) ||
+    struct stat observed;
+    if ((entry->link && (entry->mode != 0777 || entry->link[0] == '/')) ||
         (entry->mode & 07000) || entry->uid != (long long)geteuid() ||
         entry->gid != (long long)getegid() ||
         !planned_parents(check->root, entry->path, &check->parents)) return 0;
-    state = holy_install_check_entry(check->root, entry);
+    state = transition_matches(check->root, entry, &observed);
+    if (state == 1 && !observe_group(&check->groups, entry->group, &observed)) return 0;
     return state == 2 || (state == 1 && (entry->directory || check->recovering));
 }
 
@@ -269,12 +320,13 @@ static int prepare_directories(const char *snapshot, int root, int create, int r
     for (i = 0; i < check.count; ++i) check.parents.items[i] = &check.directories[i];
     qsort(check.parents.items, check.count, sizeof *check.parents.items, directory_order);
     ok = holy_install_directory_plan(root, check.directories, check.count, 0, recovering) &&
-         holy_verify_visit(snapshot, check_entry, &check) &&
+         holy_verify_visit(snapshot, check_entry, &check) && groups_intact(&check.groups) &&
          (!create || holy_install_directory_plan(root, check.directories, check.count, 1, recovering));
 done:
     for (i = 0; i < check.count; ++i) free((char *)check.directories[i].path);
     free(check.parents.items);
     free(check.directories);
+    groups_free(&check.groups);
     if (!ok) fputs("holypkg: install requires intact or declared safe directories and matching payload state\n", stderr);
     return ok;
 }
@@ -289,14 +341,68 @@ int holy_install_preflight_resume(const char *snapshot, int root)
     return prepare_directories(snapshot, root, 0, 1);
 }
 
+static int link_payload(int root, const char *source, const struct holy_manifest_entry *destination,
+                         int missing_only)
+{
+    struct holy_manifest_entry input = *destination;
+    struct stat expected, linked;
+    char *source_storage = NULL, *dest_storage = NULL;
+    const char *source_base, *dest_base;
+    int source_parent = -1, dest_parent = -1, fd = -1, ok = 0;
+    input.path = source; input.hardlink = NULL;
+    if (transition_matches(root, &input, &expected) != 1) goto done;
+    source_parent = parent_fd(root, source, &source_storage, &source_base);
+    dest_parent = parent_fd(root, destination->path, &dest_storage, &dest_base);
+    if (source_parent < 0 || dest_parent < 0) goto done;
+    fd = openat(source_parent, source_base, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0 || fstat(fd, &linked) || !S_ISREG(linked.st_mode) ||
+        linked.st_dev != expected.st_dev || linked.st_ino != expected.st_ino) goto done;
+    if (linkat(source_parent, source_base, dest_parent, dest_base, 0) &&
+        (!missing_only || errno != EEXIST)) {
+        fprintf(stderr, "holypkg: linkat: %s\n", strerror(errno));
+        goto done;
+    }
+    if (fstatat(dest_parent, dest_base, &linked, AT_SYMLINK_NOFOLLOW) ||
+        !S_ISREG(linked.st_mode) || linked.st_dev != expected.st_dev ||
+        linked.st_ino != expected.st_ino || fsync(fd) || fsync(dest_parent)) goto done;
+    ok = 1;
+done:
+    if (!ok) fputs("holypkg: hardlink creation failed; inspect source, target and filesystem\n", stderr);
+    if (fd >= 0) close(fd);
+    if (source_parent >= 0) close(source_parent);
+    if (dest_parent >= 0) close(dest_parent);
+    free(source_storage); free(dest_storage);
+    return ok;
+}
+
+struct link_install { int root, missing_only, restore_anchor; };
+
+static int install_link(void *context, const struct holy_manifest_entry *entry)
+{
+    struct link_install *links = context;
+    struct holy_manifest_entry anchor;
+    int state;
+    if (!entry->hardlink) return 1;
+    if (!links->restore_anchor)
+        return link_payload(links->root, entry->hardlink, entry, links->missing_only);
+    anchor = *entry; anchor.path = entry->hardlink; anchor.hardlink = NULL;
+    state = transition_matches(links->root, &anchor, NULL);
+    if (state == 1) return 1;
+    if (state != 2) return 0;
+    state = transition_matches(links->root, entry, NULL);
+    return state == 2 || (state == 1 && link_payload(links->root, entry->path, &anchor, 0));
+}
+
 static int install_payload(const char *snapshot, int root, int missing_only)
 {
     struct archive *archive = archive_read_new();
     struct archive_entry *entry;
     char buffer[65536];
     int status, ok = 0;
+    struct link_install links = {root, missing_only, 1};
     if (!archive) return 0;
-    if (!prepare_directories(snapshot, root, 1, missing_only)) goto done;
+    if (!prepare_directories(snapshot, root, 1, missing_only) ||
+        (missing_only && !holy_verify_visit(snapshot, install_link, &links))) goto done;
     if (archive_read_support_filter_lz4(archive) != ARCHIVE_OK ||
         archive_read_support_format_tar(archive) != ARCHIVE_OK ||
         archive_read_open_filename(archive, snapshot, 8192) != ARCHIVE_OK) goto done;
@@ -308,7 +414,7 @@ static int install_payload(const char *snapshot, int root, int missing_only)
         la_ssize_t got;
         la_int64_t count = 0;
         if (!path || strncmp(path, "DATA/", 5) || !path[5] ||
-            archive_entry_filetype(entry) == AE_IFDIR) {
+            archive_entry_filetype(entry) == AE_IFDIR || archive_entry_hardlink(entry)) {
             if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
             continue;
         }
@@ -399,7 +505,8 @@ file_done:
         free(storage);
         goto done;
     }
-    ok = status == ARCHIVE_EOF;
+    links.restore_anchor = 0;
+    ok = status == ARCHIVE_EOF && holy_verify_visit(snapshot, install_link, &links);
 done:
     archive_read_free(archive);
     if (!ok) fprintf(stderr, "holypkg: install payload incomplete; inspect transaction journal\n");
@@ -439,13 +546,18 @@ static int check_file(int root, char **v, struct stat *observed)
     ssize_t got;
     size_t i;
     int symlink = !strcmp(v[0], "symlink");
-    if ((strcmp(v[0], "dir") && strcmp(v[0], "file") && !symlink) ||
+    int hardlink = !strcmp(v[0], "hardlink");
+    if ((strcmp(v[0], "dir") && strcmp(v[0], "file") && !symlink && !hardlink) ||
         !decimal(v[2], 8, &mode) || mode > 07777 ||
         !decimal(v[5], 10, &uid) || uid > 0x7fffffff ||
         !decimal(v[6], 10, &gid) || gid > 0x7fffffff ||
         !decimal(v[7], 10, &size) || size > LLONG_MAX ||
-        strcmp(v[9], "none") || strcmp(v[10], "-") || strcmp(v[11], "-"))
+        strcmp(v[9], "none") || strcmp(v[10], "-") ||
+        ((symlink || !strcmp(v[0], "dir")) && strcmp(v[11], "-")) ||
+        (hardlink && !strcmp(v[11], "-")))
         return -1;
+    if (strcmp(v[11], "-") && (!v[11][0] ||
+        strspn(v[11], "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-") != strlen(v[11]))) return -1;
     if (symlink && (mode != 0777 || v[12][0] == '/' ||
                     !holy_safe_link(v[1], v[12]))) return -1;
     if (!strcmp(v[0], "dir") || symlink) {
@@ -546,13 +658,93 @@ static int remove_file(int root, const char *path, const struct stat *observed)
     return ok;
 }
 
+struct manifest_row {
+    char **fields;
+    size_t count;
+    int checked;
+    struct stat observed;
+};
+
+static int row_path_order(const void *a, const void *b)
+{
+    return strcmp((*(const struct manifest_row *const *)a)->fields[1],
+                  (*(const struct manifest_row *const *)b)->fields[1]);
+}
+
+static int row_group_order(const void *a, const void *b)
+{
+    return strcmp((*(const struct manifest_row *const *)a)->fields[11],
+                  (*(const struct manifest_row *const *)b)->fields[11]);
+}
+
+static int row_links(struct manifest_row *rows, size_t count)
+{
+    struct manifest_row **paths = NULL, **groups = NULL;
+    size_t i, j, group_count = 0;
+    int ok = 0;
+    if (count > SIZE_MAX / sizeof *paths) return 0;
+    paths = calloc(count ? count : 1, sizeof *paths);
+    groups = calloc(count ? count : 1, sizeof *groups);
+    if (!paths || !groups) goto done;
+    for (i = 0; i < count; ++i) {
+        paths[i] = &rows[i];
+        if (strcmp(rows[i].fields[11], "-")) groups[group_count++] = &rows[i];
+    }
+    qsort(paths, count, sizeof *paths, row_path_order);
+    for (i = 1; i < count; ++i)
+        if (!strcmp(paths[i-1]->fields[1], paths[i]->fields[1])) goto done;
+    for (i = 0; i < count; ++i) if (!strcmp(rows[i].fields[0], "hardlink")) {
+        char **v = rows[i].fields, *key_fields[2] = {NULL, v[12]};
+        struct manifest_row key = {0}, *key_ptr = &key, **found;
+        static const size_t attributes[] = {2, 5, 6, 7, 8, 11};
+        key.fields = key_fields;
+        found = bsearch(&key_ptr, paths, count, sizeof *paths, row_path_order);
+        if (!found || strcmp((*found)->fields[0], "file")) goto done;
+        for (j = 0; j < sizeof attributes / sizeof *attributes; ++j) {
+            size_t field = attributes[j];
+            if (field == 8 || field == 11) {
+                if (strcmp(v[field], (*found)->fields[field])) goto done;
+            } else {
+                unsigned long long left, right;
+                if (!decimal(v[field], field == 2 ? 8 : 10, &left) ||
+                    !decimal((*found)->fields[field], field == 2 ? 8 : 10, &right) || left != right) goto done;
+            }
+        }
+    }
+    qsort(groups, group_count, sizeof *groups, row_group_order);
+    for (i = 0; i < group_count;) {
+        size_t end = i + 1, observed = group_count;
+        char **first = groups[i]->fields;
+        const char *anchor = !strcmp(first[0], "hardlink") ? first[12] : first[1];
+        int drift = 0;
+        while (end < group_count && !strcmp(first[11], groups[end]->fields[11])) ++end;
+        for (j = i; j < end; ++j) {
+            char **v = groups[j]->fields;
+            const char *target = !strcmp(v[0], "hardlink") ? v[12] : v[1];
+            if (strcmp(anchor, target)) goto done;
+            if (groups[j]->checked != 1) continue;
+            if (observed == group_count) observed = j;
+            else if (groups[j]->observed.st_dev != groups[observed]->observed.st_dev ||
+                     groups[j]->observed.st_ino != groups[observed]->observed.st_ino) drift = 1;
+        }
+        if (drift) for (j = i; j < end; ++j)
+            if (groups[j]->checked == 1) groups[j]->checked = 0;
+        i = end;
+    }
+    ok = 1;
+done:
+    free(paths); free(groups);
+    return ok;
+}
+
 static int walk_manifest(int files_fd, int root, int mode,
                           holy_install_finding finding, void *context, const char *filter)
 {
     struct stat st;
+    struct manifest_row *rows = NULL;
     char *text = NULL;
-    size_t length, used = 0, start = 0, i, line = 0, matches = 0;
-    int result = 1;
+    size_t length, used = 0, start = 0, i, line = 0, matches = 0, row_count = 0, capacity = 0;
+    int result = -1;
     if (lseek(files_fd, 0, SEEK_SET) != 0 ||
         fstat(files_fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
         st.st_size > 16 * 1024 * 1024) return -1;
@@ -562,54 +754,79 @@ static int walk_manifest(int files_fd, int root, int mode,
     while (used < length) {
         ssize_t got = read(files_fd, text + used, length - used);
         if (got < 0 && errno == EINTR) continue;
-        if (got <= 0) { result = -1; goto done; }
+        if (got <= 0) goto done;
         used += (size_t)got;
     }
     text[length] = '\0';
     for (i = 0; i <= length; ++i) {
         char **v = NULL, *error = NULL;
         size_t count = 0;
-        int checked;
-        struct stat observed;
         if (i < length && text[i] != '\n') continue;
         ++line;
         if (memchr(text + start, '\0', i - start) ||
             !holy_lex(text + start, i - start, &v, &count, "installed/files", line, &error)) {
-            free(error);
-            result = -1;
-            goto done;
+            free(error); holy_tokens_free(v, count); goto done;
         }
         start = i + 1;
         if (!count) { holy_tokens_free(v, count); continue; }
-        if (count != (!strcmp(v[0], "symlink") ? 13u : 12u)) {
-            holy_tokens_free(v, count);
-            result = -1;
-            goto done;
+        if (count != ((!strcmp(v[0], "symlink") || !strcmp(v[0], "hardlink")) ? 13u : 12u)) {
+            holy_tokens_free(v, count); goto done;
         }
-        if (filter && strcmp(filter, v[1])) { holy_tokens_free(v, count); continue; }
+        if (row_count == capacity) {
+            size_t next_capacity = capacity ? capacity * 2 : 32;
+            struct manifest_row *next;
+            if (next_capacity < capacity || next_capacity > SIZE_MAX / sizeof *next) {
+                holy_tokens_free(v, count); goto done;
+            }
+            next = realloc(rows, next_capacity * sizeof *next);
+            if (!next) { holy_tokens_free(v, count); goto done; }
+            rows = next; capacity = next_capacity;
+        }
+        memset(&rows[row_count], 0, sizeof *rows);
+        rows[row_count].fields = v; rows[row_count].count = count;
+        rows[row_count++].checked = 2;
+    }
+    {
+        const char *group = NULL;
+        if (filter) for (i = 0; i < row_count; ++i)
+            if (!strcmp(filter, rows[i].fields[1]) && strcmp(rows[i].fields[11], "-"))
+                group = rows[i].fields[11];
+        for (i = 0; i < row_count; ++i) {
+            struct manifest_row *row = &rows[i];
+            if (filter && strcmp(filter, row->fields[1]) &&
+                (!group || strcmp(group, row->fields[11]))) continue;
+            row->checked = check_file(root, row->fields, &row->observed);
+            if (row->checked < 0) goto done;
+        }
+    }
+    if (!row_links(rows, row_count)) goto done;
+    result = 1;
+    for (i = 0; i < row_count; ++i) {
+        struct manifest_row *row = &rows[i];
+        char **v = row->fields;
+        int checked = row->checked;
+        if (filter && strcmp(filter, v[1])) continue;
         ++matches;
-        checked = check_file(root, v, &observed);
-        if (checked < 0) result = -1;
-        else if (checked == 2) {
+        if (checked == 2) {
             if (mode != 2 && mode != 3 && result == 1) result = 0;
             if (mode != 2 && mode != 3) report_changed(v[1], "missing-file");
-        }
-        else if (!checked) {
+        } else if (!checked) {
             report_changed(v[1], "changed-file");
             if (result == 1) result = 0;
-        } else if ((mode == 1 || mode == 2) && strcmp(v[0], "dir") &&
-                   !remove_file(root, v[1], &observed)) {
-            result = 0;
+        } else if ((mode == 1 || mode == 2) && strcmp(v[0], "dir")) {
+            struct stat current;
+            if (check_file(root, v, &current) != 1 ||
+                current.st_dev != row->observed.st_dev || current.st_ino != row->observed.st_ino ||
+                !remove_file(root, v[1], &current)) result = 0;
         }
         if (finding && (checked == 0 || checked == 2) &&
-            !finding(context, v[1], checked == 2 ? "missing-file" : "changed-file"))
-            result = -1;
-        holy_tokens_free(v, count);
+            !finding(context, v[1], checked == 2 ? "missing-file" : "changed-file")) result = -1;
         if (result < 0 || (mode && result != 1)) goto done;
     }
     if (filter && matches != 1) result = -1;
 done:
-    free(text);
+    for (i = 0; i < row_count; ++i) holy_tokens_free(rows[i].fields, rows[i].count);
+    free(rows); free(text);
     return result;
 }
 
@@ -672,9 +889,9 @@ static int manifest_claims(int files_fd, const char *path, int other)
             break;
         }
         if (count) {
-            if (count != (!strcmp(v[0], "symlink") ? 13u : 12u) ||
+            if (count != ((!strcmp(v[0], "symlink") || !strcmp(v[0], "hardlink")) ? 13u : 12u) ||
                 (strcmp(v[0], "file") && strcmp(v[0], "dir") &&
-                 strcmp(v[0], "symlink")))
+                 strcmp(v[0], "symlink") && strcmp(v[0], "hardlink")))
                 found = -1;
             else if (other >= 0) {
                 int kind = holy_install_manifest_owns(other, v[1]);
@@ -722,7 +939,7 @@ static int transition_matches(int root, const struct holy_manifest_entry *entry,
     char numbers[4][32], hash[65], *v[13];
     size_t i;
     if (!entry || !entry->path || (entry->directory != 0 && entry->directory != 1) ||
-        (entry->directory && entry->link) || entry->hardlink || entry->group ||
+        (entry->directory && (entry->link || entry->hardlink || entry->group)) ||
         (!entry->directory && !entry->link && !entry->hash)) return -1;
     snprintf(numbers[0], sizeof numbers[0], "%o", entry->mode);
     snprintf(numbers[1], sizeof numbers[1], "%lld", entry->uid);
@@ -730,11 +947,11 @@ static int transition_matches(int root, const struct holy_manifest_entry *entry,
     snprintf(numbers[3], sizeof numbers[3], "%lld", entry->size);
     if (!entry->link && !entry->directory) for (i = 0; i < 32; ++i)
         snprintf(hash + i * 2, 3, "%02x", entry->hash[i]);
-    v[0] = entry->directory ? "dir" : entry->link ? "symlink" : "file";
+    v[0] = entry->directory ? "dir" : entry->link ? "symlink" : entry->hardlink ? "hardlink" : "file";
     v[1] = (char *)entry->path; v[2] = numbers[0]; v[3] = v[4] = "-";
     v[5] = numbers[1]; v[6] = numbers[2]; v[7] = numbers[3];
-    v[8] = entry->link || entry->directory ? "-" : hash; v[9] = "none"; v[10] = v[11] = "-";
-    v[12] = (char *)entry->link;
+    v[8] = entry->link || entry->directory ? "-" : hash; v[9] = "none"; v[10] = "-"; v[11] = entry->group ? (char *)entry->group : "-";
+    v[12] = (char *)(entry->link ? entry->link : entry->hardlink);
     return check_file(root, v, observed);
 }
 
@@ -754,7 +971,17 @@ static int transition_absent(int root, const char *path)
 
 int holy_install_check_entry(int root, const struct holy_manifest_entry *entry)
 {
-    return transition_matches(root, entry, NULL);
+    struct stat observed, target;
+    char *storage = NULL;
+    const char *base;
+    int parent, result = transition_matches(root, entry, &observed);
+    if (result != 1 || !entry->hardlink) return result;
+    parent = parent_fd(root, entry->hardlink, &storage, &base);
+    result = parent >= 0 && !fstatat(parent, base, &target, AT_SYMLINK_NOFOLLOW) &&
+             S_ISREG(target.st_mode) && target.st_dev == observed.st_dev && target.st_ino == observed.st_ino;
+    if (parent >= 0) close(parent);
+    free(storage);
+    return result;
 }
 
 static char *transition_temporary(const char *path, const char *name)

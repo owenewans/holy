@@ -35,6 +35,162 @@ static const char *named_runtime(const struct holy_elf_info *info, const char *p
     return NULL;
 }
 
+struct scan_link { char *path, *target; unsigned int mode; };
+struct scan_links { struct scan_link *items; size_t count; };
+
+static int collect_link(void *opaque, const struct holy_manifest_entry *entry)
+{
+    struct scan_links *links = opaque;
+    struct scan_link *next;
+    if (!entry->hardlink) return 1;
+    if (links->count >= 65536) return 0;
+    next = realloc(links->items, (links->count + 1) * sizeof *next);
+    if (!next) return 0;
+    links->items = next;
+    next = &next[links->count++];
+    next->path = malloc(strlen(entry->path) + 6);
+    next->target = strdup(entry->hardlink);
+    next->mode = entry->mode;
+    if (next->path) sprintf(next->path, "DATA/%s", entry->path);
+    return next->path && next->target;
+}
+
+static int link_order(const void *left, const void *right)
+{
+    const struct scan_link *a = left, *b = right;
+    int result = strcmp(a->target, b->target);
+    return result ? result : strcmp(a->path, b->path);
+}
+
+static int inspect_elf(int fd, const char *name, unsigned int mode,
+                        const char *arch, const char *libc, int emit, size_t *edges,
+                        struct holy_scan_result *collected)
+{
+    struct holy_elf_info info;
+    const char *runtime;
+    int result;
+    result = holy_elf_read_fd(fd, &info);
+    if (result) {
+        holy_elf_free(&info);
+        fprintf(stderr, "holypkg: malformed ELF in payload: %s\n", name);
+        return 0;
+    }
+    {
+        size_t i;
+        for (i = 0; i < info.needed_count; ++i) {
+            const char *required = named_runtime(&info, info.needed[i]);
+            if (required && strcmp(libc, required)) {
+                fprintf(stderr, "holypkg: ELF runtime requirement conflicts with package libc: %s\n", name);
+                holy_elf_free(&info);
+                return 0;
+            }
+        }
+    }
+    runtime = holy_elf_runtime(&info);
+    if (!strcmp(runtime, "unknown") && info.type == ET_DYN) {
+        size_t i;
+        for (i = 0; i < info.needed_count; ++i) {
+            const char *required = named_runtime(&info, info.needed[i]);
+            if (required) runtime = required;
+        }
+        if (info.soname &&
+            ((!strcmp(info.soname, "ld-linux-x86-64.so.2") &&
+              !strcmp(holy_elf_machine(&info), "x86_64")) ||
+             (!strcmp(info.soname, "ld-linux.so.2") &&
+              !strcmp(holy_elf_machine(&info), "x86"))))
+            for (i = 0; i < info.defined_version_count; ++i)
+                if (!strcmp(info.defined_versions[i].name, "GLIBC_PRIVATE"))
+                    runtime = "glibc";
+    }
+    if (!strcmp(runtime, "unknown")) {
+        fprintf(stderr, "holypkg: ELF runtime unknown; package tag cannot prove ABI: %s\n",
+                name);
+        holy_elf_free(&info);
+        return 0;
+    }
+    if (strcmp(arch, holy_elf_machine(&info)) || strcmp(libc, runtime)) {
+        fprintf(stderr, "holypkg: ELF arch/libc mismatch in payload: %s\n", name);
+        holy_elf_free(&info);
+        return 0;
+    }
+    if (emit) {
+        size_t i;
+        fputs("elf ", stdout);
+        print_token(name + 5);
+        printf(" class=ELF%d machine=%s e_machine=%u runtime=%s isa=%s\n",
+               info.elf_class == 1 ? 32 : 64, holy_elf_machine(&info),
+                (unsigned int)info.machine, runtime,
+               holy_elf_isa(&info));
+        if (info.soname) {
+            fputs("soname ", stdout);
+            print_token(name + 5);
+            putchar(' ');
+            print_token(info.soname);
+            putchar('\n');
+        }
+        for (i = 0; i < info.needed_count; ++i) {
+            fputs("needed ", stdout);
+            print_token(name + 5);
+            putchar(' ');
+            print_token(info.needed[i]);
+            putchar('\n');
+        }
+        for (i = 0; i < info.version_count; ++i) {
+            fputs("version ", stdout);
+            print_token(name + 5);
+            putchar(' ');
+            print_token(info.versions[i].provider);
+            putchar(' ');
+            print_token(info.versions[i].name);
+            printf(" %s\n", info.versions[i].weak ? "weak" : "required");
+        }
+        for (i = 0; i < info.defined_version_count; ++i) {
+            fputs("version-def ", stdout);
+            print_token(name + 5);
+            putchar(' ');
+            print_token(info.defined_versions[i].name);
+            putchar('\n');
+        }
+        for (i = 0; i < info.symbol_count; ++i) {
+            const struct holy_elf_symbol *s = &info.symbols[i];
+            if (!s->name[0]) continue;
+            fputs("symbol ", stdout);
+            print_token(name + 5);
+            putchar(' ');
+            print_token(s->name);
+            printf(" binding=%u type=%u visibility=%u section=%u version-index=%u hidden=%d version=",
+                   s->binding, s->type, s->visibility, (unsigned)s->section,
+                   (unsigned)s->version_index, s->version_hidden);
+            print_token(s->version ? s->version : "none");
+            fputs(" provider=", stdout);
+            print_token(s->provider ? s->provider : "none");
+            putchar('\n');
+        }
+    }
+    if (info.needed_count > (size_t)-1 - *edges) {
+        holy_elf_free(&info);
+        return 0;
+    }
+    *edges += info.needed_count;
+    if (collected) {
+        struct holy_scanned_file *next;
+        char *copy = strdup(name + 5);
+        if (!copy || collected->count >= 65536) {
+            free(copy); holy_elf_free(&info); return 0;
+        }
+        next = realloc(collected->files, (collected->count + 1) * sizeof *next);
+        if (!next) { free(copy); holy_elf_free(&info); return 0; }
+        collected->files = next;
+        next[collected->count].path = copy;
+        next[collected->count].runtime = runtime;
+        next[collected->count].mode = mode;
+        next[collected->count++].elf = info;
+        memset(&info, 0, sizeof info);
+    }
+    holy_elf_free(&info);
+    return 1;
+}
+
 static int scan(const char *path, int emit, size_t *needed,
                 struct holy_scan_result *collected)
 {
@@ -43,15 +199,17 @@ static int scan(const char *path, int emit, size_t *needed,
     char *snapshot = holy_stage_local(path, "holy-scan");
     char *arch = NULL, *libc = NULL;
     char buffer[65536];
-    size_t scanned = 0, edges = 0;
+    size_t scanned = 0, edges = 0, i;
+    struct scan_links links = {0};
     int status, ok = 0;
     if (needed) *needed = 0;
     if (!snapshot) {
         fprintf(stderr, "holypkg: could not stage regular local input\n");
         return 0;
     }
-    if (!holy_verify_with_output(snapshot, 0) ||
+    if (!holy_verify_visit(snapshot, collect_link, &links) ||
         !holy_package_tags(snapshot, &arch, &libc)) goto done;
+    if (links.count) qsort(links.items, links.count, sizeof *links.items, link_order);
     a = archive_read_new();
     if (!a || archive_read_support_filter_lz4(a) != ARCHIVE_OK ||
         archive_read_support_format_tar(a) != ARCHIVE_OK ||
@@ -61,9 +219,6 @@ static int scan(const char *path, int emit, size_t *needed,
         size_t prefix = 0;
         la_ssize_t got;
         FILE *temp;
-        struct holy_elf_info info;
-        const char *runtime;
-        int result;
         if (!name || strncmp(name, "DATA/", 5) || !name[5] ||
             archive_entry_filetype(entry) != AE_IFREG ||
             archive_entry_hardlink(entry) || archive_entry_size(entry) < 4) {
@@ -91,126 +246,22 @@ static int scan(const char *path, int emit, size_t *needed,
                 goto done;
             }
         if (got < 0 || fflush(temp)) { fclose(temp); goto done; }
-        result = holy_elf_read_fd(fileno(temp), &info);
-        fclose(temp);
-        if (result) {
-            holy_elf_free(&info);
-            fprintf(stderr, "holypkg: malformed ELF in payload: %s\n", name);
-            goto done;
-        }
+        if (!inspect_elf(fileno(temp), name, (unsigned int)archive_entry_perm(entry),
+                         arch, libc, emit, &edges, collected)) { fclose(temp); goto done; }
         {
-            size_t i;
-            for (i = 0; i < info.needed_count; ++i) {
-                const char *required = named_runtime(&info, info.needed[i]);
-                if (required && strcmp(libc, required)) {
-                    fprintf(stderr, "holypkg: ELF runtime requirement conflicts with package libc: %s\n", name);
-                    holy_elf_free(&info);
-                    goto done;
-                }
+            size_t low = 0, high = links.count, i;
+            while (low < high) {
+                size_t middle = low + (high - low) / 2;
+                if (strcmp(links.items[middle].target, name + 5) < 0) low = middle + 1;
+                else high = middle;
+            }
+            for (i = low; i < links.count && !strcmp(links.items[i].target, name + 5); ++i) {
+                if (!inspect_elf(fileno(temp), links.items[i].path, links.items[i].mode,
+                                 arch, libc, emit, &edges, collected)) { fclose(temp); goto done; }
+                ++scanned;
             }
         }
-        runtime = holy_elf_runtime(&info);
-        if (!strcmp(runtime, "unknown") && info.type == ET_DYN) {
-            size_t i;
-            for (i = 0; i < info.needed_count; ++i) {
-                const char *required = named_runtime(&info, info.needed[i]);
-                if (required) runtime = required;
-            }
-            if (info.soname &&
-                ((!strcmp(info.soname, "ld-linux-x86-64.so.2") &&
-                  !strcmp(holy_elf_machine(&info), "x86_64")) ||
-                 (!strcmp(info.soname, "ld-linux.so.2") &&
-                  !strcmp(holy_elf_machine(&info), "x86"))))
-                for (i = 0; i < info.defined_version_count; ++i)
-                    if (!strcmp(info.defined_versions[i].name, "GLIBC_PRIVATE"))
-                        runtime = "glibc";
-        }
-        if (!strcmp(runtime, "unknown")) {
-            fprintf(stderr, "holypkg: ELF runtime unknown; package tag cannot prove ABI: %s\n",
-                    name);
-            holy_elf_free(&info);
-            goto done;
-        }
-        if (strcmp(arch, holy_elf_machine(&info)) || strcmp(libc, runtime)) {
-            fprintf(stderr, "holypkg: ELF arch/libc mismatch in payload: %s\n", name);
-            holy_elf_free(&info);
-            goto done;
-        }
-        if (emit) {
-            size_t i;
-            fputs("elf ", stdout);
-            print_token(name + 5);
-            printf(" class=ELF%d machine=%s e_machine=%u runtime=%s isa=%s\n",
-                   info.elf_class == 1 ? 32 : 64, holy_elf_machine(&info),
-                    (unsigned int)info.machine, runtime,
-                   holy_elf_isa(&info));
-            if (info.soname) {
-                fputs("soname ", stdout);
-                print_token(name + 5);
-                putchar(' ');
-                print_token(info.soname);
-                putchar('\n');
-            }
-            for (i = 0; i < info.needed_count; ++i) {
-                fputs("needed ", stdout);
-                print_token(name + 5);
-                putchar(' ');
-                print_token(info.needed[i]);
-                putchar('\n');
-            }
-            for (i = 0; i < info.version_count; ++i) {
-                fputs("version ", stdout);
-                print_token(name + 5);
-                putchar(' ');
-                print_token(info.versions[i].provider);
-                putchar(' ');
-                print_token(info.versions[i].name);
-                printf(" %s\n", info.versions[i].weak ? "weak" : "required");
-            }
-            for (i = 0; i < info.defined_version_count; ++i) {
-                fputs("version-def ", stdout);
-                print_token(name + 5);
-                putchar(' ');
-                print_token(info.defined_versions[i].name);
-                putchar('\n');
-            }
-            for (i = 0; i < info.symbol_count; ++i) {
-                const struct holy_elf_symbol *s = &info.symbols[i];
-                if (!s->name[0]) continue;
-                fputs("symbol ", stdout);
-                print_token(name + 5);
-                putchar(' ');
-                print_token(s->name);
-                printf(" binding=%u type=%u visibility=%u section=%u version-index=%u hidden=%d version=",
-                       s->binding, s->type, s->visibility, (unsigned)s->section,
-                       (unsigned)s->version_index, s->version_hidden);
-                print_token(s->version ? s->version : "none");
-                fputs(" provider=", stdout);
-                print_token(s->provider ? s->provider : "none");
-                putchar('\n');
-            }
-        }
-        if (info.needed_count > (size_t)-1 - edges) {
-            holy_elf_free(&info);
-            goto done;
-        }
-        edges += info.needed_count;
-        if (collected) {
-            struct holy_scanned_file *next;
-            char *copy = strdup(name + 5);
-            if (!copy || collected->count >= 65536) {
-                free(copy); holy_elf_free(&info); goto done;
-            }
-            next = realloc(collected->files, (collected->count + 1) * sizeof *next);
-            if (!next) { free(copy); holy_elf_free(&info); goto done; }
-            collected->files = next;
-            next[collected->count].path = copy;
-            next[collected->count].runtime = runtime;
-            next[collected->count].mode = (unsigned int)archive_entry_perm(entry);
-            next[collected->count++].elf = info;
-            memset(&info, 0, sizeof info);
-        }
-        holy_elf_free(&info);
+        fclose(temp);
         ++scanned;
     }
     if (status != ARCHIVE_EOF) goto done;
@@ -224,6 +275,8 @@ done:
     free(snapshot);
     free(arch);
     free(libc);
+    for (i = 0; i < links.count; ++i) { free(links.items[i].path); free(links.items[i].target); }
+    free(links.items);
     return ok;
 }
 

@@ -255,6 +255,7 @@ Same-name pages retain separate attributed records.
 Sources remain roff text; this command does not run a formatter or interpret
 roff directives. It decodes gzip, bzip2, xz and zstd with built-in libarchive
 filters when compiled in, and never invokes a decompression helper.
+Hardlinked manual names retain separate attributed pages after inode-group checks.
 The compressed source digest identifies the original file. Symlink aliases
 are checked without following them and listed as references rather than expanded.
 .PP
@@ -571,17 +572,18 @@ generated ownership indexes are not required for correctness.
 Database apply installs only an approved linux/nolibc package
 with empty hooks, transform and requirements. Its payload may contain
 ordinary regular files, including native static ELF executables, relative
-symlinks and directory entries. Existing directories must match the manifest's
+symlinks, direct hardlinks and directory entries. Existing directories must match the manifest's
 mode and numeric owner/group. Missing parents require explicit directory entries
 in that package; apply creates them in parent-first order before writing files.
 A changed directory is rejected before writing a journal.
-No absolute symlink, hardlink, privileged mode
+No absolute symlink, privileged mode
 or file collision is accepted. The caller must review the db plan digest and
 invoke db approve first. Apply holds the database writer lock, recomputes the
 approved plan and rechecks every path against opened directory descriptors.
 It creates each regular file with O_EXCL, then synchronizes it and its parent.
 It creates symlinks with symlinkat without replacing existing entries and
-synchronizes their parent directory. All parent paths must be real directories;
+synchronizes their parent directory. Hardlinks use linkat after their verified
+regular targets are available, with no replacement of existing names. All parent paths must be real directories;
 payload writes do not follow installed links. Relative targets may be dangling.
 Lexical containment checks do not prove the runtime meaning of symlink chains.
 It
@@ -720,6 +722,14 @@ non-ASCII bytes as \eu00HH; consumers reconstruct the original bytes. Findings
 follow manifest order; intact artifacts have an empty array. The artifact-level
 changed-file code remains the aggregate failure indicator. This reports only
 data-manifest coverage, including the selected literal-path provider files.
+.PP
+Hardlink groups are checked by device and inode as well as contents and metadata.
+Independent copies with matching bytes fail the group check. Missing-only repair
+reuses an intact surviving group member when its regular anchor was removed;
+when the whole group is absent it restores contents from the cache and links
+all declared names. Removal unlinks only owned paths and preserves external
+hardlinks. Cross-filesystem link failures leave a journal and report the linkat
+error. Cache update transitions involving hardlink groups remain unsupported.
 .PP
 db repair-plan SHA256 --root DIRECTORY prepares missing-only restoration of an
 installed artifact with a recorded dependency graph from the target cache. db repair SHA256

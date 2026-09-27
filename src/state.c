@@ -858,8 +858,7 @@ static int plan_entry(void *context, const struct holy_manifest_entry *entry)
     struct plan_hash *plan = context;
     char attributes[128];
     int written, available;
-    if (entry->hardlink || entry->group ||
-        (entry->link && (entry->mode != 0777 || entry->link[0] == '/')) ||
+    if ((entry->link && (entry->mode != 0777 || entry->link[0] == '/')) ||
         !entry->path[0] || entry->path[0] == '/' ||
         !strcmp(entry->path, "var/lib/holypkg") ||
         !strncmp(entry->path, "var/lib/holypkg/", 16) ||
@@ -878,12 +877,14 @@ static int plan_entry(void *context, const struct holy_manifest_entry *entry)
         return 0;
     }
     written = snprintf(attributes, sizeof attributes, "%c:%o:%lld:%lld:%lld:",
-                       entry->directory ? 'd' : entry->link ? 'l' : 'f', entry->mode,
+                       entry->directory ? 'd' : entry->link ? 'l' : entry->hardlink ? 'h' : 'f', entry->mode,
                        entry->uid, entry->gid, entry->size);
     if (written <= 0 || (size_t)written >= sizeof attributes ||
         !hash_text(plan->hash, entry->path) ||
         !hash_text(plan->hash, attributes) ||
         (entry->link && !hash_text(plan->hash, entry->link)) ||
+        (entry->hardlink && !hash_text(plan->hash, entry->hardlink)) ||
+        (entry->group && !hash_text(plan->hash, entry->group)) ||
         (!entry->directory && !entry->link &&
          EVP_DigestUpdate(plan->hash, entry->hash, 32) != 1)) return 0;
     ++plan->count;

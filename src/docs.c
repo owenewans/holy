@@ -205,7 +205,10 @@ static int page(struct bundle *b, char **v, size_t n)
         ok = 1;
         goto done;
     }
-    if (strcmp(v[0], "file") || n != 12 || strlen(v[8]) != 64) goto done;
+    if ((strcmp(v[0], "file") || n != 12) &&
+        (strcmp(v[0], "hardlink") || n != 13)) goto done;
+    if (strlen(v[8]) != 64 || (!strcmp(v[0], "hardlink") &&
+        holy_install_check_path(b->manifest, b->root, v[1]) != 1)) goto done;
     fd = open_page(b->root, v[1]);
     if (fd < 0 || !(data = read_file(fd, &size)) ||
         EVP_Digest(data, size, digest, &length, EVP_sha256(), NULL) != 1 || length != 32) goto done;

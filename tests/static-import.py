@@ -56,6 +56,11 @@ with tempfile.TemporaryDirectory(prefix="holy-static-import-") as scratch:
             entry.uid, entry.gid = os.getuid(), os.getgid()
             entry.mode = 0o644
             archive.addfile(entry, io.BytesIO(data))
+        entry = tarfile.TarInfo("alias")
+        entry.type, entry.linkname = tarfile.LNKTYPE, "value"
+        entry.uid, entry.gid = os.getuid(), os.getgid()
+        entry.mode = 0o644
+        archive.addfile(entry)
     raw = stream.getvalue()
     variants = {"tar": raw, "gzip": gzip.compress(raw), "bzip2": bz2.compress(raw), "xz": lzma.compress(raw)}
     for codec in ("zstd", "lz4"):
@@ -80,14 +85,22 @@ with tempfile.TemporaryDirectory(prefix="holy-static-import-") as scratch:
         guest("db", "apply-set", plan, digest, "--root", "/")
         guest("db", "check", "--all", "--root", "/")
         assert (root / "value").read_bytes() == b"decoded without dynamic libc or helper programs\n"
+        inode = (root / "alias").stat().st_ino
+        assert (root / "value").stat().st_ino == inode
+        (root / "value").unlink()
+        guest("db", "check", "--all", "--root", "/", status=4)
+        repair = guest("db", "repair-plan", digest, "--root", "/").decode().split(" sha256 ")[1].split()[0]
+        guest("db", "repair", digest, "--plan", repair, "--root", "/")
+        guest("db", "check", "--all", "--root", "/")
+        assert (root / "value").stat().st_ino == inode
         guest("db", "rm", digest, "--root", "/")
-        assert not (root / "value").exists()
+        assert not (root / "value").exists() and not (root / "alias").exists()
         if codec != "tar":
             (root / "input" / (codec + "-truncated")).write_bytes(data[:len(data) // 2])
             guest("import", "/input/" + codec + "-truncated", "--source", "fixture", "--format", "pacman",
                   "--output", "/bad-" + codec, status=2)
             assert not (root / ("bad-" + codec) / "conversion").exists()
-        print("static import/install/remove passed codec=" + codec, flush=True)
+        print("static import/install/hardlink-repair/remove passed codec=" + codec, flush=True)
     for name in ("lib", "lib64", "usr/lib", "usr/lib64", "bin"):
         assert not (root / name).exists()
     assert list((root / "usr/bin").iterdir()) == [root / "usr/bin/holypkg"]

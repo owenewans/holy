@@ -311,7 +311,7 @@ SEE ALSO
      holy-image(7), holypkg(8)
 
 Holy				 September 2026			    HOLY-INIT(8)
-holy-package.5 source=holy version=development sha256=8111bfdcf2a51208d820b8743e72a06ee212f50fd104f135ac982006c8ff05a9
+holy-package.5 source=holy version=development sha256=afe407ad83f74652235ca4487285af0afd601d4fe2a8d0589085c3d9b5c573cf
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -335,8 +335,8 @@ DESCRIPTION
      that a purported noarch payload has no machine code.
 
      The  separate  holypkg  scan command examines regular ELF payload files and
-     rejects known arch/libc tag mismatches. The basic info and verify	commands
-     do not perform this ABI check.
+     each hardlink path, and rejects known arch/libc tag mismatches.  The  basic
+     info and verify commands do not perform this ABI check.
 
      The scanner accepts ET_EXEC without PT_INTERP and PT_DYNAMIC as nolibc, and
      ET_DYN  requiring	libc.so.6  as  glibc evidence, including its basename in
@@ -377,13 +377,17 @@ DESCRIPTION
      files and relative symlinks into existing or explicitly declared  safe  di-
      rectories.	 Symlinks  require mode 0777 and the caller's numeric ownership.
      The transaction records their targets, checks them without following links,
-     and removes only intact owned entries. Absolute symlinks and  hardlink  in-
-     stallation	 remain	 unsupported.  The pack command writes and verifies this
-     archive format from a prepared tree of regular files, directories and  sym-
-     links.   The  verifier  does  not verify dependencies, signatures, symbolic
-     owner names or the installed filesystem. A full format implementation  must
-     verify  file ownership, links, xattrs, hooks, origin and transaction seman-
-     tics before accepting an artifact for installation.
+     and removes only intact owned entries. Direct hardlinks share the	verified
+     regular target's inode; one regular anchor belongs to each named group. In-
+     stallation	 defers	 hardlinks  until  regular payload files exist, indepen-
+     dently of archive order. Absolute symlink installation remains unsupported.
+     Cached updates involving hardlink groups remain unsupported  and  return  a
+     requirement  error	 before	 changing  payload.  The pack command writes and
+     verifies this archive format from a prepared tree of regular files,  direc-
+     tories  and  symlinks.   The  verifier does not verify dependencies, signa-
+     tures, symbolic owner names or the installed filesystem. A full format  im-
+     plementation  must	 verify file ownership, links, xattrs, hooks, origin and
+     transaction semantics before accepting an artifact for installation.
 
 FOREIGN IMPORT RECORDS
      The pacman importer preserves original package metadata  as  regular  files
@@ -522,7 +526,7 @@ SOURCE IDENTITIES
      during package selection remain unimplemented.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=ba61e6841727f391f43805cb5c752c49a0e9ba66b0e76bce9d19e29417e1b803
+holypkg.8 source=holy version=development sha256=5d46f6ac155b4941c78278db95dd0a0db7e876346ae60cb7afdf193623b13749
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -728,9 +732,10 @@ DESCRIPTION
      retain separate attributed records.  Sources remain roff text; this command
      does  not	run  a	formatter or interpret roff directives. It decodes gzip,
      bzip2, xz and zstd with built-in libarchive filters when compiled	in,  and
-     never invokes a decompression helper.  The compressed source digest identi-
-     fies  the original file. Symlink aliases are checked without following them
-     and listed as references rather than expanded.
+     never invokes a decompression helper.  Hardlinked manual names retain sepa-
+     rate  attributed pages after inode-group checks.  The compressed source di-
+     gest identifies the original file. Symlink aliases are checked without fol-
+     lowing them and listed as references rather than expanded.
 
      missing-man identifies packages with no included regular page.  omitted-man
      lists  unsupported page names/codecs. The final summary records generation,
@@ -1067,33 +1072,35 @@ DESCRIPTION
 
      Database apply installs only an approved linux/nolibc  package  with  empty
      hooks, transform and requirements. Its payload may contain ordinary regular
-     files,  including	native static ELF executables, relative symlinks and di-
-     rectory entries. Existing directories must match the  manifest's  mode  and
-     numeric  owner/group. Missing parents require explicit directory entries in
-     that package; apply creates  them	in  parent-first  order	 before	 writing
-     files.   A	 changed directory is rejected before writing a journal.  No ab-
-     solute symlink, hardlink, privileged mode or file	collision  is  accepted.
-     The  caller must review the db plan digest and invoke db approve first. Ap-
-     ply holds the database  writer  lock,  recomputes	the  approved  plan  and
-     rechecks  every path against opened directory descriptors.	 It creates each
-     regular file with O_EXCL, then synchronizes it and its parent.  It	 creates
-     symlinks with symlinkat without replacing existing entries and synchronizes
-     their  parent directory. All parent paths must be real directories; payload
-     writes do not follow installed links. Relative  targets  may  be  dangling.
-     Lexical  containment  checks  do  not  prove the runtime meaning of symlink
-     chains.  It records a journal before changing the rootfs and publishes  in-
-     stalled  metadata	and  the  next database generation after copying payload
-     files. The installed record contains meta, files, deps, origin  and  state;
-     local  delivery  has no trusted source-id. Apply does not run package hooks
-     or configure services.  Declared directories require local	 numeric  owner-
-     ship,  owner search permission, and no group/other write or privileged mode
-     bits. Apply prepares an empty publishes it with renameat2(RENAME_NOREPLACE)
-     and synchronizes the parent.  Missing renameat2 support  prevents	publica-
-     tion.  Existing  directories  are never chmodded or replaced. Archive entry
-     order does not determine creation order.  A complete staged  directory  can
-     be	 reused	 by set/update/repair recovery; a partly initialized or nonempty
-     staging directory requires inspection.  Removal retains directories and un-
-     registered contents.
+     files,  including	native static ELF executables, relative symlinks, direct
+     hardlinks and directory entries. Existing directories must match the  mani-
+     fest's  mode  and numeric owner/group. Missing parents require explicit di-
+     rectory entries in that package; apply creates them in  parent-first  order
+     before  writing  files.   A  changed directory is rejected before writing a
+     journal.  No absolute symlink, privileged mode or	file  collision	 is  ac-
+     cepted.  The  caller  must	 review the db plan digest and invoke db approve
+     first. Apply holds the database writer lock, recomputes the  approved  plan
+     and  rechecks  every path against opened directory descriptors.  It creates
+     each regular file with O_EXCL, then synchronizes it  and  its  parent.   It
+     creates symlinks with symlinkat without replacing existing entries and syn-
+     chronizes their parent directory. Hardlinks use linkat after their verified
+     regular  targets  are available, with no replacement of existing names. All
+     parent paths must be real directories; payload writes  do	not  follow  in-
+     stalled  links.  Relative	targets	 may  be  dangling.  Lexical containment
+     checks do not prove the runtime meaning of symlink chains.	  It  records  a
+     journal before changing the rootfs and publishes installed metadata and the
+     next  database generation after copying payload files. The installed record
+     contains meta, files, deps, origin and state; local delivery has no trusted
+     source-id. Apply does not run package hooks  or  configure	 services.   De-
+     clared  directories  require  local numeric ownership, owner search permis-
+     sion, and no group/other write or privileged mode bits. Apply  prepares  an
+     empty  publishes  it  with renameat2(RENAME_NOREPLACE) and synchronizes the
+     parent.  Missing renameat2 support prevents publication. Existing	directo-
+     ries are never chmodded or replaced. Archive entry order does not determine
+     creation  order.	A  complete  staged  directory	can be reused by set/up-
+     date/repair recovery; a partly initialized or  nonempty  staging  directory
+     requires  inspection.   Removal  retains  directories and unregistered con-
+     tents.
 
      An I/O failure after journal publication leaves an	 incomplete  transaction
      for  inspection; db status returns 5 and db recover does not retry file mu-
@@ -1220,6 +1227,15 @@ DESCRIPTION
      tifacts have an empty array. The artifact-level changed-file  code	 remains
      the  aggregate failure indicator. This reports only data-manifest coverage,
      including the selected literal-path provider files.
+
+     Hardlink groups are checked by device and inode as	 well  as  contents  and
+     metadata.	 Independent  copies  with  matching bytes fail the group check.
+     Missing-only repair reuses an intact surviving group member when its  regu-
+     lar anchor was removed; when the whole group is absent it restores contents
+     from  the	cache  and  links all declared names. Removal unlinks only owned
+     paths and preserves  external  hardlinks.	Cross-filesystem  link	failures
+     leave  a  journal and report the linkat error. Cache update transitions in-
+     volving hardlink groups remain unsupported.
 
      db repair-plan SHA256 --root DIRECTORY prepares missing-only restoration of
      an installed artifact with a recorded  dependency	graph  from  the  target

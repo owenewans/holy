@@ -133,6 +133,14 @@ int main(int argc, char **argv)
         if (root >= 0) close(root);
         return status;
     }
+    if (argc == 5 && !strcmp(argv[1], "--check-path")) {
+        int files = open(argv[2], O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        root = open(argv[3], O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        ok = files >= 0 && root >= 0 && holy_install_check_path(files, root, argv[4]) == 1;
+        if (files >= 0) close(files);
+        if (root >= 0) close(root);
+        return ok ? 0 : 4;
+    }
     if (argc != 3) return 2;
     if (strcmp(argv[1], "--transitions") && strcmp(argv[1], "--resume-transition") &&
         strcmp(argv[1], "--resume-addition") &&
