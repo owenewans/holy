@@ -551,9 +551,13 @@ PY
         case "$file" in vmlinuz) cmp "$root/boot/vmlinuz" "$work/readback" ;; *) cmp "$out/$file" "$work/readback" ;; esac
         rm "$work/readback"
     done
-    dd if="$work/esp.fat" of="$out/disk.raw" bs=1M seek=2 conv=notrunc status=none
-    dd if="$root_disk" of="$out/disk.raw" bs=1M seek=258 conv=notrunc status=none
-    limine bios-install "$out/disk.raw" 1
+    "$installer" disk finalize-plan --disk-plan "$out/disk.plan" \
+        --esp "$work/esp.fat" --root-image "$root_disk" \
+        --output "$out/disk-finalize.plan"
+    sha256sum "$out/disk-finalize.plan" >> "$record"
+    "$installer" disk finalize-apply --plan "$out/disk-finalize.plan" \
+        --confirm "$out/disk.raw"
+    test "$(tail -n 1 "$out/disk-finalize.plan.journal")" = committed
     sfdisk --verify "$out/disk.raw"
     chmod 0444 "$out/disk.raw"
     root_disk="$out/disk.raw"

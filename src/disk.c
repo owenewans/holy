@@ -71,6 +71,34 @@ static int hash_region(int fd, off_t offset, char out[65])
     return 1;
 }
 
+static int hash_span(int fd, uintmax_t offset, uintmax_t size, char out[65])
+{
+    unsigned char data[1048576], digest[32];
+    static const char digits[] = "0123456789abcdef";
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    unsigned length = 0;
+    size_t i;
+    int ok = ctx && EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) == 1;
+    while (ok && size) {
+        size_t want = size < sizeof data ? (size_t)size : sizeof data;
+        ssize_t got = pread(fd, data, want, (off_t)offset);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) { ok = 0; break; }
+        ok = EVP_DigestUpdate(ctx, data, (size_t)got) == 1;
+        offset += (uintmax_t)got;
+        size -= (uintmax_t)got;
+    }
+    if (ok) ok = EVP_DigestFinal_ex(ctx, digest, &length) == 1 && length == 32;
+    EVP_MD_CTX_free(ctx);
+    if (!ok) return 0;
+    for (i = 0; i < 32; ++i) {
+        out[2*i] = digits[digest[i] >> 4];
+        out[2*i+1] = digits[digest[i] & 15];
+    }
+    out[64] = 0;
+    return 1;
+}
+
 static int image_facts(int fd, struct disk_plan *p)
 {
     struct stat st;
@@ -347,8 +375,310 @@ done:
     return rc;
 }
 
+struct final_file {
+    char *path;
+    uintmax_t device, inode, size;
+    char digest[65];
+};
+
+struct final_plan {
+    struct final_file disk, esp, root, limine;
+    uintmax_t root_sectors;
+};
+
+static int digest_text(const char *s)
+{
+    size_t i;
+    if (!s || strlen(s) != 64) return 0;
+    for (i = 0; i < 64; ++i)
+        if (!((s[i] >= '0' && s[i] <= '9') ||
+              (s[i] >= 'a' && s[i] <= 'f'))) return 0;
+    return 1;
+}
+
+static void final_free(struct final_plan *p)
+{
+    free(p->disk.path); free(p->esp.path); free(p->root.path);
+    free(p->limine.path);
+}
+
+static int final_facts(int fd, struct final_file *f)
+{
+    struct stat st;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0) return 0;
+    f->device = (uintmax_t)st.st_dev;
+    f->inode = (uintmax_t)st.st_ino;
+    f->size = (uintmax_t)st.st_size;
+    return hash_span(fd, 0, f->size, f->digest);
+}
+
+static int final_open(const char *path, struct final_file *f)
+{
+    int fd;
+    f->path = realpath(path, NULL);
+    if (!f->path) return -1;
+    fd = open(f->path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0 || !final_facts(fd, f)) {
+        if (fd >= 0) close(fd);
+        return -1;
+    }
+    close(fd);
+    return 0;
+}
+
+static int final_entry(FILE *out, const char *name, const struct final_file *f)
+{
+    return fprintf(out, "%s ", name) >= 0 && quote(out, f->path) &&
+        fprintf(out, "\n%s-device %" PRIuMAX "\n%s-inode %" PRIuMAX
+                "\n%s-size %" PRIuMAX "\n%s-sha256 %s\n",
+                name, f->device, name, f->inode, name, f->size,
+                name, f->digest) >= 0;
+}
+
+static int final_write(const char *path, const struct final_plan *p)
+{
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    FILE *out;
+    int ok;
+    if (fd < 0) { perror("holyinstall: final plan"); return 1; }
+    out = fdopen(fd, "w");
+    if (!out) { close(fd); unlink(path); return 1; }
+    ok = fputs("[disk-finalize-plan]\nformat 1\n", out) >= 0 &&
+         final_entry(out, "disk", &p->disk) && final_entry(out, "esp", &p->esp) &&
+         final_entry(out, "root", &p->root) && final_entry(out, "limine", &p->limine) &&
+         fprintf(out, "root-sectors %" PRIuMAX "\n", p->root_sectors) >= 0;
+    if (fflush(out) || fsync(fd)) ok = 0;
+    if (fclose(out)) ok = 0;
+    if (ok) ok = sync_parent(path);
+    if (!ok) { unlink(path); return 1; }
+    return 0;
+}
+
+static int final_read_file(const struct holy_config *c, const char *name,
+                           struct final_file *f)
+{
+    const char *s;
+    char key[64];
+    snprintf(key, sizeof key, "%s", name);
+    s = value(c, "disk-finalize-plan", key);
+    if (!s || s[0] != '/') return 0;
+    f->path = strdup(s);
+    if (!f->path) return 0;
+    snprintf(key, sizeof key, "%s-device", name);
+    if (!number(value(c, "disk-finalize-plan", key), &f->device)) return 0;
+    snprintf(key, sizeof key, "%s-inode", name);
+    if (!number(value(c, "disk-finalize-plan", key), &f->inode)) return 0;
+    snprintf(key, sizeof key, "%s-size", name);
+    if (!number(value(c, "disk-finalize-plan", key), &f->size)) return 0;
+    snprintf(key, sizeof key, "%s-sha256", name);
+    s = value(c, "disk-finalize-plan", key);
+    if (!digest_text(s)) return 0;
+    memcpy(f->digest, s, 65);
+    return 1;
+}
+
+static int final_read(const char *path, struct final_plan *p)
+{
+    struct holy_config c = {0};
+    char *error = NULL;
+    const char *s;
+    size_t i;
+    int ok = holy_config_load_plan(path, &c, &error);
+    if (!ok) { fprintf(stderr, "holyinstall: %s\n", error ? error : "invalid plan"); free(error); return 2; }
+    ok = c.count == 22;
+    for (i = 0; i < c.count; ++i)
+        if (strcmp(c.entries[i].section, "disk-finalize-plan")) ok = 0;
+    s = value(&c, "disk-finalize-plan", "format");
+    ok = ok && s && !strcmp(s, "1") &&
+         final_read_file(&c, "disk", &p->disk) &&
+         final_read_file(&c, "esp", &p->esp) &&
+         final_read_file(&c, "root", &p->root) &&
+         final_read_file(&c, "limine", &p->limine) &&
+         number(value(&c, "disk-finalize-plan", "root-sectors"), &p->root_sectors);
+    if (ok) ok = p->disk.size >= (1ULL << 30) && p->disk.size % sector == 0 &&
+        p->root_sectors == ((p->disk.size / sector - root_start - 34) / 2048) * 2048 &&
+        p->esp.size == (uintmax_t)esp_sectors * sector &&
+        p->root.size == p->root_sectors * sector &&
+        p->limine.size > 0 && !strcmp(p->limine.path, "/usr/bin/limine");
+    holy_config_free(&c);
+    if (!ok) { fputs("holyinstall: invalid disk finalize plan\n", stderr); return 2; }
+    return 0;
+}
+
+static int final_match(int fd, const struct final_file *expected)
+{
+    struct final_file actual = {0};
+    return final_facts(fd, &actual) && actual.device == expected->device &&
+        actual.inode == expected->inode && actual.size == expected->size &&
+        !strcmp(actual.digest, expected->digest);
+}
+
+static int final_copy(int source, int target, uintmax_t offset, uintmax_t size)
+{
+    unsigned char buffer[1048576];
+    uintmax_t pos = 0;
+    while (pos < size) {
+        size_t want = size - pos < sizeof buffer ? (size_t)(size - pos) : sizeof buffer;
+        ssize_t got = pread(source, buffer, want, (off_t)pos);
+        size_t used = 0;
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) return 0;
+        while (used < (size_t)got) {
+            ssize_t n = pwrite(target, buffer + used, (size_t)got - used,
+                               (off_t)(offset + pos + used));
+            if (n < 0 && errno == EINTR) continue;
+            if (n <= 0) return 0;
+            used += (size_t)n;
+        }
+        pos += (uintmax_t)got;
+    }
+    return 1;
+}
+
+static uint64_t little64(const unsigned char *p)
+{
+    unsigned i;
+    uint64_t value = 0;
+    for (i = 0; i < 8; ++i) value |= (uint64_t)p[i] << (i * 8);
+    return value;
+}
+
+static int final_layout(int fd, uintmax_t root_sectors)
+{
+    unsigned char header[512], entries[384];
+    uint64_t start[3] = {2048, esp_start, root_start};
+    uint64_t count[3] = {2048, esp_sectors, root_sectors};
+    size_t i;
+    if (pread(fd, header, sizeof header, sector) != (ssize_t)sizeof header ||
+        memcmp(header, "EFI PART", 8) || little64(header + 72) != 2 ||
+        header[84] != 128 || header[85] || header[86] || header[87] ||
+        pread(fd, entries, sizeof entries, sector * 2) != (ssize_t)sizeof entries) return 0;
+    for (i = 0; i < 3; ++i)
+        if (little64(entries + i * 128 + 32) != start[i] ||
+            little64(entries + i * 128 + 40) != start[i] + count[i] - 1) return 0;
+    return 1;
+}
+
+static int final_plan_make(const char *disk_plan_path, const char *esp,
+                           const char *root, const char *output)
+{
+    struct disk_plan base = {0}, actual = {0};
+    struct final_plan p = {0};
+    char *journal_path = NULL;
+    FILE *journal_file = NULL;
+    char last[64] = {0}, line[64];
+    int fd = -1, rc = read_plan(disk_plan_path, &base);
+    char *const verify[] = {"sfdisk", "--verify", "/proc/self/fd/9", NULL};
+    if (rc) goto done;
+    journal_path = malloc(strlen(disk_plan_path) + 9);
+    if (!journal_path) { rc = 1; goto done; }
+    sprintf(journal_path, "%s.journal", disk_plan_path);
+    {
+        struct stat st;
+        int journal_fd = open(journal_path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+        if (journal_fd < 0) { rc = 6; goto done; }
+        if (fstat(journal_fd, &st) || !S_ISREG(st.st_mode) || st.st_size > 4096) {
+            close(journal_fd); rc = 2; goto done;
+        }
+        journal_file = fdopen(journal_fd, "r");
+        if (!journal_file) { close(journal_fd); rc = 1; goto done; }
+    }
+    while (fgets(line, sizeof line, journal_file)) {
+        if (!strchr(line, '\n')) { rc = 2; goto done; }
+        memcpy(last, line, strlen(line) + 1);
+    }
+    if (strcmp(last, "committed\n")) { rc = 5; goto done; }
+    fd = open(base.image, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0 || !image_facts(fd, &actual) ||
+        actual.device != base.device || actual.inode != base.inode ||
+        actual.size != base.size || actual.root_sectors != base.root_sectors ||
+        loop_status(base.image) || !final_layout(fd, base.root_sectors) ||
+        child("/usr/sbin/sfdisk", verify, NULL, fd)) {
+        rc = 6; goto done;
+    }
+    p.root_sectors = base.root_sectors;
+    if (final_open(base.image, &p.disk) || final_open(esp, &p.esp) ||
+        final_open(root, &p.root) || final_open("/usr/bin/limine", &p.limine)) {
+        rc = 6; goto done;
+    }
+    if (p.esp.size != (uintmax_t)esp_sectors * sector ||
+        p.root.size != p.root_sectors * sector) { rc = 2; goto done; }
+    printf("disk %s\nesp %s sha256 %s\nroot %s sha256 %s\nlimine %s sha256 %s\n",
+           p.disk.path, p.esp.path, p.esp.digest, p.root.path, p.root.digest,
+           p.limine.path, p.limine.digest);
+    rc = final_write(output, &p);
+done:
+    if (journal_file) fclose(journal_file);
+    if (fd >= 0) close(fd);
+    free(journal_path); free(base.image); final_free(&p);
+    return rc;
+}
+
+static int final_apply(const char *path, const char *confirm)
+{
+    struct final_plan p = {0};
+    int disk = -1, esp = -1, root = -1, limine = -1;
+    int rc = final_read(path, &p);
+    char *journal_path = NULL;
+    char check[65];
+    char *const install[] = {"limine", "bios-install", "/proc/self/fd/9", "1", NULL};
+    char *const verify[] = {"sfdisk", "--verify", "/proc/self/fd/9", NULL};
+    if (rc) goto done;
+    if (strcmp(confirm, p.disk.path)) { rc = 3; goto done; }
+    disk = open(p.disk.path, O_RDWR | O_NOFOLLOW | O_CLOEXEC);
+    esp = open(p.esp.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    root = open(p.root.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    limine = open(p.limine.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (disk < 0 || esp < 0 || root < 0 || limine < 0 ||
+        flock(disk, LOCK_EX | LOCK_NB)) { rc = 6; goto done; }
+    if (!final_match(disk, &p.disk) || !final_match(esp, &p.esp) ||
+        !final_match(root, &p.root) || !final_match(limine, &p.limine)) {
+        fputs("holyinstall: disk or source image changed since plan\n", stderr);
+        rc = 3; goto done;
+    }
+    if (loop_status(p.disk.path)) { rc = 6; goto done; }
+    if (access("/usr/sbin/sfdisk", X_OK) || access(p.limine.path, X_OK)) {
+        fputs("holyinstall: sfdisk and Limine are required\n", stderr);
+        rc = 6; goto done;
+    }
+    journal_path = malloc(strlen(path) + 9);
+    if (!journal_path) { rc = 1; goto done; }
+    sprintf(journal_path, "%s.journal", path);
+    if (!journal(journal_path, "prepared", 1)) { rc = errno == EEXIST ? 5 : 1; goto done; }
+    rc = 5;
+    if (!journal(journal_path, "copying-esp", 0) ||
+        !final_copy(esp, disk, (uintmax_t)esp_start * sector, p.esp.size) ||
+        fsync(disk) || !hash_span(disk, (uintmax_t)esp_start * sector, p.esp.size, check) ||
+        strcmp(check, p.esp.digest) || !journal(journal_path, "copied-esp", 0)) goto done;
+    if (!journal(journal_path, "copying-root", 0) ||
+        !final_copy(root, disk, (uintmax_t)root_start * sector, p.root.size) ||
+        fsync(disk) || !hash_span(disk, (uintmax_t)root_start * sector, p.root.size, check) ||
+        strcmp(check, p.root.digest) || !journal(journal_path, "copied-root", 0)) goto done;
+    if (!journal(journal_path, "installing-limine", 0) ||
+        child("/usr/bin/limine", install, NULL, disk) ||
+        child("/usr/sbin/sfdisk", verify, NULL, disk) || fsync(disk) ||
+        !journal(journal_path, "committed", 0)) goto done;
+    puts("disk image finalized");
+    rc = 0;
+done:
+    if (rc == 5) fputs("holyinstall: disk finalize may be partial; inspect journal and image\n", stderr);
+    if (disk >= 0) close(disk);
+    if (esp >= 0) close(esp);
+    if (root >= 0) close(root);
+    if (limine >= 0) close(limine);
+    free(journal_path); final_free(&p);
+    return rc;
+}
+
 int holy_disk_main(int argc, char **argv)
 {
+    if (argc == 9 && !strcmp(argv[0], "finalize-plan") &&
+        !strcmp(argv[1], "--disk-plan") && !strcmp(argv[3], "--esp") &&
+        !strcmp(argv[5], "--root-image") && !strcmp(argv[7], "--output"))
+        return final_plan_make(argv[2], argv[4], argv[6], argv[8]);
+    if (argc == 5 && !strcmp(argv[0], "finalize-apply") &&
+        !strcmp(argv[1], "--plan") && !strcmp(argv[3], "--confirm"))
+        return final_apply(argv[2], argv[4]);
     if (argc == 5 && !strcmp(argv[0], "plan") &&
         !strcmp(argv[1], "--config") && !strcmp(argv[3], "--output"))
         return disk_plan(argv[2], argv[4]);
@@ -356,6 +686,9 @@ int holy_disk_main(int argc, char **argv)
         !strcmp(argv[1], "--plan") && !strcmp(argv[3], "--confirm"))
         return disk_apply(argv[2], argv[4]);
     fputs("usage: holyinstall disk plan --config FILE --output NEW_PLAN | "
-          "holyinstall disk apply --plan PLAN --confirm IMAGE\n", stderr);
+          "holyinstall disk apply --plan PLAN --confirm IMAGE | "
+          "holyinstall disk finalize-plan --disk-plan PLAN --esp FILE "
+          "--root-image FILE --output NEW_PLAN | "
+          "holyinstall disk finalize-apply --plan PLAN --confirm IMAGE\n", stderr);
     return 2;
 }

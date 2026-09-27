@@ -186,6 +186,7 @@ static int valid_section(const char *s)
     return !strcmp(s, "general") || !strcmp(s, "resolver") ||
            !strcmp(s, "install") || !strcmp(s, "install-plan") ||
            !strcmp(s, "disk") || !strcmp(s, "disk-plan") ||
+           !strcmp(s, "disk-finalize-plan") ||
            (!strncmp(s, "source ", 7) && s[7] && strcmp(s + 7, "local")) ||
            (!strncmp(s, "rule ", 5) && s[5]);
 }
@@ -202,7 +203,18 @@ static int list_key(const char *section, const char *key)
 
 static int key_arity(const char *section, const char *key)
 {
-    if (!strcmp(section, "disk-plan")) {
+    if (!strcmp(section, "disk-finalize-plan")) {
+        static const char *const names[] = {"disk", "esp", "root", "limine"};
+        static const char *const suffix[] = {"", "-device", "-inode", "-size", "-sha256"};
+        size_t i, j;
+        char expected[32];
+        if (!strcmp(key, "format") || !strcmp(key, "root-sectors")) return 1;
+        for (i = 0; i < sizeof names / sizeof names[0]; ++i)
+            for (j = 0; j < sizeof suffix / sizeof suffix[0]; ++j) {
+                snprintf(expected, sizeof expected, "%s%s", names[i], suffix[j]);
+                if (!strcmp(key, expected)) return 1;
+            }
+    } else if (!strcmp(section, "disk-plan")) {
         if (!strcmp(key, "format") || !strcmp(key, "image") ||
             !strcmp(key, "device") || !strcmp(key, "inode") ||
             !strcmp(key, "size") || !strcmp(key, "head-sha256") ||

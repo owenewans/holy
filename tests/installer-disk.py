@@ -22,9 +22,21 @@ def sample_hash(path):
     return head, tail
 
 
+def region_hash(path, offset, size):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        stream.seek(offset)
+        while size:
+            data = stream.read(min(size, 1048576))
+            assert data
+            digest.update(data)
+            size -= len(data)
+    return digest.hexdigest()
+
+
 def main(binary):
     for tool in ("/usr/sbin/sfdisk", "/sbin/mkfs.fat", "/sbin/mke2fs",
-                 "/sbin/blkid", "/sbin/losetup"):
+                 "/sbin/blkid", "/sbin/losetup", "/usr/bin/limine"):
         if not os.access(tool, os.X_OK):
             raise SystemExit(f"required tool missing: {tool}")
     with tempfile.TemporaryDirectory(prefix="holy-installer-disk-") as directory:
@@ -78,7 +90,61 @@ def main(binary):
         root = run("/sbin/blkid", "-p", "-O", str(528384 * 512),
                    "-S", str(1566720 * 512), image)
         assert 'TYPE="vfat"' in fat and 'TYPE="ext4"' in root
-        print("installer disk image: plan, identity, journal, GPT, FAT32, ext4 passed")
+        esp_image = os.path.join(directory, "esp.fat")
+        root_image = os.path.join(directory, "root.ext4")
+        run("/sbin/mkfs.fat", "-C", "-F", "32", "-s", "4", esp_image, "262144")
+        with open(root_image, "wb") as stream:
+            stream.truncate(1566720 * 512)
+        run("/sbin/mke2fs", "-q", "-t", "ext4", "-F", root_image)
+        final_plan = os.path.join(directory, "final-plan")
+        before = sample_hash(image)
+        with open(image, "r+b") as stream:
+            stream.seek(1024 + 128 + 32)
+            saved_lba = stream.read(1)
+            stream.seek(1024 + 128 + 32)
+            stream.write(b"X")
+        run(binary, "disk", "finalize-plan", "--disk-plan", plan,
+            "--esp", esp_image, "--root-image", root_image,
+            "--output", final_plan, code=6)
+        with open(image, "r+b") as stream:
+            stream.seek(1024 + 128 + 32)
+            stream.write(saved_lba)
+        assert sample_hash(image) == before
+        run(binary, "disk", "finalize-plan", "--disk-plan", plan,
+            "--esp", esp_image, "--root-image", root_image,
+            "--output", final_plan)
+        assert sample_hash(image) == before
+        run(binary, "disk", "finalize-apply", "--plan", final_plan,
+            "--confirm", image + "x", code=3)
+        assert sample_hash(image) == before
+        with open(root_image, "r+b") as stream:
+            stream.seek(8192)
+            previous = stream.read(1)
+            stream.seek(8192)
+            stream.write(b"X")
+        run(binary, "disk", "finalize-apply", "--plan", final_plan,
+            "--confirm", image, code=3)
+        assert sample_hash(image) == before
+        with open(root_image, "r+b") as stream:
+            stream.seek(8192)
+            stream.write(previous)
+        with open(final_plan + ".journal", "w") as stream:
+            stream.write("prepared\n")
+        run(binary, "disk", "finalize-apply", "--plan", final_plan,
+            "--confirm", image, code=5)
+        assert sample_hash(image) == before
+        os.unlink(final_plan + ".journal")
+        run(binary, "disk", "finalize-apply", "--plan", final_plan,
+            "--confirm", image)
+        assert open(final_plan + ".journal").read().splitlines()[-1] == "committed"
+        assert region_hash(image, 4096 * 512, 524288 * 512) == \
+            region_hash(esp_image, 0, 524288 * 512)
+        assert region_hash(image, 528384 * 512, 1566720 * 512) == \
+            region_hash(root_image, 0, 1566720 * 512)
+        run("/usr/sbin/sfdisk", "--verify", image)
+        run(binary, "disk", "finalize-apply", "--plan", final_plan,
+            "--confirm", image, code=3)
+        print("installer disk image: plan, identity, journal, GPT, FAT32, ext4, finalize passed")
 
 
 if __name__ == "__main__":

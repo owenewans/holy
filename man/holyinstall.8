@@ -11,6 +11,10 @@ holyinstall \- prepare a disk image and install packages to an existing Holy roo
 .B holyinstall disk plan --config FILE --output NEW_PLAN
 .br
 .B holyinstall disk apply --plan PLAN --confirm IMAGE
+.br
+.B holyinstall disk finalize-plan --disk-plan PLAN --esp FILE --root-image FILE --output NEW_PLAN
+.br
+.B holyinstall disk finalize-apply --plan PLAN --confirm IMAGE
 .SH DESCRIPTION
 holyinstall supports a disk-image preparation stage and a separate package
 transaction for a pre-mounted root. Disk preparation does not mount the image
@@ -93,10 +97,19 @@ After an interrupted stage, inspect the image and journal before starting a
 new plan. The command does not silently repeat a format operation.
 .PP
 Disk preparation destroys existing image contents. It does not mount the
-partitions, install Limine or generate an initramfs, and does not prove the
-image can boot. The text menu currently edits only [install] configs. Disk,
-boot and account menus and the live-ISO-to-installed-disk QEMU test remain
-pending.
+partitions or generate an initramfs. The finalize-plan command requires a
+committed disk preparation journal, a valid GPT, an exact-size ESP image and
+an exact-size ext4 root image. It records the full SHA-256, device, inode and
+size of the disk, both input images and /usr/bin/limine in a new mode-0600
+plan. Review that plan before applying it. Finalize-apply requires the exact
+disk path as --confirm and rechecks all inputs before changing the disk. It
+copies the two images into their partitions, verifies the written bytes,
+installs the Limine BIOS stage and verifies GPT. The adjacent journal records
+each stage. A changed input requires a new plan; an existing finalize journal
+requires inspection before recovery. The command does not configure UEFI,
+mount the partitions or prove the image can boot. The text menu currently
+edits only [install] configs. Disk, boot and account menus and the
+live-ISO-to-installed-disk QEMU test remain pending.
 .SH EXIT STATUS
 0 means the requested step completed. 1 means an operational error. 2 means
 invalid arguments, config or plan. Disk apply returns 3 for a changed image
