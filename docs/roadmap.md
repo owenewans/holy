@@ -69,6 +69,10 @@ it does not mean a bootable distribution or general package support.
   interface setup still uses a host fixture tool, not a finished recovery profile.
 - [ ] Package statically linked BusyBox, dinit, mdevd and the recovery chain,
   plus both dynamic libc runtimes for i686 and x86_64.
+- [x] Build pinned x86_64 musl-static dinit with upstream tests; exercise
+  service start/status/shutdown and stop-command effects with dinitctl in a
+  libc-free chroot as an ordinary user. PID 1 boot remains open, as does
+  installing the package's man-page symlinks through the transaction engine.
 - [ ] Package Limine, dracut, kernel, firmware, SDK/sysroots and the default
   ConnMan+iwd network profile; test static local and HTTPS libc recovery.
 - [ ] Implement C99 `holyinstall` with reviewed disk/boot/account/network plans

@@ -147,6 +147,18 @@ compiler version, configuration, ELF facts and package hash. Capabilities suppor
 is disabled in this bootstrap profile. This package build does not establish
 PID 1 boot acceptance; that requires the image test. OUTPUT must be new.
 .PP
+make check-bootstrap-dinit DINIT_PACKAGE=FILE BUSYBOX_PACKAGE=FILE extracts
+verified packages and copies their dinit, dinitctl and BusyBox binaries into
+a disposable chroot without dynamic libc directories. It checks static ELF
+classification, starts a scripted service, queries its STARTED state through
+the control socket, requests shutdown and checks the stop-command effect.
+The service manager runs with the caller's UID/GID in user mode. Host doas,
+chroot, mknod and timeout are required; the fixture supplies only /dev/null
+and enforces a 20-second timeout. It prints the tested package hashes.
+This tests service control and the static C++ runtime, not PID 1 boot or
+package installation. The current installer cannot install this package's
+man-page symlinks yet.
+.PP
 make static-deps INPUTS=DIRECTORY OUTPUT=DIRECTORY KERNEL_HEADERS=DIRECTORY
 builds x86_64 musl dependencies from the pinned archives listed with URLs and
 SHA-256 digests in profiles/static-sources. It copies and verifies inputs

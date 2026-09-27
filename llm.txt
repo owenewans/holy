@@ -51,7 +51,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=d80c4103867a9c78e99c8ed9a9cc888c2dfccdafbdfcd3ce628c424b447c8b07
+holypkg.8 source=holy version=development sha256=acd8237cf2f78760609056a73d3211552ae07fe91c4c0d74950be632c452f015
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -157,6 +157,18 @@ DESCRIPTION
      hash. Capabilities support is disabled  in	 this  bootstrap  profile.  This
      package  build  does not establish PID 1 boot acceptance; that requires the
      image test. OUTPUT must be new.
+
+     make check-bootstrap-dinit DINIT_PACKAGE=FILE BUSYBOX_PACKAGE=FILE extracts
+     verified packages and copies their dinit,	dinitctl  and  BusyBox	binaries
+     into a disposable chroot without dynamic libc directories. It checks static
+     ELF  classification,  starts  a scripted service, queries its STARTED state
+     through the control socket, requests shutdown and checks  the  stop-command
+     effect.   The  service manager runs with the caller's UID/GID in user mode.
+     Host doas, chroot, mknod and timeout are  required;  the  fixture	supplies
+     only /dev/null and enforces a 20-second timeout. It prints the tested pack-
+     age hashes.  This tests service control and the static C++ runtime, not PID
+     1	boot  or package installation. The current installer cannot install this
+     package's man-page symlinks yet.
 
      make static-deps INPUTS=DIRECTORY OUTPUT=DIRECTORY KERNEL_HEADERS=DIRECTORY
      builds x86_64 musl dependencies from the pinned archives listed  with  URLs
