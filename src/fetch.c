@@ -240,8 +240,14 @@ static int https_object(const char *url, const char *expected,
         if (remaining <= 0 ||
             curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, remaining) != CURLE_OK)
             goto done;
-        if (curl_easy_perform(curl) != CURLE_OK ||
-            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response) != CURLE_OK)
+        {
+            CURLcode performed = curl_easy_perform(curl);
+            if (performed != CURLE_OK) {
+                fprintf(stderr, "holypkg: HTTPS transport: %s\n", curl_easy_strerror(performed));
+                goto done;
+            }
+        }
+        if (curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response) != CURLE_OK)
             goto done;
         if (response >= 200 && response < 300) break;
         if (response < 300 || response >= 400 || redirect == 5 ||

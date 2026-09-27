@@ -90,6 +90,8 @@ if test "$profile" = dual-libc; then
         *) exit 1 ;;
     esac
     state=$($bb cat /etc/holy/libc-boot-state)
+    network=$($bb cat /etc/holy/network-recovery)
+    case "$network" in off|fixture) ;; *) exit 1 ;; esac
     case "$state" in present|glibc|musl|both) ;; *) exit 1 ;; esac
     if test "$boot" = 2; then state=restored; fi
     for abi in glibc musl; do
@@ -116,6 +118,26 @@ if test "$profile" = dual-libc; then
         esac
     done
     echo "HOLY-BOOT-1 libc-initial $state"
+    if test "$network" = fixture && test "$state" = both; then
+        stage=network-setup
+        test -s /etc/holy/recovery-ca.pem
+        $bb ip link set eth0 up
+        $bb ip addr add 10.0.2.15/24 dev eth0
+        $bb ip route add default via 10.0.2.2 dev eth0
+        $bb ip addr show eth0 | $bb grep -q 'inet 10.0.2.'
+        echo 'HOLY-BOOT-1 network fixture-static-ip'
+        $bb nslookup fixture.holy.test > /run/fixture-dns
+        $bb grep -q '10.0.2.2' /run/fixture-dns
+        echo 'HOLY-BOOT-1 network fixture-dns'
+        for abi in glibc musl; do
+            digest=$($bb cat "/etc/holy/$abi.sha256")
+            test ! -e "/var/cache/holypkg/objects/sha256/$digest.holy"
+            $pkg fetch "https://fixture.holy.test:8443/$abi.holy" \
+                --sha256 "$digest" --output /var/cache/holypkg/objects/sha256 \
+                --ca-file /etc/holy/recovery-ca.pem > /run/network-fetch
+            echo "HOLY-BOOT-1 downloaded-libc $abi"
+        done
+    fi
     for abi in glibc musl; do
         case "$state:$abi" in
             both:*|glibc:glibc|musl:musl)

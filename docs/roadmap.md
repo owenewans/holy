@@ -209,10 +209,12 @@
   chroot, including wrong CA/digest refusals and a hashed JSON report. Pinned
   static BusyBox packages for i686 and x86_64 now include ip, udhcpc and
   nslookup; the fixture raises loopback with that packaged ip applet inside the
-  libc-free chroot. QEMU network recovery remains a separate gate.
+  libc-free chroot. Guest DNS is covered by the QEMU fixture below; public CA
+  packaging remains a separate gate.
 - [x] Package statically linked BusyBox, dinit, mdevd and the local recovery
-  chain, plus both dynamic libc runtimes for i686 and x86_64. Network setup
-  inside the recovery image and independent HTTPS recovery remain unfinished.
+  chain, plus both dynamic libc runtimes for i686 and x86_64. The isolated QEMU
+  HTTPS recovery fixture is listed below; ordinary network configuration and
+  public CA packaging remain unfinished.
 - [x] Build pinned i686 and x86_64 musl as native runtime packages with source hashes,
   license and a natively linked loader SONAME. Run pthread/allocation probes
   alongside glibc.
@@ -274,7 +276,8 @@
   tests and rseq registration-length assumptions. Boot recovery proofs do
   not establish a passing upstream suite.
 - [ ] Package Limine, dracut, kernel, firmware, SDK/sysroots and the default
-  ConnMan+iwd network profile; test static local and HTTPS libc recovery.
+  ConnMan+iwd network profile. Static local recovery and a private HTTPS
+  recovery fixture have acceptance tests; production network recovery remains.
 - [ ] Implement C99 `holyinstall` with reviewed disk/boot/account/network plans
   and `holypkg --root` integration.
 - [ ] Implement `holygetiso` with explicit inputs, installed man bundle and a
@@ -307,6 +310,12 @@
   its FAT boot partition, restores both libc packages, writes a boot-partition
   witness and verifies that witness plus package state after reboot. i686 UEFI
   and the interactive installer remain separate acceptance gates.
+- [x] Boot a dual-libc RAM image with both libc archives absent from its cache
+  and fetch their native artifacts over HTTPS from a QEMU fixture in a private
+  network namespace. The guest uses static BusyBox ip and holypkg, verifies the
+  fixture CA and artifact hashes, repairs both runtimes and runs dynamic/IPC
+  probes. Guest DNS resolution and hostname-verified HTTPS are covered for both
+  architectures; public CA and external network coverage remain open.
 - [x] Run `make check-root` against disposable target-root install, check,
   remove and recovery fixtures; this gate does not boot a system.
 - [x] Add a BIOS/UEFI `make check-qemu ARCH=... ISO=... BOOT_PLAN=...` runner

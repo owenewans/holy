@@ -1,4 +1,4 @@
-holy-image.7 source=holy version=development sha256=60594aa4b8e0a0ed61cad89442c6af76ce20c2bfca72f3327ab5e034e4787a07
+holy-image.7 source=holy version=development sha256=b2c6d14891da4895c8a29c98252a06807fba1da134978312a199ea8147c5af87
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
 NAME
@@ -24,7 +24,14 @@ BUILD
      include  switch_root,  sync  and reboot.  gpt-ext4 selects an independently
      bootable GPT disk with the same ext4 recovery contract. It additionally re-
      quires sfdisk, mkfs.fat and mtools; xorriso is only required for  ISO  pro-
-     files.  The following make variables are required:
+     files.   NETWORK_RECOVERY	defaults  to off. The explicit fixture value re-
+     quires a dual-libc RAM image with LIBC_BOOT_STATE=both. The  builder  omits
+     both  libc	 archives from the guest cache, retains copies for a local HTTPS
+     fixture, and packages a generated test CA. The guest  assigns  the	 fixture
+     address with static BusyBox ip, downloads both archives with static holypkg
+     and  verifies their SHA-256 digests before missing-only repair. The test CA
+     key stays in the build output and is not included in the image or	documen-
+     tation bundle.  The following make variables are required:
 
      STATIC_HOLYPKG
 	    Previously built musl-static holypkg executable.
@@ -147,17 +154,26 @@ QEMU
      rately.  IMAGE_PROFILE defaults to dual-libc.  LIBC_BOOT_STATE  must  match
      the  image's  declared initial state. The runner requires the corresponding
      recovery  markers;	 a  static-only	 boot  cannot  pass  a	dual-libc  test.
-     ARCH=i686	chooses	 qemu-system-i386 and requires an i686 guest image.  RE-
-     PORT_DIR chooses an existing report parent	 directory,  defaulting	 to  the
-     system  temporary	directory.  QEMU_TIMEOUT bounds boot in seconds (1..600,
-     default 120). QEMU_ACCEL=auto selects usable KVM or TCG; kvm and tcg  force
-     the accelerator, with unavailable KVM returning 6.
+     ARCH=i686	chooses	 qemu-system-i386 and requires an i686 guest image.  The
+     builder reads the x86 kernel boot header and  rejects  a  kernel  with  the
+     other  target  architecture before it creates an image.  REPORT_DIR chooses
+     an existing report parent directory, defaulting to the system temporary di-
+     rectory.  QEMU_TIMEOUT  bounds  boot  in  seconds	(1..600,  default  120).
+     QEMU_ACCEL=auto  selects usable KVM or TCG; kvm and tcg force the accelera-
+     tor, with unavailable KVM returning 6.
 
-     FIRMWARE=bios   is	  the  default.	 FIRMWARE=uefi	requires  UEFI_CODE  and
-     UEFI_VARS.	 The runner copies both firmware inputs and gives  the	guest  a
-     new  writable VARS file. It copies and hashes the ISO before starting QEMU.
-     Networking is disabled, and no host writable disks or directories	are  at-
-     tached.
+     FIRMWARE=bios  is	the  default.  FIRMWARE=uefi  requires	 UEFI_CODE   and
+     UEFI_VARS.	  The  runner  copies both firmware inputs and gives the guest a
+     new writable VARS file. It copies and hashes the ISO before starting  QEMU.
+     Networking	 is  disabled by default, and no host writable disks or directo-
+     ries are attached.	 For NETWORK_RECOVERY=fixture, the runner creates a pri-
+     vate network namespace, raises its loopback, serves the  two  frozen  arti-
+     facts  over HTTPS and connects QEMU user networking only to that namespace.
+     Its host has no external route.  The guest uses 10.0.2.15/24, resolves fix-
+     ture.holy.test through the fixture DNS server and fetches both archives  by
+     that  HTTPS  name.	 The  report  records  DNS  queries, the CA and artifact
+     hashes, HTTP requests and recovery markers.  This fixture does not	 test  a
+     public CA bundle or external network access.
 
      ROOT_DISK	explicitly  supplies a regular raw disk image for the persistent
      dual-libc test. The runner copies it to a read-only base, creates	a  qcow2
@@ -227,45 +243,45 @@ COVERAGE
 
      The  bootstrap  glibc  package  currently contains libc.so.6 and its loader
      with licenses, not the complete SDK, locale archive, NSS modules or  auxil-
-     iary  glibc  libraries. The reference image still needs networking, the in-
-     staller and i686. The ext4 fixture uses an ISO kernel; gpt-ext4  loads  its
-     kernel  and  initramfs  from the disk's ESP. Both test recovery followed by
-     reboot on a persistent root overlay. The GPT builder is not the interactive
-     installer. Kernel updates still require integration with ESP  contents  and
-     the  generated  initramfs.	  Those gates remain separate from this boot re-
-     sult. Recovery tests missing payloads with retained  package  records,  not
-     forced removal of referenced packages.  The repository documentation bundle
-     contains  Holy pages. The image builder uses holypkg docs after its package
-     transaction to generate  /usr/share/holy/llm.txt  from  the  installed  man
-     sources,  including  dinit.   This generated file is separate from package-
-     owned source pages; its SHA-256 is recorded in the frozen	image  plan  and
-     /etc/holy/docs.sha256. The output directory retains llm.txt and docs.record
-     with  the coverage summary. Packages without man pages and unsupported page
-     encodings appear in that bundle.
+     iary  glibc libraries. The reference image still needs the installer, ordi-
+     nary networking and public CA packaging. The ext4 fixture uses an ISO  ker-
+     nel; gpt-ext4 loads its kernel and initramfs from the disk's ESP. Both test
+     recovery  followed	 by reboot on a persistent root overlay. The GPT builder
+     is not the interactive installer. Kernel updates still require  integration
+     with ESP contents and the generated initramfs.  Those gates remain separate
+     from  this boot result. Recovery tests missing payloads with retained pack-
+     age records, not forced removal of	 referenced  packages.	 The  repository
+     documentation  bundle  contains  Holy pages. The image builder uses holypkg
+     docs after its package transaction to generate /usr/share/holy/llm.txt from
+     the installed man sources, including dinit.  This generated file  is  sepa-
+     rate from package-owned source pages; its SHA-256 is recorded in the frozen
+     image  plan and /etc/holy/docs.sha256. The output directory retains llm.txt
+     and docs.record with the coverage summary. Packages without man  pages  and
+     unsupported page encodings appear in that bundle.
 
-     On each boot, the guest verifies the shipped bundle's digest  and	regener-
-     ates  it with static holypkg before libc recovery. It compares the complete
-     contents, normalizing only the final summary's database generation	 because
-     package  transactions  between  boots advance that counter. A documentation
-     failure fails the	boot  contract.	 The  bundle  contains	attributed  roff
+     On	 each  boot, the guest verifies the shipped bundle's digest and regener-
+     ates it with static holypkg before libc recovery. It compares the	complete
+     contents,	normalizing only the final summary's database generation because
+     package transactions between boots advance that  counter.	A  documentation
+     failure  fails  the  boot	contract.  The	bundle	contains attributed roff
      sources rather than rendered upstream text. QEMU virtual devices do not es-
      tablish physical GPU support.
 
-     make   check-image-docs   IMAGE_DIRECTORY=DIRECTORY   tests  an  ext4/dual-
+     make  check-image-docs  IMAGE_DIRECTORY=DIRECTORY	 tests	 an   ext4/dual-
      libc/both build's documentation failures. It copies root.ext4 into two dis-
-     posable disks, changes the	 generated  bundle  in	one  and  the  installed
-     holypkg  man  source in the other, then boots each through the original ISO
-     under BIOS/TCG. Both guests must stop the boot contract at	 the  documenta-
-     tion  stage. The original root image's hash must remain unchanged. The fix-
+     posable  disks,  changes  the  generated  bundle  in  one and the installed
+     holypkg man source in the other, then boots each through the  original  ISO
+     under  BIOS/TCG.  Both guests must stop the boot contract at the documenta-
+     tion stage. The original root image's hash must remain unchanged. The  fix-
      ture requires debugfs and the QEMU tools; it never edits the original image
      or mounts a host disk.
 
 SOURCES
-     Limine  configuration  and	 ISO   layout:	 https://github.com/limine-boot-
-     loader/limine/blob/v12.x/CONFIG.md	   and	 https://github.com/limine-boot-
+     Limine   configuration   and  ISO	layout:	 https://github.com/limine-boot-
+     loader/limine/blob/v12.x/CONFIG.md	  and	 https://github.com/limine-boot-
      loader/limine/blob/v12.x/USAGE.md.	      dracut	  module      interface:
      https://github.com/dracut-ng/dracut-ng/blob/main/man/dracut.modules.7.adoc.
-     QEMU  block device and backing-file options: https://www.qemu.org/docs/mas-
+     QEMU block device and backing-file options:  https://www.qemu.org/docs/mas-
      ter/system/invocation.html.
 
 SEE ALSO

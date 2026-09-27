@@ -34,10 +34,38 @@ esac
 for tool in dracut ldconfig limine sha256sum cpio gzip python3 "$qemu"; do
     command -v "$tool" >/dev/null || { echo "$tool required" >&2; exit 6; }
 done
+python3 - "$kernel" "$arch" <<'PY'
+import struct
+import sys
+
+with open(sys.argv[1], 'rb') as source:
+    header = source.read(0x238)
+if (len(header) < 0x238 or header[0x202:0x206] != b'HdrS' or
+        struct.unpack_from('<H', header, 0x206)[0] < 0x20c):
+    print('holy-image: unsupported x86 kernel boot header', file=sys.stderr)
+    sys.exit(6)
+kernel_arch = 'x86_64' if struct.unpack_from('<H', header, 0x236)[0] & 1 else 'i686'
+if kernel_arch != sys.argv[2]:
+    print(f'holy-image: kernel target {kernel_arch} does not match image {sys.argv[2]}',
+          file=sys.stderr)
+    sys.exit(6)
+PY
 project=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 profile=${IMAGE_PROFILE:-dual-libc}
 boot_state=${LIBC_BOOT_STATE:-present}
 storage=${ROOT_STORAGE:-ram}
+network_recovery=${NETWORK_RECOVERY:-off}
+case "$network_recovery" in
+    off) ;;
+    fixture)
+        test "$profile" = dual-libc && test "$boot_state" = both && test "$storage" = ram || {
+            echo 'network fixture requires dual-libc, both absent and ram root' >&2
+            exit 2
+        }
+        command -v openssl >/dev/null || exit 6
+        ;;
+    *) echo 'NETWORK_RECOVERY must be off or fixture' >&2; exit 2 ;;
+esac
 case "$storage:$profile" in
     ram:*) ;;
     ext4:dual-libc|gpt-ext4:dual-libc)
@@ -73,6 +101,7 @@ started=$(date +%s)
 record="$out/build.record"
 printf 'format holy-bootstrap-image-1\narch %s\nprofile %s\nlibc-boot-state %s\nkernel-version %s\n' "$arch" "$profile" "$boot_state" "$version" > "$record"
 printf 'root-storage %s\n' "$storage" >> "$record"
+printf 'network-recovery %s\n' "$network_recovery" >> "$record"
 finish() {
     rc=$?
     trap - EXIT
@@ -212,6 +241,19 @@ printf '%s\n' "$profile" > "$tree/DATA/etc/holy/image-profile"
 case "$storage" in gpt-ext4) printf 'ext4\n' ;; *) printf '%s\n' "$storage" ;; esac > "$tree/DATA/etc/holy/root-storage"
 if test "$storage" = gpt-ext4; then printf '/dev/vda2\n' > "$tree/DATA/etc/holy/esp-device"; fi
 printf '%s\n' "$boot_state" > "$tree/DATA/etc/holy/libc-boot-state"
+printf '%s\n' "$network_recovery" > "$tree/DATA/etc/holy/network-recovery"
+if test "$network_recovery" = fixture; then
+    mkdir "$out/network"
+    printf 'nameserver 10.0.2.3\noptions timeout:2 attempts:2\n' > "$tree/DATA/etc/resolv.conf"
+    openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+        -keyout "$out/network/key.pem" -out "$out/network/ca.pem" \
+        -subj '/CN=Holy recovery fixture' \
+        -addext 'subjectAltName=DNS:fixture.holy.test,IP:10.0.2.2' \
+        > "$work/openssl.out" 2> "$work/openssl.err"
+    chmod 0600 "$out/network/key.pem"
+    cp "$out/network/ca.pem" "$tree/DATA/etc/holy/recovery-ca.pem"
+    sha256sum "$out/network/ca.pem" >> "$record"
+fi
 if test "$profile" = dual-libc; then
     for name in $extra_packages; do
         hash=$(sha256sum "$out/packages/$name.holy")
@@ -292,6 +334,16 @@ docs_hash=$(sha256sum "$out/llm.txt")
 printf '%s\n' "${docs_hash%% *}" > "$root/etc/holy/docs.sha256"
 printf 'documentation-sha256 %s\n' "${docs_hash%% *}" >> "$record"
 tail -n 1 "$out/llm.txt" > "$out/docs.record"
+if test "$network_recovery" = fixture; then
+    for abi in glibc musl; do
+        digest=$(cat "$root/etc/holy/$abi.sha256")
+        cache="$root/var/cache/holypkg/objects/sha256/$digest.holy"
+        test -f "$cache" && cmp "$cache" "$out/packages/$abi.holy"
+        cp "$cache" "$out/network/$abi.holy"
+        rm "$cache"
+        printf 'network-only-artifact %s %s\n' "$abi" "$digest" >> "$record"
+    done
+fi
 for abi in glibc musl; do
     case "$boot_state:$abi" in
         both:*|glibc:glibc|musl:musl)
@@ -500,9 +552,14 @@ fi
 sha256sum "$out/initramfs.img" "$root/boot/vmlinuz" >> "$record"
 ARCH="$arch" BOOT_MEDIA="$boot_media" ISO="$iso_image" BOOT_PLAN="$plan" REPORT_DIR="$out/reports" \
     IMAGE_PROFILE="$profile" LIBC_BOOT_STATE="$boot_state" \
+    NETWORK_RECOVERY="$network_recovery" NETWORK_DIR="$out/network" \
     ROOT_DISK="$root_disk" \
     KERNEL_IMAGE="$root/boot/vmlinuz" KERNEL_VERSION="$version" INITRAMFS="$out/initramfs.img" \
     sh "$project/tests/qemu.sh"
 printf 'result boot-tested-%s\n' "$profile" >> "$record"
 if test "$storage" = ram; then printf 'not-tested libc-recovery-reboot\n' >> "$record"; fi
-printf 'not-tested installer network graphics\n' >> "$record"
+if test "$network_recovery" = fixture; then
+    printf 'not-tested installer public-network-dns graphics\n' >> "$record"
+else
+    printf 'not-tested installer network graphics\n' >> "$record"
+fi

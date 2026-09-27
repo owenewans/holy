@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 import fcntl
 import hashlib
+import http.server
 import json
 import os
 from pathlib import Path
 import shutil
 import signal
 import socket
+import ssl
+import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 
@@ -80,6 +84,37 @@ def boot_frames(lines, disk):
 
 
 def main():
+    network = os.environ.get('NETWORK_RECOVERY', 'off')
+    if network == 'fixture' and os.environ.get('HOLY_QEMU_NETNS') != '1':
+        if not shutil.which('unshare') or not shutil.which('ip'):
+            error('unshare and ip required for isolated fixture network', 6)
+        descriptor, resolver = tempfile.mkstemp(prefix='holy-qemu-resolv-')
+        with os.fdopen(descriptor, 'w') as stream:
+            stream.write('nameserver 127.0.0.1\n')
+        environment = os.environ.copy()
+        environment['HOLY_QEMU_NETNS'] = '1'
+        environment['HOLY_QEMU_HOST_NETNS'] = str(os.stat('/proc/self/ns/net').st_ino)
+        environment['HOLY_QEMU_RESOLV'] = resolver
+        os.execvpe('unshare', ['unshare', '--map-root-user', '--net', '--mount',
+                              '--propagation', 'private', '--',
+                              sys.executable, str(Path(__file__).resolve())], environment)
+    namespace_evidence = None
+    if network == 'fixture':
+        host_namespace = os.environ.get('HOLY_QEMU_HOST_NETNS', '')
+        current_namespace = str(os.stat('/proc/self/ns/net').st_ino)
+        if not host_namespace or host_namespace == current_namespace:
+            error('fixture network namespace was not isolated', 6)
+        subprocess.run(['ip', 'link', 'set', 'lo', 'up'], check=True)
+        resolver = os.environ.get('HOLY_QEMU_RESOLV', '')
+        if not resolver or not Path(resolver).is_file():
+            error('fixture resolver file missing', 6)
+        subprocess.run(['mount', '--bind', resolver, '/etc/resolv.conf'], check=True)
+        os.unlink(resolver)
+        routes = subprocess.check_output(['ip', '-4', 'route', 'show'], text=True).splitlines()
+        if routes:
+            error('fixture network namespace has an external route', 6)
+        namespace_evidence = {'host_inode': host_namespace, 'fixture_inode': current_namespace,
+                              'fixture_routes': routes}
     arch = os.environ.get('ARCH', '')
     if arch not in ('i686', 'x86_64'):
         error('ARCH must be i686 or x86_64', 2)
@@ -107,6 +142,10 @@ def main():
         error('unsupported image profile or libc boot state', 2)
     if profile == 'static-core' and state != 'present':
         error('libc boot state requires dual-libc profile', 2)
+    if network not in ('off', 'fixture'):
+        error('NETWORK_RECOVERY must be off or fixture', 2)
+    if network == 'fixture' and (profile != 'dual-libc' or state != 'both' or media != 'iso'):
+        error('network fixture requires dual-libc, both absent and ISO boot', 2)
     disk_path = os.environ.get('ROOT_DISK', '')
     if media == 'disk' and not disk_path:
         error('disk boot requires ROOT_DISK', 6)
@@ -142,8 +181,92 @@ def main():
         if field in os.environ:
             path = Path(os.environ[field])
             inputs[field.lower()] = {'source': str(path.resolve()), 'sha256': digest(path)}
+    requests = []
+    dns_queries = []
+    dns_socket = None
+    server = None
+    network_inputs = {}
+    network_args = ['-net', 'none']
+    if network == 'fixture':
+        dns_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        dns_socket.bind(('127.0.0.1', 53))
+        dns_socket.settimeout(0.2)
+        dns_stopped = threading.Event()
+
+        def serve_dns():
+            while not dns_stopped.is_set():
+                try:
+                    data, peer = dns_socket.recvfrom(4096)
+                except socket.timeout:
+                    continue
+                except OSError:
+                    return
+                if len(data) < 17 or struct.unpack('!H', data[4:6])[0] != 1:
+                    continue
+                cursor, labels = 12, []
+                while cursor < len(data) and 0 < data[cursor] <= 63:
+                    size = data[cursor]
+                    if cursor + size + 1 >= len(data):
+                        break
+                    labels.append(data[cursor + 1:cursor + size + 1])
+                    cursor += size + 1
+                if cursor + 5 > len(data) or data[cursor] != 0:
+                    continue
+                kind, group = struct.unpack('!HH', data[cursor + 1:cursor + 5])
+                name = b'.'.join(labels).lower()
+                if name != b'fixture.holy.test' or group != 1:
+                    continue
+                dns_queries.append({'name': name.decode(), 'type': kind})
+                question = data[12:cursor + 5]
+                answer = b''
+                if kind == 1:
+                    answer = b'\xc0\x0c' + struct.pack('!HHIH', 1, 1, 0, 4) + socket.inet_aton('10.0.2.2')
+                response = data[:2] + struct.pack('!HHHHH', 0x8180, 1, bool(answer), 0, 0)
+                dns_socket.sendto(response + question + answer, peer)
+
+        dns_thread = threading.Thread(target=serve_dns, daemon=True)
+        dns_thread.start()
+        source_dir = Path(os.environ.get('NETWORK_DIR', ''))
+        for name in ('ca.pem', 'key.pem', 'glibc.holy', 'musl.holy'):
+            if not (source_dir / name).is_file():
+                error('network fixture missing ' + name, 6)
+        network_dir = run / 'network'
+        network_dir.mkdir(mode=0o700)
+        for name in ('ca.pem', 'key.pem', 'glibc.holy', 'musl.holy'):
+            shutil.copyfile(source_dir / name, network_dir / name)
+            os.chmod(network_dir / name, 0o600 if name == 'key.pem' else 0o444)
+        class Handler(http.server.SimpleHTTPRequestHandler):
+            def __init__(self, *arguments, **keywords):
+                super().__init__(*arguments, directory=str(network_dir), **keywords)
+
+            def do_GET(self):
+                if self.path not in ('/glibc.holy', '/musl.holy'):
+                    self.send_error(404)
+                    return
+                super().do_GET()
+
+            def do_HEAD(self):
+                self.send_error(404)
+
+            def log_message(self, *arguments):
+                pass
+
+            def send_response(self, code, message=None):
+                requests.append({'method': self.command, 'path': self.path, 'status': code})
+                return super().send_response(code, message)
+
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 8443), Handler)
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls.load_cert_chain(network_dir / 'ca.pem', network_dir / 'key.pem')
+        server.socket = tls.wrap_socket(server.socket, server_side=True)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        network_args = ['-netdev', 'user,id=holy-net,ipv6=off',
+                        '-device', 'virtio-net-pci,netdev=holy-net']
+        network_inputs = {name: digest(network_dir / name)
+                          for name in ('ca.pem', 'glibc.holy', 'musl.holy')}
     args = [qemu, '-accel', accel, '-m', '1024', '-display', 'none', '-monitor', 'none',
-            '-net', 'none', '-boot', 'c' if media == 'disk' else 'd',
+            *network_args, '-boot', 'c' if media == 'disk' else 'd',
             '-serial', 'file:' + str(run / 'serial.log')]
     if media == 'iso':
         args += ['-cdrom', str(run / 'input.iso')]
@@ -170,6 +293,11 @@ def main():
         for abi in ('glibc', 'musl'):
             if state in (abi, 'both'):
                 expected.update({f'HOLY-BOOT-1 missing-libc {abi}', f'HOLY-BOOT-1 restored-libc {abi}'})
+                if network == 'fixture':
+                    expected.add(f'HOLY-BOOT-1 downloaded-libc {abi}')
+    if network == 'fixture':
+        expected.add('HOLY-BOOT-1 network fixture-static-ip')
+        expected.add('HOLY-BOOT-1 network fixture-dns')
     if 'KERNEL_VERSION' in os.environ:
         expected.add('HOLY-BOOT-1 kernel ' + os.environ['KERNEL_VERSION'])
     if media == 'disk':
@@ -252,6 +380,17 @@ def main():
                     process.kill()
                     process.wait()
     base_unchanged = not disk_path or digest(run / 'root.raw') == inputs['root_disk']['sha256']
+    if server:
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=5)
+        dns_stopped.set()
+        dns_socket.close()
+        dns_thread.join(timeout=5)
+        wanted_requests = {f'/{abi}.holy' for abi in ('glibc', 'musl')}
+        served = {entry['path'] for entry in requests if entry['status'] == 200}
+        if not wanted_requests <= served or not any(item['type'] == 1 for item in dns_queries):
+            reason, result = 'network-fixture-incomplete', 'fail'
     if not base_unchanged:
         reason, result = 'changed-read-only-base', 'fail'
     boots = []
@@ -261,7 +400,10 @@ def main():
                       'checks': {marker: 'pass' if marker in actual else 'unknown' for marker in sorted(wanted)}})
     report = {'schema': 'holy-qemu-report-2', 'arch': arch, 'accelerator': accel,
               'firmware': firmware, 'profile': profile, 'libc_boot_state': state,
-              'network': 'disabled', 'plan': plan, 'inputs': inputs,
+              'network': 'private-loopback-fixture-https' if server else 'disabled', 'plan': plan,
+              'inputs': inputs, 'network_inputs': network_inputs, 'network_requests': requests,
+              'dns_queries': dns_queries,
+              'network_namespace': namespace_evidence,
               'argv': args, 'pid': process.pid, 'exit': code,
               'cancel_signal': cancelled[0] if cancelled else None,
               'elapsed_seconds': time.monotonic() - started,
@@ -276,7 +418,7 @@ def main():
               'not_tested': (['libc-recovery'] if profile != 'dual-libc' or state == 'present' else []) +
                             ([] if disk_path else ['libc-recovery-reboot']) +
                             (['i686-libc'] if arch != 'i686' or profile != 'dual-libc' else []) +
-                            ['installer', 'hardware', 'network', 'kernel-update']}
+                            ['installer', 'hardware', 'public-network' if server else 'network', 'kernel-update']}
     if disk_path:
         report['overlay'] = {'path': str(run / 'root.qcow2'), 'sha256': digest(run / 'root.qcow2'),
                              'base_unchanged': base_unchanged}

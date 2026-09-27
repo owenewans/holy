@@ -22,6 +22,13 @@ virtio-blk, and the BusyBox package must include switch_root, sync and reboot.
 gpt-ext4 selects an independently bootable GPT disk with the same ext4
 recovery contract. It additionally requires sfdisk, mkfs.fat and mtools;
 xorriso is only required for ISO profiles.
+NETWORK_RECOVERY defaults to off. The explicit fixture value requires a
+dual-libc RAM image with LIBC_BOOT_STATE=both. The builder omits both libc
+archives from the guest cache, retains copies for a local HTTPS fixture,
+and packages a generated test CA. The guest assigns the fixture address with
+static BusyBox ip, downloads both archives with static holypkg and verifies
+their SHA-256 digests before missing-only repair. The test CA key stays in the
+build output and is not included in the image or documentation bundle.
 The following make variables are required:
 .TP
 STATIC_HOLYPKG
@@ -137,6 +144,8 @@ IMAGE_PROFILE defaults to dual-libc. LIBC_BOOT_STATE must match the image's
 declared initial state. The runner requires the corresponding recovery markers;
 a static-only boot cannot pass a dual-libc test.
 ARCH=i686 chooses qemu-system-i386 and requires an i686 guest image.
+The builder reads the x86 kernel boot header and rejects a kernel with the
+other target architecture before it creates an image.
 REPORT_DIR chooses an existing report parent directory, defaulting to the
 system temporary directory. QEMU_TIMEOUT bounds boot in seconds (1..600,
 default 120). QEMU_ACCEL=auto selects usable KVM or TCG; kvm and tcg force
@@ -145,7 +154,14 @@ the accelerator, with unavailable KVM returning 6.
 FIRMWARE=bios is the default. FIRMWARE=uefi requires UEFI_CODE and UEFI_VARS.
 The runner copies both firmware inputs and gives the guest a new writable
 VARS file. It copies and hashes the ISO before starting QEMU. Networking is
-disabled, and no host writable disks or directories are attached.
+disabled by default, and no host writable disks or directories are attached.
+For NETWORK_RECOVERY=fixture, the runner creates a private network namespace,
+raises its loopback, serves the two frozen artifacts over HTTPS and connects
+QEMU user networking only to that namespace. Its host has no external route.
+The guest uses 10.0.2.15/24, resolves fixture.holy.test through the fixture
+DNS server and fetches both archives by that HTTPS name. The report records
+DNS queries, the CA and artifact hashes, HTTP requests and recovery markers.
+This fixture does not test a public CA bundle or external network access.
 .PP
 ROOT_DISK explicitly supplies a regular raw disk image for the persistent
 dual-libc test. The runner copies it to a read-only base, creates a qcow2
@@ -211,7 +227,8 @@ and limine.conf instead of an ISO. BIOS and UEFI remain separate test runs.
 The bootstrap glibc package currently contains
 libc.so.6 and its loader with licenses, not the complete SDK, locale archive,
 NSS modules or auxiliary glibc libraries. The reference image still needs
-networking, the installer and i686. The ext4 fixture uses an ISO kernel;
+the installer, ordinary networking and public CA packaging. The ext4 fixture
+uses an ISO kernel;
 gpt-ext4 loads its kernel and initramfs from the disk's ESP. Both test
 recovery followed by reboot on a persistent root overlay. The GPT builder
 is not the interactive installer. Kernel updates still require integration
