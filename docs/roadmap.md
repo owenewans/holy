@@ -26,6 +26,9 @@ it does not mean a bootable distribution or general package support.
 - [x] Journal installation, check and removal of `linux/nolibc` data and native static ELF
   artifacts into existing directories. Recovery covers empty aborted installs,
   completed installs and interrupted removals under documented conditions.
+- [x] Install relative symlinks with recorded targets and ownership; check, remove
+  and recover them without following the links. Absolute links and hardlinks
+  remain outside the transaction subset.
 - [x] Query exact installed data-file ownership; report duplicate regular-file
   claims as conflicts while permitting shared directory entries.
 - [x] Check one or all installed data manifests against the target root without
@@ -71,8 +74,9 @@ it does not mean a bootable distribution or general package support.
   plus both dynamic libc runtimes for i686 and x86_64.
 - [x] Build pinned x86_64 musl-static dinit with upstream tests; exercise
   service start/status/shutdown and stop-command effects with dinitctl in a
-  libc-free chroot as an ordinary user. PID 1 boot remains open, as does
-  installing the package's man-page symlinks through the transaction engine.
+  libc-free chroot as an ordinary user. Install/check/remove the complete package,
+  including command and man-page symlinks, through the transaction engine.
+  PID 1 boot remains open.
 - [x] Build pinned x86_64 musl-static mdevd/skalibs with licenses and upstream
   HTML docs. Install, check and remove the package; parse valid symbolic-owner
   configuration and reject invalid regex inside a libc-free chroot with a

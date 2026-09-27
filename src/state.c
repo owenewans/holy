@@ -672,7 +672,8 @@ static int plan_entry(void *context, const struct holy_manifest_entry *entry)
     struct plan_hash *plan = context;
     char attributes[128];
     int written, available;
-    if (entry->link || entry->hardlink || entry->group ||
+    if (entry->hardlink || entry->group ||
+        (entry->link && (entry->mode != 0777 || entry->link[0] == '/')) ||
         !entry->path[0] || entry->path[0] == '/' ||
         !strcmp(entry->path, "var/lib/holypkg") ||
         !strncmp(entry->path, "var/lib/holypkg/", 16) ||
@@ -681,7 +682,7 @@ static int plan_entry(void *context, const struct holy_manifest_entry *entry)
         (entry->mode & 07000) ||
         entry->uid != (long long)geteuid() ||
         entry->gid != (long long)getegid()) {
-        fprintf(stderr, "holypkg: plan requires ordinary files and local ownership; unsupported path: %s\n",
+        fprintf(stderr, "holypkg: plan requires files or relative symlinks and local ownership; unsupported path: %s\n",
                 entry->path);
         return 0;
     }
@@ -691,12 +692,13 @@ static int plan_entry(void *context, const struct holy_manifest_entry *entry)
         return 0;
     }
     written = snprintf(attributes, sizeof attributes, "%c:%o:%lld:%lld:%lld:",
-                       entry->directory ? 'd' : 'f', entry->mode,
+                       entry->directory ? 'd' : entry->link ? 'l' : 'f', entry->mode,
                        entry->uid, entry->gid, entry->size);
     if (written <= 0 || (size_t)written >= sizeof attributes ||
         !hash_text(plan->hash, entry->path) ||
         !hash_text(plan->hash, attributes) ||
-        (!entry->directory &&
+        (entry->link && !hash_text(plan->hash, entry->link)) ||
+        (!entry->directory && !entry->link &&
          EVP_DigestUpdate(plan->hash, entry->hash, 32) != 1)) return 0;
     ++plan->count;
     return 1;

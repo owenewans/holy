@@ -170,17 +170,17 @@ compiler version, configuration, ELF facts and package hash. Capabilities suppor
 is disabled in this bootstrap profile. This package build does not establish
 PID 1 boot acceptance; that requires the image test. OUTPUT must be new.
 .PP
-make check-bootstrap-dinit DINIT_PACKAGE=FILE BUSYBOX_PACKAGE=FILE extracts
-verified packages and copies their dinit, dinitctl and BusyBox binaries into
-a disposable chroot without dynamic libc directories. It checks static ELF
+make check-bootstrap-dinit DINIT_PACKAGE=FILE BUSYBOX_PACKAGE=FILE stages both
+packages and installs them through approved database plans into a disposable
+chroot without dynamic libc directories. It checks command and man-page links, static ELF
 classification, starts a scripted service, queries its STARTED state through
 the control socket, requests shutdown and checks the stop-command effect.
 The service manager runs with the caller's UID/GID in user mode. Host doas,
 chroot, mknod and timeout are required; the fixture supplies only /dev/null
 and enforces a 20-second timeout. It prints the tested package hashes.
-This tests service control and the static C++ runtime, not PID 1 boot or
-package installation. The current installer cannot install this package's
-man-page symlinks yet.
+After service shutdown it checks both installed manifests and removes both
+packages through the database. This covers package installation, service
+control and the static C++ runtime. PID 1 boot remains a separate test.
 .PP
 make static-deps INPUTS=DIRECTORY OUTPUT=DIRECTORY KERNEL_HEADERS=DIRECTORY
 builds x86_64 musl dependencies from the pinned archives listed with URLs and
@@ -210,6 +210,11 @@ doas creates the chroot and drops to the caller's numeric UID/GID.
 Both artifact hashes are printed on success. This verifies the local static
 package path; removal and restoration of real dynamic libc packages, network
 recovery and dinit boot still require their own tests.
+.PP
+Passing DINIT_PACKAGE=FILE to check-static-core also installs, checks and removes
+the complete dinit package, including its symlinks, with holypkg running inside
+that libc-free chroot. The fixture removes the input after caching and reports
+the tested artifact hash. Service control is covered by check-bootstrap-dinit.
 .PP
 make check-static-network STATIC_HOLYPKG=FILE BUSYBOX_PACKAGE=FILE REPORT=FILE
 tests that static client in a libc-free chroot with private network namespace,
@@ -283,10 +288,11 @@ root-path collisions and refuses unresolved requirements, interpreters and
 ELF dependencies. The supported planning subset is linux/nolibc with
 noarch data or the native host architecture (x86_64 on x86_64, x86 on i686).
 Hooks and transform must be empty. Payloads may contain ordinary directories and regular
-files owned by the current UID/GID. Symlinks, hardlinks, privileged modes
+files and relative symlinks owned by the current UID/GID. Hardlinks, privileged modes
 and writes inside holypkg state or cache trees are excluded. Output includes
 target-root device/inode, generation, artifact SHA-256, path count and a
-SHA-256 over those identities and ordered manifest entries. The narrow local
+SHA-256 over those identities and ordered manifest entries, including symlink
+types and targets. Symlinks must have mode 0777. The narrow local
 planner rejects a second installed package with the same name, even when its
 payload paths differ; general source-ID and ABI slot management is pending.
 This command does not persist a plan,
@@ -317,14 +323,20 @@ generated ownership indexes are not required for correctness.
 .PP
 Database apply installs only an approved linux/nolibc package
 with empty hooks, transform and requirements. Its payload may contain
-ordinary regular files, including native static ELF executables, and directory entries; every directory
+ordinary regular files, including native static ELF executables, relative
+symlinks and directory entries; every directory
 must already exist in the target root with the manifest's mode and numeric
 owner/group. A changed directory is rejected before writing a journal.
-No symlink, hardlink, privileged mode
+No absolute symlink, hardlink, privileged mode
 or file collision is accepted. The caller must review the db plan digest and
 invoke db approve first. Apply holds the database writer lock, recomputes the
 approved plan and rechecks every path against opened directory descriptors.
-It creates each file with O_EXCL, then synchronizes it and its parent. It
+It creates each regular file with O_EXCL, then synchronizes it and its parent.
+It creates symlinks with symlinkat without replacing existing entries and
+synchronizes their parent directory. All parent paths must be real directories;
+payload writes do not follow installed links. Relative targets may be dangling.
+Lexical containment checks do not prove the runtime meaning of symlink chains.
+It
 records a journal before changing the rootfs and publishes installed metadata
 and the next database generation after copying payload files. The installed
 record contains meta, files, deps, origin and state; local delivery has no
@@ -354,7 +366,8 @@ until architecture override decisions are implemented. No metadata is relabeled.
 .PP
 Database check reads one installed manifest and compares its regular
 files against the target root by path, type, size, mode, numeric ownership
-and SHA-256. It checks listed directories against their manifest mode and
+and SHA-256. It compares symlink type, mode, numeric ownership and exact
+readlink target without following the link. It checks listed directories against their manifest mode and
 numeric owner/group and rejects
 symlinked parent paths. It returns 4 for changed or missing files, 6 when
 the instance is absent, and 5 while a file transaction is incomplete. The
@@ -367,7 +380,7 @@ emits one holy-installed-check-1 JSON line per artifact followed by a summary
 of passes and failures, or one error line on an invalid database, missing
 instance or incomplete transaction. Each artifact includes a findings array
 with code, severity and relative path for each mismatch. missing-file identifies
-an absent regular file under accessible parents; changed-file covers other
+an absent regular file or symlink under accessible parents; changed-file covers other
 manifest mismatches, including inaccessible or symlinked parents. Paths encode
 non-ASCII bytes as \eu00HH; consumers reconstruct the original bytes. Findings
 follow manifest order; intact artifacts have an empty array. The artifact-level
@@ -376,7 +389,7 @@ data-manifest coverage.
 .PP
 Database owner reads installed manifests and lists the artifact digest
 and kind for an exact relative or root-absolute path. Multiple packages may
-list the same directory. If multiple records claim one regular file, the
+list the same directory. If multiple records claim one regular file or symlink, the
 command returns conflict status 4 without listing an arbitrary owner. An
 absent path returns 6. It holds a shared database lock and does not require
 the path to exist in the live rootfs; db check compares actual contents.
@@ -388,7 +401,7 @@ it also checks the other installed manifests for conflicting ownership claims;
 shared directories are allowed. A conflict returns 4 without deleting files.
 Recovery repeats this ownership check before resuming an interrupted removal;
 conflicts retain the journal and return 5. It unlinks only
-listed regular files and the instance record; shared directories and the
+listed regular files, symlinks and the instance record; shared directories and the
 cached artifact remain. The database generation advances after removal. If
 an I/O failure interrupts deletion, db status reports an incomplete journal.
 db recover --continue accepts a removing journal at its original generation

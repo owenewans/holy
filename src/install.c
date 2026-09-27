@@ -61,7 +61,8 @@ static int check_entry(void *context, const struct holy_manifest_entry *entry)
     const char *base;
     struct stat st;
     int parent, ok = 0;
-    if (entry->link || entry->hardlink || entry->group ||
+    if (entry->hardlink || entry->group ||
+        (entry->link && (entry->mode != 0777 || entry->link[0] == '/')) ||
         (entry->mode & 07000) ||
         entry->uid != (long long)geteuid() ||
         entry->gid != (long long)getegid()) return 0;
@@ -83,7 +84,7 @@ int holy_install_preflight(const char *snapshot, int root)
 {
     struct root_check check = { root };
     if (!holy_verify_visit(snapshot, check_entry, &check)) {
-        fprintf(stderr, "holypkg: install requires existing safe directories and new ordinary files\n");
+        fprintf(stderr, "holypkg: install requires existing safe directories and new files or relative symlinks\n");
         return 0;
     }
     return 1;
@@ -109,6 +110,20 @@ int holy_install_payload(const char *snapshot, int root)
         if (!path || strncmp(path, "DATA/", 5) || !path[5] ||
             archive_entry_filetype(entry) == AE_IFDIR) {
             if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
+            continue;
+        }
+        if (archive_entry_filetype(entry) == AE_IFLNK) {
+            const char *target = archive_entry_symlink(entry);
+            if (!target || target[0] == '/' ||
+                !holy_safe_link(path + 5, target) ||
+                archive_entry_perm(entry) != 0777 ||
+                archive_entry_size(entry) != 0) goto done;
+            parent = parent_fd(root, path + 5, &storage, &base);
+            if (parent < 0) goto done;
+            if (symlinkat(target, parent, base) || fsync(parent) ||
+                archive_read_data_skip(archive) != ARCHIVE_OK) goto file_done;
+            close(parent);
+            free(storage);
             continue;
         }
         if (archive_entry_filetype(entry) != AE_IFREG ||
@@ -170,18 +185,40 @@ static int check_file(int root, char **v, struct stat *observed)
     char buffer[65536];
     ssize_t got;
     size_t i;
-    if ((strcmp(v[0], "dir") && strcmp(v[0], "file")) ||
+    int symlink = !strcmp(v[0], "symlink");
+    if ((strcmp(v[0], "dir") && strcmp(v[0], "file") && !symlink) ||
         !decimal(v[2], 8, &mode) || mode > 07777 ||
         !decimal(v[5], 10, &uid) || uid > 0x7fffffff ||
         !decimal(v[6], 10, &gid) || gid > 0x7fffffff ||
         !decimal(v[7], 10, &size) || size > LLONG_MAX ||
         strcmp(v[9], "none") || strcmp(v[10], "-") || strcmp(v[11], "-"))
         return -1;
-    if (!strcmp(v[0], "dir")) {
+    if (symlink && (mode != 0777 || v[12][0] == '/' ||
+                    !holy_safe_link(v[1], v[12]))) return -1;
+    if (!strcmp(v[0], "dir") || symlink) {
         if (size || strcmp(v[8], "-")) return -1;
     } else if (strlen(v[8]) != 64) return -1;
     parent = parent_fd(root, v[1], &storage, &base);
     if (parent < 0) return 0;
+    if (symlink) {
+        size_t length = strlen(v[12]);
+        char *target;
+        if (fstatat(parent, base, &st, AT_SYMLINK_NOFOLLOW)) {
+            result = errno == ENOENT ? 2 : 0;
+            goto done;
+        }
+        if (!S_ISLNK(st.st_mode) || (st.st_mode & 07777) != mode ||
+            (unsigned long long)st.st_uid != uid ||
+            (unsigned long long)st.st_gid != gid) { result = 0; goto done; }
+        target = malloc(length + 1);
+        if (!target) goto done;
+        got = readlinkat(parent, base, target, length + 1);
+        result = got >= 0 && (size_t)got == length &&
+                 !memcmp(target, v[12], length);
+        free(target);
+        if (result && observed) *observed = st;
+        goto done;
+    }
     if (!strcmp(v[0], "dir")) {
         result = !fstatat(parent, base, &st, AT_SYMLINK_NOFOLLOW) &&
                  S_ISDIR(st.st_mode) &&
@@ -237,7 +274,7 @@ static int remove_file(int root, const char *path, const struct stat *observed)
     int parent = parent_fd(root, path, &storage, &base), ok = 0;
     if (parent < 0) return 0;
     if (!fstatat(parent, base, &st, AT_SYMLINK_NOFOLLOW) &&
-        S_ISREG(st.st_mode) &&
+        (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) &&
         st.st_dev == observed->st_dev && st.st_ino == observed->st_ino &&
         st.st_size == observed->st_size && st.st_mode == observed->st_mode &&
         st.st_uid == observed->st_uid && st.st_gid == observed->st_gid &&
@@ -282,7 +319,7 @@ static int walk_manifest(int files_fd, int root, int mode,
         }
         start = i + 1;
         if (!count) { holy_tokens_free(v, count); continue; }
-        if (count != 12) {
+        if (count != (!strcmp(v[0], "symlink") ? 13u : 12u)) {
             holy_tokens_free(v, count);
             result = -1;
             goto done;
@@ -296,7 +333,7 @@ static int walk_manifest(int files_fd, int root, int mode,
         else if (!checked) {
             report_changed(v[1], "changed-file");
             if (result == 1) result = 0;
-        } else if ((mode == 1 || mode == 2) && !strcmp(v[0], "file") &&
+        } else if ((mode == 1 || mode == 2) && strcmp(v[0], "dir") &&
                    !remove_file(root, v[1], &observed)) {
             result = 0;
         }
@@ -360,15 +397,17 @@ static int manifest_claims(int files_fd, const char *path, int other)
             break;
         }
         if (count) {
-            if (count != 12 || (strcmp(v[0], "file") && strcmp(v[0], "dir")))
+            if (count != (!strcmp(v[0], "symlink") ? 13u : 12u) ||
+                (strcmp(v[0], "file") && strcmp(v[0], "dir") &&
+                 strcmp(v[0], "symlink")))
                 found = -1;
             else if (other >= 0) {
                 int kind = holy_install_manifest_owns(other, v[1]);
                 if (kind < 0) found = -1;
-                else if (kind && (kind == 1 || !strcmp(v[0], "file"))) found = 1;
+                else if (kind && (kind == 1 || strcmp(v[0], "dir"))) found = 1;
             } else if (!strcmp(v[1], path)) {
                 if (found) found = -1;
-                else found = !strcmp(v[0], "file") ? 1 : 2;
+                else found = !strcmp(v[0], "dir") ? 2 : 1;
             }
         }
         holy_tokens_free(v, count);

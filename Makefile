@@ -46,7 +46,7 @@ check-bootstrap-busybox: holypkg
 	sh tests/bootstrap-busybox.sh ./holypkg "$(or $(BUSYBOX_PACKAGE),out/busybox-bootstrap/busybox.holy)"
 
 check-static-core:
-	sh tests/static-core.sh "$(or $(STATIC_HOLYPKG),./holypkg)" "$(or $(BUSYBOX_PACKAGE),out/busybox-bootstrap/busybox.holy)"
+	sh tests/static-core.sh "$(or $(STATIC_HOLYPKG),./holypkg)" "$(or $(BUSYBOX_PACKAGE),out/busybox-bootstrap/busybox.holy)" "$(DINIT_PACKAGE)"
 
 .PHONY: check-static-network
 check-static-network:
@@ -100,6 +100,7 @@ check-https: holypkg
 check-install-payload: holypkg
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o tests/install-helper tests/install.c src/install.c src/verify.c src/package.c src/stage.c src/config.c $(LDFLAGS) -larchive -lcrypto
 	sh tests/install.sh ./tests/install-helper ./holypkg
+	sh tests/symlinks.sh ./holypkg
 
 check-solver:
 	@pkg-config --exists libsolv || { echo 'libsolv development files required' >&2; exit 6; }

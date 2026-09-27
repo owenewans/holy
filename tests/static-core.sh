@@ -52,6 +52,29 @@ for iteration in 1 2; do
 done
 guest db status --root / > "$tmp/out"
 grep -qx 'generation 4' "$tmp/out"
+if test -n "${3:-}"; then
+    mkdir -p "$root/usr/share/man/man5" "$root/usr/share/man/man8" \
+        "$root/usr/share/licenses/dinit"
+    cp "$3" "$root/input/dinit.holy"
+    guest cache stage local:/input/dinit.holy --root / > "$tmp/out"
+    dinit=$(sha256sum "$3")
+    dinit=${dinit%% *}
+    rm "$root/input/dinit.holy"
+    guest db reserve "$dinit" --root / > "$tmp/out"
+    guest db plan --root / > "$tmp/out"
+    plan=$(sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+    test "${#plan}" -eq 64
+    guest db approve "$plan" --root / > "$tmp/out"
+    guest db apply --root / > "$tmp/out"
+    guest db check "$dinit" --root / > "$tmp/out"
+    test "$(readlink "$root/usr/bin/reboot")" = shutdown
+    test "$(readlink "$root/usr/share/man/man8/reboot.8")" = shutdown.8
+    guest db rm "$dinit" --root / > "$tmp/out"
+    test ! -e "$root/usr/bin/dinit"
+    test ! -L "$root/usr/bin/reboot"
+    test ! -L "$root/usr/share/man/man8/reboot.8"
+    printf 'static core dinit transaction passed artifact=%s\n' "$dinit"
+fi
 core=$(sha256sum "$bin")
 core=${core%% *}
 printf 'static core chroot fixture passed holypkg=%s busybox=%s\n' "$core" "$digest"

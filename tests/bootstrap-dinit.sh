@@ -9,15 +9,25 @@ doas -n true || exit 6
 umask 022
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
-"$bin" fetch "local:$2" --extract --output "$tmp/dinit" > "$tmp/extract.log"
-"$bin" fetch "local:$3" --extract --output "$tmp/busybox" >> "$tmp/extract.log"
 root="$tmp/root"
-mkdir -p "$root/usr/bin" "$root/run" "$root/services" "$root/dev"
-doas -n mknod -m 666 "$root/dev/null" c 1 3
-for name in dinit dinitctl; do
-    cp "$tmp/dinit/DATA/usr/bin/$name" "$root/usr/bin/$name"
+mkdir -p "$root/usr/bin" "$root/run" "$root/services" "$root/dev" \
+    "$root/usr/share/licenses/dinit" "$root/usr/share/licenses/busybox" \
+    "$root/usr/share/licenses/musl" "$root/usr/share/man/man5" "$root/usr/share/man/man8"
+"$bin" db init --root "$root" > "$tmp/out"
+for package in "$2" "$3"; do
+    "$bin" cache stage "local:$package" --root "$root" > "$tmp/out"
+    digest=$(sha256sum "$package")
+    digest=${digest%% *}
+    "$bin" db reserve "$digest" --root "$root" > "$tmp/out"
+    "$bin" db plan --root "$root" > "$tmp/out"
+    plan=$(sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+    test "${#plan}" -eq 64
+    "$bin" db approve "$plan" --root "$root" > "$tmp/out"
+    "$bin" db apply --root "$root" > "$tmp/out"
 done
-cp "$tmp/busybox/DATA/usr/bin/busybox" "$root/usr/bin/busybox"
+doas -n mknod -m 666 "$root/dev/null" c 1 3
+test "$(readlink "$root/usr/bin/reboot")" = shutdown
+test "$(readlink "$root/usr/share/man/man8/reboot.8")" = shutdown.8
 for name in dinit dinitctl busybox; do
     "$bin" elf "$root/usr/bin/$name" > "$tmp/elf"
     grep -qx 'runtime nolibc' "$tmp/elf"
@@ -53,4 +63,14 @@ fi
 grep -q 'static dinit service and shutdown passed' "$tmp/service.log"
 grep -q 'State: STARTED' "$tmp/service.log"
 cat "$tmp/service.log"
+"$bin" db check --all --root "$root" > "$tmp/out"
+for package in "$2" "$3"; do
+    digest=$(sha256sum "$package")
+    digest=${digest%% *}
+    "$bin" db rm "$digest" --root "$root" > "$tmp/out"
+done
+test ! -e "$root/usr/bin/dinit"
+test ! -L "$root/usr/bin/reboot"
+test ! -L "$root/usr/share/man/man8/reboot.8"
+printf 'static dinit package install/check/remove passed\n'
 sha256sum "$2" "$3"

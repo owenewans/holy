@@ -51,7 +51,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=af70c3b7d07bee7c5e0ad6a94ae783c32f21acf25da99aedbc981d469ec59621
+holypkg.8 source=holy version=development sha256=21673271184c66f802a854c8d89476c2110c30640c6ca372e91dc579afefcb14
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -182,46 +182,53 @@ DESCRIPTION
      package  build  does not establish PID 1 boot acceptance; that requires the
      image test. OUTPUT must be new.
 
-     make check-bootstrap-dinit DINIT_PACKAGE=FILE BUSYBOX_PACKAGE=FILE extracts
-     verified packages and copies their dinit,	dinitctl  and  BusyBox	binaries
-     into a disposable chroot without dynamic libc directories. It checks static
-     ELF  classification,  starts  a scripted service, queries its STARTED state
-     through the control socket, requests shutdown and checks  the  stop-command
-     effect.   The  service manager runs with the caller's UID/GID in user mode.
-     Host doas, chroot, mknod and timeout are  required;  the  fixture	supplies
-     only /dev/null and enforces a 20-second timeout. It prints the tested pack-
-     age hashes.  This tests service control and the static C++ runtime, not PID
-     1	boot  or package installation. The current installer cannot install this
-     package's man-page symlinks yet.
+     make check-bootstrap-dinit DINIT_PACKAGE=FILE  BUSYBOX_PACKAGE=FILE  stages
+     both packages and installs them through approved database plans into a dis-
+     posable chroot without dynamic libc directories. It checks command and man-
+     page  links,  static ELF classification, starts a scripted service, queries
+     its STARTED state through the control socket, requests shutdown and  checks
+     the  stop-command	effect.	  The  service	manager	 runs  with the caller's
+     UID/GID in user mode. Host doas, chroot, mknod and	 timeout  are  required;
+     the  fixture  supplies  only /dev/null and enforces a 20-second timeout. It
+     prints the tested package hashes.	After service shutdown	it  checks  both
+     installed	manifests  and	removes both packages through the database. This
+     covers package installation, service control and the  static  C++	runtime.
+     PID 1 boot remains a separate test.
 
      make static-deps INPUTS=DIRECTORY OUTPUT=DIRECTORY KERNEL_HEADERS=DIRECTORY
-     builds x86_64 musl dependencies from the pinned archives listed  with  URLs
-     and  SHA-256 digests in profiles/static-sources. It copies and verifies in-
-     puts before unpacking. The caller supplies	 Linux	userspace  headers  with
+     builds  x86_64  musl dependencies from the pinned archives listed with URLs
+     and SHA-256 digests in profiles/static-sources. It copies and verifies  in-
+     puts  before  unpacking.  The  caller supplies Linux userspace headers with
      linux, asm and asm-generic subdirectories. Their installed copies receive a
-     hash  inventory.  GCC,  make,  CMake,  autotools, libtool, Perl and archive
+     hash inventory. GCC, make, CMake,	autotools,  libtool,  Perl  and	 archive
      tools are host build requirements. JOBS controls parallelism, default 2.
 
-     The output is a new private prefix containing static libarchive/LZ4,  zlib,
+     The  output is a new private prefix containing static libarchive/LZ4, zlib,
      libelf, libsolv, curl and OpenSSL, plus build compatibility libraries.  Its
-     musl  toolchain  includes	a  private dynamic loader for upstream configure
-     probes; the final holypkg link uses -static.  No  host  libc  is  replaced.
-     Source  manifests, build logs, library hashes, exit status and elapsed sec-
-     onds remain in the prefix. Archive support in this bootstrap  configuration
-     is	 limited to the enabled codecs, including native LZ4; full foreign codec
+     musl toolchain includes a private dynamic	loader	for  upstream  configure
+     probes;  the  final  holypkg  link	 uses -static. No host libc is replaced.
+     Source manifests, build logs, library hashes, exit status and elapsed  sec-
+     onds  remain in the prefix. Archive support in this bootstrap configuration
+     is limited to the enabled codecs, including native LZ4; full foreign  codec
      coverage is a separate build profile.
 
-     make static STATIC_DEPS=DIRECTORY checks the completed  dependency	 prefix,
-     cleans  existing  object  files  and builds holypkg with its musl compiler.
+     make  static  STATIC_DEPS=DIRECTORY checks the completed dependency prefix,
+     cleans existing object files and builds holypkg  with  its	 musl  compiler.
      make check-static-core STATIC_HOLYPKG=FILE BUSYBOX_PACKAGE=FILE copies that
-     binary into a disposable root without dynamic libc directories. Inside  the
+     binary  into a disposable root without dynamic libc directories. Inside the
      chroot, holypkg verifies and caches the supplied BusyBox package, installs,
      checks and removes it twice using the cached artifact. The original package
-     is	 removed  after	 caching. A BusyBox shell probe runs after each install.
-     doas creates the chroot and drops to the caller's	numeric	 UID/GID.   Both
-     artifact  hashes  are  printed  on	 success. This verifies the local static
-     package path; removal and restoration of real dynamic libc	 packages,  net-
+     is removed after caching. A BusyBox shell probe runs  after  each	install.
+     doas  creates  the	 chroot and drops to the caller's numeric UID/GID.  Both
+     artifact hashes are printed on success.  This  verifies  the  local  static
+     package  path;  removal and restoration of real dynamic libc packages, net-
      work recovery and dinit boot still require their own tests.
+
+     Passing DINIT_PACKAGE=FILE to check-static-core also installs,  checks  and
+     removes  the  complete  dinit package, including its symlinks, with holypkg
+     running inside that libc-free chroot. The fixture removes the  input  after
+     caching and reports the tested artifact hash. Service control is covered by
+     check-bootstrap-dinit.
 
      make   check-static-network  STATIC_HOLYPKG=FILE  BUSYBOX_PACKAGE=FILE  RE-
      PORT=FILE tests that static client in a libc-free chroot with private  net-
@@ -300,14 +307,15 @@ DESCRIPTION
      ELF dependencies. The supported planning subset is linux/nolibc with noarch
      data or the native host architecture  (x86_64  on	x86_64,	 x86  on  i686).
      Hooks  and	 transform must be empty. Payloads may contain ordinary directo-
-     ries and regular files owned by the current UID/GID.  Symlinks,  hardlinks,
-     privileged	 modes	and  writes  inside holypkg state or cache trees are ex-
-     cluded. Output  includes  target-root  device/inode,  generation,	artifact
-     SHA-256,  path  count and a SHA-256 over those identities and ordered mani-
-     fest entries. The narrow local planner rejects a second  installed	 package
-     with  the	same name, even when its payload paths differ; general source-ID
-     and ABI slot management is pending.  This command does not persist a  plan,
-     reserve  ownership,  authorize apply or recheck the target root at mutation
+     ries and regular files and relative symlinks owned by the current	UID/GID.
+     Hardlinks,	 privileged modes and writes inside holypkg state or cache trees
+     are excluded. Output includes target-root device/inode,  generation,  arti-
+     fact  SHA-256,  path  count and a SHA-256 over those identities and ordered
+     manifest entries, including symlink types and targets. Symlinks  must  have
+     mode 0777. The narrow local planner rejects a second installed package with
+     the  same	name,  even when its payload paths differ; general source-ID and
+     ABI slot management is pending.  This command does not persist a plan,  re-
+     serve  ownership,	authorize  apply  or recheck the target root at mutation
      time. Concurrent changes can invalidate the collision check. Apply	 revali-
      dates inputs and paths under its writer lock.
 
@@ -335,69 +343,76 @@ DESCRIPTION
 
      Database  apply  installs	only an approved linux/nolibc package with empty
      hooks, transform and requirements. Its payload may contain ordinary regular
-     files, including native static  ELF  executables,	and  directory	entries;
-     every  directory  must already exist in the target root with the manifest's
-     mode and numeric owner/group. A changed directory is rejected before  writ-
-     ing  a journal.  No symlink, hardlink, privileged mode or file collision is
-     accepted. The caller must review the db plan digest and invoke  db	 approve
-     first.  Apply  holds the database writer lock, recomputes the approved plan
-     and rechecks every path against opened directory descriptors.   It	 creates
-     each  file	 with  O_EXCL, then synchronizes it and its parent. It records a
-     journal before changing the rootfs and publishes installed metadata and the
-     next database generation after copying payload files. The installed  record
-     contains meta, files, deps, origin and state; local delivery has no trusted
-     source-id.	 Apply does not run package hooks or configure services.  An I/O
-     failure after journal publication leaves an incomplete transaction for  in-
-     spection; db status returns 5 and db recover does not retry file mutations.
-     db recover --abort-empty can clear an incomplete journal only at its origi-
-     nal  generation,  with the same approved artifact and no installed instance
-     or payload files. It retains approval for a later apply or cancel.	  Other-
-     wise  the	operator  must inspect the rootfs and journal manually.	 A crash
-     after publishing the next generation can leave  the  journal  and	approved
-     reservation  behind.  db  recover --finish-apply verifies the installed in-
-     stance, its generation, all listed payload files and any remaining approval
-     before clearing those records. It refuses an incomplete  payload  and  does
-     not  resume file extraction.  A regular successful return requires both the
-     installed record and generation publication. General ownership  replacement
-     and automatic rollback are not implemented. The command is not an installer
-     for arbitrary .holy packages.
+     files, including native static ELF executables, relative symlinks	and  di-
+     rectory entries; every directory must already exist in the target root with
+     the  manifest's  mode  and	 numeric owner/group. A changed directory is re-
+     jected before writing a journal.  No absolute symlink, hardlink, privileged
+     mode or file collision is accepted. The caller must review the db plan  di-
+     gest and invoke db approve first. Apply holds the database writer lock, re-
+     computes the approved plan and rechecks every path against opened directory
+     descriptors.   It	creates each regular file with O_EXCL, then synchronizes
+     it and its parent.	 It creates symlinks with  symlinkat  without  replacing
+     existing  entries and synchronizes their parent directory. All parent paths
+     must be real directories; payload writes do  not  follow  installed  links.
+     Relative  targets may be dangling.	 Lexical containment checks do not prove
+     the runtime meaning of symlink chains.  It records a journal before  chang-
+     ing  the rootfs and publishes installed metadata and the next database gen-
+     eration after copying payload files. The installed	 record	 contains  meta,
+     files, deps, origin and state; local delivery has no trusted source-id. Ap-
+     ply does not run package hooks or configure services.  An I/O failure after
+     journal  publication  leaves  an  incomplete transaction for inspection; db
+     status returns 5 and db recover does not retry file mutations.  db	 recover
+     --abort-empty  can clear an incomplete journal only at its original genera-
+     tion, with the same approved artifact and no installed instance or	 payload
+     files.  It retains approval for a later apply or cancel.  Otherwise the op-
+     erator must inspect the rootfs and journal manually.  A  crash  after  pub-
+     lishing  the next generation can leave the journal and approved reservation
+     behind. db recover --finish-apply verifies the installed instance, its gen-
+     eration, all listed payload files and any remaining approval before  clear-
+     ing  those	 records.  It  refuses an incomplete payload and does not resume
+     file extraction.  A regular successful return requires both  the  installed
+     record  and generation publication. General ownership replacement and auto-
+     matic rollback are not implemented. The command is not an installer for ar-
+     bitrary .holy packages.
 
-     Static  executable installation verifies ELF architecture and nolibc facts;
-     it does not execute package programs. The caller may run an installed  pro-
-     gram  as  a separate action. Executable payloads with an unknown format are
+     Static executable installation verifies ELF architecture and nolibc  facts;
+     it	 does not execute package programs. The caller may run an installed pro-
+     gram as a separate action. Executable payloads with an unknown  format  are
      refused; shebang interpreters remain unresolved requirements in the current
-     planner.  Foreign architecture, including x86 on x86_64,  returns	require-
-     ment  error  6  until  architecture  override decisions are implemented. No
+     planner.	Foreign	 architecture, including x86 on x86_64, returns require-
+     ment error 6 until architecture  override	decisions  are	implemented.  No
      metadata is relabeled.
 
-     Database check reads one installed manifest and compares its regular  files
-     against  the  target  root by path, type, size, mode, numeric ownership and
-     SHA-256. It checks listed directories against their manifest mode	and  nu-
-     meric  owner/group	 and  rejects  symlinked  parent paths. It returns 4 for
-     changed or missing files, 6 when the instance is absent, and 5 while a file
-     transaction is incomplete. The command neither downloads an archive nor re-
-     pairs a file. This restricted check does not model dynamic linking, scripts
-     or runtime behavior. --all walks every supported installed	 manifest  under
-     the  same shared lock and reports each artifact as intact or changed in di-
-     gest order. It returns 4 if any artifact has changed.  An	empty  installed
-     set  reports zero checked packages. --json emits one holy-installed-check-1
-     JSON line per artifact followed by a summary of passes and failures, or one
-     error line on an invalid database, missing instance or incomplete	transac-
-     tion. Each artifact includes a findings array with code, severity and rela-
-     tive path for each mismatch. missing-file identifies an absent regular file
-     under  accessible	parents;  changed-file covers other manifest mismatches,
-     including inaccessible or symlinked parents. Paths encode	non-ASCII  bytes
-     as	 \u00HH; consumers reconstruct the original bytes. Findings follow mani-
-     fest order; intact	 artifacts  have  an  empty  array.  The  artifact-level
-     changed-file  code	 remains  the  aggregate failure indicator. This reports
-     only data-manifest coverage.
+     Database  check reads one installed manifest and compares its regular files
+     against the target root by path, type, size, mode,	 numeric  ownership  and
+     SHA-256.  It compares symlink type, mode, numeric ownership and exact read-
+     link target without  following  the  link.	 It  checks  listed  directories
+     against  their  manifest mode and numeric owner/group and rejects symlinked
+     parent paths. It returns 4 for changed or missing files,  6  when	the  in-
+     stance is absent, and 5 while a file transaction is incomplete. The command
+     neither downloads an archive nor repairs a file. This restricted check does
+     not  model	 dynamic linking, scripts or runtime behavior. --all walks every
+     supported installed manifest under the same shared lock  and  reports  each
+     artifact as intact or changed in digest order. It returns 4 if any artifact
+     has  changed.  An empty installed set reports zero checked packages. --json
+     emits one holy-installed-check-1 JSON line per artifact followed by a  sum-
+     mary  of  passes  and  failures,  or one error line on an invalid database,
+     missing instance or incomplete transaction. Each artifact includes a  find-
+     ings  array  with code, severity and relative path for each mismatch. miss-
+     ing-file identifies an absent regular file or symlink under accessible par-
+     ents; changed-file covers other manifest mismatches, including inaccessible
+     or symlinked parents. Paths encode non-ASCII bytes as \u00HH; consumers re-
+     construct the original bytes. Findings follow manifest order; intact  arti-
+     facts have an empty array. The artifact-level changed-file code remains the
+     aggregate failure indicator. This reports only data-manifest coverage.
 
-     Database owner reads installed manifests and lists the artifact digest  and
-     kind  for	an  exact  relative or root-absolute path. Multiple packages may
-     list the same directory. If multiple records claim one  regular  file,  the
-     command  returns  conflict	 status 4 without listing an arbitrary owner. An
-     absent path returns 6. It holds a shared database lock and does not require
-     the path to exist in the live rootfs; db check compares actual contents.
+     Database  owner reads installed manifests and lists the artifact digest and
+     kind for an exact relative or root-absolute  path.	 Multiple  packages  may
+     list the same directory. If multiple records claim one regular file or sym-
+     link,  the	 command  returns conflict status 4 without listing an arbitrary
+     owner. An absent path returns 6. It holds a shared database lock  and  does
+     not  require the path to exist in the live rootfs; db check compares actual
+     contents.
 
      Database rm removes one intact supported  installed  instance  by	artifact
      SHA-256.  It  verifies  all  listed  files before mutation, refuses changed
@@ -406,16 +421,16 @@ DESCRIPTION
      ownership claims; shared directories are  allowed.	 A  conflict  returns  4
      without  deleting	files.	Recovery repeats this ownership check before re-
      suming an interrupted removal; conflicts retain the journal and  return  5.
-     It unlinks only listed regular files and the instance record; shared direc-
-     tories and the cached artifact remain. The database generation advances af-
-     ter  removal.  If	an I/O failure interrupts deletion, db status reports an
-     incomplete journal.  db recover --continue accepts a  removing  journal  at
-     its  original  generation	with  an  intact installed record, treats absent
-     listed files as removed, verifies every remaining	file  without  mutation,
-     then  completes removal. Changed files or partial installed records require
-     manual inspection. --abort-empty applies only  to	an  installing	journal,
-     never to removal. This command does not resolve reverse dependencies or re-
-     move general packages.
+     It	 unlinks  only	listed	regular files, symlinks and the instance record;
+     shared directories and the cached artifact remain. The database  generation
+     advances  after  removal.	If an I/O failure interrupts deletion, db status
+     reports an incomplete journal.  db recover --continue  accepts  a	removing
+     journal  at its original generation with an intact installed record, treats
+     absent listed files as removed, verifies every remaining file without muta-
+     tion, then completes removal. Changed files or  partial  installed	 records
+     require  manual  inspection.  --abort-empty  applies  only to an installing
+     journal, never to removal. This command does not resolve reverse  dependen-
+     cies or remove general packages.
 
      The  info	command reads an LZ4-frame-compressed tar archive and prints the
      seven required fields from HOLY/meta. It reads  archive  data  without  ex-
@@ -791,7 +806,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-package.5 source=holy version=development sha256=01f85860c267490e4e599decc347c599542597e99f8b34fa1010779100b48f64
+holy-package.5 source=holy version=development sha256=a65a15393c28701bde21a6daf1673532d3fefac1ff19e0ce3b775cc3ed4c5711
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -844,13 +859,17 @@ DESCRIPTION
      if HOLY/files says XATTRS=-. The planned full format includes those attrib-
      utes.
 
-     The  narrow database apply command installs approved data and native static
-     ELF archives into pre-existing safe directories. The  pack	 command  writes
-     and verifies this archive format from a prepared tree of regular files, di-
-     rectories	and symlinks.  The verifier does not verify dependencies, signa-
-     tures, symbolic owner names or the installed filesystem. A full format  im-
-     plementation  must	 verify file ownership, links, xattrs, hooks, origin and
-     transaction semantics before accepting an artifact for installation.
+     The narrow database apply command installs approved data, native static ELF
+     files  and	 relative  symlinks into pre-existing safe directories. Symlinks
+     require mode 0777 and  the	 caller's  numeric  ownership.	The  transaction
+     records  their  targets,  checks  them without following links, and removes
+     only intact owned entries. Absolute symlinks and hardlink installation  re-
+     main unsupported.	The pack command writes and verifies this archive format
+     from a prepared tree of regular files, directories and symlinks.  The veri-
+     fier  does not verify dependencies, signatures, symbolic owner names or the
+     installed filesystem. A full format implementation must verify file  owner-
+     ship, links, xattrs, hooks, origin and transaction semantics before accept-
+     ing an artifact for installation.
 
 SEE ALSO
      holypkg(8), holy.conf(5)
