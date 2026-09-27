@@ -43,8 +43,8 @@ DATA/, one manifest line contains twelve whitespace-separated tokens:
 file PATH MODE OWNER GROUP UID GID SIZE SHA256 FLAGS XATTRS HARDLINK-GROUP
 .fi
 MODE is octal; UID, GID and SIZE are decimal. PATH is relative to DATA. SHA256
-has 64 hexadecimal digits. The current verifier accepts FLAGS=none,
-XATTRS=- and HARDLINK-GROUP=- only. A symlink uses one additional TARGET token,
+has 64 hexadecimal digits. The current verifier accepts FLAGS=none and
+XATTRS=-. Independent files use HARDLINK-GROUP=-. A symlink uses one additional TARGET token,
 SIZE=0 and SHA256=-. A hardlinked file uses TYPE=hardlink, a group identifier
 in HARDLINK-GROUP and one extra TARGET token naming a regular file in DATA.
 The target file carries the same group identifier. SIZE and SHA256 describe
@@ -65,8 +65,10 @@ their targets, checks them without following links, and removes only intact
 owned entries. Direct hardlinks share the verified regular target's inode; one
 regular anchor belongs to each named group. Installation defers hardlinks until
 regular payload files exist, independently of archive order. Absolute symlink
-installation remains unsupported. Cached updates involving hardlink groups
-remain unsupported and return a requirement error before changing payload.
+installation remains unsupported. Cached updates preserve hardlink groups across
+content and mode changes, member additions/removals, anchor moves and group
+splits/merges. The file plan names a reserved staging link for each new group;
+recovery validates both content and inode relationships.
 The pack command writes and verifies
 this archive format from a prepared tree of regular files, directories and symlinks.
 The verifier does not verify dependencies,

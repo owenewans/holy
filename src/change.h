@@ -45,4 +45,7 @@ int holy_file_plan_apply(const struct holy_file_plan *plan, int root,
 /* requires the completed payload; removed shared directories remain present. */
 int holy_file_plan_finished(const struct holy_file_plan *plan, int root);
 
+/* after database publication; validates the final tree before removing group witnesses. */
+int holy_file_plan_cleanup(const struct holy_file_plan *plan, int root);
+
 #endif

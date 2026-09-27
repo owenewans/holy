@@ -673,6 +673,13 @@ After validating the new payload, database and generation, apply retains the
 old database and journal under transactions/PLAN_SHA256. It retains cached
 old archives. These records are not a general rollback command.
 .PP
+Hardlink updates stage one inode per new group and link each changed member's
+temporary path to it. A group-stage record binds the reserved anchor sibling
+name to the plan. Retained anchors keep their inode. Group staging links remain
+until the new database and generation are published; cleanup validates the
+final groups before removing them. Equal bytes alone do not satisfy a group
+split or merge. External hardlinks to replaced files keep the old inode.
+.PP
 db recover --update revalidates the immutable plan, cached inputs and old/new
 file states before continuing the interrupted operation. It recognizes a
 completed database exchange or generation publication and does not repeat
@@ -729,7 +736,9 @@ reuses an intact surviving group member when its regular anchor was removed;
 when the whole group is absent it restores contents from the cache and links
 all declared names. Removal unlinks only owned paths and preserves external
 hardlinks. Cross-filesystem link failures leave a journal and report the linkat
-error. Cache update transitions involving hardlink groups remain unsupported.
+error. Cached updates also verify group topology during partial publication and
+recovery. Full manifest checks reject undeclared inode sharing between independent
+files or different groups within that manifest.
 .PP
 db repair-plan SHA256 --root DIRECTORY prepares missing-only restoration of an
 installed artifact with a recorded dependency graph from the target cache. db repair SHA256

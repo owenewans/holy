@@ -3397,7 +3397,8 @@ static int finish_update(int root, int db, int transactions, int work, int befor
                           journal->next, source, journal->generation, resolution, 0) ||
         (current == journal->generation && !set_generation(db, journal->generation + 1)) || fsync(db)) goto done;
     snprintf(committed, sizeof committed, "%s\n", journal->plan);
-    if (!update_replace(work, "progress", "stage committed\n") ||
+    if (holy_file_plan_cleanup(files, root) ||
+        !update_replace(work, "progress", "stage committed\n") ||
         !update_replace(work, "committed", committed)) goto done;
 #ifdef SYS_renameat2
     if (syscall(SYS_renameat2, transactions, "update", transactions, journal->plan, 1u) || fsync(transactions)) goto done;

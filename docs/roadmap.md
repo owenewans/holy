@@ -6,8 +6,14 @@
 - [x] Install direct hardlinks after their regular payload, validate inode groups,
   restore missing anchors from surviving members, and recover interrupted link
   creation/removal. Scan ELF facts at every hardlink path and retain hardlinked
-  manual names in documentation bundles. Cached update transitions
-  involving hardlink groups and native tree writer hardlink detection remain open.
+  manual names in documentation bundles. Native tree writer hardlink detection
+  remains open.
+
+- [x] Update cached hardlink groups with shared staging inodes, preserve retained
+  anchors, and support content/mode changes, membership changes, anchor moves and
+  splits/merges. Retain group staging links through database publication and
+  validate topology during recovery and cleanup. Reject undeclared inode sharing
+  within installed manifests.
 
 - [x] Resolve pacman package version constraints before passing exact candidate
   identities to libsolv. Preserve the comparator family, apply arch/libc scopes,

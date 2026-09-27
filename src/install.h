@@ -2,6 +2,7 @@
 #define HOLY_INSTALL_H
 
 #include <stddef.h>
+#include <sys/stat.h>
 
 struct holy_manifest_entry;
 
@@ -36,6 +37,18 @@ int holy_install_check_or_missing(int files_fd, int root);
 int holy_install_check_path(int files_fd, int root, const char *path);
 /* read-only normalized entry check: 1 matches, 2 absent, 0 drift, -1 unsupported. */
 int holy_install_check_entry(int root, const struct holy_manifest_entry *entry);
+
+/* raw content/attributes for mixed update states; temporary NULL selects public path.
+   returns 1 exact, 2 absent, 0 drift, -1 invalid; observed is optional. */
+int holy_install_entry_state(int root, const struct holy_manifest_entry *entry,
+                              const char *temporary, struct stat *observed);
+/* link a reserved sibling to a verified public or reserved source without replacement. */
+int holy_install_prepare_link(int root, const struct holy_manifest_entry *next,
+    const char *temporary, const struct holy_manifest_entry *source,
+    const char *source_temporary, int recovering);
+/* removes only an intact reserved sibling; absence is accepted during recovery. */
+int holy_install_remove_temporary(int root, const struct holy_manifest_entry *entry,
+                                   const char *temporary);
 
 /* caller owns the journal reservation for a temporary basename beside next.
    prepare verifies content before publishing it; fd is borrowed, read at offset 0. */

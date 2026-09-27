@@ -677,6 +677,15 @@ static int row_group_order(const void *a, const void *b)
                   (*(const struct manifest_row *const *)b)->fields[11]);
 }
 
+static int row_inode_order(const void *a, const void *b)
+{
+    const struct stat *left = &(*(const struct manifest_row *const *)a)->observed;
+    const struct stat *right = &(*(const struct manifest_row *const *)b)->observed;
+    if (left->st_dev != right->st_dev) return left->st_dev < right->st_dev ? -1 : 1;
+    if (left->st_ino != right->st_ino) return left->st_ino < right->st_ino ? -1 : 1;
+    return 0;
+}
+
 static int row_links(struct manifest_row *rows, size_t count)
 {
     struct manifest_row **paths = NULL, **groups = NULL;
@@ -730,6 +739,22 @@ static int row_links(struct manifest_row *rows, size_t count)
         if (drift) for (j = i; j < end; ++j)
             if (groups[j]->checked == 1) groups[j]->checked = 0;
         i = end;
+    }
+    {
+        size_t inodes = 0;
+        for (i = 0; i < count; ++i)
+            if (rows[i].checked == 1 && S_ISREG(rows[i].observed.st_mode)) paths[inodes++] = &rows[i];
+        qsort(paths, inodes, sizeof *paths, row_inode_order);
+        for (i = 0; i < inodes;) {
+            size_t end = i + 1;
+            const char *group = paths[i]->fields[11];
+            int drift = 0;
+            while (end < inodes && !row_inode_order(&paths[i], &paths[end])) ++end;
+            for (j = i + 1; j < end; ++j)
+                if (!strcmp(group, "-") || strcmp(group, paths[j]->fields[11])) drift = 1;
+            if (drift) for (j = i; j < end; ++j) paths[j]->checked = 0;
+            i = end;
+        }
     }
     ok = 1;
 done:
@@ -925,7 +950,7 @@ static int transition_entry_valid(const struct holy_manifest_entry *entry)
 {
     return entry && entry->path && entry->path[0] && entry->path[0] != '/' &&
            entry->path[strlen(entry->path) - 1] != '/' &&
-           !entry->directory && !entry->hardlink && !entry->group &&
+           !entry->directory && !(entry->link && (entry->hardlink || entry->group)) &&
            !(entry->mode & ~0777u) && entry->uid == (long long)geteuid() &&
            entry->gid == (long long)getegid() && entry->size >= 0 &&
            (entry->link ? entry->mode == 0777 && !entry->size &&
@@ -998,6 +1023,51 @@ static char *transition_temporary(const char *path, const char *name)
     return result;
 }
 
+int holy_install_entry_state(int root, const struct holy_manifest_entry *entry,
+                              const char *temporary, struct stat *observed)
+{
+    struct holy_manifest_entry staged;
+    char *path;
+    int result;
+    if (!temporary) return transition_matches(root, entry, observed);
+    if (!transition_entry_valid(entry) || !(path = transition_temporary(entry->path, temporary))) return -1;
+    staged = *entry; staged.path = path;
+    result = transition_matches(root, &staged, observed);
+    free(path);
+    return result;
+}
+
+int holy_install_prepare_link(int root, const struct holy_manifest_entry *next,
+    const char *temporary, const struct holy_manifest_entry *source,
+    const char *source_temporary, int recovering)
+{
+    struct holy_manifest_entry staged;
+    char *path = NULL, *from = NULL;
+    int ok = 0;
+    if (!transition_entry_valid(next) || next->link || !source || source->link ||
+        !(path = transition_temporary(next->path, temporary))) goto done;
+    from = source_temporary ? transition_temporary(source->path, source_temporary) : strdup(source->path);
+    if (!from) goto done;
+    staged = *next; staged.path = path;
+    ok = link_payload(root, from, &staged, recovering);
+done:
+    free(path); free(from);
+    return ok;
+}
+
+int holy_install_remove_temporary(int root, const struct holy_manifest_entry *entry,
+                                   const char *temporary)
+{
+    struct stat observed;
+    char *path;
+    int state = holy_install_entry_state(root, entry, temporary, &observed), ok;
+    if (state == 2) return 1;
+    if (state != 1 || !(path = transition_temporary(entry->path, temporary))) return 0;
+    ok = remove_file(root, path, &observed);
+    free(path);
+    return ok;
+}
+
 int holy_install_transition_check(int root, const struct holy_manifest_entry *before,
                                   const struct holy_manifest_entry *after, int recovering)
 {
@@ -1020,7 +1090,7 @@ int holy_install_prepare_file(int root, const struct holy_manifest_entry *next,
     struct stat input;
     int parent = -1, fd = -1, created = 0, ok = 0;
     long long offset = 0;
-    if (!transition_entry_valid(next) || !(path = transition_temporary(next->path, temporary))) goto done;
+    if (!transition_entry_valid(next) || next->hardlink || !(path = transition_temporary(next->path, temporary))) goto done;
     staged = *next; staged.path = path;
     parent = parent_fd(root, path, &storage, &base);
     if (parent < 0) goto done;
@@ -1093,6 +1163,12 @@ int holy_install_transition(int root, const struct holy_manifest_entry *before,
     staged = *after; staged.path = path;
     completed = transition_matches(root, after, NULL) == 1;
     ready_state = transition_matches(root, &staged, &ready);
+    if (completed && ready_state == 1 &&
+        (after->group || (before && (before->group || before->hardlink)))) {
+        struct stat published;
+        if (transition_matches(root, after, &published) != 1) goto done;
+        if (published.st_dev != ready.st_dev || published.st_ino != ready.st_ino) completed = 0;
+    }
     if (completed) {
         if (ready_state == 2) ok = !fsync(parent);
         else if (ready_state == 1) ok = remove_file(root, path, &ready);

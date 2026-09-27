@@ -160,6 +160,7 @@ with tarfile.open(sys.argv[2], 'w', format=tarfile.PAX_FORMAT) as out:
 PY
 lz4 -q "$tmp/hardlinks.tar" "$tmp/hardlinks.holy"
 "$bin" verify "local:$tmp/hardlinks.holy" > "$tmp/out"
-expect 6 "$helper" --file-plan "$tmp/old.holy" "$tmp/hardlinks.holy" "$tmp/clean"
+expect 0 "$helper" --file-plan "$tmp/old.holy" "$tmp/hardlinks.holy" "$tmp/clean"
 grep -q 'after hardlink "usr/share/hard" .* "usr/share/retained" "group1"' "$tmp/record"
+grep -q 'group-stage "usr/share/retained" ".holy-update-.*-group"' "$tmp/record"
 printf 'file plan fixtures passed\n'

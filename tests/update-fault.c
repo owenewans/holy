@@ -77,6 +77,8 @@ int unlinkat(int dir, const char *name, int flags)
 #endif
     result = next_unlinkat(dir, name, flags);
     if (!result && fault("hardlink-remove") && !strcmp(name, "a-first")) stop();
+    if (!result && fault("group-cleanup") && strlen(name) > 6 &&
+        !strcmp(name + strlen(name) - 6, "-group")) stop();
     return result;
 }
 
@@ -125,6 +127,18 @@ int fsync(int fd)
                     if (!strncmp(entry->d_name, ".holy-dir-", 10)) stop();
                 closedir(stream);
             } else if (listing >= 0) close(listing);
+        }
+    }
+    if (getenv("HOLY_UPDATE_STEP") && strstr(path, "/transactions/update/")) {
+        static unsigned long step;
+        snprintf(proc, sizeof proc, "/proc/self/fd/%d", fd);
+        copy = open(proc, O_RDONLY | O_CLOEXEC);
+        length = copy < 0 ? -1 : pread(copy, text, sizeof text - 1, 0);
+        if (copy >= 0) close(copy);
+        if (length > 0) {
+            text[length] = 0;
+            if (!strncmp(text, "stage applying\n", 15) && strstr(text, "\nresult done\n") &&
+                ++step == strtoul(getenv("HOLY_UPDATE_STEP"), NULL, 10)) stop();
         }
     }
     if (fault("database-before")) {
