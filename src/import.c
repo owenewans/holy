@@ -6,6 +6,7 @@
 #include "stage.h"
 #include "elf.h"
 #include "../backends/pacman.h"
+#include "../backends/deb-version.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -415,6 +416,10 @@ static int parse_deb(const char *control, size_t length, struct deb_metadata *me
     for (offset = 0; meta->arch[offset]; ++offset)
         if (!((meta->arch[offset] >= 'a' && meta->arch[offset] <= 'z') ||
               (meta->arch[offset] >= '0' && meta->arch[offset] <= '9'))) return 0;
+    {
+        int order;
+        if (!holy_deb_version_compare(meta->version, meta->version, &order)) return 0;
+    }
     return 1;
 }
 
@@ -556,6 +561,83 @@ static void requirement(FILE *out, const char *id, const char *consumer, const c
     fputc('\n', out);
 }
 
+static int deb_dependencies(FILE *out, const char *consumer, const struct deb_field *field)
+{
+    char *copy = strdup(field->value), *cursor, *buffer = NULL, *original = NULL;
+    size_t size = 0, index = 0;
+    FILE *temporary = NULL;
+    int ok = 0;
+    if (!copy || !(temporary = open_memstream(&buffer, &size))) goto done;
+    cursor = copy;
+    while (*cursor) {
+        char *segment = cursor, *comma = strchr(cursor, ','), *end, *name_end, *version = NULL;
+        const char *relation = "any";
+        char id[64];
+        size_t i;
+        if (comma) { *comma = 0; cursor = comma + 1; if (!*cursor) goto done; }
+        else cursor += strlen(cursor);
+        while (*segment == ' ' || *segment == '\t' || *segment == '\n') ++segment;
+        end = segment + strlen(segment);
+        while (end > segment && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n')) *--end = 0;
+        if (end == segment || ++index > 4096) goto done;
+        if ((size_t)(end - segment) > 65536 || !(original = strdup(segment))) goto done;
+        name_end = segment;
+        while (*name_end && *name_end != ' ' && *name_end != '\t' &&
+               *name_end != '\n' && *name_end != '(') ++name_end;
+        for (i = 0; segment + i < name_end; ++i)
+            if (!((segment[i] >= 'a' && segment[i] <= 'z') ||
+                  (segment[i] >= '0' && segment[i] <= '9') ||
+                  (i && (segment[i] == '+' || segment[i] == '-' || segment[i] == '.')))) goto done;
+        if (name_end == segment) goto done;
+        if (*name_end) {
+            char *p = name_end;
+            if (*p == '(') *p++ = 0;
+            else {
+                *p++ = 0;
+                while (*p == ' ' || *p == '\t' || *p == '\n') ++p;
+                if (*p++ != '(') goto done;
+            }
+            while (*p == ' ' || *p == '\t') ++p;
+            if (p[0] == '<' && p[1] == '<') relation = "lt";
+            else if (p[0] == '<' && p[1] == '=') relation = "le";
+            else if (p[0] == '=') relation = "eq";
+            else if (p[0] == '>' && p[1] == '=') relation = "ge";
+            else if (p[0] == '>' && p[1] == '>') relation = "gt";
+            else goto done;
+            p += !strcmp(relation, "eq") ? 1 : 2;
+            while (*p == ' ' || *p == '\t') ++p;
+            version = p;
+            while (*p && *p != ' ' && *p != '\t' && *p != ')') ++p;
+            if (p == version) goto done;
+            if (*p == ')') { *p++ = 0; if (*p) goto done; }
+            else {
+                if (!*p) goto done;
+                *p++ = 0;
+                while (*p == ' ' || *p == '\t') ++p;
+                if (*p++ != ')' || *p) goto done;
+            }
+            {
+                int order;
+                if (!holy_deb_version_compare(version, version, &order)) goto done;
+            }
+        } else *name_end = 0;
+        snprintf(id, sizeof id, "deb-%zu-%zu", field->line, index);
+        requirement(temporary, id, consumer, "package", segment, "any", "any", relation,
+                    version ? version : "-", original, "deb:Depends");
+        if (ferror(temporary)) goto done;
+        free(original); original = NULL;
+    }
+    if (!index) goto done;
+    if (fclose(temporary)) { temporary = NULL; goto done; }
+    temporary = NULL;
+    if (fwrite(buffer, 1, size, out) != size) goto done;
+    ok = 1;
+done:
+    if (temporary) fclose(temporary);
+    free(original); free(copy); free(buffer);
+    return ok;
+}
+
 static int write_output(struct foreign_input *input, const struct holy_pacman_metadata *meta,
                          const struct deb_metadata *deb,
                          const char *source, const char *hash, const char *output, int output_fd, FILE *receipt, int group)
@@ -626,7 +708,8 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
             !strcasecmp(field->key, "Architecture") || !strcasecmp(field->key, "Description") ||
             !strcasecmp(field->key, "Maintainer") || !strcasecmp(field->key, "Homepage") ||
             !strcasecmp(field->key, "Section") || !strcasecmp(field->key, "Priority") ||
-            !strcasecmp(field->key, "Installed-Size")) continue;
+            !strcasecmp(field->key, "Installed-Size") || !strcasecmp(field->key, "Source")) continue;
+        if (!strcasecmp(field->key, "Depends") && deb_dependencies(files[2], name, field)) continue;
         snprintf(id, sizeof id, "deb-%zu", field->line);
         requirement(files[2], id, name, "foreign", field->value, "any", "any", "any", "-",
                     field->value, field->key);

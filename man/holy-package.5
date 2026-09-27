@@ -7,7 +7,8 @@ HOLY/meta contains one key and one value per line. The required fields are
 format (holy-package-1), name, version, release, os, arch and libc. An unknown
 requires-feature field fails inspection. Optional x-version-family records the
 version comparator family and is a scalar: duplicates fail inspection.
-The current resolver supports constrained package requirements for pacman;
+The current resolver supports constrained package requirements for pacman and
+Debian. It compares versions within the consumer's declared family;
 unknown families remain inspectable but cannot acquire guessed version semantics.
 Pacman imports store the complete foreign epoch:version-release in version,
 and use release for the native artifact revision.
@@ -78,8 +79,8 @@ signatures, symbolic owner names or the installed filesystem. A full format
 implementation must verify file ownership, links, xattrs, hooks, origin and
 transaction semantics before accepting an artifact for installation.
 .SH FOREIGN IMPORT RECORDS
-The pacman importer preserves original package metadata as regular files beneath
-HOLY/foreign/pacman. HOLY/origin binds these records to the exact original archive
+The pacman and Debian importers preserve original package metadata beneath
+HOLY/foreign/pacman and HOLY/foreign/deb. HOLY/origin binds these records to the exact original archive
 hash and retains original field values and line numbers. The source-name field
 is provenance, not authority to assign a trusted installed source-id.
 .PP

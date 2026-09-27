@@ -155,11 +155,14 @@ data.tar in order, including supported compressed variants. It retains control
 files beneath HOLY/foreign/deb and each control field with its source line in
 HOLY/origin. Debian maintainer scripts remain review-required and never run
 during import. Conffiles require config-manifest support and return status 3.
-Unknown dependency and relationship fields become attributed foreign
-requirements that the current solver refuses. The current converter supports
+Simple comma-separated Depends entries become package requirements. Their
+version constraints use Debian ordering, including epoch, tilde and revision,
+only against providers in the deb version family. Alternatives, architecture
+qualifiers, Pre-Depends and other unsupported relationships remain attributed
+foreign requirements that the current solver refuses. The converter supports
 Architecture all, amd64 and i386; it checks observed ELF machines against that
 claim and returns status 3 for unknown or mismatched payloads. It does not
-sync APT indexes, verify Debian signatures or perform Debian version ordering.
+sync APT indexes or verify Debian signatures.
 make check-deb exercises valid and malformed ar members, codecs, dependencies,
 inactive hooks and native install/check/remove in a temporary root.
 .PP
@@ -988,12 +991,15 @@ declared version; an unversioned alias cannot satisfy a version constraint.
 Explicit claim scopes must agree with the artifact's arch/libc; any inherits
 that artifact scope. Selection preserves the actual package identity and records
 the requested alias on the dependency edge. Version constraints eq/ge/gt/le/lt use
-pacman ordering only when the consumer and provider declare x-version-family
-pacman. The full foreign epoch:version-release string belongs in version;
+the comparator declared by both consumer and provider: pacman or deb. The full
+foreign epoch:version-release string belongs in version;
 release remains the native artifact revision and is not appended a second time.
 A missing pkgrel on one side does not constrain pkgrel. Numeric epochs,
 prerelease letters and separator widths follow pacman's comparison rules.
-The comparator accepts nonempty printable ASCII strings up to 65536 bytes;
+The Debian comparator uses epoch, upstream version and final Debian revision,
+with tilde before the end of a part. Its validator requires Debian version
+characters and a leading digit in the upstream part. Both comparators limit
+input to 65536 bytes;
 unsupported encodings do not receive a guessed order.
 The adapter filters candidates before the common libsolv solver receives exact
 requirement capabilities. The mixed solver pool does not compare foreign EVRs.

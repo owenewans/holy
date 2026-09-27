@@ -8,6 +8,7 @@
 #include "stage.h"
 #include "verify.h"
 #include "../backends/pacman.h"
+#include "../backends/deb-version.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -31,6 +32,16 @@ struct package_edge {
 };
 
 struct package_claim { char *capability, *version; };
+
+struct version_adapter {
+    const char *family;
+    int (*compare)(const char *, const char *, int *);
+};
+
+static const struct version_adapter version_adapters[] = {
+    {"pacman", holy_pacman_version_compare},
+    {"deb", holy_deb_version_compare}
+};
 
 struct local_item {
     struct holy_package_identity identity;
@@ -149,12 +160,22 @@ static int package_claim(void *opaque, const char *kind, const char *name,
     return claim->capability && claim->version;
 }
 
-static int version_matches(const char *candidate, const struct package_edge *edge)
+static const struct version_adapter *version_adapter(const char *family)
+{
+    size_t i;
+    if (!family) return NULL;
+    for (i = 0; i < sizeof version_adapters / sizeof *version_adapters; ++i)
+        if (!strcmp(family, version_adapters[i].family)) return &version_adapters[i];
+    return NULL;
+}
+
+static int version_matches(const char *candidate, const struct package_edge *edge,
+                           const struct version_adapter *adapter)
 {
     int order;
     if (!strcmp(edge->relation, "any")) return 1;
     if (!strcmp(candidate, "-")) return 0;
-    if (!holy_pacman_version_compare(candidate, edge->version, &order)) return -1;
+    if (!adapter || !adapter->compare(candidate, edge->version, &order)) return -1;
     return !strcmp(edge->relation, "eq") ? order == 0 :
            !strcmp(edge->relation, "ge") ? order >= 0 :
            !strcmp(edge->relation, "gt") ? order > 0 :
@@ -187,10 +208,11 @@ static int package_requirements(struct local_item *local, struct holy_solver_ite
         const char *base = local[i].original_requirements[index];
         const char *family = local[i].identity.version_family;
         const char *relation = edge->relation;
+        const struct version_adapter *adapter = version_adapter(family);
         int constrained = strcmp(relation, "any") != 0;
         char *capability;
         size_t length = strlen(local[i].requirement_ids[index]) + 80;
-        if (constrained && (!family || strcmp(family, "pacman"))) {
+        if (constrained && !adapter) {
             fprintf(stderr, "holypkg: unsupported-version-family consumer=%s requirement=%s\n",
                 local[i].identity.digest, local[i].requirement_ids[index]);
             return 0;
@@ -208,10 +230,10 @@ static int package_requirements(struct local_item *local, struct holy_solver_ite
             if ((strcmp(edge->arch, "any") && strcmp(edge->arch, candidate->arch)) ||
                 (strcmp(edge->libc, "any") && strcmp(edge->libc, candidate->libc))) continue;
             if (constrained && (!candidate->version_family || strcmp(candidate->version_family, family))) continue;
-            if (!strcmp(base, local[k].capability)) matches = version_matches(candidate->version, edge);
+            if (!strcmp(base, local[k].capability)) matches = version_matches(candidate->version, edge, adapter);
             for (claim = 0; !matches && claim < local[k].claim_count; ++claim)
                 if (!strcmp(base, local[k].claims[claim].capability))
-                    matches = version_matches(local[k].claims[claim].version, edge);
+                    matches = version_matches(local[k].claims[claim].version, edge, adapter);
             if (matches < 0) return 0;
             if (matches && !add_provide(&items[k], capability)) return 0;
         }

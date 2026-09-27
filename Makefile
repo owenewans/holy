@@ -121,7 +121,7 @@ static:
 	$(MAKE) clean
 	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lssl -lcrypto -llz4 -lzstd -llzma -lbz2 -lz -leu -Wl,--end-group -lpthread -ldl" all
 
-HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o backends/pacman.o backends/pacman-version.o
+HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o backends/pacman.o backends/pacman-version.o backends/deb-version.o
 
 holypkg: $(HOLY_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(SOLV_LIBS)
@@ -172,6 +172,8 @@ check-pacman: holypkg
 
 .PHONY: check-deb
 check-deb: holypkg
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o tests/deb-version-helper tests/deb-version.c backends/deb-version.c
+	./tests/deb-version-helper
 	python3 tests/import-deb.py ./holypkg
 
 check-fixtures: check
@@ -245,4 +247,4 @@ clean:
 	rm -f holy-init
 	rm -f holyinstall src/disk.o
 	rm -f .build-config .build-config.tmp
-	rm -f holypkg tests/resolution tests/solver tests/install-helper tests/pacman-helper $(HOLY_OBJECTS)
+	rm -f holypkg tests/resolution tests/solver tests/install-helper tests/pacman-helper tests/deb-version-helper $(HOLY_OBJECTS)

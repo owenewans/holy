@@ -103,6 +103,27 @@ with tempfile.TemporaryDirectory() as scratch:
     dependency = next((tmp / "depends-output").glob("*.holy"))
     assert "foreign" in run("requirements", "local:" + str(dependency))
     run("solve", "local:" + str(dependency), status=6)
+    old_library = convert(foreign("old-library", control=b"Package: library\nVersion: 1.0~rc1-1\nArchitecture: all\n"),
+                          "old-library-output")[0]
+    new_library = convert(foreign("new-library", control=b"Package: library\nVersion: 1.0-1\nArchitecture: all\n"),
+                          "new-library-output")[0]
+    app = convert(foreign("app", control=b"Package: app\nVersion: 1\nArchitecture: all\nSource: app-src\nDepends: library (>= 1.0), helper\n"),
+                  "app-output")[0]
+    edges = run("requirements", "local:" + str(app))
+    assert '"package" "library"' in edges and '"ge" "1.0"' in edges
+    assert '"package" "helper"' in edges and "foreign" not in edges
+    helper = convert(foreign("helper", control=b"Package: helper\nVersion: 1\nArchitecture: all\n"),
+                     "helper-output")[0]
+    selected = run("solve", "local:" + str(app), "local:" + str(old_library),
+                   "local:" + str(new_library), "local:" + str(helper))
+    assert hashlib.sha256(new_library.read_bytes()).hexdigest() in selected
+    run("solve", "local:" + str(app), "local:" + str(old_library), "local:" + str(helper), status=4)
+    compact = convert(foreign("compact", control=b"Package: compact\nVersion: 1\nArchitecture: all\nDepends: library(>=1.0)\n"),
+                      "compact-output")[0]
+    assert '"package" "library"' in run("requirements", "local:" + str(compact))
+    unsupported = convert(foreign("predepends", control=b"Package: predepends\nVersion: 1\nArchitecture: all\nPre-Depends: library\n"),
+                          "predepends-output")[0]
+    assert "foreign" in run("requirements", "local:" + str(unsupported))
     sentinel = tmp / "hook-ran"
     hook = ("#!/bin/sh\necho unexpected > " + str(sentinel) + "\n").encode()
     hook_control = tar([("control", b"Package: debfixture\nVersion: 1\nArchitecture: all\n", "file"),

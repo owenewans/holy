@@ -173,4 +173,12 @@ with tempfile.TemporaryDirectory(prefix="holy-versions-") as scratch:
     assert upgraded_hash in graph and alias_hash not in graph
     run("db", "rm", alias_app_hash, "--root", alias_root)
     run("db", "rm", upgraded_hash, "--root", alias_root)
+    deb_old, _ = package("deb-old", "deblib", "1.0~rc1", family="deb")
+    deb_new, deb_new_hash = package("deb-new", "deblib", "1.0", family="deb")
+    deb_wrong, _ = package("deb-wrong-family", "deblib", "99.0", family="pacman")
+    deb_app, _ = package("deb-app", "app", "1", dependency("ge", "1.0").replace("library", "deblib"), family="deb")
+    run("solve", "local:" + str(deb_app), "local:" + str(deb_old), status=4)
+    run("solve", "local:" + str(deb_app), "local:" + str(deb_wrong), status=4)
+    assert "selected " + deb_new_hash in run("solve", "local:" + str(deb_app),
+        "local:" + str(deb_old), "local:" + str(deb_new), "local:" + str(deb_wrong))
     print("version constraints, virtual capabilities and transaction fixtures passed")

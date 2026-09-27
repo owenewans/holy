@@ -13,3 +13,4 @@
 /backends/*.o
 
 /tests/pacman-helper
+/tests/deb-version-helper

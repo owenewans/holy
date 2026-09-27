@@ -41,7 +41,8 @@
   identities to libsolv. Preserve the comparator family, apply arch/libc scopes,
   reject cross-family constraint satisfaction, and validate updates against
   installed consumer constraints. Run 92 upstream comparison cases and solver /
-  transaction fixtures. Other comparators remain open.
+  transaction fixtures. The separate Debian comparator covers epoch, tilde and
+  revision; other comparators remain open.
 
 - [x] Resolve declared package aliases using their own versions and artifact ABI
   scopes. Preserve claims and their hash in holy-instance-4, discover installed
@@ -63,9 +64,10 @@
 - [x] Import local Debian .deb binary archives into native outputs with original
   ar bytes, control fields and scripts retained. Check ar order, payload paths,
   codecs, architecture claims and install/check/remove for a data package.
-  Unsupported relationships stay foreign requirements; conffiles require a
-  decision. APT indexes, signatures, Debian version ordering and full hook
-  integration remain open.
+  Resolve simple Depends entries with Debian version ordering within the deb
+  family. Alternatives, Pre-Depends and other unsupported relationships stay
+  foreign requirements; conffiles require a decision. APT indexes, signatures
+  and full hook integration remain open.
 
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.
 - [x] Plan and atomically apply a source identity registry under the database
