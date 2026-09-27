@@ -97,9 +97,15 @@
 - [x] Compare verified old/new archive manifests into a canonical file plan with
   stable change IDs and both artifact hashes. Check the entire payload delta
   without writing files, accepting exact before/after states during recovery.
-  Preserve unsupported entries in the record and reject their application;
-  directory creation, source/graph/ownership binding and update journaling remain
-  open. This is an internal component, not a public package-update command.
+  Preserve unsupported entries in the record and reject their application.
+  The cached update preview binds source, graph and ownership checks;
+  directory creation and update journaling remain open.
+- [x] Preview one cached slot replacement with `db plan-update`. Bind the
+  generation, root/database identities, every installed state, source registry,
+  file delta and proposed complete dependency graph. Reject changed payloads,
+  conflicting owners, disabled origins and unavailable old archives. Preserve
+  source identity across alias changes. Applying the update, fetching candidates,
+  new dependency selection and grouped replacements remain open.
 - [ ] Implement native HTTPS/Git source synchronization, signed generations and
   cache retention with provenance.
 - [x] Mirror an explicitly pinned HTTPS native catalog into a new sealed local

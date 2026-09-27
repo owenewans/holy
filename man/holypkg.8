@@ -100,6 +100,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db repair-plan SHA256 --root DIRECTORY
 .br
+.B holypkg db plan-update OLD_SHA256 NEW_SHA256 --root DIRECTORY
+.br
 .B holypkg db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY
 .br
 .B holypkg db recover --repair --root DIRECTORY
@@ -531,14 +533,42 @@ generation publication. General ownership replacement and automatic rollback
 are not implemented. The command is not an installer for
 arbitrary .holy packages.
 .PP
-Internal update preparation compares verified old/new manifests and records
-retained, added, replaced and removed paths with stable IDs and archive hashes.
-Its read-only preflight checks the whole file plan; recovery checking accepts
-exact old or new objects and rejects unrelated changes. Unsupported entries
-remain in the record and prevent application. This component does not yet bind
-database generation, ownership, source or dependency decisions and is not a
-public update command. Directory creation and durable update journaling remain
-unimplemented.
+db plan-update OLD_SHA256 NEW_SHA256 --root DIRECTORY previews one explicit
+cached replacement. It keeps the installed source-id, name, OS, architecture
+and libc slot; a different slot or an already active target artifact conflicts.
+It requires the old archive, the proposed archive and archives for every other
+installed package in the cache. It does not select versions or download missing
+dependencies. The caller explicitly proposes local delivery in the installed
+source's slot; metadata inside the new archive cannot assign a source-id or
+provide signature evidence.
+.PP
+The command takes the database's shared lock, refuses pending transactions and
+checks installed metadata, file ownership, payload and saved provider edges.
+It verifies the entire proposed set with the old artifact replaced by the new
+one. A broken dependent outside the updated package's own dependency graph
+therefore prevents a valid plan. New dependencies must already be satisfiable
+by that proposed set; ambiguous edges return decision-required. Installed reasons
+and all current state hashes remain bound to the plan.
+.PP
+The first output line reports the SHA-256 of the following UTF-8 record.
+The holy-update-plan-1 record has update, installed, files and graph sections.
+It includes database generation, root/database device and inode, old/new hashes,
+source registry digest and current source alias, every installed state hash,
+the canonical file delta and the proposed graph. Repeating a preview with the
+same inputs produces the same bytes. Alias changes keep source identity but
+invalidate the plan; a deactivated registered source returns unavailable (6).
+Unassociated local packages retain source-id "-".
+.PP
+This preview writes no installed state or payload and executes no package code.
+Missing or modified installed files conflict; modified-config preservation,
+directory creation, hooks, new provider selection and multi-package replacement
+are not implemented. There is no apply-update command yet. The printed record
+is not accepted by db apply or db apply-set. JSON output is not implemented.
+.PP
+The internal file planner records retained, added, replaced and removed paths
+with stable IDs and archive hashes. Unsupported entries remain in the record
+and prevent application. Recovery checking accepts exact old or new objects
+and rejects unrelated changes. Durable update journaling remains unimplemented.
 .PP
 The internal resolver can also validate a complete proposed artifact set.
 It requires every supplied artifact, including disconnected consumers and
@@ -1076,7 +1106,8 @@ List prints identities and status without endpoint definitions.
 An ID identifies a configured origin; it is not signature evidence. The current
 registry retains inactive origins and supports explicit local-artifact associations
 in set installation. Slot replacement, configured catalog synchronization
-and source-aware update plans remain unimplemented. These
+and source-aware update application remain unimplemented. Cached replacement
+preview is available through db plan-update. These
 commands do not yet implement JSON output. See holy.conf(5) for identity rules
 and endpoint restrictions.
 .SH ORPHAN PACKAGES

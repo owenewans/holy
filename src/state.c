@@ -12,6 +12,7 @@
 #include "scan.h"
 #include "deps.h"
 #include "source.h"
+#include "change.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -157,7 +158,7 @@ static int empty_child(int dir, const char *name)
     return empty;
 }
 
-static int graph_digest(int item, char output[65])
+static int instance_record_digest(int item, const char *name, char output[65])
 {
     unsigned char buffer[8192], digest[32];
     unsigned int length;
@@ -165,7 +166,7 @@ static int graph_digest(int item, char output[65])
     ssize_t got;
     struct stat st;
     EVP_MD_CTX *hash = EVP_MD_CTX_new();
-    int fd = openat(item, "graph", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    int fd = openat(item, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     int ok = 0;
     if (fd < 0 || !hash || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
         (st.st_mode & 0022) || (st.st_uid != 0 && st.st_uid != geteuid()) ||
@@ -185,6 +186,11 @@ done:
     if (fd >= 0) close(fd);
     EVP_MD_CTX_free(hash);
     return ok;
+}
+
+static int graph_digest(int item, char output[65])
+{
+    return instance_record_digest(item, "graph", output);
 }
 
 static int instance_state_generation(int item, const char *digest,
@@ -948,8 +954,8 @@ static int same_slot(const struct holy_package_identity *a, const char *a_source
            !strcmp(a->os, b->os) && !strcmp(a->arch, b->arch) && !strcmp(a->libc, b->libc);
 }
 
-static int slot_available(int dir, const struct holy_package_identity *identity,
-                          const char *source_id)
+static int slot_available_except(int dir, const struct holy_package_identity *identity,
+                                 const char *source_id, const char *replaced)
 {
     const char *keys[] = {"name", "os", "arch", "libc"};
     const char *values[] = {identity->name, identity->os, identity->arch, identity->libc};
@@ -964,6 +970,7 @@ static int slot_available(int dir, const struct holy_package_identity *identity,
         int item, match;
         char source[65];
         if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        if (replaced && !strcmp(entry->d_name, replaced)) { errno = 0; continue; }
         if (!strcmp(entry->d_name, identity->digest)) { available = 0; goto done; }
         item = child_dir(installed, entry->d_name, 0);
         if (item < 0) goto done;
@@ -982,6 +989,12 @@ done:
     closedir(list);
     close(installed);
     return available;
+}
+
+static int slot_available(int dir, const struct holy_package_identity *identity,
+                          const char *source_id)
+{
+    return slot_available_except(dir, identity, source_id, NULL);
 }
 
 static int inspect_plan(const char *root_path, int root, int dir,
@@ -2983,5 +2996,166 @@ done:
     if (transactions >= 0) close(transactions);
     if (dir >= 0) close(dir);
     if (root >= 0) close(root);
+    return result;
+}
+
+int holy_state_update_plan(const char *old_digest, const char *new_digest,
+                           const char *root_path)
+{
+    int root = -1, dir = -1, installed = -1, item = -1, files = -1, result = 1, pending;
+    char **names = NULL, **snapshots = NULL, **states = NULL;
+    char source[65], registry[65], existing[65], approved[65], checksum[65];
+    char *old_snapshot = NULL, *new_snapshot = NULL, *source_record = NULL;
+    char *file_record = NULL, *graph_record = NULL, *record = NULL;
+    size_t count = 0, i, old_index = 0, file_size = 0, graph_size = 0, record_size = 0, failed;
+    unsigned long long generation, recorded;
+    struct stat root_st, db_st;
+    struct holy_package_identity old = {0}, next = {0};
+    struct holy_file_plan changes = {0};
+    struct holy_resolution resolution = {0};
+    struct install_set claims = {0};
+    struct plan_hash validation = {0};
+    DIR *list = NULL;
+    struct dirent *entry;
+    FILE *out = NULL;
+    unsigned char bytes[32];
+    unsigned length;
+    if (!valid_digest(old_digest) || !valid_digest(new_digest)) return 2;
+    if (!strcmp(old_digest, new_digest)) return 3;
+    root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0 || fstat(root, &root_st) || (dir = state_dir_at(root, 0)) < 0 ||
+        flock(dir, LOCK_SH) || fstat(dir, &db_st) || !state_layout(dir, 0) ||
+        !read_generation(dir, &generation)) goto done;
+    pending = transaction_pending(dir, generation);
+    if (pending < 0) goto done;
+    if (pending) { result = 5; goto done; }
+    pending = pending_child(dir, generation, existing, approved);
+    if (pending < 0) goto done;
+    if (pending) { result = 5; goto done; }
+    if (!installed_valid(dir) || (installed = child_dir(dir, "installed", 0)) < 0 ||
+        !(list = directory_stream(installed))) goto done;
+    names = calloc(10000, sizeof *names);
+    snapshots = calloc(10000, sizeof *snapshots);
+    states = calloc(10000, sizeof *states);
+    if (!names || !snapshots || !states) goto done;
+    errno = 0;
+    while ((entry = readdir(list))) {
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        if (count == 10000) { result = 6; goto done; }
+        names[count] = strdup(entry->d_name);
+        if (!names[count]) goto done;
+        ++count;
+        errno = 0;
+    }
+    if (errno) goto done;
+    if (count) qsort(names, count, sizeof *names, compare_instance_names);
+    for (old_index = 0; old_index < count; ++old_index)
+        if (!strcmp(names[old_index], old_digest)) break;
+    if (old_index == count) { result = 6; goto done; }
+    for (i = 0; i < count; ++i)
+        if (!strcmp(names[i], new_digest)) { result = 4; goto done; }
+    for (i = 0; i < count; ++i) {
+        char state[65];
+        snapshots[i] = holy_cache_snapshot(names[i], root_path);
+        if (!snapshots[i]) { result = 6; goto done; }
+        item = child_dir(installed, names[i], 0);
+        if (item < 0) goto done;
+        files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+        if (files < 0 || !instance_state_generation(item, names[i], &recorded) ||
+            recorded > generation || !instance_matches_snapshot(item, snapshots[i]) ||
+            !instance_record_digest(item, "state", state)) goto done;
+        states[i] = strdup(state);
+        if (!states[i]) goto done;
+        if (exclusive_claims(installed, names[i], files) != 1 ||
+            holy_install_check_manifest(files, root) != 1 ||
+            check_graph(installed, root, names[i], NULL) != 1) { result = 4; goto done; }
+        if (i == old_index && !installed_source_id(item, source)) goto done;
+        close(files); files = -1;
+        close(item); item = -1;
+    }
+    strcpy(registry, "-");
+    if (strcmp(source, "-")) {
+        result = holy_source_record(dir, source, &source_record, registry);
+        if (result) goto done;
+    }
+    result = 6;
+    new_snapshot = holy_cache_snapshot(new_digest, root_path);
+    if (!new_snapshot || !holy_package_identity(snapshots[old_index], &old) ||
+        !holy_package_identity(new_snapshot, &next) ||
+        !empty_transform(new_snapshot) || !instance_preflight(new_snapshot)) goto done;
+    if (!same_slot(&old, source, &next, source)) { result = 4; goto done; }
+    pending = slot_available_except(dir, &next, source, old_digest);
+    if (pending != 1) { result = pending < 0 ? 1 : 4; goto done; }
+    result = holy_preview_resolved(new_snapshot, root_path, 1);
+    if (result) goto done;
+    result = explicit_elf_paths(new_snapshot);
+    if (result) goto done;
+    validation.completed = 1;
+    validation.hash = EVP_MD_CTX_new();
+    result = 6;
+    if (!validation.hash || EVP_DigestInit_ex(validation.hash, EVP_sha256(), NULL) != 1 ||
+        !holy_verify_visit(new_snapshot, plan_entry, &validation) ||
+        !holy_file_plan_collect(snapshots[old_index], new_snapshot, &changes) ||
+        !holy_file_plan_record(&changes, &file_record, &file_size)) goto done;
+    result = holy_file_plan_check(&changes, root, 0, &failed);
+    if (result) {
+        fprintf(stderr, "holypkg: update file preflight failed at change %zu\n", failed);
+        goto done;
+    }
+    old_snapshot = snapshots[old_index];
+    snapshots[old_index] = new_snapshot;
+    new_snapshot = NULL;
+    for (i = 0; i < count; ++i)
+        if (!holy_verify_visit(snapshots[i], set_claim, &claims)) { result = 6; goto done; }
+    if (!set_claims_valid(&claims)) { result = 4; goto done; }
+    result = holy_resolve_collect_set((const char *const *)snapshots, count, &resolution);
+    if (result) goto done;
+    result = 1;
+    if (!holy_resolution_record(&resolution, &graph_record, &graph_size)) goto done;
+    out = open_memstream(&record, &record_size);
+    if (!out) goto done;
+    fprintf(out, "[update]\nformat holy-update-plan-1\ngeneration %llu\n"
+            "root %ju %ju\ndatabase %ju %ju\nold %s\nnew %s\nregistry %s\n",
+            generation, (uintmax_t)root_st.st_dev, (uintmax_t)root_st.st_ino,
+            (uintmax_t)db_st.st_dev, (uintmax_t)db_st.st_ino, old_digest, new_digest, registry);
+    if (source_record) fputs(source_record, out);
+    else fputs("source - local\n", out);
+    fputs("delivery local\n[installed]\n", out);
+    for (i = 0; i < count; ++i) fprintf(out, "instance %s %s\n", names[i], states[i]);
+    fputs("[files]\n", out);
+    fwrite(file_record, 1, file_size, out);
+    fputs("[graph]\n", out);
+    fwrite(graph_record, 1, graph_size, out);
+    pending = ferror(out);
+    if (fclose(out)) pending = 1;
+    out = NULL;
+    if (pending || !same_root(root_path, &root_st) ||
+        EVP_Digest(record, record_size, bytes, &length, EVP_sha256(), NULL) != 1 || length != 32)
+        goto done;
+    for (i = 0; i < 32; ++i) snprintf(checksum + i * 2, 3, "%02x", bytes[i]);
+    if (printf("plan-update sha256 %s read-only\n", checksum) < 0 ||
+        fwrite(record, 1, record_size, stdout) != record_size) goto done;
+    result = 0;
+done:
+    if (result) fprintf(stderr, "holypkg: cannot form update plan (status %d)\n", result);
+    if (out) fclose(out);
+    if (list) closedir(list);
+    if (files >= 0) close(files);
+    if (item >= 0) close(item);
+    if (installed >= 0) close(installed);
+    if (dir >= 0) close(dir);
+    if (root >= 0) close(root);
+    if (old_snapshot) { unlink(old_snapshot); free(old_snapshot); }
+    if (new_snapshot) { unlink(new_snapshot); free(new_snapshot); }
+    for (i = 0; i < count; ++i) {
+        free(names[i]);
+        if (snapshots && snapshots[i]) { unlink(snapshots[i]); free(snapshots[i]); }
+        if (states) free(states[i]);
+    }
+    free(names); free(snapshots); free(states); free(source_record);
+    free(file_record); free(graph_record); free(record);
+    holy_package_identity_free(&old); holy_package_identity_free(&next);
+    holy_file_plan_free(&changes); holy_resolution_free(&resolution); free_set(&claims);
+    EVP_MD_CTX_free(validation.hash);
     return result;
 }

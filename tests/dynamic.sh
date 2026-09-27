@@ -78,6 +78,27 @@ test "${#plan}" -eq 64
 expect 0 "$bin" db apply-set "$plan" "$probe" "$provider" "$runtime_hash" --root "$root"
 expect 0 "$bin" db check --all --root "$root"
 test "$(readlink "$root/usr/lib64/ld-linux-x86-64.so.2")" = ../lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2
+for variant in compatible broken; do
+    if test "$variant" = compatible; then symbol=holy_fixture; else symbol=wrong_fixture; fi
+    printf '#include <stdio.h>\nint %s(void) { return puts("updated-probe") < 0; }\n' "$symbol" > "$tmp/update-library.c"
+    printf 'HOLY_1 { global: %s; local: *; };\n' "$symbol" > "$tmp/update-map"
+    new library
+    printf 'x-update-test %s\n' "$variant" >> "$tree/HOLY/meta"
+    mkdir -p "$tree/DATA$runtime"
+    gcc -shared -fPIC -Wl,-soname,libholyfixture.so.1 -Wl,--version-script="$tmp/update-map" \
+        -o "$tree/DATA$library" "$tmp/update-library.c"
+    patchelf --replace-needed libc.so.6 "$libc" "$tree/DATA$library"
+    pack "update-$variant"
+    if test "$variant" = compatible; then
+        expect 0 "$bin" db plan-update "$provider" "$(hash update-compatible)" --root "$root"
+        grep -q 'needed-path' "$tmp/out"
+        grep -q "\"$probe\" .* \"$(hash update-compatible)\"" "$tmp/out"
+    else
+        expect 4 "$bin" db plan-update "$provider" "$(hash update-broken)" --root "$root"
+        test ! -s "$tmp/out"
+    fi
+done
+expect 0 "$bin" db check --all --root "$root"
 expect 3 "$bin" db rm "$runtime_hash" --root "$root"
 if test "${HOLY_TEST_DYNAMIC_CHROOT:-0}" = 1; then
     command -v doas >/dev/null && doas -n true || exit 6
