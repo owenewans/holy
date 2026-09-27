@@ -17,7 +17,10 @@ struct holy_manifest_entry {
 
 /* borrowed fields remain valid only during the callback; zero aborts traversal. */
 typedef int (*holy_manifest_visit)(void *context,
-                                   const struct holy_manifest_entry *entry);
+                                    const struct holy_manifest_entry *entry);
+
+/* lexical target-root containment; this does not resolve other symlinks. */
+int holy_safe_link(const char *path, const char *target);
 
 /* checks the regular-file subset of HOLY/files without extracting files. */
 int holy_verify(const char *path);

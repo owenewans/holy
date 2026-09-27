@@ -128,8 +128,8 @@ install files or run hooks. General foreign binary fetch remains separate.
 .PP
 Pack reads a prepared tree containing only HOLY/ and DATA/. HOLY/ must contain
 exactly meta, files, deps, provides, hooks, origin and transform as ordinary
-files. DATA/ may contain directories and ordinary files; the current writer
-rejects symlinks, hardlinks and extended attributes. It records file modes
+files. DATA/ may contain directories, ordinary files and symlinks; the current writer
+rejects hardlinks and extended attributes. It records file modes
 and numeric ownership, fixes archive timestamps to zero and orders directory
 entries by name. It writes a POSIX PAX tar compressed as an LZ4 frame to a
 temporary file alongside the destination, verifies the completed artifact,
@@ -140,14 +140,22 @@ publishing a package; recipes and foreign conversion are separate work.
 .PP
 Manifest generate reads DATA/ below DIRECTORY and writes HOLY/files records
 to a new output path outside the input tree. It emits directories and ordinary
-files in sorted order, numeric UID/GID, modes, sizes and SHA-256 digests.
+files and symlinks in sorted order, numeric UID/GID, modes, sizes, link targets
+and SHA-256 digests for ordinary files.
 Symbolic owner/group names are placeholders; the numeric values remain the
-source tree's ownership. The command refuses symlinks, hardlinks and xattrs,
+source tree's ownership. The command refuses hardlinks and xattrs,
 escapes paths with whitespace or non-ASCII bytes, and does not replace an
 existing output. Copy the generated file to HOLY/files and run pack; neither
 command infers package arch/libc or dependencies from arbitrary data files.
 Archive pack and inspection use the active LC_CTYPE locale for libarchive
 pathname conversion. Use an available UTF-8 locale for UTF-8 filenames.
+.PP
+Pack and manifest generation read symlink targets without following them.
+They reject lexical traversal above the target root; absolute targets refer
+to that root. Dangling links are preserved. Symlink xattr inspection requires
+/proc/self/fd on the build host. Metadata files must remain ordinary files.
+These commands do not resolve chains of symlinks or prove runtime targets exist.
+The separate fetch --extract operation still refuses absolute symlinks.
 .PP
 The db plan command reads the prepared reservation at the current database
 generation. It verifies a private snapshot of the cached artifact, checks

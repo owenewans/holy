@@ -58,12 +58,35 @@ test ! -e "$tmp/payload/DATA/usr/bin/self.holy"
 if "$bin" pack "$tmp/payload" --output "$tmp/written.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
 test ! -s "$tmp/out"
 test "$(find "$tmp" -name '*.holy-tmp-*' | wc -l)" -eq 0
-ln -s "$tmp/payload/DATA/usr/bin/data" "$tmp/payload/DATA/usr/bin/extra"
+ln -s ../../../outside "$tmp/payload/DATA/usr/bin/extra"
 if "$bin" manifest generate "$tmp/payload" --output "$tmp/refused-files" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
 test ! -e "$tmp/refused-files"
 if "$bin" pack "$tmp/payload" --output "$tmp/refused.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
 test ! -e "$tmp/refused.holy"
 rm "$tmp/payload/DATA/usr/bin/extra"
+cp -a "$tmp/payload" "$tmp/links"
+ln -s usr/bin "$tmp/links/DATA/bin"
+ln -s data "$tmp/links/DATA/usr/bin/alias"
+ln -s 'missing "target"' "$tmp/links/DATA/usr/bin/dangling"
+"$bin" manifest generate "$tmp/links" --output "$tmp/link-files" > "$tmp/out"
+cp "$tmp/link-files" "$tmp/links/HOLY/files"
+"$bin" pack "$tmp/links" --output "$tmp/links.holy" > "$tmp/out"
+"$bin" verify "local:$tmp/links.holy" > "$tmp/out"
+"$bin" fetch "local:$tmp/links.holy" --extract --output "$tmp/link-extract" > "$tmp/out"
+test "$(readlink "$tmp/link-extract/DATA/bin")" = usr/bin
+test "$(readlink "$tmp/link-extract/DATA/usr/bin/alias")" = data
+test "$(readlink "$tmp/link-extract/DATA/usr/bin/dangling")" = 'missing "target"'
+cmp "$tmp/link-extract/DATA/bin/alias" "$tmp/payload/DATA/usr/bin/data"
+ln -s /usr/bin/data "$tmp/links/DATA/usr/bin/absolute"
+"$bin" manifest generate "$tmp/links" --output "$tmp/absolute-files" > "$tmp/out"
+cp "$tmp/absolute-files" "$tmp/links/HOLY/files"
+"$bin" pack "$tmp/links" --output "$tmp/absolute.holy" > "$tmp/out"
+"$bin" verify "local:$tmp/absolute.holy" > "$tmp/out"
+ln -s /../outside "$tmp/links/DATA/usr/bin/escape"
+if "$bin" manifest generate "$tmp/links" --output "$tmp/escape-files" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+test ! -e "$tmp/escape-files"
+if "$bin" pack "$tmp/links" --output "$tmp/escape.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+test ! -e "$tmp/escape.holy"
 printf 'spaced\n' > "$tmp/payload/DATA/usr/bin/a b"
 printf 'unicode\n' > "$tmp/payload/DATA/usr/bin/é"
 "$bin" manifest generate "$tmp/payload" --output "$tmp/spaced-files" > "$tmp/out"

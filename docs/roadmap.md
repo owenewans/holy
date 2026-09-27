@@ -13,9 +13,9 @@ it does not mean a bootable distribution or general package support.
 - [x] Verify local LZ4-frame `.holy` archives, file manifests, hashes and basic ELF facts.
 - [x] Classify static ET_EXEC without dynamic linkage as nolibc; reject
   unclassified ELF in native package scan rather than trusting a libc label.
-- [x] Pack a prepared regular-file/dir tree into a verified native `.holy`;
+- [x] Pack a prepared regular-file/dir/symlink tree into a verified native `.holy`;
   reject unlisted inputs and unsupported file types before publication.
-- [x] Generate a prepared DATA tree's regular-file/dir HOLY/files manifest
+- [x] Generate a prepared DATA tree's regular-file/dir/symlink HOLY/files manifest
   with numeric ownership and SHA-256; reject unsupported objects.
 - [x] Stage verified objects in a target-root cache; preview collisions.
 - [x] Fetch a pinned native `.holy` over HTTPS with certificate checks and a
@@ -30,7 +30,7 @@ it does not mean a bootable distribution or general package support.
   claims as conflicts while permitting shared directory entries.
 - [x] Check one or all installed data manifests against the target root without
   downloads or repair; report each changed artifact in the all-packages pass.
-  Emit machine-readable pass/fail summaries for this restricted check.
+  Emit machine-readable pass/fail summaries and per-path findings for this restricted check.
 - [x] Reject existing directory mode/owner drift before data-only install;
   report installed directory drift in check without removing shared directories.
 - [x] Reject a second local data package with an already installed name during

@@ -118,6 +118,70 @@ done:
     return ok;
 }
 
+static int write_symlink(struct writer *writer, int parent, const char *name,
+                          const char *archive_path)
+{
+    struct stat before, after;
+    struct archive_entry *entry = NULL;
+    char *target = NULL, *procpath = NULL;
+    size_t capacity = 128, length = strlen(name);
+    ssize_t got;
+    int ok = 0;
+    if (fstatat(parent, name, &before, AT_SYMLINK_NOFOLLOW) ||
+        !S_ISLNK(before.st_mode) || before.st_nlink != 1 ||
+        length > SIZE_MAX - 64) goto done;
+    procpath = malloc(length + 64);
+    if (!procpath) goto done;
+    snprintf(procpath, length + 64, "/proc/self/fd/%d/%s", parent, name);
+    if (llistxattr(procpath, NULL, 0) != 0) goto done;
+    for (;;) {
+        char *grown = realloc(target, capacity);
+        if (!grown) goto done;
+        target = grown;
+        got = readlinkat(parent, name, target, capacity - 1);
+        if (got < 0) goto done;
+        if ((size_t)got < capacity - 1) break;
+        if (capacity > SIZE_MAX / 2) goto done;
+        capacity *= 2;
+    }
+    target[got] = '\0';
+    if (!holy_safe_link(archive_path + 5, target) ||
+        fstatat(parent, name, &after, AT_SYMLINK_NOFOLLOW) ||
+        before.st_dev != after.st_dev || before.st_ino != after.st_ino ||
+        before.st_mode != after.st_mode || before.st_nlink != after.st_nlink ||
+        before.st_uid != after.st_uid || before.st_gid != after.st_gid ||
+        before.st_ctim.tv_sec != after.st_ctim.tv_sec ||
+        before.st_ctim.tv_nsec != after.st_ctim.tv_nsec) goto done;
+    if (writer->archive) {
+        entry = archive_entry_new();
+        if (!entry) goto done;
+        archive_entry_set_pathname(entry, archive_path);
+        archive_entry_set_filetype(entry, AE_IFLNK);
+        archive_entry_set_perm(entry, before.st_mode & 07777);
+        archive_entry_set_uid(entry, before.st_uid);
+        archive_entry_set_gid(entry, before.st_gid);
+        archive_entry_set_mtime(entry, 0, 0);
+        archive_entry_set_size(entry, 0);
+        archive_entry_set_symlink(entry, target);
+        if (archive_write_header(writer->archive, entry) != ARCHIVE_OK) goto done;
+    }
+    if (writer->manifest &&
+        (fputs("symlink ", writer->manifest) == EOF ||
+         !write_manifest_path(writer->manifest, archive_path + 5) ||
+         fprintf(writer->manifest, " %o - - %lu %lu 0 - none - - ",
+                 (unsigned)(before.st_mode & 07777),
+                 (unsigned long)before.st_uid, (unsigned long)before.st_gid) < 0 ||
+         !write_manifest_path(writer->manifest, target) ||
+         fputc('\n', writer->manifest) == EOF)) goto done;
+    ok = 1;
+done:
+    archive_entry_free(entry);
+    free(target);
+    free(procpath);
+    if (!ok) fprintf(stderr, "holypkg: cannot pack symlink\n");
+    return ok;
+}
+
 static int exact_members(int dir, const char *const *names, size_t count)
 {
     int copy = dup(dir);
@@ -244,6 +308,12 @@ static int walk_data(struct writer *writer, int parent, const char *relative,
             goto done;
         }
         directory = S_ISDIR(st.st_mode);
+        if (S_ISLNK(st.st_mode)) {
+            int written = write_symlink(writer, dir, names[i], path);
+            free(path);
+            if (!written) goto done;
+            continue;
+        }
         if ((!directory && !S_ISREG(st.st_mode)) ||
             !write_entry(writer, dir, names[i], path, directory) ||
             (directory && !walk_data(writer, dir, names[i], path, depth + 1))) {

@@ -26,10 +26,10 @@ struct payload {
     int matched;
 };
 
-static int safe_link(const char *path, const char *target)
+int holy_safe_link(const char *path, const char *target)
 {
     const char *p, *end;
-    int depth = 0;
+    size_t depth = 0;
     if (!target || !*target) return 0;
     if (target[0] != '/') {
         for (p = path; *p; ++p) if (*p == '/') ++depth;
@@ -132,7 +132,7 @@ static int validate_manifest(const char *path, char *text, size_t size,
             ((symlink || directory) ? strcmp(v[11], "-") :
              strcmp(v[11], "-") && !valid_group(v[11])) ||
             (hardlink && (!valid_group(v[11]) || !v[12][0])) ||
-            (symlink && (!v[12][0] || !safe_link(v[1], v[12]))) ||
+            (symlink && (!v[12][0] || !holy_safe_link(v[1], v[12]))) ||
             mode > 07777 || uid > 0x7fffffff || gid > 0x7fffffff ||
             length > 0x7fffffffffffffffULL) {
             fprintf(stderr, "%s: HOLY/files:%zu: unsupported or invalid record\n", path, line);
@@ -296,7 +296,7 @@ static int verify_archive(const char *path, int emit,
                 ++directories;
             } else if (archive_entry_filetype(entry) == AE_IFLNK) {
                 const char *target = archive_entry_symlink(entry);
-                if (!safe_link(files[count].path, target)) {
+                if (!holy_safe_link(files[count].path, target)) {
                     free(files[count].path);
                     fprintf(stderr, "%s: unsafe symlink target\n", path);
                     goto done;

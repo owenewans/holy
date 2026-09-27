@@ -51,7 +51,7 @@ planned full format includes those attributes.
 .PP
 The narrow database apply command installs only approved data-only archives
 into pre-existing safe directories. The pack command writes and verifies
-this archive format from a prepared tree of regular files and directories.
+this archive format from a prepared tree of regular files, directories and symlinks.
 The verifier does not verify dependencies,
 signatures, symbolic owner names or the installed filesystem. A full format
 implementation must verify file ownership, links, xattrs, hooks, origin and
