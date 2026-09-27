@@ -1,6 +1,5 @@
 <div align="center">
 
-# holy
 
 ![logo](./assets/logo.png)
 
@@ -34,9 +33,3 @@ BusyBox package. See [holypkg(8)](man/holypkg.8) for inputs and its chroot test.
 inputs; `make check-static-core` exercises package operations inside a libc-free chroot.
 `make check-qemu ARCH=x86_64 ISO=FILE BOOT_PLAN=SHA256` requires a Holy ISO and guest
 serial probes; the repository does not yet produce one.
-
-## documentation
-
-Read [holypkg(8)](man/holypkg.8), [holy-package(5)](man/holy-package.5) and
-[holy.conf(5)](man/holy.conf.5) for the implemented interface.
-See [roadmap](docs/roadmap.md) for remaining work and acceptance gates.
