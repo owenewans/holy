@@ -150,7 +150,7 @@ int main(int argc, char **argv)
     ok = !strcmp(argv[1], "--transitions") ? transitions(root, 0) :
          !strcmp(argv[1], "--resume-transition") ? transitions(root, 1) :
          !strcmp(argv[1], "--resume-addition") ? transitions(root, 2) :
-         holy_install_preflight(argv[1], root) && holy_install_payload(argv[1], root);
+         holy_install_preflight(argv[1], root, 0) && holy_install_payload(argv[1], root, 0);
     close(root);
     return ok ? 0 : 4;
 }

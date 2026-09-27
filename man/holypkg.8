@@ -94,9 +94,9 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db apply --root DIRECTORY
 .br
-.B holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] --root DIRECTORY
+.B holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] --root DIRECTORY
 .br
-.B holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] --root DIRECTORY
+.B holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] --root DIRECTORY
 .br
 .B holypkg db recover --finish-set|--continue-set --root DIRECTORY
 .br
@@ -499,6 +499,15 @@ transactions/set-journal before the first payload. All selected packages share
 one generation increment. Installed state records the explicit root and
 dependency reasons; each instance retains the selected graph. Package hooks,
 upgrades and grouped removal are not implemented by this interface.
+.PP
+Repeated --accept-privileged SHA256 confirms installation of regular executable
+files with setuid in that exact selected artifact. Without it, plan-set returns
+3 and names the artifact, path and mode. The choice enters the plan hash,
+set journal and installed state; apply requires the same flag. Setgid, sticky
+bits, setuid directories, symlinks and hardlinks remain unsupported. The
+choice covers only native set transactions, not local preview, single-package
+apply or cached update. The caller must review the full artifact payload and
+the target root before approving the mode.
 .PP
 Repeated --accept-arch SHA256 confirms placement of selected new artifacts whose
 architecture differs from the native host mapping. Each exact hash needs its

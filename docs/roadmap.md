@@ -1,5 +1,16 @@
 # Holy roadmap
 
+## Current state
+
+- [x] Boot the x86_64 live ISO, prepare a blank GPT guest disk in holyinstall,
+  install the target root, then boot the installed disk through BIOS and UEFI
+  under QEMU/TCG. The installed guest checks dinit, holypkg, package repair
+  and local password login; a wrong password is rejected. The two VM reports
+  use the same fixture image and do not establish i686 installer support.
+- [ ] Add doas to the installed guest and verify a scoped command from the
+  unprivileged account. A static OpenDoas package and local setuid transaction
+  fixture exist in the working tree; installed-guest verification is pending.
+
 
 ## Package manager
 
@@ -280,8 +291,9 @@
 - [ ] Package Limine, dracut, kernel, firmware, SDK/sysroots and the default
   ConnMan+iwd network profile. Static local recovery and a private HTTPS
   recovery fixture have acceptance tests; production network recovery remains.
-- [ ] Implement C99 `holyinstall` with reviewed disk/boot/account/network plans
-  and `holypkg --root` integration.
+- [ ] Complete C99 `holyinstall` plans for accounts, network, encryption and
+  filesystem choices. The implemented blank-disk GPT/ext4/FAT path uses
+  reviewed plans and `holypkg --root`; account login has a VM fixture.
 - [ ] Implement `holygetiso` with explicit inputs, installed man bundle and a
   boot-validated ISO for each target architecture.
 
@@ -331,8 +343,11 @@
   Missing images return a requirement error; blank ISO fails both architecture
   fixtures via `make check-qemu-gate`. Cancellation reaps the guest and records
   failure. The x86_64 static-core ISO passes BIOS/TCG and UEFI/TCG boot contracts.
-- [ ] Add real `make check-install` and `check-hardware` targets; extend the
-  QEMU runner to qcow2 trial overlays and per-probe timeouts/result channels.
+- [x] Run `make check-install` against plan/apply/disk fixtures and a separate
+  installed-disk VM gate in BIOS and UEFI. The VM gate covers disk preparation,
+  installation, boot and account login.
+- [ ] Add a real `check-hardware` target; extend the QEMU runner to qcow2 trial
+  overlays and per-probe timeouts/result channels.
 - [ ] Boot both target architectures in QEMU and prove PID 1, shell, package
   install/removal and recovery after removing either or both dynamic libc runtimes.
 - [ ] Run compiler/SDK, language, GUI, graphics, gaming, workstation and foreign

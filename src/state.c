@@ -279,7 +279,9 @@ static int instance_state_generation(int item, const char *digest,
     close(fd);
     if (got != st.st_size || buffer[got - 1] != '\n' || memchr(buffer, 0, (size_t)got)) return 0;
     buffer[got] = '\0';
-    version = !strncmp(buffer, "format holy-instance-5\n", 23) ? 5 :
+    version = !strncmp(buffer, "format holy-instance-7\n", 23) ? 7 :
+              !strncmp(buffer, "format holy-instance-6\n", 23) ? 6 :
+              !strncmp(buffer, "format holy-instance-5\n", 23) ? 5 :
               !strncmp(buffer, "format holy-instance-4\n", 23) ? 4 :
               !strncmp(buffer, "format holy-instance-3\n", 23) ? 3 :
               !strncmp(buffer, "format holy-instance-2\n", 23) ? 2 : 1;
@@ -294,15 +296,18 @@ static int instance_state_generation(int item, const char *digest,
             if (errno != ENOENT) return 0;
             strcpy(source, "-"); strcpy(source_hash, "-");
         }
-        if (!state_architecture(buffer, architecture) || (version == 5) != !!architecture[0]) return 0;
+        if (!state_architecture(buffer, architecture) ||
+            (version == 5 || version == 7) != !!architecture[0]) return 0;
         if (architecture[0]) {
             const char *keys[] = {"arch"}, *values[] = {strchr(architecture, ' ') + 1};
             if (installed_fields(item, keys, values, 1) != 1) return 0;
         }
         length = (size_t)snprintf(prefix, sizeof prefix,
-            "format holy-instance-%d\nsource-id %s\nsource-record %s\ndelivery local\nreason %s\nartifact %s\ngraph %s\nprovides %s\n%s%s%sgeneration ",
+            "format holy-instance-%d\nsource-id %s\nsource-record %s\ndelivery local\nreason %s\nartifact %s\ngraph %s\nprovides %s\n%s%s%s%s%s%sgeneration ",
             version, source, source_hash, reason, digest, graph, claims,
-            architecture[0] ? "architecture " : "", architecture, architecture[0] ? "\n" : "");
+            architecture[0] ? "architecture " : "", architecture, architecture[0] ? "\n" : "",
+            version >= 6 ? "privileged " : "", version >= 6 ? digest : "",
+            version >= 6 ? "\n" : "");
     } else if (version == 3) {
         if (!graph_digest(item, graph) || !holy_source_instance(item, source, source_hash)) return 0;
         length = (size_t)snprintf(prefix, sizeof prefix,
@@ -867,6 +872,7 @@ done:
 
 struct plan_hash {
     int completed;
+    int accepted_privileged;
     EVP_MD_CTX *hash;
     size_t count;
     int dir;
@@ -928,7 +934,9 @@ static int plan_entry(void *context, const struct holy_manifest_entry *entry)
         !strncmp(entry->path, "var/lib/holypkg/", 16) ||
         !strcmp(entry->path, "var/cache/holypkg") ||
         !strncmp(entry->path, "var/cache/holypkg/", 18) ||
-        (entry->mode & 07000) ||
+        ((entry->mode & 07000) &&
+         (!plan->accepted_privileged || entry->directory || entry->link ||
+          entry->hardlink || (entry->mode & 03000))) ||
         entry->uid != (long long)geteuid() ||
         entry->gid != (long long)getegid()) {
         fprintf(stderr, "holypkg: plan requires files or relative symlinks and local ownership; unsupported path: %s\n",
@@ -1155,7 +1163,7 @@ static int inspect_plan(const char *root_path, int root, int dir,
         if (plan.claim_error) result = plan.claim_error;
         goto done;
     }
-    if (!holy_install_preflight(snapshot, root)) { result = 4; goto done; }
+    if (!holy_install_preflight(snapshot, root, 0)) { result = 4; goto done; }
     result = slot_available(dir, &identity, "-");
     if (result < 0) { result = 1; goto done; }
     if (!result) {
@@ -1350,7 +1358,8 @@ done:
 
 static int save_instance(int installed, const char *digest, const char *snapshot,
                          unsigned long long generation, const char *graph, size_t graph_length,
-                         const char *reason, const char *source_record, const char *architecture)
+                         const char *reason, const char *source_record,
+                         const char *architecture, int privileged)
 {
     static const char *const names[] = { "meta", "files", "deps", "origin", "provides" };
     struct archive *archive = NULL;
@@ -1404,9 +1413,12 @@ static int save_instance(int installed, const char *digest, const char *snapshot
     if (source_record && (!record_file(item, "source", source_record, strlen(source_record)) ||
         !holy_source_instance(item, source, source_hash))) goto done;
     i = (size_t)snprintf(state, sizeof state,
-        "format holy-instance-%d\nsource-id %s\nsource-record %s\ndelivery local\nreason %s\nartifact %s\ngraph %s\nprovides %s\n%s%s%sgeneration %llu\n",
-        architecture ? 5 : 4, source, source_hash, reason, digest, graph_hash, claims,
-        architecture ? "architecture " : "", architecture ? architecture : "", architecture ? "\n" : "", generation + 1);
+        "format holy-instance-%d\nsource-id %s\nsource-record %s\ndelivery local\nreason %s\nartifact %s\ngraph %s\nprovides %s\n%s%s%s%s%s%sgeneration %llu\n",
+        privileged ? architecture ? 7 : 6 : architecture ? 5 : 4,
+        source, source_hash, reason, digest, graph_hash, claims,
+        architecture ? "architecture " : "", architecture ? architecture : "", architecture ? "\n" : "",
+        privileged ? "privileged " : "", privileged ? digest : "", privileged ? "\n" : "",
+        generation + 1);
     if (i >= sizeof state || !record_file(item, "state", state, i) || fsync(item)) goto done;
     ok = 1;
 done:
@@ -1442,7 +1454,7 @@ int holy_state_apply(const char *root_path)
     snapshot = holy_cache_snapshot(digest, root_path);
     if (!snapshot) { result = 6; goto done; }
     if (!instance_preflight(snapshot)) { result = 6; goto done; }
-    if (!holy_install_preflight(snapshot, root)) { result = 4; goto done; }
+    if (!holy_install_preflight(snapshot, root, 0)) { result = 4; goto done; }
     installed = child_dir(dir, "installed", 0);
     transactions = child_dir(dir, "transactions", 0);
     if (installed < 0 || transactions < 0 ||
@@ -1457,8 +1469,8 @@ int holy_state_apply(const char *root_path)
     }
     journaled = 1;
     result = 5;
-    if (!holy_install_payload(snapshot, root) ||
-        !save_instance(installed, digest, snapshot, generation, graph, graph_length, "explicit", NULL, NULL)) goto done;
+    if (!holy_install_payload(snapshot, root, 0) ||
+        !save_instance(installed, digest, snapshot, generation, graph, graph_length, "explicit", NULL, NULL, 0)) goto done;
     length = (size_t)snprintf(generation_record, sizeof generation_record,
                               "%llu\n", generation + 1);
     if (length >= sizeof generation_record) goto done;
@@ -1508,7 +1520,7 @@ int holy_state_abort_empty(const char *root_path)
         strcmp(reserved, digest) || strcmp(approved, plan) ||
         !fstatat(installed, digest, &st, AT_SYMLINK_NOFOLLOW) || errno != ENOENT) goto done;
     snapshot = holy_cache_snapshot(digest, root_path);
-    if (!snapshot || !holy_install_preflight(snapshot, root) ||
+    if (!snapshot || !holy_install_preflight(snapshot, root, 0) ||
         !same_root(root_path, &root_st)) goto done;
     if (unlinkat(transactions, "journal", 0) || fsync(transactions)) goto done;
     printf("aborted empty apply %s; approval retained\n", digest);
@@ -2194,7 +2206,33 @@ struct set_item {
     char architecture[96];
     struct holy_package_identity identity;
     int reused;
+    int privileged;
 };
+
+struct privileged_scan {
+    char *first;
+    unsigned mode;
+    size_t count;
+    int unsupported;
+};
+
+static int scan_privileged(void *context, const struct holy_manifest_entry *entry)
+{
+    struct privileged_scan *scan = context;
+    if (!(entry->mode & 07000)) return 1;
+    if (entry->directory || entry->link || entry->hardlink ||
+        (entry->mode & 03000) || !(entry->mode & 0111)) {
+        scan->unsupported = 1;
+        return 0;
+    }
+    if (!scan->first) {
+        scan->first = strdup(entry->path);
+        if (!scan->first) return 0;
+        scan->mode = entry->mode;
+    }
+    ++scan->count;
+    return 1;
+}
 
 struct set_claim {
     char *path;
@@ -2223,6 +2261,8 @@ struct set_journal {
     size_t count, binding_count;
     char **accepted_arch, host[65];
     size_t accepted_count;
+    char **accepted_privileged;
+    size_t privileged_count;
 };
 
 static void free_set(struct install_set *set)
@@ -2358,6 +2398,11 @@ static int reuse_instance(int dir, int root, struct set_item *candidate,
     if (fd < 0 || (got = read(fd, state, sizeof state - 1)) <= 0) goto done;
     state[got] = 0;
     if (!hash_text(hash, "reuse-installed") || !hash_text(hash, state)) goto done;
+    {
+        char marker[96];
+        snprintf(marker, sizeof marker, "\nprivileged %s\n", candidate->identity.digest);
+        candidate->privileged = strstr(state, marker) != NULL;
+    }
     if (!installed_source_id(item, candidate->source_id)) goto done;
     candidate->reused = 1;
     result = 1;
@@ -2529,6 +2574,7 @@ static int build_set(const char *root_path, int root, int dir,
                       size_t count, const char *choice, int completed,
                       const char *const *bindings, size_t binding_count,
                       const char *const *accepted_arch, size_t accepted_count,
+                      const char *const *accepted_privileged, size_t privileged_count,
                       struct install_set *set)
 {
     char **snapshots = NULL;
@@ -2541,10 +2587,16 @@ static int build_set(const char *root_path, int root, int dir,
     unsigned int length;
     size_t i, j;
     int result = 1;
-    if (!count || count > 10000 || binding_count > 10000 || accepted_count > 10000) return 2;
+    if (!count || count > 10000 || binding_count > 10000 ||
+        accepted_count > 10000 || privileged_count > 10000) return 2;
     for (i = 0; i < accepted_count; ++i) {
         if (!valid_digest(accepted_arch[i])) return 2;
         for (j = 0; j < i; ++j) if (!strcmp(accepted_arch[i], accepted_arch[j])) return 2;
+    }
+    for (i = 0; i < privileged_count; ++i) {
+        if (!valid_digest(accepted_privileged[i])) return 2;
+        for (j = 0; j < i; ++j)
+            if (!strcmp(accepted_privileged[i], accepted_privileged[j])) return 2;
     }
     for (i = 0; i < count; ++i) if (!valid_digest(digests[i])) return 2;
     for (i = 0; i < binding_count; ++i) {
@@ -2571,6 +2623,11 @@ static int build_set(const char *root_path, int root, int dir,
     for (i = 0; i < accepted_count; ++i) {
         for (j = 0; j < set->resolution.artifact_count; ++j)
             if (!strcmp(accepted_arch[i], set->resolution.artifacts[j])) break;
+        if (j == set->resolution.artifact_count) { result = 3; goto done; }
+    }
+    for (i = 0; i < privileged_count; ++i) {
+        for (j = 0; j < set->resolution.artifact_count; ++j)
+            if (!strcmp(accepted_privileged[i], set->resolution.artifacts[j])) break;
         if (j == set->resolution.artifact_count) { result = 3; goto done; }
     }
     for (i = 0; i < binding_count; ++i) {
@@ -2613,6 +2670,31 @@ static int build_set(const char *root_path, int root, int dir,
         if (result) goto done;
         result = reuse_instance(dir, root, item, generation, completed, set->graph, plan.hash);
         if (result < 0) { result = 4; goto done; }
+        {
+            struct privileged_scan scan = {0};
+            int accepted = 0, scanned = holy_verify_visit(item->snapshot, scan_privileged, &scan);
+            for (j = 0; j < privileged_count; ++j)
+                if (!strcmp(accepted_privileged[j], item->identity.digest)) accepted = 1;
+            if (!scanned) {
+                result = scan.unsupported ? 6 : 1;
+                free(scan.first); goto done;
+            }
+            if (item->reused) {
+                result = accepted ? 3 : item->privileged != !!scan.count ? 4 : 0;
+            } else if (accepted && !scan.count) result = 2;
+            else if (scan.count && !accepted) {
+                fprintf(stderr, "holypkg: decision-required privileged artifact=%s path=%s mode=%04o; --accept-privileged %s permits setuid placement\n",
+                        item->identity.digest, scan.first, scan.mode, item->identity.digest);
+                result = 3;
+            } else {
+                item->privileged = accepted;
+                result = 0;
+                if (accepted && (!hash_text(plan.hash, "accepted-privileged") ||
+                                 !hash_text(plan.hash, item->identity.digest))) result = 1;
+            }
+            free(scan.first);
+            if (result) goto done;
+        }
         for (j = 0; j < accepted_count; ++j)
             if (!strcmp(accepted_arch[j], item->identity.digest)) break;
         if (j < accepted_count) {
@@ -2653,7 +2735,7 @@ static int build_set(const char *root_path, int root, int dir,
         if (item->reused && !strcmp(item->identity.digest, set->resolution.root)) {
             result = 3; goto done;
         }
-        result = holy_preview_resolved(item->snapshot, root_path, completed || item->reused);
+        result = holy_preview_resolved(item->snapshot, root_path, completed || item->reused, item->privileged);
         if (result) goto done;
         for (j = 0; j < i; ++j)
             if (same_slot(&set->items[j].identity, set->items[j].source_id,
@@ -2663,10 +2745,11 @@ static int build_set(const char *root_path, int root, int dir,
         if (!completed && !item->reused) {
             result = slot_available(dir, &item->identity, item->source_id);
             if (result != 1) { result = result < 0 ? 1 : 4; goto done; }
-            if (!holy_install_preflight(item->snapshot, root)) { result = 4; goto done; }
+            if (!holy_install_preflight(item->snapshot, root, item->privileged)) { result = 4; goto done; }
         }
         result = 6;
         plan.completed = completed || item->reused;
+        plan.accepted_privileged = item->privileged;
         if (!hash_text(plan.hash, item->identity.digest) ||
             !holy_verify_visit(item->snapshot, plan_entry, &plan)) {
             if (plan.claim_error) result = plan.claim_error;
@@ -2705,6 +2788,8 @@ static void free_set_journal(struct set_journal *journal)
     free(journal->choice);
     for (i = 0; i < journal->accepted_count; ++i) free(journal->accepted_arch[i]);
     free(journal->accepted_arch);
+    for (i = 0; i < journal->privileged_count; ++i) free(journal->accepted_privileged[i]);
+    free(journal->accepted_privileged);
     memset(journal, 0, sizeof *journal);
 }
 
@@ -2769,7 +2854,8 @@ static int read_set_journal(int dir, struct set_journal *journal)
             memchr(line, 0, (size_t)got)) goto done;
         line[got - 1] = 0;
         if (number == 0) {
-            if (!strcmp(line, "format holy-set-journal-3")) version = 3;
+            if (!strcmp(line, "format holy-set-journal-4")) version = 4;
+            else if (!strcmp(line, "format holy-set-journal-3")) version = 3;
             else if (!strcmp(line, "format holy-set-journal-2")) version = 2;
             else if (strcmp(line, "format holy-set-journal-1")) goto done;
         } else if (number == 1) {
@@ -2788,13 +2874,13 @@ static int read_set_journal(int dir, struct set_journal *journal)
             if (strncmp(line, "choice ", 7) || !set_choice_valid(line + 7)) goto done;
             journal->choice = strdup(line + 7);
             if (!journal->choice) goto done;
-        } else if (version == 3 && number == 5) {
+        } else if (version >= 3 && number == 5) {
             char architecture[96];
             if (strncmp(line, "host ", 5) || strlen(line + 5) > 64) goto done;
             snprintf(architecture, sizeof architecture, "%s x86", line + 5);
             if (!architecture_valid(architecture)) goto done;
             strcpy(journal->host, line + 5);
-        } else if (version == 3 && !strncmp(line, "accept-arch ", 12)) {
+        } else if (version >= 3 && !strncmp(line, "accept-arch ", 12)) {
             char **next;
             size_t i;
             if (!valid_digest(line + 12) || journal->accepted_count >= journal->count) goto done;
@@ -2808,10 +2894,27 @@ static int read_set_journal(int dir, struct set_journal *journal)
             next[journal->accepted_count] = strdup(line + 12);
             if (!next[journal->accepted_count]) goto done;
             ++journal->accepted_count;
+        } else if (version == 4 && !strncmp(line, "accept-privileged ", 18)) {
+            char **next;
+            size_t i;
+            if (!valid_digest(line + 18) || journal->privileged_count >= journal->count) goto done;
+            for (i = 0; i < journal->count; ++i)
+                if (!strcmp(line + 18, journal->digests[i])) break;
+            if (i == journal->count) goto done;
+            for (i = 0; i < journal->privileged_count; ++i)
+                if (!strcmp(line + 18, journal->accepted_privileged[i])) goto done;
+            next = realloc(journal->accepted_privileged,
+                           (journal->privileged_count + 1) * sizeof *next);
+            if (!next) goto done;
+            journal->accepted_privileged = next;
+            next[journal->privileged_count] = strdup(line + 18);
+            if (!next[journal->privileged_count]) goto done;
+            ++journal->privileged_count;
         } else if (version >= 2 && !strncmp(line, "binding ", 8)) {
             char **next;
             size_t i;
-            if (journal->accepted_count || !binding_valid(line + 8) || journal->binding_count >= journal->count) goto done;
+            if (journal->accepted_count || journal->privileged_count ||
+                !binding_valid(line + 8) || journal->binding_count >= journal->count) goto done;
             for (i = 0; i < journal->count; ++i)
                 if (!strncmp(line + 8, journal->digests[i], 64)) break;
             if (i == journal->count) goto done;
@@ -2825,7 +2928,8 @@ static int read_set_journal(int dir, struct set_journal *journal)
             ++journal->binding_count;
         } else {
             char **next;
-            if (journal->binding_count || journal->accepted_count || strncmp(line, "artifact ", 9) || !valid_digest(line + 9) ||
+            if (journal->binding_count || journal->accepted_count || journal->privileged_count ||
+                strncmp(line, "artifact ", 9) || !valid_digest(line + 9) ||
                 journal->count >= 10000 ||
                 (journal->count && strcmp(journal->digests[journal->count - 1], line + 9) >= 0))
                 goto done;
@@ -2841,7 +2945,8 @@ static int read_set_journal(int dir, struct set_journal *journal)
     }
     if (!ferror(stream) && bytes == (size_t)st.st_size && number >= 6 && roots == 1 &&
         (version == 1 || (version == 2 && journal->binding_count) ||
-         (version == 3 && journal->accepted_count))) result = 1;
+         (version == 3 && journal->accepted_count) ||
+         (version == 4 && journal->privileged_count))) result = 1;
 done:
     free(line);
     if (stream) fclose(stream);
@@ -2865,7 +2970,8 @@ static int set_journal_present(int dir)
 static int write_set_journal(int transactions, unsigned long long generation,
                              const struct install_set *set, const char *choice,
                              const char *const *bindings, size_t binding_count,
-                             const char *const *accepted_arch, size_t accepted_count)
+                             const char *const *accepted_arch, size_t accepted_count,
+                             const char *const *accepted_privileged, size_t privileged_count)
 {
     char *record = NULL;
     size_t length = 0, i;
@@ -2873,14 +2979,17 @@ static int write_set_journal(int transactions, unsigned long long generation,
     int ok = 1;
     if (!stream) return 0;
     if (fprintf(stream, "format holy-set-journal-%d\ngeneration %llu\nplan %s\nroot %s\nchoice %s\n",
-                accepted_count ? 3 : binding_count ? 2 : 1, generation, set->hash, set->resolution.root, choice ? choice : "-") < 0) ok = 0;
-    if (accepted_count && fprintf(stream, "host %s\n", set->host) < 0) ok = 0;
+                privileged_count ? 4 : accepted_count ? 3 : binding_count ? 2 : 1,
+                generation, set->hash, set->resolution.root, choice ? choice : "-") < 0) ok = 0;
+    if ((accepted_count || privileged_count) && fprintf(stream, "host %s\n", set->host) < 0) ok = 0;
     for (i = 0; i < set->count && ok; ++i)
         if (fprintf(stream, "artifact %s\n", set->items[i].identity.digest) < 0) ok = 0;
     for (i = 0; i < binding_count && ok; ++i)
         if (fprintf(stream, "binding %s\n", bindings[i]) < 0) ok = 0;
     for (i = 0; i < accepted_count && ok; ++i)
         if (fprintf(stream, "accept-arch %s\n", accepted_arch[i]) < 0) ok = 0;
+    for (i = 0; i < privileged_count && ok; ++i)
+        if (fprintf(stream, "accept-privileged %s\n", accepted_privileged[i]) < 0) ok = 0;
     if (fclose(stream)) ok = 0;
     if (ok) ok = record_file(transactions, "set-journal", record, length);
     free(record);
@@ -2903,7 +3012,8 @@ static int set_generation(int dir, unsigned long long generation)
 int holy_state_set(const char *const *digests, size_t count, const char *choice,
                    const char *approved, const char *root_path,
                    const char *const *bindings, size_t binding_count,
-                   const char *const *accepted_arch, size_t accepted_count)
+                   const char *const *accepted_arch, size_t accepted_count,
+                   const char *const *accepted_privileged, size_t privileged_count)
 {
     struct install_set set = {0};
     unsigned long long generation;
@@ -2918,7 +3028,7 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
     if (!empty_child(dir, "transactions")) { result = 5; goto done; }
     if (!installed_valid(dir)) goto done;
     result = build_set(root_path, root, dir, generation, digests, count, choice, 0, bindings, binding_count,
-                       accepted_arch, accepted_count, &set);
+                       accepted_arch, accepted_count, accepted_privileged, privileged_count, &set);
     if (result) goto done;
     if (!approved) {
         printf("plan-set generation %llu root %s artifacts %zu paths %zu sha256 %s read-only\n",
@@ -2938,6 +3048,9 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
         for (i = 0; i < set.count; ++i) if (set.items[i].architecture[0])
             printf("architecture %s %s accepted-unverified scope artifact\n",
                    set.items[i].identity.digest, set.items[i].architecture);
+        for (i = 0; i < set.count; ++i) if (set.items[i].privileged)
+            printf("privileged %s setuid accepted scope artifact\n",
+                   set.items[i].identity.digest);
         goto done;
     }
     if (strcmp(set.hash, approved)) { result = 3; goto done; }
@@ -2945,7 +3058,8 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
     transactions = child_dir(dir, "transactions", 0);
     if (installed < 0 || transactions < 0) { result = 1; goto done; }
     if (!write_set_journal(transactions, generation, &set, choice, bindings, binding_count,
-                           accepted_arch, accepted_count)) {
+                           accepted_arch, accepted_count,
+                           accepted_privileged, privileged_count)) {
         struct stat st;
         result = fstatat(transactions, "set-journal", &st, AT_SYMLINK_NOFOLLOW) ? 1 : 5;
         goto done;
@@ -2955,11 +3069,12 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
     for (i = 0; i < set.count; ++i) {
         struct set_item *item = &set.items[i];
         if (item->reused) continue;
-        if (!holy_install_payload(item->snapshot, root) ||
+        if (!holy_install_payload(item->snapshot, root, item->privileged) ||
             !save_instance(installed, item->identity.digest, item->snapshot, generation,
                            set.graph, set.graph_length,
                            strcmp(item->identity.digest, set.resolution.root) ? "dependency" : "explicit",
-                           item->source_record, item->architecture[0] ? item->architecture : NULL))
+                           item->source_record, item->architecture[0] ? item->architecture : NULL,
+                           item->privileged))
             goto done;
         printf("applied %s\n", item->identity.digest);
     }
@@ -3071,7 +3186,9 @@ static int recover_set(const char *root_path, int resume)
     if (build_set(root_path, root, dir, journal.generation, digests, journal.count,
                   strcmp(journal.choice, "-") ? journal.choice : NULL, 1,
                   (const char *const *)journal.bindings, journal.binding_count,
-                  (const char *const *)journal.accepted_arch, journal.accepted_count, &set) ||
+                  (const char *const *)journal.accepted_arch, journal.accepted_count,
+                  (const char *const *)journal.accepted_privileged, journal.privileged_count,
+                  &set) ||
         set.count != journal.count || strcmp(set.hash, journal.hash)) goto done;
     installed = child_dir(dir, "installed", 0);
     transactions = child_dir(dir, "transactions", 0);
@@ -3089,7 +3206,7 @@ static int recover_set(const char *root_path, int resume)
             struct plan_hash claims = {0};
             if (errno != ENOENT || !resume || generation != journal.generation ||
                 slot_available(dir, &candidate->identity, candidate->source_id) != 1 ||
-                !holy_install_preflight_resume(candidate->snapshot, root)) goto done;
+                !holy_install_preflight_resume(candidate->snapshot, root, candidate->privileged)) goto done;
             claims.dir = dir;
             claims.hash = EVP_MD_CTX_new();
             ok = claims.hash && EVP_DigestInit_ex(claims.hash, EVP_sha256(), NULL) == 1 &&
@@ -3125,7 +3242,8 @@ static int recover_set(const char *root_path, int resume)
             !save_instance(installed, item->identity.digest, item->snapshot, journal.generation,
                            set.graph, set.graph_length,
                            strcmp(item->identity.digest, set.resolution.root) ? "dependency" : "explicit",
-                           item->source_record, item->architecture[0] ? item->architecture : NULL))
+                           item->source_record, item->architecture[0] ? item->architecture : NULL,
+                           item->privileged))
             goto done;
         printf("resumed %s\n", item->identity.digest);
     }
@@ -3579,8 +3697,16 @@ static int update_instances(int next_db, int before, char **names, char **snapsh
         else source = update_record(item, "source");
         if (!source && ((i == replaced && new_source) || errno != ENOENT)) goto done;
         if (!instance_graph(resolution, digest, &graph, &length)) goto done;
-        if (create && !save_instance(installed, digest, snapshots[i], generation, graph, length, reason, source,
-                                     architecture[0] ? architecture : NULL)) goto done;
+        if (create) {
+            char *state_record = update_record(item, "state");
+            int privileged;
+            if (!state_record) goto done;
+            privileged = strstr(state_record, "\nprivileged ") != NULL;
+            free(state_record);
+            if (!save_instance(installed, digest, snapshots[i], generation, graph, length,
+                               reason, source, architecture[0] ? architecture : NULL,
+                               privileged)) goto done;
+        }
         proposed = child_dir(installed, digest, 0);
         if (proposed < 0 || !instance_state_generation(proposed, digest, &recorded) || recorded != generation + 1 ||
             !instance_reason_matches(proposed, reason) || !instance_source_matches(proposed, source) ||
@@ -3845,7 +3971,7 @@ static int state_update(const char *old_digest, const char *new_digest,
     }
     pending = slot_available_except(reference_db, &next, source, old_digest);
     if (pending != 1) { result = pending < 0 ? 1 : 4; goto done; }
-    result = holy_preview_resolved(new_snapshot, root_path, 1);
+    result = holy_preview_resolved(new_snapshot, root_path, 1, 0);
     if (result) goto done;
     result = explicit_elf_paths(new_snapshot);
     if (result) goto done;

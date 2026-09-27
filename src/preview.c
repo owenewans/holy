@@ -106,7 +106,7 @@ done:
 }
 
 static int preview(const char *package, const char *root_path,
-                   int json, int resolved, int completed)
+                   int json, int resolved, int completed, int accepted_privileged)
 {
     struct archive *archive = NULL;
     struct archive_entry *entry;
@@ -143,7 +143,9 @@ static int preview(const char *package, const char *root_path,
             if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
             continue;
         }
-        if (archive_entry_perm(entry) & 06000) {
+        if ((archive_entry_perm(entry) & 07000) &&
+            (!accepted_privileged || archive_entry_filetype(entry) != AE_IFREG ||
+             archive_entry_hardlink(entry) || (archive_entry_perm(entry) & 03000))) {
             fprintf(stderr, "holypkg: privileged payload mode requires review\n");
             rc = 6;
             goto done;
@@ -278,10 +280,11 @@ int holy_preview_local(const char *package, const char *root_path)
 
 int holy_preview_local_format(const char *package, const char *root_path, int json)
 {
-    return preview(package, root_path, json, 0, 0);
+    return preview(package, root_path, json, 0, 0, 0);
 }
 
-int holy_preview_resolved(const char *package, const char *root_path, int completed)
+int holy_preview_resolved(const char *package, const char *root_path, int completed,
+                          int accepted_privileged)
 {
-    return preview(package, root_path, -1, 1, completed);
+    return preview(package, root_path, -1, 1, completed, accepted_privileged);
 }

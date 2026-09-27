@@ -270,7 +270,7 @@ done:
 }
 
 struct root_check {
-    int root, recovering;
+    int root, recovering, accepted_privileged;
     struct holy_manifest_entry *directories;
     size_t count;
     struct directory_list parents;
@@ -299,7 +299,9 @@ static int check_entry(void *context, const struct holy_manifest_entry *entry)
     int state;
     struct stat observed;
     if ((entry->link && (entry->mode != 0777 || entry->link[0] == '/')) ||
-        (entry->mode & 07000) || entry->uid != (long long)geteuid() ||
+        ((entry->mode & 07000) &&
+         (!check->accepted_privileged || entry->directory || entry->link || entry->hardlink ||
+          (entry->mode & 03000))) || entry->uid != (long long)geteuid() ||
         entry->gid != (long long)getegid() ||
         !planned_parents(check->root, entry->path, &check->parents)) return 0;
     state = transition_matches(check->root, entry, &observed);
@@ -307,12 +309,14 @@ static int check_entry(void *context, const struct holy_manifest_entry *entry)
     return state == 2 || (state == 1 && (entry->directory || check->recovering));
 }
 
-static int prepare_directories(const char *snapshot, int root, int create, int recovering)
+static int prepare_directories(const char *snapshot, int root, int create,
+                               int recovering, int accepted_privileged)
 {
     struct root_check check = {0};
     size_t i;
     int ok = 0;
     check.root = root; check.recovering = recovering;
+    check.accepted_privileged = accepted_privileged;
     if (!holy_verify_visit(snapshot, collect_directory, &check)) goto done;
     check.parents.items = calloc(check.count ? check.count : 1, sizeof *check.parents.items);
     if (!check.parents.items) goto done;
@@ -331,14 +335,14 @@ done:
     return ok;
 }
 
-int holy_install_preflight(const char *snapshot, int root)
+int holy_install_preflight(const char *snapshot, int root, int accepted_privileged)
 {
-    return prepare_directories(snapshot, root, 0, 0);
+    return prepare_directories(snapshot, root, 0, 0, accepted_privileged);
 }
 
-int holy_install_preflight_resume(const char *snapshot, int root)
+int holy_install_preflight_resume(const char *snapshot, int root, int accepted_privileged)
 {
-    return prepare_directories(snapshot, root, 0, 1);
+    return prepare_directories(snapshot, root, 0, 1, accepted_privileged);
 }
 
 static int link_payload(int root, const char *source, const struct holy_manifest_entry *destination,
@@ -393,7 +397,8 @@ static int install_link(void *context, const struct holy_manifest_entry *entry)
     return state == 2 || (state == 1 && link_payload(links->root, entry->path, &anchor, 0));
 }
 
-static int install_payload(const char *snapshot, int root, int missing_only)
+static int install_payload(const char *snapshot, int root, int missing_only,
+                           int accepted_privileged)
 {
     struct archive *archive = archive_read_new();
     struct archive_entry *entry;
@@ -401,7 +406,7 @@ static int install_payload(const char *snapshot, int root, int missing_only)
     int status, ok = 0;
     struct link_install links = {root, missing_only, 1};
     if (!archive) return 0;
-    if (!prepare_directories(snapshot, root, 1, missing_only) ||
+    if (!prepare_directories(snapshot, root, 1, missing_only, accepted_privileged) ||
         (missing_only && !holy_verify_visit(snapshot, install_link, &links))) goto done;
     if (archive_read_support_filter_lz4(archive) != ARCHIVE_OK ||
         archive_read_support_format_tar(archive) != ARCHIVE_OK ||
@@ -449,6 +454,8 @@ static int install_payload(const char *snapshot, int root, int missing_only)
         }
         if (archive_entry_filetype(entry) != AE_IFREG ||
             archive_entry_hardlink(entry) || archive_entry_size(entry) < 0) goto done;
+        if ((archive_entry_perm(entry) & 07000) &&
+            (!accepted_privileged || (archive_entry_perm(entry) & 03000))) goto done;
         parent = parent_fd(root, path + 5, &storage, &base);
         if (parent < 0) goto done;
         if (missing_only) {
@@ -493,7 +500,7 @@ static int install_payload(const char *snapshot, int root, int missing_only)
             }
         }
         if (got != 0 || count != archive_entry_size(entry) ||
-            fchmod(fd, archive_entry_perm(entry) & 0777) || fsync(fd) ||
+            fchmod(fd, archive_entry_perm(entry)) || fsync(fd) ||
             fsync(parent)) goto file_done;
         close(fd);
         close(parent);
@@ -513,14 +520,14 @@ done:
     return ok;
 }
 
-int holy_install_payload(const char *snapshot, int root)
+int holy_install_payload(const char *snapshot, int root, int accepted_privileged)
 {
-    return install_payload(snapshot, root, 0);
+    return install_payload(snapshot, root, 0, accepted_privileged);
 }
 
 int holy_install_payload_missing(const char *snapshot, int root)
 {
-    return install_payload(snapshot, root, 1);
+    return install_payload(snapshot, root, 1, 1);
 }
 
 static int decimal(const char *text, int base, unsigned long long *value)

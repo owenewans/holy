@@ -62,6 +62,14 @@ bootstrap-storage: holypkg
 check-bootstrap-storage: holypkg
 	sh tests/bootstrap-storage.sh ./holypkg "$(or $(STORAGE_TOOLS_PACKAGE),out/storage-bootstrap/holy-storage-tools.holy)"
 
+.PHONY: bootstrap-doas
+bootstrap-doas: holypkg
+	sh tools/bootstrap-doas.sh ./holypkg "$(DOAS_SOURCE)" "$(STATIC_PREFIX)" "$(or $(OUTPUT),out/doas-bootstrap)"
+
+.PHONY: check-bootstrap-doas
+check-bootstrap-doas: holypkg
+	sh tests/bootstrap-doas.sh ./holypkg "$(or $(DOAS_PACKAGE),out/doas-bootstrap/doas.holy)"
+
 .PHONY: bootstrap-dinit check-bootstrap-dinit
 .PHONY: bootstrap-mdevd check-bootstrap-mdevd
 bootstrap-mdevd: holypkg
