@@ -91,6 +91,12 @@
   durable transaction journal before a package-update command can use them.
 - [ ] Implement native HTTPS/Git source synchronization, signed generations and
   cache retention with provenance.
+- [x] Mirror an explicitly pinned HTTPS native catalog into a new sealed local
+  snapshot through the common transport. Verify all artifact hashes, identity,
+  payload and claims before publishing current; retain unsigned URL/digest
+  provenance. Fixture TLS covers search/solve/fetch, escaped filenames, empty,
+  duplicate/truncated indexes, false claims, bad hashes, missing URLs and limits.
+  Configured source activation and publisher signatures remain open.
 - [ ] Implement foreign binary adapters and file indexes with real fixtures:
   pacman, APT/DEB, RPM, APK, XBPS, Slackware and eopkg.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,

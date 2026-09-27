@@ -1,6 +1,10 @@
 #ifndef HOLY_REPO_H
 #define HOLY_REPO_H
 
+/* materialize a pinned HTTPS catalog in a new directory; CLI status result. */
+int holy_repo_mirror(const char *base, const char *digest, const char *output,
+                     const char *ca_file);
+
 /* writes an unsigned local prototype index after validating native objects. */
 int holy_repo_index(const char *directory);
 int holy_repo_list(const char *directory);

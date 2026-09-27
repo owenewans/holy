@@ -157,6 +157,13 @@ int main(int argc, char **argv)
         free(paths);
         return result;
     }
+    if (argc > 2 && !strcmp(argv[1], "repo") && !strcmp(argv[2], "mirror")) {
+        if ((argc == 8 || argc == 10) && !strcmp(argv[4], "--sha256") &&
+            !strcmp(argv[6], "--output") && (argc == 8 || !strcmp(argv[8], "--ca-file")))
+            return holy_repo_mirror(argv[3], argv[5], argv[7], argc == 10 ? argv[9] : NULL);
+        fputs("usage: holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--ca-file FILE]\n", stderr);
+        return 2;
+    }
     if (argc == 4 && !strcmp(argv[1], "repo") &&
         !strcmp(argv[2], "index"))
         return holy_repo_index(argv[3]) ? 0 : 1;
@@ -302,7 +309,7 @@ set_done:
         !strcmp(argv[3], "--sha256") && !strcmp(argv[5], "--output") &&
         (argc == 7 || !strcmp(argv[7], "--ca-file")))
         return holy_fetch_https(argv[2], argv[4], argv[6],
-                                argc == 9 ? argv[8] : NULL);
+                                argc == 9 ? argv[8] : NULL, 1);
     if (argc == 5 && !strcmp(argv[1], "fetch") &&
         !strncmp(argv[2], "local:", 6) && argv[2][6] &&
         !strcmp(argv[3], "--output"))

@@ -123,6 +123,7 @@ struct download {
     int fd;
     EVP_MD_CTX *hash;
     curl_off_t bytes;
+    curl_off_t limit;
 };
 
 static size_t receive(void *data, size_t size, size_t count, void *context)
@@ -132,7 +133,7 @@ static size_t receive(void *data, size_t size, size_t count, void *context)
     size_t length, used = 0;
     if (size && count > (size_t)-1 / size) return 0;
     length = size * count;
-    if (length > (size_t)(1024 * 1024 * 1024 - download->bytes)) return 0;
+    if (length > (size_t)(download->limit - download->bytes)) return 0;
     if (EVP_DigestUpdate(download->hash, data, length) != 1) return 0;
     while (used < length) {
         ssize_t sent = write(download->fd, cursor + used, length - used);
@@ -164,10 +165,29 @@ done:
     return ok;
 }
 
-int holy_fetch_https(const char *url, const char *expected,
-                     const char *output, const char *ca_file)
+char *holy_fetch_child_url(const char *base, const char *filename)
 {
-    struct download transfer = { .fd = -1, .hash = NULL, .bytes = 0 };
+    char *escaped, *url = NULL;
+    size_t length = strlen(base), extra;
+    if (!length || base[length - 1] != '/' || strchr(base, '?') || strchr(base, '#') ||
+        !secure_url(base) || !*filename || strchr(filename, '/') ||
+        !strcmp(filename, ".") || !strcmp(filename, "..")) return NULL;
+    escaped = curl_easy_escape(NULL, filename, 0);
+    if (!escaped) return NULL;
+    extra = strlen(escaped);
+    if (length < (size_t)-1 - extra && (url = malloc(length + extra + 1))) {
+        memcpy(url, base, length);
+        memcpy(url + length, escaped, extra + 1);
+    }
+    curl_free(escaped);
+    return url;
+}
+
+static int https_object(const char *url, const char *expected,
+                        const char *output, const char *ca_file, int native, int emit)
+{
+    struct download transfer = { .fd = -1, .hash = NULL, .bytes = 0,
+                                .limit = native ? 1024 * 1024 * 1024 : 16 * 1024 * 1024 };
     CURL *curl = NULL;
     struct stat st;
     struct timespec started, now;
@@ -240,7 +260,8 @@ int holy_fetch_https(const char *url, const char *expected,
     if (EVP_DigestFinal_ex(transfer.hash, digest, &digest_size) != 1 ||
         digest_size != 32 || fsync(transfer.fd)) goto done;
     for (i = 0; i < 32; ++i) snprintf(name + i * 2, 3, "%02x", digest[i]);
-    memcpy(name + 64, ".holy", 6);
+    if (native) memcpy(name + 64, ".holy", 6);
+    else name[64] = 0;
     if (strncmp(name, expected, 64)) { result = 4; goto done; }
     output_length = strlen(output);
     if (output_length > (size_t)-1 - sizeof temporary - 2) { result = 1; goto done; }
@@ -248,7 +269,7 @@ int holy_fetch_https(const char *url, const char *expected,
     if (!path) { result = 1; goto done; }
     snprintf(path, output_length + sizeof temporary + 2, "%s/%s", output, temporary);
     result = 2;
-    if (!holy_verify_with_output(path, 0)) goto done;
+    if (native && !holy_verify_with_output(path, 0)) goto done;
     result = 1;
     if (linkat(dir, temporary, dir, name, 0)) {
         if (errno != EEXIST) goto done;
@@ -258,7 +279,7 @@ int holy_fetch_https(const char *url, const char *expected,
             memcmp(prior, digest, 32)) { result = 4; goto done; }
     }
     if (fsync(dir)) goto done;
-    printf("%s/%s\n", output, name);
+    if (emit) printf("%s/%s\n", output, name);
     result = 0;
 done:
     if (result) fprintf(stderr, "holypkg: pinned HTTPS fetch failed (status %d)\n", result);
@@ -271,4 +292,16 @@ done:
     if (dir >= 0) close(dir);
     if (initialized) curl_global_cleanup();
     return result;
+}
+
+int holy_fetch_https(const char *url, const char *expected,
+                     const char *output, const char *ca_file, int emit)
+{
+    return https_object(url, expected, output, ca_file, 1, emit);
+}
+
+int holy_fetch_https_data(const char *url, const char *expected,
+                          const char *output, const char *ca_file)
+{
+    return https_object(url, expected, output, ca_file, 0, 0);
 }

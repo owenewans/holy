@@ -54,6 +54,96 @@ server.serve_forever()
 server=$!
 read -r port < "$tmp/port"
 test -n "$port"
+expect() {
+    wanted=$1
+    shift
+    rc=0
+    "$@" > "$tmp/result" 2> "$tmp/error" || rc=$?
+    test "$rc" -eq "$wanted" || { cat "$tmp/result" "$tmp/error"; exit 1; }
+}
+base="https://localhost:$port/"
+# build a second output whose filename requires URL escaping.
+sed 's/name https-fixture/name https-second/' "$tmp/serve/HOLY/meta" > "$tmp/meta"
+mv "$tmp/meta" "$tmp/serve/HOLY/meta"
+printf 'require parent https-second package https-fixture any any any - https-fixture fixture\n' > "$tmp/serve/HOLY/deps"
+tar -cf "$tmp/second.tar" -C "$tmp/serve" HOLY DATA
+lz4 -q "$tmp/second.tar" "$tmp/serve/space?#.holy"
+"$bin" repo index "$tmp/serve" > "$tmp/result"
+"$bin" repo seal "$tmp/serve" > "$tmp/result"
+index=$(sed -n 's/^sha256 //p' "$tmp/serve/current")
+expect 0 "$bin" repo mirror "$base" --sha256 "$index" --output "$tmp/mirror" --ca-file "$tmp/cert.pem"
+test "$(cat "$tmp/result")" = "sealed $index"
+cmp "$tmp/serve/current" "$tmp/mirror/current"
+cmp "$tmp/serve/index.$index" "$tmp/mirror/index.$index"
+cmp "$tmp/serve/space?#.holy" "$tmp/mirror/space?#.holy"
+grep -qx 'verification digest-pinned-unsigned' "$tmp/mirror/mirror-origin"
+expect 0 "$bin" repo search "$tmp/mirror" https-second
+grep -q 'listed 1 packages' "$tmp/result"
+expect 0 "$bin" repo solve "$tmp/mirror" https-second --json
+grep -q '"count":2' "$tmp/result"
+mkdir "$tmp/mirror-fetch"
+expect 0 "$bin" repo fetch "$tmp/mirror" "$digest" --output "$tmp/mirror-fetch"
+cmp "$tmp/mirror-fetch/$digest.holy" "$tmp/serve/native.holy"
+expect 1 "$bin" repo mirror "$base" --sha256 "$index" --output "$tmp/mirror" --ca-file "$tmp/cert.pem"
+cmp "$tmp/serve/current" "$tmp/mirror/current"
+expect 6 "$bin" repo mirror "$base" --sha256 "$index" --output "$tmp/untrusted"
+test ! -e "$tmp/untrusted/current"
+expect 2 "$bin" repo mirror "https://user:pass@localhost:$port/" --sha256 "$index" --output "$tmp/credentials"
+test ! -e "$tmp/credentials"
+! grep -Eq 'user|pass' "$tmp/error"
+expect 2 "$bin" repo mirror "${base}?query/" --sha256 "$index" --output "$tmp/query"
+test ! -e "$tmp/query"
+bad_index=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+cp "$tmp/serve/index" "$tmp/serve/index.$bad_index"
+expect 4 "$bin" repo mirror "$base" --sha256 "$bad_index" --output "$tmp/wrong-index" --ca-file "$tmp/cert.pem"
+test ! -e "$tmp/wrong-index/current"
+mkdir "$tmp/serve/empty" "$tmp/serve/duplicate" "$tmp/serve/truncated"
+printf 'format holy-index-prototype-2\n' > "$tmp/serve/empty/index"
+cp "$tmp/serve/index" "$tmp/serve/duplicate/index"
+tail -n 1 "$tmp/serve/index" >> "$tmp/serve/duplicate/index"
+printf 'format holy-index-prototype-2\npackage "truncated\n' > "$tmp/serve/truncated/index"
+for variant in empty duplicate truncated; do
+    sum=$(sha256sum "$tmp/serve/$variant/index")
+    sum=${sum%% *}
+    cp "$tmp/serve/$variant/index" "$tmp/serve/$variant/index.$sum"
+    wanted=4
+    test "$variant" != empty || wanted=0
+    expect "$wanted" "$bin" repo mirror "$base$variant/" --sha256 "$sum" \
+        --output "$tmp/$variant" --ca-file "$tmp/cert.pem"
+    if test "$wanted" -ne 0; then test ! -e "$tmp/$variant/current"; fi
+done
+expect 0 "$bin" repo list "$tmp/empty"
+grep -qx 'listed 0 packages' "$tmp/result"
+mv "$tmp/serve/space?#.holy" "$tmp/second.holy"
+expect 6 "$bin" repo mirror "$base" --sha256 "$index" --output "$tmp/disappeared" --ca-file "$tmp/cert.pem"
+test ! -e "$tmp/disappeared/current"
+mv "$tmp/second.holy" "$tmp/serve/space?#.holy"
+cp "$tmp/serve/native.holy" "$tmp/original.holy"
+printf changed > "$tmp/serve/native.holy"
+expect 4 "$bin" repo mirror "$base" --sha256 "$index" --output "$tmp/changed-artifact" --ca-file "$tmp/cert.pem"
+test ! -e "$tmp/changed-artifact/current"
+cp "$tmp/original.holy" "$tmp/serve/native.holy"
+mkdir "$tmp/serve/claims" "$tmp/serve/oversized"
+cp "$tmp/serve/index" "$tmp/serve/claims/index"
+second=$(sha256sum "$tmp/serve/space?#.holy" | cut -d ' ' -f 1)
+printf 'claim %s package forged any any - fixture\n' "$second" >> "$tmp/serve/claims/index"
+cp "$tmp/serve/native.holy" "$tmp/serve/space?#.holy" "$tmp/serve/claims/"
+python3 - "$tmp/serve/oversized/index" <<'PY'
+import sys
+with open(sys.argv[1], 'wb') as stream:
+    stream.write(b'x' * (17 * 1024 * 1024))
+PY
+for variant in claims oversized; do
+    sum=$(sha256sum "$tmp/serve/$variant/index" | cut -d ' ' -f 1)
+    cp "$tmp/serve/$variant/index" "$tmp/serve/$variant/index.$sum"
+    wanted=4
+    test "$variant" != oversized || wanted=6
+    expect "$wanted" "$bin" repo mirror "$base$variant/" --sha256 "$sum" \
+        --output "$tmp/$variant" --ca-file "$tmp/cert.pem"
+    test ! -e "$tmp/$variant/current"
+    test ! -s "$tmp/result"
+done
+printf 'HTTPS catalog mirror fixtures passed\n'
 url="https://localhost:$port/native.holy"
 "$bin" fetch "$url" --sha256 "$digest" --output "$tmp/out" \
     --ca-file "$tmp/cert.pem" > "$tmp/result"

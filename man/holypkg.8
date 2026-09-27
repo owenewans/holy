@@ -2,6 +2,8 @@
 .SH NAME
 holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
+.B holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--ca-file FILE]
+.br
 .B holypkg source plan --config FILE --root DIRECTORY
 .br
 .B holypkg source apply PLAN --sha256 HASH --root DIRECTORY
@@ -130,6 +132,41 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 .SH DESCRIPTION
+.SS Pinned HTTPS catalog mirrors
+repo mirror downloads one explicit catalog generation into a new local
+directory. HTTPS_BASE must end with slash and contain no credentials, query
+or fragment. The command requests index.INDEX_SHA256, checks its digest,
+parses the entire supported holy-index-prototype-1/2 catalog, and downloads
+its packages by their recorded hashes. It URL-escapes each filename as one
+path component. The common HTTPS transport validates certificates, permits
+at most five redirects and refuses credential-bearing redirect targets.
+--ca-file selects a fixture or private repository CA.
+.PP
+The mirror verifies every archive, payload, known ABI, dependency record,
+identity, size and indexed capability claim before sealing its local current
+pointer. The final sealed index must still match INDEX_SHA256. A truncated,
+duplicate, forged or unavailable object cannot publish a usable catalog.
+Index transfers are limited to 16 MiB and package transfers to 1 GiB, each
+with the common five-minute deadline including redirects. This operation
+downloads the entire selected catalog, rather than resolving a single package.
+.PP
+The new directory contains the original filenames, index, index.DIGEST,
+current and mirror-origin. The latter records the base URL, pinned digest
+and digest-pinned-unsigned verification status. repo list/search/providers,
+repo solve and repo fetch operate on the resulting local snapshot without
+network access. A valid empty catalog is supported. Existing output
+directories are refused. Download or validation errors leave partial files
+without a current pointer; a new attempt uses a new output directory.
+An I/O failure during final pointer publication can require inspection of
+current, as with repo seal. Success prints only the sealed index digest.
+.PP
+The caller supplies the digest; this command does not verify publisher
+signatures, activate a configured source, assign source-id or install packages.
+Configured sync, trust decisions and signed generation discovery remain
+separate work. Successful return is 0; invalid arguments return 2, conflicting
+hashes or catalog contents 4, unavailable TLS/network inputs 6, and local
+filesystem errors 1. The directory remains private to its owner until that
+owner chooses to share it.
 .SS Installed documentation
 holypkg docs --root DIRECTORY --output FILE creates a new holy-docs-1 bundle
 from the selected root's installed manifests. It holds the database shared
@@ -739,7 +776,7 @@ output directory and synchronizes it
 before a no-overwrite hardlink creates the object. Repeating the command checks
 the existing object's digest. A mismatched object is left untouched. Fetch
 does not establish archive validity, provenance or a trusted root-owned cache.
-Remote source fetching is not implemented.
+Configured source fetching remains separate from the pinned HTTPS mirror command.
 .PP
 With --extract, DIRECTORY must not exist. The command copies the regular input
 into a private temporary file, verifies that copy and checks that every entry

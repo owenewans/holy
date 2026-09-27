@@ -374,12 +374,37 @@ static int parse_claim(char **v, size_t n, struct object *object)
     return add_claim(object, v[2], v[3], v[4], v[5], v[6], v[7]);
 }
 
+struct mirror {
+    const char *base, *ca_file, *downloads;
+    int status;
+};
+
+static int mirror_object(struct mirror *mirror, int dir, const struct object *object)
+{
+    char *url = holy_fetch_child_url(mirror->base, object->filename);
+    char name[70];
+    int downloads, ok;
+    if (!url) { mirror->status = 2; return 0; }
+    mirror->status = holy_fetch_https(url, object->identity.digest,
+                                      mirror->downloads, mirror->ca_file, 0);
+    free(url);
+    if (mirror->status) return 0;
+    downloads = open(mirror->downloads, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (downloads < 0) { mirror->status = 1; return 0; }
+    snprintf(name, sizeof name, "%s.holy", object->identity.digest);
+    ok = !linkat(downloads, name, dir, object->filename, 0) && !fsync(dir);
+    if (ok) ok = !unlinkat(downloads, name, 0) && !fsync(downloads);
+    close(downloads);
+    if (!ok) mirror->status = 1;
+    return ok;
+}
+
 static int list(const char *directory, const char *query,
                  const char *forced_index, int lock, int emit,
                  const char *fetch_digest, const char *output,
                  const char *provider_kind, const char *provider_name,
                  const char *solve_name, const char *solve_choice,
-                 int solve_json, int *solve_rc)
+                  int solve_json, int *solve_rc, struct mirror *mirror)
 {
     struct object *objects = NULL;
     char **candidate_snapshots = NULL;
@@ -457,6 +482,10 @@ static int list(const char *directory, const char *query,
                 goto done;
     }
     if (ferror(index) || !number) goto done;
+    if (mirror) {
+        for (i = 0; i < count; ++i)
+            if (!mirror_object(mirror, dir, &objects[i])) goto done;
+    }
     if (solve_name) {
         candidate_snapshots = calloc(count ? count : 1, sizeof *candidate_snapshots);
         if (!candidate_snapshots) goto done;
@@ -599,7 +628,7 @@ done:
 
 int holy_repo_list(const char *directory)
 {
-    return list(directory, NULL, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL);
+    return list(directory, NULL, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL);
 }
 
 int holy_repo_search(const char *directory, const char *query)
@@ -608,7 +637,7 @@ int holy_repo_search(const char *directory, const char *query)
         fprintf(stderr, "holypkg: package name required\n");
         return 0;
     }
-    return list(directory, query, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL);
+    return list(directory, query, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL);
 }
 
 int holy_repo_providers(const char *directory, const char *kind,
@@ -620,7 +649,7 @@ int holy_repo_providers(const char *directory, const char *kind,
         return 0;
     }
     return list(directory, NULL, NULL, 1, json ? 2 : 1,
-                NULL, NULL, kind, name, NULL, NULL, 0, NULL);
+                NULL, NULL, kind, name, NULL, NULL, 0, NULL, NULL);
 }
 
 int holy_repo_solve(const char *directory, const char *name,
@@ -633,7 +662,7 @@ int holy_repo_solve(const char *directory, const char *name,
         return 2;
     }
     if (!list(directory, NULL, NULL, 1, 0, NULL, NULL,
-              NULL, NULL, name, choice, json, &result)) {
+              NULL, NULL, name, choice, json, &result, NULL)) {
         if (json) puts("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"invalid-catalog\"}");
         return 6;
     }
@@ -647,13 +676,13 @@ int holy_repo_fetch(const char *directory, const char *digest, const char *outpu
     for (i = 0; i < 64; ++i)
         if (!((digest[i] >= '0' && digest[i] <= '9') ||
               (digest[i] >= 'a' && digest[i] <= 'f'))) goto invalid;
-    return list(directory, NULL, NULL, 1, 0, digest, output, NULL, NULL, NULL, NULL, 0, NULL);
+    return list(directory, NULL, NULL, 1, 0, digest, output, NULL, NULL, NULL, NULL, 0, NULL, NULL);
 invalid:
     fprintf(stderr, "holypkg: expected a lowercase SHA-256 digest\n");
     return 0;
 }
 
-int holy_repo_seal(const char *directory)
+static int seal(const char *directory, const char *expected)
 {
     char temporary[43] = {0}, pointer_temp[43] = {0};
     char index_name[71], digest[65], previous[65], line[73];
@@ -695,11 +724,12 @@ int holy_repo_seal(const char *directory)
     output = -1;
     close(input);
     input = -1;
-    if (!list(directory, NULL, temporary, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL)) goto done;
+    if (!list(directory, NULL, temporary, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL)) goto done;
     input = openat(dir, temporary, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (input < 0) goto done;
     snapshot = holy_stage_fd(input, "holy-seal");
-    if (!snapshot || !digest_file(snapshot, digest)) goto done;
+    if (!snapshot || !digest_file(snapshot, digest) ||
+        (expected && strcmp(digest, expected))) goto done;
     snprintf(index_name, sizeof index_name, "index.%s", digest);
     if (linkat(dir, temporary, dir, index_name, 0)) {
         if (errno != EEXIST) goto done;
@@ -745,4 +775,59 @@ done:
         close(dir);
     }
     return ok;
+}
+
+int holy_repo_seal(const char *directory)
+{
+    return seal(directory, NULL);
+}
+
+int holy_repo_mirror(const char *base, const char *digest, const char *output,
+                     const char *ca_file)
+{
+    struct mirror mirror = { base, ca_file, NULL, 0 };
+    char index_name[71], *url = NULL, *downloads = NULL;
+    size_t i, length = strlen(output);
+    int dir = -1, provenance = -1, result = 1;
+    FILE *record = NULL;
+    if (strlen(digest) != 64) return 2;
+    for (i = 0; i < 64; ++i)
+        if (!((digest[i] >= '0' && digest[i] <= '9') ||
+              (digest[i] >= 'a' && digest[i] <= 'f'))) return 2;
+    snprintf(index_name, sizeof index_name, "index.%s", digest);
+    url = holy_fetch_child_url(base, index_name);
+    if (!url) return 2;
+    if (length > (size_t)-1 - 12 || !(downloads = malloc(length + 12))) goto done;
+    snprintf(downloads, length + 12, "%s/.downloads", output);
+    mirror.downloads = downloads;
+    if (mkdir(output, 0700)) goto done;
+    dir = open(output, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir < 0 || flock(dir, LOCK_EX) || mkdirat(dir, ".downloads", 0700)) goto done;
+    result = holy_fetch_https_data(url, digest, output, ca_file);
+    if (result) goto done;
+    if (!list(output, NULL, digest, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, &mirror)) {
+        result = mirror.status ? mirror.status : 4;
+        goto done;
+    }
+    result = 1;
+    if (linkat(dir, digest, dir, "index", 0)) goto done;
+    provenance = openat(dir, "mirror-origin", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (provenance < 0 || !(record = fdopen(provenance, "w"))) goto done;
+    fputs("format holy-mirror-1\nurl ", record);
+    if (!quote(record, base) || fprintf(record, "\nindex-sha256 %s\nverification digest-pinned-unsigned\n", digest) < 0 ||
+        fflush(record) || fsync(provenance)) goto done;
+    if (fclose(record)) { record = NULL; provenance = -1; goto done; }
+    record = NULL; provenance = -1;
+    if (unlinkat(dir, digest, 0) || unlinkat(dir, ".downloads", AT_REMOVEDIR) || fsync(dir)) goto done;
+    /* seal takes its own exclusive lock after the private download phase. */
+    close(dir); dir = -1;
+    result = seal(output, digest) ? 0 : 4;
+done:
+    if (result) fprintf(stderr, "holypkg: HTTPS catalog mirror incomplete (status %d)\n", result);
+    if (record) fclose(record);
+    else if (provenance >= 0) close(provenance);
+    if (dir >= 0) close(dir);
+    free(downloads);
+    free(url);
+    return result;
 }
