@@ -139,7 +139,7 @@ src/%.o: src/%.c $(wildcard src/*.h) $(wildcard backends/*.h) .build-config
 check-init: holy-init
 	@./holy-init >/dev/null 2>&1; test $$? -eq 2
 
-check: check-pacman holypkg tests/resolution check-init check-solver check-install-payload check-install check-https
+check: check-pacman check-deb holypkg tests/resolution check-init check-solver check-install-payload check-install check-https
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg
@@ -169,6 +169,10 @@ check-pacman: holypkg
 	./tests/pacman-helper
 	python3 tests/import.py ./holypkg
 	python3 tests/versions.py ./holypkg
+
+.PHONY: check-deb
+check-deb: holypkg
+	python3 tests/import-deb.py ./holypkg
 
 check-fixtures: check
 

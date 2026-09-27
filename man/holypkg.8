@@ -2,7 +2,7 @@
 .SH NAME
 holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
-.B holypkg import INPUT --source NAME --format pacman --output NEW_DIRECTORY
+.B holypkg import INPUT --source NAME --format pacman|deb --output NEW_DIRECTORY
 .br
 .B holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--ca-file FILE]
 .br
@@ -142,13 +142,26 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 .SH DESCRIPTION
-.SS Local pacman binary import
-import snapshots a local pacman tar archive, retains its exact bytes as
+.SS Local pacman and Debian binary import
+import snapshots a local pacman tar archive or Debian .deb, retains its exact bytes as
 NEW_DIRECTORY/original and creates verified LZ4-frame .holy outputs. The output
 directory must not exist. --format selects the adapter explicitly; --source
 records provenance only and grants no registered source identity or trust.
 The command does not install files, execute package code or verify a publisher
 signature. Each output records verification=unverified.
+.PP
+--format deb reads the Debian ar members debian-binary, control.tar and
+data.tar in order, including supported compressed variants. It retains control
+files beneath HOLY/foreign/deb and each control field with its source line in
+HOLY/origin. Debian maintainer scripts remain review-required and never run
+during import. Conffiles require config-manifest support and return status 3.
+Unknown dependency and relationship fields become attributed foreign
+requirements that the current solver refuses. The current converter supports
+Architecture all, amd64 and i386; it checks observed ELF machines against that
+claim and returns status 3 for unknown or mismatched payloads. It does not
+sync APT indexes, verify Debian signatures or perform Debian version ordering.
+make check-deb exercises valid and malformed ar members, codecs, dependencies,
+inactive hooks and native install/check/remove in a temporary root.
 .PP
 The importer reads .PKGINFO identities, full epoch/version/release strings,
 package relations and original field values. It preserves .PKGINFO, .BUILDINFO,
@@ -186,7 +199,9 @@ not invoke an external decoder. The static dependency profile builds all five co
 libarchive configuration missing any of them. Import uses anonymous spool files instead of extracting
 foreign paths on the host. It rejects duplicate paths, unsafe links, non-directory
 ancestors, unsupported special nodes, ACLs and xattrs. Limits are 1 GiB compressed
-input, 1 GiB per entry, 4 GiB payload spool, 100000 entries and 1 MiB .PKGINFO.
+input, 1 GiB per entry, 4 GiB payload spool, 100000 entries and 1 MiB .PKGINFO or
+Debian control. Debian control.tar also has a 16 MiB outer member limit; the
+data.tar.lzma legacy variant uses libarchive's LZMA filter when available.
 The native writer verifies outputs through /proc/self/fd before publication.
 .PP
 make check-pacman runs parser and archive fixtures, including a retained

@@ -60,6 +60,13 @@
   Repository sync, publisher verification, config files, recipe import and full
   foreign relation/hook/transform installation remain open.
 
+- [x] Import local Debian .deb binary archives into native outputs with original
+  ar bytes, control fields and scripts retained. Check ar order, payload paths,
+  codecs, architecture claims and install/check/remove for a data package.
+  Unsupported relationships stay foreign requirements; conffiles require a
+  decision. APT indexes, signatures, Debian version ordering and full hook
+  integration remain open.
+
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.
 - [x] Plan and atomically apply a source identity registry under the database
   writer lock. Preserve IDs across alias changes and retain inactive origin
@@ -199,8 +206,8 @@
   unrelated backends, wrong digest, missing CA, changed/malformed pointers and
   credential-bearing redirects. Publisher signatures, persistent source cache
   and multi-source search remain open.
-- [ ] Implement foreign binary adapters and file indexes with real fixtures:
-  pacman, APT/DEB, RPM, APK, XBPS, Slackware and eopkg.
+- [ ] Implement remaining foreign binary adapters and file indexes with real
+  fixtures: APT indexes, RPM, APK, XBPS, Slackware and eopkg.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
   Gentoo and Pacstall recipe conversion with helper environments and split outputs.
 - [ ] Implement Nix closure, Flatpak, Snap, AppImage, Scoop and WinGet imports

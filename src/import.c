@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -40,6 +41,15 @@ struct foreign_input {
     char *pkginfo;
     size_t pkginfo_size;
     int unknown;
+};
+
+enum foreign_archive_kind { FOREIGN_PACMAN, FOREIGN_DEB_CONTROL, FOREIGN_DEB_DATA };
+
+struct deb_field { char *key, *value; size_t line; };
+struct deb_metadata {
+    char *name, *version, *arch;
+    struct deb_field *fields;
+    size_t count;
 };
 
 static void token(FILE *out, const char *value)
@@ -89,7 +99,7 @@ static char *normalized(const char *input, int directory)
     return out;
 }
 
-static struct archive *foreign_reader(const char *snapshot, int *result)
+static struct archive *foreign_reader(const char *snapshot, int *result, int lzma)
 {
     unsigned char header[8];
     int fd = open(snapshot, O_RDONLY | O_CLOEXEC), support;
@@ -98,7 +108,8 @@ static struct archive *foreign_reader(const char *snapshot, int *result)
     if (fd < 0) return NULL;
     got = read(fd, header, sizeof header); close(fd);
     if (got < 0 || !(a = archive_read_new())) return NULL;
-    if (got >= 4 && !memcmp(header, "\x28\xb5\x2f\xfd", 4)) support = archive_read_support_filter_zstd(a);
+    if (lzma) support = archive_read_support_filter_lzma(a);
+    else if (got >= 4 && !memcmp(header, "\x28\xb5\x2f\xfd", 4)) support = archive_read_support_filter_zstd(a);
     else if (got >= 6 && !memcmp(header, "\xfd""7zXZ\0", 6)) support = archive_read_support_filter_xz(a);
     else if (got >= 3 && !memcmp(header, "BZh", 3)) support = archive_read_support_filter_bzip2(a);
     else if (got >= 2 && header[0] == 0x1f && header[1] == 0x8b) support = archive_read_support_filter_gzip(a);
@@ -135,12 +146,14 @@ static int metadata_path(const char *path)
     return 0;
 }
 
-static int collect_archive(const char *snapshot, struct foreign_input *input)
+static int collect_archive(const char *snapshot, struct foreign_input *input,
+                           enum foreign_archive_kind kind, int lzma)
 {
     struct archive *a = NULL;
     struct archive_entry *entry;
     int status, result = 1;
-    if (!(input->spool = tmpfile()) || !(a = foreign_reader(snapshot, &result))) goto done;
+    if (!input->spool && !(input->spool = tmpfile())) goto done;
+    if (!(a = foreign_reader(snapshot, &result, lzma))) goto done;
     while ((status = archive_read_next_header(a, &entry)) == ARCHIVE_OK) {
         struct foreign_entry *e;
         const char *name = archive_entry_pathname(entry), *hardlink = archive_entry_hardlink(entry);
@@ -158,6 +171,7 @@ static int collect_archive(const char *snapshot, struct foreign_input *input)
             (type != AE_IFREG && type != AE_IFDIR && type != AE_IFLNK && !(hardlink && type == 0))) {
             result = 6; goto done;
         }
+        if (kind == FOREIGN_DEB_CONTROL && (type != AE_IFREG || hardlink)) goto done;
         if ((type == AE_IFDIR || type == AE_IFLNK || hardlink) && size) goto done;
         if (input->count == input->capacity) {
             size_t capacity = input->capacity ? input->capacity * 2 : 64;
@@ -169,9 +183,17 @@ static int collect_archive(const char *snapshot, struct foreign_input *input)
         memset(e, 0, sizeof *e); e->group = -1; e->hardlink_group = -1;
         e->original = normalized(name, type == AE_IFDIR);
         if (!e->original) goto done;
-        e->metadata = metadata_path(e->original);
+        if (kind == FOREIGN_DEB_CONTROL && strchr(e->original, '/')) goto done;
+        e->metadata = kind == FOREIGN_DEB_CONTROL ||
+                      (kind == FOREIGN_PACMAN && metadata_path(e->original));
         if (e->metadata && (type != AE_IFREG || hardlink)) goto done;
-        e->stream.path = e->metadata ? joined("HOLY/foreign/pacman", e->original + 1) : joined("DATA", e->original);
+        if (kind == FOREIGN_DEB_CONTROL) {
+            char *original = e->original;
+            e->stream.path = joined("HOLY/foreign/deb", original);
+            e->original = joined("@control", original);
+            free(original);
+        } else e->stream.path = e->metadata ?
+            joined("HOLY/foreign/pacman", e->original + 1) : joined("DATA", e->original);
         e->stream.mode = archive_entry_perm(entry);
         e->stream.uid = archive_entry_uid(entry); e->stream.gid = archive_entry_gid(entry);
         e->stream.directory = type == AE_IFDIR;
@@ -229,7 +251,8 @@ static int collect_archive(const char *snapshot, struct foreign_input *input)
             holy_elf_free(&info); fclose(elf);
             if (e->group < 0) input->unknown = 1;
         }
-        if (!strcmp(e->original, ".PKGINFO")) {
+        if ((kind == FOREIGN_PACMAN && !strcmp(e->original, ".PKGINFO")) ||
+            (kind == FOREIGN_DEB_CONTROL && !strcmp(e->original, "@control/control"))) {
             if (input->pkginfo || size > 1024 * 1024 || fflush(input->spool)) goto done;
             input->pkginfo = malloc((size_t)size + 1);
             if (!input->pkginfo) { result = 1; goto done; }
@@ -237,10 +260,75 @@ static int collect_archive(const char *snapshot, struct foreign_input *input)
             input->pkginfo[size] = 0; input->pkginfo_size = (size_t)size;
         }
     }
-    if (status != ARCHIVE_EOF || !input->pkginfo || fflush(input->spool) || fsync(fileno(input->spool))) goto done;
+    if (status != ARCHIVE_EOF || (kind != FOREIGN_DEB_DATA && !input->pkginfo) ||
+        fflush(input->spool) || fsync(fileno(input->spool))) goto done;
     result = 0;
 done:
     if (a) archive_read_free(a);
+    return result;
+}
+
+static int collect_deb(const char *snapshot, struct foreign_input *input)
+{
+    struct archive *ar = archive_read_new();
+    struct archive_entry *entry;
+    char magic[8];
+    int fd = open(snapshot, O_RDONLY | O_CLOEXEC);
+    int stage = 0, result = 2, status;
+    if (!ar) { if (fd >= 0) close(fd); return 1; }
+    if (fd < 0 || read(fd, magic, sizeof magic) != sizeof magic || memcmp(magic, "!<arch>\n", sizeof magic)) {
+        if (fd >= 0) close(fd);
+        goto done;
+    }
+    close(fd);
+    if (archive_read_support_filter_none(ar) != ARCHIVE_OK ||
+        archive_read_support_format_ar(ar) != ARCHIVE_OK ||
+        archive_read_open_filename(ar, snapshot, 65536) != ARCHIVE_OK) goto done;
+    while ((status = archive_read_next_header(ar, &entry)) == ARCHIVE_OK) {
+        const char *name = archive_entry_pathname(entry);
+        long long size = archive_entry_size(entry), total = 0;
+        FILE *part = NULL;
+        char descriptor[64], buffer[65536];
+        la_ssize_t got;
+        if (!name || size < 0 || size > 1024LL * 1024 * 1024) goto done;
+        if (name[0] == '_' && stage && stage < 3) {
+            if (archive_read_data_skip(ar) != ARCHIVE_OK) goto done;
+            continue;
+        }
+        if (stage == 0) {
+            char version[5];
+            if (strcmp(name, "debian-binary") || size != 4 ||
+                archive_read_data(ar, version, 4) != 4 || memcmp(version, "2.0\n", 4)) goto done;
+            stage = 1;
+            continue;
+        }
+        if (stage == 1) {
+            if (strncmp(name, "control.tar", 11) ||
+                (strcmp(name + 11, "") && strcmp(name + 11, ".gz") &&
+                 strcmp(name + 11, ".xz") && strcmp(name + 11, ".zst")) || size > 16 * 1024 * 1024) goto done;
+        } else if (stage == 2) {
+            if (strncmp(name, "data.tar", 8) ||
+                (strcmp(name + 8, "") && strcmp(name + 8, ".gz") &&
+                 strcmp(name + 8, ".xz") && strcmp(name + 8, ".zst") &&
+                 strcmp(name + 8, ".bz2") && strcmp(name + 8, ".lzma"))) goto done;
+        } else goto done;
+        part = tmpfile();
+        if (!part) { result = 1; goto done; }
+        while ((got = archive_read_data(ar, buffer, sizeof buffer)) > 0) {
+            if (got > size - total || fwrite(buffer, 1, (size_t)got, part) != (size_t)got) break;
+            total += got;
+        }
+        if (got || total != size || fflush(part) || fsync(fileno(part))) { fclose(part); goto done; }
+        snprintf(descriptor, sizeof descriptor, "/proc/self/fd/%d", fileno(part));
+        result = collect_archive(descriptor, input, stage == 1 ? FOREIGN_DEB_CONTROL : FOREIGN_DEB_DATA,
+                                 stage == 2 && !strcmp(name + 8, ".lzma"));
+        fclose(part);
+        if (result) goto done;
+        ++stage;
+    }
+    result = status == ARCHIVE_EOF && stage == 3 ? 0 : 2;
+done:
+    archive_read_free(ar);
     return result;
 }
 
@@ -254,6 +342,80 @@ static void free_input(struct foreign_input *input)
     }
     free(input->entries); free(input->pkginfo);
     if (input->spool) fclose(input->spool);
+}
+
+static void free_deb(struct deb_metadata *meta)
+{
+    size_t i;
+    for (i = 0; i < meta->count; ++i) { free(meta->fields[i].key); free(meta->fields[i].value); }
+    free(meta->fields);
+}
+
+static int parse_deb(const char *control, size_t length, struct deb_metadata *meta)
+{
+    size_t offset = 0, line = 0;
+    int blank = 0;
+    if (memchr(control, 0, length)) return 0;
+    while (offset < length) {
+        const char *start = control + offset, *end = memchr(start, '\n', length - offset), *colon;
+        size_t size = end ? (size_t)(end - start) : length - offset, i;
+        struct deb_field *field;
+        ++line;
+        offset += size + (end != NULL);
+        if (size && start[size-1] == '\r') --size;
+        if (!size) { if (meta->count) blank = 1; continue; }
+        if (blank) return 0;
+        if (*start == ' ' || *start == '\t') {
+            char *value;
+            size_t old;
+            if (!meta->count) return 0;
+            field = &meta->fields[meta->count - 1]; old = strlen(field->value);
+            if (old > SIZE_MAX - size - 2) return 0;
+            value = realloc(field->value, old + size + 2);
+            if (!value) return 0;
+            field->value = value; value[old] = '\n';
+            memcpy(value + old + 1, start, size); value[old + size + 1] = 0;
+            continue;
+        }
+        colon = memchr(start, ':', size);
+        if (!colon || colon == start || meta->count >= 4096) return 0;
+        for (i = 0; i < (size_t)(colon - start); ++i)
+            if (!((start[i] >= 'A' && start[i] <= 'Z') ||
+                  (start[i] >= 'a' && start[i] <= 'z') || start[i] == '-')) return 0;
+        for (i = 0; i < meta->count; ++i)
+            if (strlen(meta->fields[i].key) == (size_t)(colon - start) &&
+                !strncasecmp(meta->fields[i].key, start, (size_t)(colon - start))) return 0;
+        i = (size_t)(colon - start);
+        while (colon + 1 < start + size && (colon[1] == ' ' || colon[1] == '\t')) ++colon;
+        {
+            struct deb_field *grown = realloc(meta->fields, (meta->count + 1) * sizeof *grown);
+            if (!grown) return 0;
+            meta->fields = grown;
+        }
+        field = &meta->fields[meta->count++];
+        field->key = strndup(start, i);
+        field->value = strndup(colon + 1, (size_t)(start + size - colon - 1));
+        field->line = line;
+        if (!field->key || !field->value) return 0;
+    }
+    for (offset = 0; offset < meta->count; ++offset) {
+        struct deb_field *field = &meta->fields[offset];
+        if (!strcasecmp(field->key, "Package")) meta->name = field->value;
+        if (!strcasecmp(field->key, "Version")) meta->version = field->value;
+        if (!strcasecmp(field->key, "Architecture")) meta->arch = field->value;
+    }
+    if (!meta->name || !*meta->name || !meta->version || !*meta->version || !meta->arch || !*meta->arch) return 0;
+    for (offset = 0; meta->name[offset]; ++offset)
+        if (!((meta->name[offset] >= 'a' && meta->name[offset] <= 'z') ||
+              (meta->name[offset] >= '0' && meta->name[offset] <= '9') ||
+              (offset && (meta->name[offset] == '+' || meta->name[offset] == '-' ||
+                          meta->name[offset] == '.')))) return 0;
+    for (offset = 0; meta->version[offset]; ++offset)
+        if ((unsigned char)meta->version[offset] <= 32 || (unsigned char)meta->version[offset] >= 127) return 0;
+    for (offset = 0; meta->arch[offset]; ++offset)
+        if (!((meta->arch[offset] >= 'a' && meta->arch[offset] <= 'z') ||
+              (meta->arch[offset] >= '0' && meta->arch[offset] <= '9'))) return 0;
+    return 1;
 }
 
 static int input_hash(const char *path, char hex[65])
@@ -395,6 +557,7 @@ static void requirement(FILE *out, const char *id, const char *consumer, const c
 }
 
 static int write_output(struct foreign_input *input, const struct holy_pacman_metadata *meta,
+                         const struct deb_metadata *deb,
                          const char *source, const char *hash, const char *output, int output_fd, FILE *receipt, int group)
 {
     static const char *const names[] = {
@@ -406,26 +569,30 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
     struct holy_stream_entry *entries = NULL;
     int ok = 0, aggregate = input->group_count == 1 || group == (int)input->group_count - 1;
     const char *arch = input->groups[group].arch, *libc = input->groups[group].libc;
+    const char *family = deb ? "deb" : "pacman";
+    const char *name = deb ? deb->name : meta->name;
+    const char *version = deb ? deb->version : meta->version;
+    const char *source_arch = deb ? deb->arch : meta->arch;
     for (i = 0; i < 7; ++i) if (!(files[i] = open_memstream(&text[i], &sizes[i]))) goto done;
-    fputs("format holy-package-1\nname ", files[0]); token(files[0], meta->name);
-    fputs("\nversion ", files[0]); token(files[0], meta->version);
-    fprintf(files[0], "\nrelease 1\nos linux\narch %s\nlibc %s\nx-version-family pacman\nx-source-arch ", arch, libc);
-    token(files[0], meta->arch); fputc('\n', files[0]);
-    fprintf(files[5], "format holy-import-origin-1\nfamily pacman\nsource-name ");
+    fputs("format holy-package-1\nname ", files[0]); token(files[0], name);
+    fputs("\nversion ", files[0]); token(files[0], version);
+    fprintf(files[0], "\nrelease 1\nos linux\narch %s\nlibc %s\nx-version-family %s\nx-source-arch ", arch, libc, family);
+    token(files[0], source_arch); fputc('\n', files[0]);
+    fprintf(files[5], "format holy-import-origin-1\nfamily %s\nsource-name ", family);
     token(files[5], source);
-    fprintf(files[5], "\noriginal-sha256 %s\nverification unverified\nconverter holy-pacman-1\noriginal-version ", hash);
-    token(files[5], meta->version); fputc('\n', files[5]);
+    fprintf(files[5], "\noriginal-sha256 %s\nverification unverified\nconverter holy-%s-1\noriginal-version ", hash, family);
+    token(files[5], version); fputc('\n', files[5]);
     if (input->group_count > 1) {
-        fprintf(files[6], "split pacman %s %s %s\n", hash, arch, libc);
+        fprintf(files[6], "split %s %s %s %s\n", family, hash, arch, libc);
         for (i = 0; i < input->group_count; ++i) {
             char id[64];
             if ((aggregate && (int)i == group) || (!aggregate && i != input->group_count - 1)) continue;
             snprintf(id, sizeof id, "split-%zu", i);
-            requirement(files[2], id, meta->name, "package", meta->name, input->groups[i].arch,
-                        input->groups[i].libc, "any", "-", meta->name, "import-output");
+            requirement(files[2], id, name, "package", name, input->groups[i].arch,
+                        input->groups[i].libc, "any", "-", name, "import-output");
         }
     }
-    for (i = 0; i < meta->count; ++i) {
+    for (i = 0; !deb && i < meta->count; ++i) {
         const struct holy_pacman_field *field = &meta->fields[i];
         char id[64];
         fputs("pkginfo ", files[5]); token(files[5], field->key); fputc(' ', files[5]);
@@ -450,6 +617,20 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
                         "any", "any", "any", "-", field->value, field->key);
         }
     }
+    for (i = 0; deb && i < deb->count; ++i) {
+        const struct deb_field *field = &deb->fields[i];
+        char id[64];
+        fputs("control ", files[5]); token(files[5], field->key); fputc(' ', files[5]);
+        token(files[5], field->value); fprintf(files[5], " %zu\n", field->line);
+        if (!aggregate || !strcasecmp(field->key, "Package") || !strcasecmp(field->key, "Version") ||
+            !strcasecmp(field->key, "Architecture") || !strcasecmp(field->key, "Description") ||
+            !strcasecmp(field->key, "Maintainer") || !strcasecmp(field->key, "Homepage") ||
+            !strcasecmp(field->key, "Section") || !strcasecmp(field->key, "Priority") ||
+            !strcasecmp(field->key, "Installed-Size")) continue;
+        snprintf(id, sizeof id, "deb-%zu", field->line);
+        requirement(files[2], id, name, "foreign", field->value, "any", "any", "any", "-",
+                    field->value, field->key);
+    }
     entries = calloc(input->count + 11, sizeof *entries);
     if (!entries) goto done;
     for (i = 0; i < input->count; ++i) {
@@ -461,6 +642,19 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
             hex_hash(files[4], e->hash);
             fputs(" review-required\n", files[4]);
         }
+        if (deb && aggregate && (!strcmp(e->original, "@control/preinst") ||
+            !strcmp(e->original, "@control/postinst") || !strcmp(e->original, "@control/prerm") ||
+            !strcmp(e->original, "@control/postrm"))) {
+            fputs("foreign-script deb unknown ", files[4]); token(files[4], e->stream.path);
+            fputs(" sha256 ", files[4]); hex_hash(files[4], e->hash);
+            fputs(" review-required\n", files[4]);
+        } else if (deb && aggregate && e->metadata &&
+                   strcmp(e->original, "@control/control") && strcmp(e->original, "@control/md5sums")) {
+            char id[64];
+            snprintf(id, sizeof id, "deb-control-%zu", i);
+            requirement(files[2], id, name, "foreign", e->original, "any", "any", "any", "-",
+                        e->original, "deb-control-file");
+        }
     }
     entries[count++] = (struct holy_stream_entry){"HOLY", NULL, NULL, "root", "root", 0, 0, 0, 0, 0755, 1};
     for (i = 0; i < 7; ++i) {
@@ -470,17 +664,17 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
         if (failed || !append_text(input, &entries[count++], names[i], text[i], sizes[i])) goto done;
     }
     entries[count++] = (struct holy_stream_entry){"HOLY/foreign", NULL, NULL, "root", "root", 0, 0, 0, 0, 0755, 1};
-    entries[count++] = (struct holy_stream_entry){"HOLY/foreign/pacman", NULL, NULL, "root", "root", 0, 0, 0, 0, 0755, 1};
+    entries[count++] = (struct holy_stream_entry){deb ? "HOLY/foreign/deb" : "HOLY/foreign/pacman", NULL, NULL, "root", "root", 0, 0, 0, 0, 0755, 1};
     for (i = 0; i < input->count; ++i)
         if (input->entries[i].metadata) entries[count++] = input->entries[i].stream;
     entries[count++] = (struct holy_stream_entry){"DATA", NULL, NULL, "root", "root", 0, 0, 0, 0, 0755, 1};
     for (i = 0; i < input->count; ++i)
         if (!input->entries[i].metadata && belongs(input, i, group)) entries[count++] = input->entries[i].stream;
     if (fflush(input->spool) || fsync(fileno(input->spool))) goto done;
-    length = strlen(meta->name) + strlen(arch) + strlen(libc) + 10;
+    length = strlen(name) + strlen(arch) + strlen(libc) + 10;
     filename = malloc(length);
     if (!filename) goto done;
-    snprintf(filename, length, "%s--%s--%s.holy", meta->name, arch, libc);
+    snprintf(filename, length, "%s--%s--%s.holy", name, arch, libc);
     path = joined(output, filename);
     if (!path || !holy_pack_stream(fileno(input->spool), entries, count, output_fd, filename)) goto done;
     {
@@ -549,7 +743,7 @@ int holy_import_pacman(const char *input_path, const char *source, const char *o
     output_fd = open(output, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (output_fd < 0 || fstat(output_fd, &st) || st.st_uid != geteuid() ||
         (st.st_mode & 0777) != 0700 || !preserve_original(snapshot, output_fd)) goto done;
-    result = collect_archive(snapshot, &input);
+    result = collect_archive(snapshot, &input, FOREIGN_PACMAN, 0);
     if (result) goto done;
     if (!validate_paths(&input) || !holy_pacman_parse(input.pkginfo, input.pkginfo_size, &metadata, &error)) {
         if (error.message) fprintf(stderr, "holypkg: PKGINFO:%zu: %s\n", error.line, error.message);
@@ -579,7 +773,7 @@ int holy_import_pacman(const char *input_path, const char *source, const char *o
     fprintf(receipt, "format holy-import-record-1\nfamily pacman\nconverter holy-pacman-1\noriginal-sha256 %s\nsource-name ", hash);
     token(receipt, source); fputs("\nverification unverified\n", receipt);
     for (i = 0; i < input.group_count; ++i)
-        if (!write_output(&input, &metadata, source, hash, output, output_fd, receipt, (int)i)) goto done;
+        if (!write_output(&input, &metadata, NULL, source, hash, output, output_fd, receipt, (int)i)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
     if (fclose(receipt)) { receipt = NULL; goto done; }
@@ -593,5 +787,79 @@ done:
     if (input_fd >= 0) close(input_fd);
     if (snapshot) { unlink(snapshot); free(snapshot); }
     holy_pacman_free(&metadata); free_input(&input);
+    return result;
+}
+
+int holy_import_deb(const char *input_path, const char *source, const char *output)
+{
+    struct foreign_input input = {0};
+    struct deb_metadata metadata = {0};
+    struct stat st;
+    char *snapshot = NULL, hash[65], temporary[43] = {0};
+    FILE *receipt = NULL;
+    int input_fd = -1, output_fd = -1, result = 1, common;
+    size_t i;
+    if (!*source || !strcmp(source, "local")) return 2;
+    for (i = 0; source[i]; ++i)
+        if ((unsigned char)source[i] <= 32 || source[i] == ':' || source[i] == '/' || source[i] == '@') return 2;
+    input_fd = open(input_path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (input_fd < 0 || fstat(input_fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+        st.st_size > 1024LL * 1024 * 1024) { result = 6; goto done; }
+    snapshot = holy_stage_fd(input_fd, "holy-import");
+    if (!snapshot || !input_hash(snapshot, hash) || mkdir(output, 0700)) goto done;
+    output_fd = open(output, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (output_fd < 0 || fstat(output_fd, &st) || st.st_uid != geteuid() ||
+        (st.st_mode & 0777) != 0700 || !preserve_original(snapshot, output_fd)) goto done;
+    result = collect_deb(snapshot, &input);
+    if (result) goto done;
+    if (!validate_paths(&input) || !parse_deb(input.pkginfo, input.pkginfo_size, &metadata)) {
+        fputs("holypkg: malformed deb control or payload paths\n", stderr);
+        result = 2; goto done;
+    }
+    result = 3;
+    if (input.unknown) { fputs("holypkg: unknown payload ABI or executable format requires classification\n", stderr); goto done; }
+    if (strcmp(metadata.arch, "all") && strcmp(metadata.arch, "amd64") && strcmp(metadata.arch, "i386")) {
+        fputs("holypkg: unsupported Debian architecture requires classification\n", stderr); goto done;
+    }
+    for (i = 0; i < input.count; ++i) if (!strcmp(input.entries[i].original, "@control/conffiles")) {
+        fputs("holypkg: Debian conffiles require config-manifest support\n", stderr); goto done;
+    }
+    for (i = 0; i < input.group_count; ++i) {
+        const char *arch = input.groups[i].arch;
+        if ((!strcmp(metadata.arch, "all") && strcmp(arch, "noarch")) ||
+            (!strcmp(metadata.arch, "amd64") && strcmp(arch, "x86_64")) ||
+            (!strcmp(metadata.arch, "i386") && strcmp(arch, "x86"))) {
+            fputs("holypkg: Debian architecture differs from payload ELF\n", stderr); goto done;
+        }
+    }
+    if (!input.group_count) common = add_group(&input, "noarch", "nolibc");
+    else if (input.group_count == 1) common = 0;
+    else common = add_group(&input, "noarch", "nolibc");
+    if (common < 0) { result = 6; goto done; }
+    for (i = 0; i < input.count; ++i) if (input.entries[i].group < 0) input.entries[i].group = common;
+    result = 1;
+    {
+        int fd = holy_temporary_at(output_fd, temporary);
+        if (fd < 0) goto done;
+        receipt = fdopen(fd, "w");
+        if (!receipt) { close(fd); goto done; }
+    }
+    fprintf(receipt, "format holy-import-record-1\nfamily deb\nconverter holy-deb-1\noriginal-sha256 %s\nsource-name ", hash);
+    token(receipt, source); fputs("\nverification unverified\n", receipt);
+    for (i = 0; i < input.group_count; ++i)
+        if (!write_output(&input, NULL, &metadata, source, hash, output, output_fd, receipt, (int)i)) goto done;
+    fputs("state complete\n", receipt);
+    if (fflush(receipt) || fsync(fileno(receipt))) goto done;
+    if (fclose(receipt)) { receipt = NULL; goto done; }
+    receipt = NULL;
+    if (linkat(output_fd, temporary, output_fd, "conversion", 0) || fsync(output_fd)) goto done;
+    result = 0;
+done:
+    if (result) fprintf(stderr, "holypkg: deb import incomplete (status %d); no installed state changed\n", result);
+    if (receipt) fclose(receipt);
+    if (output_fd >= 0) { if (*temporary) unlinkat(output_fd, temporary, 0); close(output_fd); }
+    if (input_fd >= 0) close(input_fd);
+    if (snapshot) { unlink(snapshot); free(snapshot); }
+    free_deb(&metadata); free_input(&input);
     return result;
 }

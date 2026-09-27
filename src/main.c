@@ -35,9 +35,11 @@ int main(int argc, char **argv)
 
     if (argc > 1 && !strcmp(argv[1], "import")) {
         if (argc == 9 && !strcmp(argv[3], "--source") && !strcmp(argv[5], "--format") &&
-            !strcmp(argv[6], "pacman") && !strcmp(argv[7], "--output"))
-            return holy_import_pacman(argv[2], argv[4], argv[8]);
-        fputs("usage: holypkg import INPUT --source NAME --format pacman --output DIRECTORY\n", stderr);
+            !strcmp(argv[7], "--output")) {
+            if (!strcmp(argv[6], "pacman")) return holy_import_pacman(argv[2], argv[4], argv[8]);
+            if (!strcmp(argv[6], "deb")) return holy_import_deb(argv[2], argv[4], argv[8]);
+        }
+        fputs("usage: holypkg import INPUT --source NAME --format pacman|deb --output DIRECTORY\n", stderr);
         return 2;
     }
 
