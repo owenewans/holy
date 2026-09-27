@@ -20,6 +20,8 @@ struct install_input {
     size_t count;
     char **accepted_arch;
     size_t accept_count;
+    char **accepted_privileged;
+    size_t privileged_count;
     struct stat root_stat;
     char hash[65];
 };
@@ -133,30 +135,41 @@ static int load_input(const char *path, struct holy_config *config,
     if (!input->count) { fputs("holyinstall: [install] needs artifact entries\n", stderr); return 2; }
     input->accepted_arch = calloc(config->count ? config->count : 1,
                                   sizeof *input->accepted_arch);
-    if (!input->accepted_arch) return 1;
+    input->accepted_privileged = calloc(config->count ? config->count : 1,
+                                        sizeof *input->accepted_privileged);
+    if (!input->accepted_arch || !input->accepted_privileged) return 1;
     for (i = 0; i < config->count; ++i) {
         const struct holy_entry *e = &config->entries[i];
-        if (strcmp(e->section, "install") || strcmp(e->key, "accept-arch")) continue;
+        char ***accepted;
+        size_t *accepted_count;
+        if (strcmp(e->section, "install")) continue;
+        if (!strcmp(e->key, "accept-arch")) {
+            accepted = &input->accepted_arch;
+            accepted_count = &input->accept_count;
+        } else if (!strcmp(e->key, "accept-privileged")) {
+            accepted = &input->accepted_privileged;
+            accepted_count = &input->privileged_count;
+        } else continue;
         if (!digest_valid(e->values[0])) {
-            fprintf(stderr, "holyinstall: invalid accept-arch at %s:%zu\n", e->file, e->line);
+            fprintf(stderr, "holyinstall: invalid %s at %s:%zu\n", e->key, e->file, e->line);
             return 2;
         }
         for (j = 0; j < input->count; ++j)
             if (!strcmp(input->artifacts[j], e->values[0])) break;
         if (j == input->count) {
-            fprintf(stderr, "holyinstall: accept-arch needs a selected artifact at %s:%zu\n",
-                    e->file, e->line);
+            fprintf(stderr, "holyinstall: %s needs a selected artifact at %s:%zu\n",
+                    e->key, e->file, e->line);
             return 2;
         }
-        for (j = 0; j < input->accept_count; ++j)
-            if (!strcmp(input->accepted_arch[j], e->values[0])) break;
-        if (j != input->accept_count) {
-            fprintf(stderr, "holyinstall: duplicate accept-arch at %s:%zu\n", e->file, e->line);
+        for (j = 0; j < *accepted_count; ++j)
+            if (!strcmp((*accepted)[j], e->values[0])) break;
+        if (j != *accepted_count) {
+            fprintf(stderr, "holyinstall: duplicate %s at %s:%zu\n", e->key, e->file, e->line);
             return 2;
         }
-        input->accepted_arch[input->accept_count] = strdup(e->values[0]);
-        if (!input->accepted_arch[input->accept_count]) return 1;
-        ++input->accept_count;
+        (*accepted)[*accepted_count] = strdup(e->values[0]);
+        if (!(*accepted)[*accepted_count]) return 1;
+        ++*accepted_count;
     }
     if (!config_hash(config, input->hash)) return 1;
     return 0;
@@ -166,7 +179,7 @@ static int run_package_manager(const char *binary, const struct install_input *i
                                const char *approved, char **output)
 {
     char **args;
-    size_t i, count = input->count + input->accept_count * 2 +
+    size_t i, count = input->count + (input->accept_count + input->privileged_count) * 2 +
                       (approved ? 7 : 6), used = 0, capacity = 0;
     char *buffer = NULL;
     int pipefd[2] = {-1, -1}, status, rc = 1;
@@ -182,6 +195,10 @@ static int run_package_manager(const char *binary, const struct install_input *i
     for (size_t j = 0; j < input->accept_count; ++j) {
         args[i++] = "--accept-arch";
         args[i++] = input->accepted_arch[j];
+    }
+    for (size_t j = 0; j < input->privileged_count; ++j) {
+        args[i++] = "--accept-privileged";
+        args[i++] = input->accepted_privileged[j];
     }
     args[i++] = "--root";
     args[i++] = input->root;
@@ -289,7 +306,7 @@ static int write_plan(const char *path, const struct install_input *input,
     stream = fdopen(fd, "w");
     if (!stream) { close(fd); unlink(path); return 1; }
     if (fprintf(stream, "[install-plan]\nformat holy-install-plan-%d\nroot ",
-                input->accept_count ? 2 : 1) < 0 ||
+                input->privileged_count ? 3 : input->accept_count ? 2 : 1) < 0 ||
         !quote(stream, input->root) ||
         fprintf(stream, "\ndevice %ju\ninode %ju\nconfig-sha256 %s\nset-sha256 %s\n",
                 (uintmax_t)input->root_stat.st_dev, (uintmax_t)input->root_stat.st_ino,
@@ -298,6 +315,8 @@ static int write_plan(const char *path, const struct install_input *input,
         if (fprintf(stream, "artifact %s\n", input->artifacts[i]) < 0) ok = 0;
     for (i = 0; i < input->accept_count && ok; ++i)
         if (fprintf(stream, "accept-arch %s\n", input->accepted_arch[i]) < 0) ok = 0;
+    for (i = 0; i < input->privileged_count && ok; ++i)
+        if (fprintf(stream, "accept-privileged %s\n", input->accepted_privileged[i]) < 0) ok = 0;
     if (fflush(stream) || fsync(fd)) ok = 0;
     if (fclose(stream)) ok = 0;
     if (ok) ok = sync_parent(path);
@@ -314,7 +333,7 @@ static int check_plan(const char *path, struct install_input *input,
     char *line = NULL, *resolved = NULL;
     size_t capacity = 0, row = 0;
     ssize_t length;
-    int rc = 2, version = 0, in_arch = 0;
+    int rc = 2, version = 0, phase = 0;
     if (fd < 0) { perror("holyinstall: plan"); return 2; }
     if (fstat(fd, &plan_stat) || !S_ISREG(plan_stat.st_mode) ||
         plan_stat.st_size < 0 || plan_stat.st_size > 2 * 1024 * 1024) {
@@ -340,10 +359,12 @@ static int check_plan(const char *path, struct install_input *input,
         } else if (row == 2) {
             if (strcmp(v[0], "format") ||
                 (strcmp(v[1], "holy-install-plan-1") &&
-                 strcmp(v[1], "holy-install-plan-2"))) {
+                 strcmp(v[1], "holy-install-plan-2") &&
+                 strcmp(v[1], "holy-install-plan-3"))) {
                 holy_tokens_free(v, count); goto done;
             }
-            version = !strcmp(v[1], "holy-install-plan-2") ? 2 : 1;
+            version = !strcmp(v[1], "holy-install-plan-3") ? 3 :
+                      !strcmp(v[1], "holy-install-plan-2") ? 2 : 1;
         } else if (row == 3) {
             if (strcmp(v[0], "root") || !(input->root = strdup(v[1])) ||
                 !(resolved = realpath(input->root, NULL)) ||
@@ -368,34 +389,47 @@ static int check_plan(const char *path, struct install_input *input,
                 holy_tokens_free(v, count); goto done;
             }
             memcpy(hash, v[1], 65);
-        } else if (!strcmp(v[0], "accept-arch")) {
+        } else if (!strcmp(v[0], "accept-arch") ||
+                   !strcmp(v[0], "accept-privileged")) {
             char **next;
+            char ***accepted;
+            size_t *accepted_count;
             size_t i;
-            in_arch = 1;
-            if (version != 2 || !digest_valid(v[1]) ||
-                input->accept_count >= input->count) {
+            int privileged = !strcmp(v[0], "accept-privileged");
+            if (privileged) {
+                if (version != 3) { holy_tokens_free(v, count); goto done; }
+                phase = 2;
+                accepted = &input->accepted_privileged;
+                accepted_count = &input->privileged_count;
+            } else {
+                if (phase == 2 || version < 2) { holy_tokens_free(v, count); goto done; }
+                phase = 1;
+                accepted = &input->accepted_arch;
+                accepted_count = &input->accept_count;
+            }
+            if (!digest_valid(v[1]) || *accepted_count >= input->count) {
                 holy_tokens_free(v, count); goto done;
             }
             for (i = 0; i < input->count; ++i)
                 if (!strcmp(v[1], input->artifacts[i])) break;
             if (i == input->count) { holy_tokens_free(v, count); goto done; }
-            for (i = 0; i < input->accept_count; ++i)
-                if (!strcmp(v[1], input->accepted_arch[i])) break;
-            if (i != input->accept_count ||
-                !(next = realloc(input->accepted_arch,
-                                 (input->accept_count + 1) * sizeof *next))) {
+            for (i = 0; i < *accepted_count; ++i)
+                if (!strcmp(v[1], (*accepted)[i])) break;
+            if (i != *accepted_count ||
+                !(next = realloc(*accepted,
+                                 (*accepted_count + 1) * sizeof *next))) {
                 holy_tokens_free(v, count); goto done;
             }
-            input->accepted_arch = next;
-            input->accepted_arch[input->accept_count] = strdup(v[1]);
-            if (!input->accepted_arch[input->accept_count]) {
+            *accepted = next;
+            (*accepted)[*accepted_count] = strdup(v[1]);
+            if (!(*accepted)[*accepted_count]) {
                 holy_tokens_free(v, count); goto done;
             }
-            ++input->accept_count;
+            ++*accepted_count;
         } else {
             char **next;
             size_t i;
-            if (in_arch || strcmp(v[0], "artifact") || !digest_valid(v[1]) ||
+            if (phase || strcmp(v[0], "artifact") || !digest_valid(v[1]) ||
                 input->count >= 1024) {
                 holy_tokens_free(v, count); goto done;
             }
@@ -412,9 +446,10 @@ static int check_plan(const char *path, struct install_input *input,
         }
         holy_tokens_free(v, count);
     }
-    if (ferror(stream) || row != 7 + input->count + input->accept_count ||
+    if (ferror(stream) || row != 7 + input->count + input->accept_count + input->privileged_count ||
         !input->count || (version == 1 && input->accept_count) ||
-        (version == 2 && !input->accept_count)) goto done;
+        (version == 2 && (!input->accept_count || input->privileged_count)) ||
+        (version == 3 && !input->privileged_count)) goto done;
     rc = 0;
 done:
     free(line);
@@ -431,6 +466,8 @@ struct menu_state {
     size_t count;
     char **accepted_arch;
     size_t accept_count;
+    char **accepted_privileged;
+    size_t privileged_count;
 };
 
 static void free_input(struct install_input *input)
@@ -440,6 +477,8 @@ static void free_input(struct install_input *input)
     free(input->artifacts);
     for (i = 0; i < input->accept_count; ++i) free(input->accepted_arch[i]);
     free(input->accepted_arch);
+    for (i = 0; i < input->privileged_count; ++i) free(input->accepted_privileged[i]);
+    free(input->accepted_privileged);
     free(input->root);
     memset(input, 0, sizeof *input);
 }
@@ -451,6 +490,8 @@ static void free_menu(struct menu_state *menu)
     free(menu->artifacts);
     for (i = 0; i < menu->accept_count; ++i) free(menu->accepted_arch[i]);
     free(menu->accepted_arch);
+    for (i = 0; i < menu->privileged_count; ++i) free(menu->accepted_privileged[i]);
+    free(menu->accepted_privileged);
     free(menu->root);
     free(menu->disk_image);
 }
@@ -505,28 +546,36 @@ static int menu_load(const char *path, struct menu_state *menu)
         const struct holy_entry *e = &config.entries[i];
         size_t j;
         char **next;
-        if (strcmp(e->key, "accept-arch")) continue;
+        char ***accepted;
+        size_t *accepted_count;
+        if (strcmp(e->section, "install")) continue;
+        if (!strcmp(e->key, "accept-arch")) {
+            accepted = &menu->accepted_arch;
+            accepted_count = &menu->accept_count;
+        } else if (!strcmp(e->key, "accept-privileged")) {
+            accepted = &menu->accepted_privileged;
+            accepted_count = &menu->privileged_count;
+        } else continue;
         for (j = 0; j < menu->count; ++j)
             if (!strcmp(e->values[0], menu->artifacts[j])) break;
         if (!digest_valid(e->values[0]) || j == menu->count) {
-            fputs("holyinstall: accept-arch needs a selected artifact\n", stderr);
+            fprintf(stderr, "holyinstall: %s needs a selected artifact\n", e->key);
             holy_config_free(&config); return 2;
         }
-        for (j = 0; j < menu->accept_count; ++j)
-            if (!strcmp(e->values[0], menu->accepted_arch[j])) break;
-        if (j != menu->accept_count) {
-            fputs("holyinstall: duplicate accept-arch\n", stderr);
+        for (j = 0; j < *accepted_count; ++j)
+            if (!strcmp(e->values[0], (*accepted)[j])) break;
+        if (j != *accepted_count) {
+            fprintf(stderr, "holyinstall: duplicate %s\n", e->key);
             holy_config_free(&config); return 2;
         }
-        next = realloc(menu->accepted_arch,
-                       (menu->accept_count + 1) * sizeof *next);
+        next = realloc(*accepted, (*accepted_count + 1) * sizeof *next);
         if (!next) { holy_config_free(&config); return 1; }
-        menu->accepted_arch = next;
-        menu->accepted_arch[menu->accept_count] = strdup(e->values[0]);
-        if (!menu->accepted_arch[menu->accept_count]) {
+        *accepted = next;
+        (*accepted)[*accepted_count] = strdup(e->values[0]);
+        if (!(*accepted)[*accepted_count]) {
             holy_config_free(&config); return 1;
         }
-        ++menu->accept_count;
+        ++*accepted_count;
     }
     holy_config_free(&config);
     return 0;
@@ -542,6 +591,8 @@ static int menu_write(FILE *stream, const struct menu_state *menu)
         if (fprintf(stream, "artifact %s\n", menu->artifacts[i]) < 0) return 0;
     for (i = 0; i < menu->accept_count; ++i)
         if (fprintf(stream, "accept-arch %s\n", menu->accepted_arch[i]) < 0) return 0;
+    for (i = 0; i < menu->privileged_count; ++i)
+        if (fprintf(stream, "accept-privileged %s\n", menu->accepted_privileged[i]) < 0) return 0;
     if (menu->disk_image && (fputs("[disk]\nimage ", stream) == EOF ||
                              !quote(stream, menu->disk_image) ||
                              fputs("\nlayout gpt-ext4\n", stream) == EOF)) return 0;
@@ -599,13 +650,16 @@ static int menu_packages(struct menu_state *menu, int *dirty)
         int found = 0;
         puts("Packages: first entry is the explicit root package");
         for (i = 0; i < menu->count; ++i) {
-            size_t j;
+            size_t j, k;
             for (j = 0; j < menu->accept_count; ++j)
                 if (!strcmp(menu->artifacts[i], menu->accepted_arch[j])) break;
-            printf("%zu %s%s\n", i + 1, menu->artifacts[i],
-                   j < menu->accept_count ? " [arch override]" : "");
+            for (k = 0; k < menu->privileged_count; ++k)
+                if (!strcmp(menu->artifacts[i], menu->accepted_privileged[k])) break;
+            printf("%zu %s%s%s\n", i + 1, menu->artifacts[i],
+                   j < menu->accept_count ? " [arch override]" : "",
+                   k < menu->privileged_count ? " [setuid approved]" : "");
         }
-        if (!menu_line("a add, d delete, x arch override, b back > ", &answer)) {
+        if (!menu_line("a add, d delete, x arch override, p setuid approval, b back > ", &answer)) {
             free(answer); return 0;
         }
         if (!strcmp(answer, "b")) { free(answer); return 1; }
@@ -626,10 +680,14 @@ static int menu_packages(struct menu_state *menu, int *dirty)
             *dirty = 1;
             continue;
         }
-        if (!strcmp(answer, "d") || !strcmp(answer, "x")) {
+        if (!strcmp(answer, "d") || !strcmp(answer, "x") || !strcmp(answer, "p")) {
             char *number = NULL, *end;
             unsigned long long index;
             int remove = !strcmp(answer, "d");
+            char ***accepted = !strcmp(answer, "p") ? &menu->accepted_privileged :
+                                &menu->accepted_arch;
+            size_t *accepted_count = !strcmp(answer, "p") ? &menu->privileged_count :
+                                     &menu->accept_count;
             free(answer);
             if (!menu_line("Number > ", &number)) { free(number); return 0; }
             errno = 0;
@@ -637,23 +695,35 @@ static int menu_packages(struct menu_state *menu, int *dirty)
             if (errno || !number[0] || *end || !index || index > menu->count) {
                 puts("Invalid number"); free(number); continue;
             }
-            for (i = 0; i < menu->accept_count; ++i)
-                if (!strcmp(menu->accepted_arch[i], menu->artifacts[index - 1])) break;
-            if (i < menu->accept_count) {
-                free(menu->accepted_arch[i]);
-                for (++i; i < menu->accept_count; ++i)
-                    menu->accepted_arch[i - 1] = menu->accepted_arch[i];
-                --menu->accept_count;
+            for (i = 0; i < *accepted_count; ++i)
+                if (!strcmp((*accepted)[i], menu->artifacts[index - 1])) break;
+            if (i < *accepted_count) {
+                free((*accepted)[i]);
+                for (++i; i < *accepted_count; ++i)
+                    (*accepted)[i - 1] = (*accepted)[i];
+                --*accepted_count;
             } else if (!remove) {
-                char **next = realloc(menu->accepted_arch,
-                                      (menu->accept_count + 1) * sizeof *next);
+                char **next = realloc(*accepted, (*accepted_count + 1) * sizeof *next);
                 if (!next) { free(number); return 0; }
-                menu->accepted_arch = next;
-                menu->accepted_arch[menu->accept_count] = strdup(menu->artifacts[index - 1]);
-                if (!menu->accepted_arch[menu->accept_count]) { free(number); return 0; }
-                ++menu->accept_count;
+                *accepted = next;
+                (*accepted)[*accepted_count] = strdup(menu->artifacts[index - 1]);
+                if (!(*accepted)[*accepted_count]) { free(number); return 0; }
+                ++*accepted_count;
             }
             if (remove) {
+                char **other = menu->accepted_privileged;
+                size_t *other_count = &menu->privileged_count;
+                if (accepted == &menu->accepted_privileged) {
+                    other = menu->accepted_arch;
+                    other_count = &menu->accept_count;
+                }
+                for (i = 0; i < *other_count; ++i)
+                    if (!strcmp(other[i], menu->artifacts[index - 1])) break;
+                if (i < *other_count) {
+                    free(other[i]);
+                    for (++i; i < *other_count; ++i) other[i - 1] = other[i];
+                    --*other_count;
+                }
                 free(menu->artifacts[index - 1]);
                 for (i = (size_t)index; i < menu->count; ++i)
                     menu->artifacts[i - 1] = menu->artifacts[i];
@@ -663,7 +733,7 @@ static int menu_packages(struct menu_state *menu, int *dirty)
             free(number);
             continue;
         }
-        puts("Choose a, d, x or b");
+        puts("Choose a, d, x, p or b");
         free(answer);
     }
 }
@@ -819,10 +889,12 @@ static int menu_run(const char *config_path, const char *plan_path,
             if (rc) { free_input(&input); printf("Plan failed (status %d)\n", rc); prepared = 0; continue; }
             fputs("Root ", stdout);
             menu_path(input.root);
-            printf("\nSet %s\nArtifacts %zu\nArchitecture overrides %zu\n",
-                   hash, input.count, input.accept_count);
+            printf("\nSet %s\nArtifacts %zu\nArchitecture overrides %zu\nSetuid approvals %zu\n",
+                   hash, input.count, input.accept_count, input.privileged_count);
             for (size_t j = 0; j < input.accept_count; ++j)
                 printf("accept-arch %s\n", input.accepted_arch[j]);
+            for (size_t j = 0; j < input.privileged_count; ++j)
+                printf("accept-privileged %s\n", input.accepted_privileged[j]);
             if (!menu_line("Type yes to install > ", &confirm)) {
                 free(confirm); free_input(&input); rc = 0; break;
             }

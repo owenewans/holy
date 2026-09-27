@@ -95,6 +95,7 @@ case "$storage:$profile" in
 esac
 if test "$storage" != gpt-ext4; then command -v xorriso >/dev/null || exit 6; fi
 extra_packages=
+install_doas=
 case "$profile:$boot_state" in
     static-core:present) ;;
     dual-libc:present|dual-libc:glibc|dual-libc:musl|dual-libc:both|dual-libc:remove-both)
@@ -242,6 +243,7 @@ if test "$install_test" = 1; then
     doas_digest=$(sha256sum "$out/packages/doas.holy")
     doas_digest=${doas_digest%% *}
     printf 'guest-package doas %s\n' "$doas_digest" >> "$record"
+    install_doas=doas
 fi
 metadata linux "$version" "$package_arch"
 mkdir -p "$tree/DATA/boot"
@@ -337,7 +339,7 @@ sha256sum "$project/src/early-init.c" "$project/tests/boot-probe.sh" \
     "$project/profiles/dinit/"* > "$tree/HOLY/origin"
 pack holy-boot
 metadata holy-base bootstrap noarch
-for name in busybox dinit mdevd holypkg holyinstall linux limine holy-boot $extra_packages; do
+for name in busybox dinit mdevd holypkg holyinstall linux limine holy-boot $extra_packages $install_doas; do
     "$bin" info "local:$out/packages/$name.holy" > "$work/package-info"
     actual_name=$(sed -n 's/^name //p' "$work/package-info")
     case "$actual_name" in ''|*[!a-zA-Z0-9._+-]*) echo 'unsupported bootstrap package name' >&2; exit 6 ;; esac
@@ -375,7 +377,7 @@ with open(sys.argv[2], 'w', encoding='utf-8') as output:
     output.write('[install]\nroot ' + quoted(sys.argv[1]) + '\n')
 PY
 accepted_arch=
-for name in holy-base busybox dinit mdevd holypkg holyinstall linux limine holy-boot $extra_packages; do
+for name in holy-base busybox dinit mdevd holypkg holyinstall linux limine holy-boot $extra_packages $install_doas; do
     package="$out/packages/$name.holy"
     digest=$(sha256sum "$package")
     digest=${digest%% *}
@@ -387,6 +389,9 @@ for name in holy-base busybox dinit mdevd holypkg holyinstall linux limine holy-
         if grep -qx 'arch x86' "$work/package-info"; then accepted_arch="$accepted_arch $digest"; fi
     fi
 done
+if test "$install_test" = 1; then
+    printf 'accept-privileged %s\n' "$doas_digest" >> "$work/install.conf"
+fi
 for digest in $accepted_arch; do
     printf 'architecture-placement host x86_64 target x86 artifact %s accepted-unverified\n' "$digest" >> "$record"
     printf 'accept-arch %s\n' "$digest" >> "$work/install.conf"
@@ -424,8 +429,6 @@ if test "$install_test" = 1; then
         --holypkg "$bin" > "$out/storage.preview"
     "$installer" --apply "$out/storage.plan" --holypkg "$bin" > "$out/storage.apply"
     "$bin" db check --all --root "$root" > "$out/root-check.record"
-    "$bin" cache stage "local:$out/packages/doas.holy" --root "$root"
-    test -f "$root/var/cache/holypkg/objects/sha256/$doas_digest.holy"
 fi
 "$bin" docs --root "$root" --output "$root/usr/share/holy/llm.txt"
 chmod 0644 "$root/usr/share/holy/llm.txt"

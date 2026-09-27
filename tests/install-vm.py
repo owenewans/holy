@@ -120,7 +120,7 @@ def main():
         'HOLY-INSTALL-1 disk prepared',
         'HOLY-INSTALL-1 root mounted',
         'HOLY-INSTALL-1 package-set committed',
-        'HOLY-INSTALL-1 doas approved-and-installed',
+        'HOLY-INSTALL-1 doas in-reviewed-set',
         'HOLY-INSTALL-1 account prepared',
         'HOLY-INSTALL-1 esp files-and-package-state',
         'HOLY-INSTALL-1 result pass',
@@ -168,7 +168,7 @@ def main():
     unchanged = digest(disk) == base_hash
     result = ('pass' if unchanged and guest_disk_plan and second and second['result'] == 'pass' and
               (firmware == 'bios' or third and third['result'] == 'pass') else 'fail')
-    report = {'schema': 'holy-install-vm-5', 'result': result, 'arch': 'x86_64',
+    report = {'schema': 'holy-install-vm-6', 'result': result, 'arch': 'x86_64',
               'accelerator': accel, 'boot_plan': plan,
               'inputs': {'iso_sha256': digest(frozen_iso), 'target_base_sha256': base_hash,
                          'guest_disk_plan_sha256': guest_disk_plan},

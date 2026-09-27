@@ -80,4 +80,45 @@ if test "$(uname -m)" = x86_64; then
     grep -qx arch-accepted "$arch_root/usr/share/arch-fixture"
     "$holypkg" db check --all --root "$arch_root" > /dev/null
 fi
+priv_tree="$tmp/priv-tree"
+priv_root="$tmp/priv-root"
+mkdir -p "$priv_tree/HOLY" "$priv_tree/DATA/usr/bin" "$priv_root/usr/bin"
+case "$(uname -m)" in
+    x86_64)
+        priv_arch=x86_64; priv_bits=64; priv_emulation=elf_x86_64
+        printf '.global _start\n_start:\n mov $0, %%edi\n mov $60, %%eax\n syscall\n' > "$tmp/priv.s" ;;
+    i686)
+        priv_arch=x86; priv_bits=32; priv_emulation=elf_i386
+        printf '.global _start\n_start:\n mov $0, %%ebx\n mov $1, %%eax\n int $0x80\n' > "$tmp/priv.s" ;;
+    *) echo 'privileged fixture requires x86 or x86_64' >&2; exit 6 ;;
+esac
+printf 'format holy-package-1\nname privileged-fixture\nversion 1\nrelease 1\nos linux\narch %s\nlibc nolibc\n' "$priv_arch" > "$priv_tree/HOLY/meta"
+for field in deps provides hooks origin transform; do : > "$priv_tree/HOLY/$field"; done
+as --"$priv_bits" -o "$tmp/priv.o" "$tmp/priv.s"
+ld -m "$priv_emulation" -o "$priv_tree/DATA/usr/bin/priv-fixture" "$tmp/priv.o"
+chmod 4755 "$priv_tree/DATA/usr/bin/priv-fixture"
+"$holypkg" manifest generate "$priv_tree" --output "$tmp/priv-files" > /dev/null
+mv "$tmp/priv-files" "$priv_tree/HOLY/files"
+"$holypkg" pack "$priv_tree" --output "$tmp/priv-fixture.holy" > /dev/null
+priv_digest=$(sha256sum "$tmp/priv-fixture.holy" | cut -d ' ' -f 1)
+"$holypkg" db init --root "$priv_root" > /dev/null
+"$holypkg" cache stage "local:$tmp/priv-fixture.holy" --root "$priv_root" > /dev/null
+printf '[install]\nroot "%s"\nartifact %s\n' "$priv_root" "$priv_digest" > "$tmp/priv.conf"
+if "$installer" --config "$tmp/priv.conf" --plan "$tmp/priv-no.plan" --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then
+    exit 1
+else
+    test "$?" -eq 3
+fi
+test ! -e "$tmp/priv-no.plan"
+printf 'accept-privileged %s\n' "$priv_digest" >> "$tmp/priv.conf"
+"$installer" --config "$tmp/priv.conf" --plan "$tmp/priv.plan" --holypkg "$holypkg" > "$tmp/out"
+grep -qx 'format holy-install-plan-3' "$tmp/priv.plan"
+grep -qx "accept-privileged $priv_digest" "$tmp/priv.plan"
+cp "$tmp/priv.plan" "$tmp/priv-invalid.plan"
+sed -i '/^accept-privileged /d' "$tmp/priv-invalid.plan"
+if "$installer" --apply "$tmp/priv-invalid.plan" --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -e "$priv_root/usr/bin/priv-fixture"
+"$installer" --apply "$tmp/priv.plan" --holypkg "$holypkg" > "$tmp/out"
+test "$(stat -c '%a' "$priv_root/usr/bin/priv-fixture")" = 4755
+"$holypkg" db check --all --root "$priv_root" > /dev/null
 printf 'installer plan and apply fixtures passed\n'

@@ -55,7 +55,7 @@ pinned util-linux, dosfstools, e2fsprogs and Limine inputs.
 DOAS_PACKAGE
 Native musl-static OpenDoas package with a root-owned setuid executable,
 required by INSTALL_TEST=1. The guest stages it from the live cache and
-installs it through a separate holypkg set plan with approval bound to the
+installs it in the reviewed holyinstall set plan with approval bound to the
 artifact SHA-256.
 .TP
 STATIC_CC
@@ -102,8 +102,9 @@ The dynamic musl package owns its own license file.
 .PP
 The static core binary, selected kernel, Limine data and Holy boot configuration
 also become native packages. The holy-base metapackage requires the resulting
-eight packages, including holyinstall. The dual-libc profile adds the two runtime packages and two C
-probe packages. holyinstall asks holypkg to resolve the selected set, writes
+eight packages, including holyinstall. INSTALL_TEST=1 also selects the doas
+package and records its setuid approval. The dual-libc profile adds the two
+runtime packages and two C probe packages. holyinstall asks holypkg to resolve the selected set, writes
 install.preview and a frozen install.plan, then applies that plan with one
 writer lock and one generation change into root/. The preview records selected
 providers and requirements; the plan records artifacts and architecture approvals.
@@ -175,8 +176,8 @@ that disk, create FAT32 and ext4 filesystems, and install Limine's BIOS
 stage. Its static storage tools come from STORAGE_TOOLS_PACKAGE, which the
 builder installs into the live image but excludes from the installed base.
 The guest mounts the target root, stages its local .holy
-archives, reviews and applies one holyinstall base package plan, then reviews
-and applies a separate holypkg doas plan. It generates the
+archives, reviews and applies one holyinstall package plan containing doas
+and its setuid approval. It generates the
 installed man bundle, and copies kernel, initramfs and Limine files from the
 ISO to the ESP. The runner shuts down that guest after serial success markers,
 then forks the installed overlay for separate BIOS and UEFI disk boots. Both
@@ -189,7 +190,7 @@ BusyBox command. The fixture account and scoped doas.conf are
 only present when INSTALL_TEST=1. The UEFI boot uses fresh writable firmware
 variables.
 .PP
-The holy-install-vm-5 report records each QEMU command, serial hashes,
+The holy-install-vm-6 report records each QEMU command, serial hashes,
 ISO and disk hashes, the guest disk-plan hash, base-image integrity and
 missing markers. It lists i686 installed boot, the account menu,
 PAM/NSS and network as untested. INSTALL_FIRMWARE=bios runs only BIOS and records

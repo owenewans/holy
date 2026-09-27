@@ -58,6 +58,17 @@ while read -r digest; do
     printf 'artifact %s\n' "$digest" >> /run/install.conf
     echo "HOLY-INSTALL-1 staged $digest"
 done < /usr/share/holy/install-artifacts
+doas_digest=$($bb cat /etc/holy/doas.sha256)
+test "${#doas_digest}" -eq 64
+if $installer --config /run/install.conf --plan /run/install-unapproved.plan \
+    --holypkg "$pkg" > /run/install-unapproved 2>&1; then
+    exit 1
+else
+    test "$?" -eq 3
+fi
+test ! -e /run/install-unapproved.plan
+$bb grep -q 'decision-required privileged' /run/install-unapproved
+printf 'accept-privileged %s\n' "$doas_digest" >> /run/install.conf
 echo 'HOLY-INSTALL-1 resolver start'
 $installer --config /run/install.conf --plan /run/install.plan \
     --holypkg "$pkg" > /run/install-preview
@@ -70,26 +81,8 @@ $pkg db check --all --root /mnt/holy > /run/install-check
 echo 'HOLY-INSTALL-1 package-set committed'
 
 stage=doas
-doas_digest=$($bb cat /etc/holy/doas.sha256)
-test "${#doas_digest}" -eq 64
-doas_archive="/var/cache/holypkg/objects/sha256/$doas_digest.holy"
-test -f "$doas_archive"
-$pkg cache stage "local:$doas_archive" --root /mnt/holy > /run/doas-cache
-if $pkg db plan-set "$doas_digest" --root /mnt/holy > /run/doas-unapproved 2>&1; then
-    exit 1
-else
-    test "$?" -eq 3
-fi
-$bb grep -q 'decision-required privileged' /run/doas-unapproved
-$pkg db plan-set "$doas_digest" --accept-privileged "$doas_digest" \
-    --root /mnt/holy > /run/doas-preview
-doas_plan=$($bb sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' /run/doas-preview)
-test "${#doas_plan}" -eq 64
-$pkg db apply-set "$doas_plan" "$doas_digest" --accept-privileged "$doas_digest" \
-    --root /mnt/holy > /run/doas-apply
-test "$($bb cat /mnt/holy/var/lib/holypkg/generation)" = 2
 $pkg db check "$doas_digest" --root /mnt/holy > /run/doas-check
-echo 'HOLY-INSTALL-1 doas approved-and-installed'
+echo 'HOLY-INSTALL-1 doas in-reviewed-set'
 
 stage=account
 $bb mkdir -p /mnt/holy/home/holytest

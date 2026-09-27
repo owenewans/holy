@@ -39,6 +39,9 @@ explicit package. The installer checks required fields, digest syntax and
 duplicate artifacts before planning. See holyinstall(8).
 An addressable accept-arch list can approve placement of selected artifacts
 with a different target architecture. The frozen plan retains each approval.
+An accept-privileged list confirms the exact artifact hashes whose setuid
+executables have been reviewed. holyinstall records these decisions in its
+frozen plan and passes them to holypkg.
 .PP
 [disk] accepts one image path and layout gpt-ext4. The disk plan accepts
 regular image files, not block devices. Its fixed plan schema forbids include.

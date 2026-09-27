@@ -69,6 +69,7 @@ root "/mnt/holy"
 artifact SHA256_OF_ROOT_PACKAGE
 artifact SHA256_OF_DEPENDENCY_CANDIDATE
 accept-arch SHA256_OF_CONFIRMED_CROSS_ARCH_PACKAGE
+accept-privileged SHA256_OF_REVIEWED_SETUID_PACKAGE
 .fi
 .RE
 .PP
@@ -82,6 +83,12 @@ explicit architecture-placement decision in plan format 2. Preview and apply
 pass the same approval to holypkg. It permits placement; it does not claim the
 target executable can run on the host. The text menu toggles this decision in
 the package list and shows accepted artifacts before installation.
+.PP
+accept-privileged names a selected artifact whose setuid executable and full
+payload the caller has reviewed. Plan format 3 records its exact SHA-256 and
+apply passes the same decision to holypkg. Without the approval, planning
+returns decision-required. The package menu toggles this decision separately
+from architecture placement. A changed artifact needs a new approval and plan.
 .SH DISK PREPARATION
 The disk command accepts a regular file or a block disk of at least 1 GiB. The supported
 layout is GPT with a 1 MiB BIOS boot partition, a 256 MiB FAT32 ESP and an
