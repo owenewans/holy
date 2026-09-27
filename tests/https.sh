@@ -77,6 +77,50 @@ cmp "$tmp/serve/current" "$tmp/mirror/current"
 cmp "$tmp/serve/index.$index" "$tmp/mirror/index.$index"
 cmp "$tmp/serve/space?#.holy" "$tmp/mirror/space?#.holy"
 grep -qx 'verification digest-pinned-unsigned' "$tmp/mirror/mirror-origin"
+mkdir "$tmp/source-root"
+expect 0 "$bin" db init --root "$tmp/source-root"
+printf '[source fixture]\ntype holy-http\nurl "%s"\n' "$base" > "$tmp/source.conf"
+expect 0 "$bin" source plan --config "$tmp/source.conf" --root "$tmp/source-root"
+cp "$tmp/result" "$tmp/source.plan"
+source_plan=$(sha256sum "$tmp/source.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" source apply "$tmp/source.plan" --sha256 "$source_plan" --root "$tmp/source-root"
+expect 0 "$bin" source list --root "$tmp/source-root"
+source_id=$(awk '$1 == "source" && $4 == "active" {print $2}' "$tmp/result")
+test "${#source_id}" -eq 64
+expect 0 "$bin" sync fixture --root "$tmp/source-root" --sha256 "$index" \
+    --output "$tmp/source-mirror" --ca-file "$tmp/cert.pem"
+grep -qx "source-id $source_id" "$tmp/source-mirror/mirror-origin"
+cmp "$tmp/serve/current" "$tmp/source-mirror/current"
+expect 0 "$bin" repo solve "$tmp/source-mirror" https-second --json
+grep -q '"count":2' "$tmp/result"
+expect 6 "$bin" sync absent --root "$tmp/source-root" --sha256 "$index" \
+    --output "$tmp/source-absent" --ca-file "$tmp/cert.pem"
+test ! -e "$tmp/source-absent"
+expect 6 "$bin" sync fixture --root "$tmp/source-root" --sha256 "$index" \
+    --output "$tmp/source-untrusted"
+test ! -e "$tmp/source-untrusted/current"
+expect 2 "$bin" sync fixture --root "$tmp/source-root" --sha256 bad \
+    --output "$tmp/source-invalid" --ca-file "$tmp/cert.pem"
+test ! -e "$tmp/source-invalid"
+printf '[source renamed]\ntype holy-http\nurl "%s"\n' "$base" > "$tmp/source.conf"
+expect 0 "$bin" source plan --config "$tmp/source.conf" --root "$tmp/source-root"
+cp "$tmp/result" "$tmp/source.plan"
+source_plan=$(sha256sum "$tmp/source.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" source apply "$tmp/source.plan" --sha256 "$source_plan" --root "$tmp/source-root"
+expect 0 "$bin" sync renamed --root "$tmp/source-root" --sha256 "$index" \
+    --output "$tmp/source-renamed" --ca-file "$tmp/cert.pem"
+grep -qx "source-id $source_id" "$tmp/source-renamed/mirror-origin"
+expect 6 "$bin" sync fixture --root "$tmp/source-root" --sha256 "$index" \
+    --output "$tmp/source-inactive" --ca-file "$tmp/cert.pem"
+test ! -e "$tmp/source-inactive"
+printf '[source fixture]\ntype pacman\nrepo core "%s"\n' "$base" > "$tmp/source.conf"
+expect 0 "$bin" source plan --config "$tmp/source.conf" --root "$tmp/source-root"
+cp "$tmp/result" "$tmp/source.plan"
+source_plan=$(sha256sum "$tmp/source.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" source apply "$tmp/source.plan" --sha256 "$source_plan" --root "$tmp/source-root"
+expect 6 "$bin" sync fixture --root "$tmp/source-root" --sha256 "$index" \
+    --output "$tmp/source-wrong-family" --ca-file "$tmp/cert.pem"
+test ! -e "$tmp/source-wrong-family"
 expect 0 "$bin" repo search "$tmp/mirror" https-second
 grep -q 'listed 1 packages' "$tmp/result"
 expect 0 "$bin" repo solve "$tmp/mirror" https-second --json

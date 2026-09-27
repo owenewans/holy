@@ -12,6 +12,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg source list --root DIRECTORY
 .br
+.B holypkg sync SOURCE --root DIRECTORY --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--ca-file FILE]
+.br
 .B holypkg orphan [--root DIRECTORY] [--json]
 .br
 .B holypkg docs --root DIRECTORY --output FILE
@@ -234,8 +236,9 @@ current, as with repo seal. Success prints only the sealed index digest.
 .PP
 The caller supplies the digest; this command does not verify publisher
 signatures, activate a configured source, assign source-id or install packages.
-Configured sync, trust decisions and signed generation discovery remain
-separate work. Successful return is 0; invalid arguments return 2, conflicting
+Configured sync with a pinned digest is described below. Publisher trust
+decisions and signed generation discovery remain separate work.
+Successful return is 0; invalid arguments return 2, conflicting
 hashes or catalog contents 4, unavailable TLS/network inputs 6, and local
 filesystem errors 1. The directory remains private to its owner until that
 owner chooses to share it.
@@ -1368,8 +1371,23 @@ List prints identities and status without endpoint definitions.
 .PP
 An ID identifies a configured origin; it is not signature evidence. The current
 registry retains inactive origins and supports explicit local-artifact associations
-in set installation and cached slot replacement. Configured catalog synchronization
-and automatic update candidate selection remain unimplemented. Explicit cached
+in set installation and cached slot replacement. The sync command reads one
+active registered SOURCE alias under the database shared lock. For a holy-http
+source with one URL, it mirrors an explicitly pinned index and all referenced
+artifacts into NEW_DIRECTORY through the same validator as repo mirror. The
+URL must be an HTTPS directory URL ending in slash. It writes the registered
+source-id in mirror-origin before sealing current. The snapshot stays in the
+chosen directory; repo search, solve and fetch can use it. No root mutation,
+package installation, script execution or automatic source migration occurs.
+The source registry is read before network transfer, so a later alias change
+does not change the snapshot's recorded ID. A source with another backend,
+an inactive alias or an untrusted TLS certificate is unavailable (6). The
+index digest is an explicit user pin; the mirror remains unsigned and does not
+establish publisher identity. The recorded source-id is provenance for this
+snapshot, not an installation authority derived from package metadata.
+Automatic signed generation discovery, cache publication under the target root,
+multi-source search and update candidate selection remain unimplemented.
+Explicit cached
 replacement uses db plan-update and db apply-update. These
 commands do not yet implement JSON output. See holy.conf(5) for identity rules
 and endpoint restrictions.

@@ -5,6 +5,9 @@
 int holy_source_plan(const char *config, const char *root);
 int holy_source_apply(const char *plan, const char *digest, const char *root);
 int holy_source_list(const char *root);
+/* mirrors one registered holy-http source with a pinned index digest. */
+int holy_source_sync(const char *alias, const char *root, const char *digest,
+                     const char *output, const char *ca_file);
 
 /* caller holds database lock; returns an owned alias record and registry hash. */
 int holy_source_record(int database, const char *id, char **record, char registry[65]);

@@ -2,8 +2,10 @@
 .SH NAME
 holy.conf \- Holy source configuration format
 .SH STATUS
-This page describes the syntax checker and source identity registration. Configured source fetching,
-general multi-source resolution and full disk installation are not implemented;
+This page describes the syntax checker and source identity registration. A
+registered holy-http source can mirror one explicitly pinned index through
+holypkg sync. Automatic source refresh, general multi-source resolution and
+full disk installation are not implemented;
 the restricted local data/static-ELF transaction uses separate commands.
 .SH SYNOPSIS
 .B holypkg config check FILE

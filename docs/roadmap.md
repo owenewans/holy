@@ -64,7 +64,8 @@
 - [x] Plan and atomically apply a source identity registry under the database
   writer lock. Preserve IDs across alias changes and retain inactive origin
   history; reject stale, wrong-root and history-dropping plans. Apply consumes
-  the reviewed plan without rereading user includes. Configured sync, automatic source-aware update selection and trust enforcement remain open.
+  the reviewed plan without rereading user includes. Automatic source-aware
+  update selection and trust enforcement remain open.
 - [x] Bind explicitly associated local artifacts to active registered source IDs
   in set plans and installed state. Retain the alias at installation, preserve
   origin through source deactivation and provider reuse, and validate associations
@@ -84,7 +85,7 @@
 - [x] Stage verified objects in a target-root cache; preview collisions.
 - [x] Fetch a pinned native `.holy` over HTTPS with certificate checks and a
   local CA fixture; reject credential-bearing redirect targets before making
-  redirected requests. Configured source sync and signatures remain open.
+  redirected requests. Signed generation discovery remains open.
 - [x] Build and seal a local repository catalog; search and fetch its verified objects.
 - [x] Resolve a restricted local/catalog graph with libsolv; reject unsupported semantics.
 - [x] Validate every artifact in a proposed complete set, including consumers
@@ -190,6 +191,12 @@
   provenance. Fixture TLS covers search/solve/fetch, escaped filenames, empty,
   duplicate/truncated indexes, false claims, bad hashes, missing URLs and limits.
   Configured source activation and publisher signatures remain open.
+- [x] Resolve an active registered holy-http alias to its immutable source-id
+  and HTTPS URL, then mirror a pinned index into a new local catalog. Store the
+  source-id in mirror-origin before sealing. The local TLS fixture covers
+  alias lookup, unrelated backend refusal, wrong digest and missing CA.
+  Automatic index discovery, persistent source cache and multi-source search
+  remain open.
 - [ ] Implement foreign binary adapters and file indexes with real fixtures:
   pacman, APT/DEB, RPM, APK, XBPS, Slackware and eopkg.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,

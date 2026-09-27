@@ -3,6 +3,7 @@
 #include "config.h"
 #include "state.h"
 #include "stage.h"
+#include "repo.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -431,6 +432,73 @@ int holy_source_list(const char *root)
     }
     if (result) fprintf(stderr, "holypkg: source registry unavailable (status %d)\n", result);
     close(dir); free(data); clear_registry(&r);
+    return result;
+}
+
+static char *native_endpoint(const char *definition)
+{
+    const char *line = definition;
+    char *url = NULL;
+    int native = 0, unsupported = 0;
+    while (*line) {
+        const char *end = strchr(line, '\n');
+        char **v = NULL;
+        size_t n = 0;
+        if (!end || !tokens(line, (size_t)(end - line), &v, &n)) {
+            holy_tokens_free(v, n);
+            free(url);
+            return NULL;
+        }
+        if (n == 2 && !strcmp(v[0], "type")) native = !strcmp(v[1], "holy-http");
+        else if (n == 2 && !strcmp(v[0], "url")) {
+            free(url);
+            url = strdup(v[1]);
+            if (!url) { holy_tokens_free(v, n); return NULL; }
+        } else if (n == 3 && !strcmp(v[0], "repo")) unsupported = 1;
+        holy_tokens_free(v, n);
+        line = end + 1;
+    }
+    if (!native || unsupported) { free(url); return NULL; }
+    return url;
+}
+
+int holy_source_sync(const char *alias, const char *root, const char *digest,
+                     const char *output, const char *ca_file)
+{
+    struct registry registry = {0};
+    char *data = NULL, *url = NULL;
+    char source_id[65] = {0};
+    unsigned long long generation;
+    int dir, result = 1;
+    size_t i;
+    if (!alias || !*alias || !strcmp(alias, "local") || !digest || !valid_hash(digest) ||
+        !output || !*output) return 2;
+    dir = holy_state_lock(root, 0, &generation, &result);
+    if (dir < 0) return result;
+    result = 1;
+    data = load_registry(dir, &registry);
+    if (!data) goto done;
+    result = 6;
+    for (i = 0; i < registry.count; ++i)
+        if (registry.items[i].active && !strcmp(registry.items[i].alias, alias)) break;
+    if (i == registry.count) {
+        fputs("holypkg: active source unavailable: ", stderr);
+        quote(stderr, alias); fputc('\n', stderr);
+        goto done;
+    }
+    url = native_endpoint(registry.items[i].definition);
+    if (!url) {
+        fputs("holypkg: source ", stderr);
+        quote(stderr, alias); fputs(" requires a single holy-http URL\n", stderr);
+        goto done;
+    }
+    memcpy(source_id, registry.items[i].id, sizeof source_id);
+    close(dir); dir = -1;
+    result = holy_repo_mirror_source(url, digest, output, ca_file, source_id);
+    if (!result) printf("synced source %s index %s\n", source_id, digest);
+done:
+    if (dir >= 0) close(dir);
+    free(data); free(url); clear_registry(&registry);
     return result;
 }
 

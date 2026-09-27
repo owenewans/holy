@@ -52,6 +52,16 @@ int main(int argc, char **argv)
         return 2;
     }
 
+    if (argc > 1 && !strcmp(argv[1], "sync")) {
+        if ((argc == 9 || argc == 11) && !strcmp(argv[3], "--root") &&
+            !strcmp(argv[5], "--sha256") && !strcmp(argv[7], "--output") &&
+            (argc == 9 || !strcmp(argv[9], "--ca-file")))
+            return holy_source_sync(argv[2], argv[4], argv[6], argv[8],
+                                    argc == 11 ? argv[10] : NULL);
+        fputs("usage: holypkg sync SOURCE --root DIRECTORY --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--ca-file FILE]\n", stderr);
+        return 2;
+    }
+
     if (argc > 1 && !strcmp(argv[1], "orphan")) {
         const char *root = "/";
         int i, json = 0, root_seen = 0;
