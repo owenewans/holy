@@ -170,5 +170,22 @@ grep -qx "resumed $second" "$tmp/out"
 test "$(cat "$db/generation")" -eq 4
 expect 0 "$bin" db check --all --root "$root"
 test ! -e "$db/transactions/set-journal"
+rm "$root/usr/share/app"
+expect 0 "$bin" db repair-plan "$app" --root "$root"
+repair=$(sed -n 's/^repair-plan .* sha256 \([0-9a-f]*\) missing-only read-only$/\1/p' "$tmp/out")
+test "${#repair}" -eq 64
+expect 5 env LD_PRELOAD="$tmp/fault.so" HOLY_FAIL_PATH=app "$bin" db repair "$app" --plan "$repair" --root "$root"
+grep -qx 'stage repairing' "$db/transactions/journal"
+expect 5 "$bin" db status --root "$root"
+expect 5 "$bin" db recover --continue --root "$root"
+printf partial > "$root/usr/share/app"
+expect 5 "$bin" db recover --repair --root "$root"
+grep -qx partial "$root/usr/share/app"
+rm "$root/usr/share/app"
+expect 0 "$bin" db recover --repair --root "$root"
+test "$(cat "$db/generation")" -eq 5
+test ! -e "$db/transactions/journal"
+grep -qx app "$root/usr/share/app"
+expect 0 "$bin" db check --all --root "$root"
 printf 'package set fixtures passed\n'
 

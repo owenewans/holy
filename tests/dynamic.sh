@@ -1,0 +1,221 @@
+#!/bin/sh
+set -eu
+bin=$(realpath "$1")
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+root="$tmp/root"
+tree="$tmp/tree"
+runtime=/usr/lib/holy/x86_64-linux-gnu
+loader=$runtime/ld-linux-x86-64.so.2
+libc=$runtime/libc.so.6
+library=$runtime/libholyfixture.so.1
+mkdir -p "$root$runtime" "$root/usr/bin" "$root/usr/lib64" "$root/tmp"
+ln -s usr/lib64 "$root/lib64"
+expect() {
+    wanted=$1
+    shift
+    if "$@" > "$tmp/out" 2> "$tmp/err"; then got=0; else got=$?; fi
+    test "$got" -eq "$wanted" || { cat "$tmp/out" "$tmp/err"; exit 1; }
+}
+repair_pkg() {
+    if test "${HOLY_TEST_STATIC_RECOVERY:-0}" = 1; then
+        doas -n chroot --userspec="$(id -u):$(id -g)" "$root" /usr/bin/holypkg "$@" --root /
+    else
+        "$bin" "$@" --root "$root"
+    fi
+}
+new() {
+    rm -rf "$tree"
+    mkdir -p "$tree/HOLY" "$tree/DATA"
+    printf 'format holy-package-1\nname %s\nversion 1\nrelease 1\nos linux\narch x86_64\nlibc %s\n' "$1" "${2:-glibc}" > "$tree/HOLY/meta"
+    for name in deps provides hooks origin transform; do : > "$tree/HOLY/$name"; done
+}
+pack() {
+    "$bin" manifest generate "$tree" --output "$tmp/files" > "$tmp/out"
+    mv "$tmp/files" "$tree/HOLY/files"
+    "$bin" pack "$tree" --output "$tmp/$1.holy" > "$tmp/out"
+    "$bin" cache stage "local:$tmp/$1.holy" --root "$root" > "$tmp/out"
+}
+hash() { sha256sum "$tmp/$1.holy" | cut -d ' ' -f 1; }
+printf '#include <stdio.h>\nint holy_fixture(void) { return puts("dynamic-probe") < 0; }\n' > "$tmp/library.c"
+printf 'extern int holy_fixture(void); int main(void) { return holy_fixture(); }\n' > "$tmp/main.c"
+printf 'HOLY_1 { global: holy_fixture; local: *; };\n' > "$tmp/map"
+gcc -shared -fPIC -Wl,-soname,libholyfixture.so.1 -Wl,--version-script="$tmp/map" -o "$tmp/library.so" "$tmp/library.c"
+gcc -o "$tmp/probe" "$tmp/main.c" "$tmp/library.so"
+host_loader=$(patchelf --print-interpreter "$tmp/probe")
+"$bin" db init --root "$root" > "$tmp/out"
+new runtime
+mkdir -p "$tree/DATA$runtime" "$tree/DATA/usr/lib64"
+cp -L "$host_loader" "$tree/DATA$loader"
+cp -L "$(gcc -print-file-name=libc.so.6)" "$tree/DATA$libc"
+sha256sum "$tree/DATA$loader" "$tree/DATA$libc" > "$tree/HOLY/origin"
+patchelf --set-interpreter "$loader" --replace-needed ld-linux-x86-64.so.2 "$loader" "$tree/DATA$libc"
+ln -s ../lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2 "$tree/DATA/usr/lib64/ld-linux-x86-64.so.2"
+pack runtime
+new library
+mkdir -p "$tree/DATA$runtime"
+cp "$tmp/library.so" "$tree/DATA$library"
+sha256sum "$tmp/library.so" > "$tree/HOLY/origin"
+patchelf --replace-needed libc.so.6 "$libc" "$tree/DATA$library"
+pack library
+new probe
+mkdir -p "$tree/DATA/usr/bin"
+cp "$tmp/probe" "$tree/DATA/usr/bin/probe"
+sha256sum "$tmp/probe" > "$tree/HOLY/origin"
+patchelf --set-interpreter "$loader" --replace-needed libc.so.6 "$libc" --replace-needed libholyfixture.so.1 "$library" "$tree/DATA/usr/bin/probe"
+pack probe
+probe=$(hash probe) provider=$(hash library) runtime_hash=$(hash runtime)
+expect 0 "$bin" db plan-set "$probe" "$provider" "$runtime_hash" --root "$root"
+grep -q 'needed-path' "$tmp/out"
+plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+test "${#plan}" -eq 64
+expect 0 "$bin" db apply-set "$plan" "$probe" "$provider" "$runtime_hash" --root "$root"
+expect 0 "$bin" db check --all --root "$root"
+test "$(readlink "$root/usr/lib64/ld-linux-x86-64.so.2")" = ../lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2
+expect 3 "$bin" db rm "$runtime_hash" --root "$root"
+if test "${HOLY_TEST_DYNAMIC_CHROOT:-0}" = 1; then
+    command -v doas >/dev/null && doas -n true || exit 6
+    doas -n chroot --userspec="$(id -u):$(id -g)" "$root" /usr/bin/probe > "$tmp/run"
+    grep -qx dynamic-probe "$tmp/run"
+    doas -n chroot --userspec="$(id -u):$(id -g)" "$root" /lib64/ld-linux-x86-64.so.2 /usr/bin/probe > "$tmp/run"
+    grep -qx dynamic-probe "$tmp/run"
+    printf 'dynamic chroot probes passed\n'
+fi
+musl_loader=/usr/lib/holy/x86_64-linux-musl/ld-musl-x86_64.so.1
+if test -n "${MUSL_CC:-}" || test -n "${MUSL_LIBC:-}" || test -n "${MUSL_PACKAGE:-}"; then
+    test -x "${MUSL_CC:-}" || exit 6
+    mkdir -p "$root/usr/lib/holy/x86_64-linux-musl" "$root/usr/share/licenses/musl" "$root/usr/share/doc/musl"
+    ln -s usr/lib "$root/lib"
+    if test -n "${MUSL_PACKAGE:-}"; then
+        cp "$MUSL_PACKAGE" "$tmp/musl-runtime.holy"
+        "$bin" cache stage "local:$tmp/musl-runtime.holy" --root "$root" > "$tmp/out"
+    else
+        test -f "${MUSL_LIBC:-}" || exit 6
+        test "$(patchelf --print-soname "$MUSL_LIBC")" = libc.musl-x86_64.so.1 || {
+            echo 'musl fixture requires a natively linked musl SONAME; do not rewrite the loader' >&2
+            exit 6
+        }
+        new musl-runtime musl
+        mkdir -p "$tree/DATA/usr/lib/holy/x86_64-linux-musl"
+        cp -L "$MUSL_LIBC" "$tree/DATA$musl_loader"
+        sha256sum "$MUSL_LIBC" > "$tree/HOLY/origin"
+        ln -s holy/x86_64-linux-musl/ld-musl-x86_64.so.1 "$tree/DATA/usr/lib/ld-musl-x86_64.so.1"
+        pack musl-runtime
+    fi
+    new musl-probe musl
+    mkdir -p "$tree/DATA/usr/bin"
+    cat > "$tmp/musl.c" <<'C'
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+static void *worker(void *p) { return p; }
+int main(void)
+{
+    pthread_t thread;
+    void *value = malloc(64), *result;
+    if (!value || pthread_create(&thread, NULL, worker, value) ||
+        pthread_join(thread, &result) || result != value) return 1;
+    free(value);
+    return puts("musl-probe") < 0;
+}
+C
+    "$MUSL_CC" -pthread -o "$tree/DATA/usr/bin/musl-probe" "$tmp/musl.c"
+    patchelf --set-interpreter "$musl_loader" --replace-needed libc.so "$musl_loader" "$tree/DATA/usr/bin/musl-probe"
+    pack musl-probe
+    musl_runtime=$(hash musl-runtime) musl_probe=$(hash musl-probe)
+    expect 0 "$bin" db plan-set "$musl_probe" "$musl_runtime" --root "$root"
+    musl_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+    expect 0 "$bin" db apply-set "$musl_plan" "$musl_probe" "$musl_runtime" --root "$root"
+    if test "${HOLY_TEST_DYNAMIC_CHROOT:-0}" = 1; then
+        doas -n chroot --userspec="$(id -u):$(id -g)" "$root" /usr/bin/musl-probe > "$tmp/run"
+        grep -qx musl-probe "$tmp/run"
+        doas -n chroot --userspec="$(id -u):$(id -g)" "$root" /lib/ld-musl-x86_64.so.1 /usr/bin/musl-probe > "$tmp/run"
+        grep -qx musl-probe "$tmp/run"
+    fi
+fi
+# keep the application installed while the owner removes its libc and loader.
+if test "${HOLY_TEST_STATIC_RECOVERY:-0}" = 1; then
+    "$bin" elf "$bin" > "$tmp/out"
+    grep -qx 'runtime nolibc' "$tmp/out"
+    command -v doas >/dev/null && doas -n true || exit 6
+    cp "$bin" "$root/usr/bin/holypkg"
+fi
+rm "$root$libc" "$root$loader"
+if test -n "${musl_runtime:-}"; then
+    rm "$root$musl_loader"
+    expect 4 "$bin" db check "$musl_probe" --root "$root" --json
+    grep -q '"code":"broken-provider"' "$tmp/out"
+fi
+expect 4 "$bin" db check "$probe" --root "$root" --json
+grep -q '"code":"broken-provider"' "$tmp/out"
+test ! -e "$root$libc"
+expect 0 repair_pkg db repair-plan "$runtime_hash"
+repair=$(sed -n 's/^repair-plan .* sha256 \([0-9a-f]*\) missing-only read-only$/\1/p' "$tmp/out")
+test "${#repair}" -eq 64
+expect 3 repair_pkg db repair "$runtime_hash" --plan "$(printf '%064d' 0)"
+test ! -e "$root$libc"
+expect 0 repair_pkg db repair "$runtime_hash" --plan "$repair"
+expect 0 "$bin" db check "$probe" --root "$root"
+if test "${HOLY_TEST_DYNAMIC_CHROOT:-0}" = 1; then
+    doas -n chroot --userspec="$(id -u):$(id -g)" "$root" /usr/bin/probe > "$tmp/run"
+    grep -qx dynamic-probe "$tmp/run"
+    printf 'glibc cache recovery probe passed\n'
+fi
+if test -n "${musl_runtime:-}"; then
+    expect 0 repair_pkg db repair-plan "$musl_runtime"
+    repair=$(sed -n 's/^repair-plan .* sha256 \([0-9a-f]*\) missing-only read-only$/\1/p' "$tmp/out")
+    expect 0 repair_pkg db repair "$musl_runtime" --plan "$repair"
+    expect 0 "$bin" db check --all --root "$root"
+    for removed in glibc musl; do
+        if test "$removed" = glibc; then
+            rm "$root$libc" "$root$loader" "$root/usr/lib64/ld-linux-x86-64.so.2"
+            damaged=$runtime_hash
+        else
+            rm "$root$musl_loader" "$root/usr/lib/ld-musl-x86_64.so.1"
+            damaged=$musl_runtime
+        fi
+        expect 0 repair_pkg db repair-plan "$damaged"
+        repair=$(sed -n 's/^repair-plan .* sha256 \([0-9a-f]*\) missing-only read-only$/\1/p' "$tmp/out")
+        expect 0 repair_pkg db repair "$damaged" --plan "$repair"
+        expect 0 "$bin" db check --all --root "$root"
+        test "$(readlink "$root/usr/lib64/ld-linux-x86-64.so.2")" = ../lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2
+        test "$(readlink "$root/usr/lib/ld-musl-x86_64.so.1")" = holy/x86_64-linux-musl/ld-musl-x86_64.so.1
+        if test "${HOLY_TEST_DYNAMIC_CHROOT:-0}" = 1; then
+            doas -n chroot --userspec="$(id -u):$(id -g)" "$root" /usr/bin/probe > "$tmp/run"
+            grep -qx dynamic-probe "$tmp/run"
+            doas -n chroot --userspec="$(id -u):$(id -g)" "$root" /usr/bin/musl-probe > "$tmp/run"
+            grep -qx musl-probe "$tmp/run"
+        fi
+        printf '%s individual recovery passed\n' "$removed"
+    done
+    printf 'dual-libc recovery fixture passed\n'
+fi
+# changed content is not silently overwritten by missing-only repair.
+cp "$root$libc" "$tmp/saved-libc"
+printf changed > "$root$libc"
+expect 4 repair_pkg db repair-plan "$runtime_hash"
+grep -qx changed "$root$libc"
+cp "$tmp/saved-libc" "$root$libc"
+expect 0 "$bin" db rm "$probe" --root "$root"
+expect 0 "$bin" db rm "$provider" --root "$root"
+expect 0 "$bin" db rm "$runtime_hash" --root "$root"
+test ! -e "$root$libc"
+# a SONAME match in another directory does not satisfy a literal path.
+new misplaced
+mkdir -p "$tree/DATA/usr/lib"
+cp "$tmp/library.so" "$tree/DATA/usr/lib/libholyfixture.so.1"
+patchelf --replace-needed libc.so.6 "$libc" "$tree/DATA/usr/lib/libholyfixture.so.1"
+pack misplaced
+expect 4 "$bin" db plan-set "$probe" "$(hash misplaced)" "$runtime_hash" --root "$root"
+# named search remains a decision until its launch context is modeled.
+new named
+mkdir -p "$tree/DATA/usr/bin"
+cp "$tmp/probe" "$tree/DATA/usr/bin/named"
+patchelf --set-interpreter "$loader" "$tree/DATA/usr/bin/named"
+pack named
+expect 3 "$bin" db plan-set "$(hash named)" "$provider" "$runtime_hash" --root "$root"
+grep -q unknown-loader-search "$tmp/err"
+if test "${HOLY_TEST_STATIC_RECOVERY:-0}" = 1; then
+    printf 'static libc-free recovery fixture passed\n'
+fi
+printf 'dynamic placement fixtures passed\n'

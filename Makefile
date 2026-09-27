@@ -29,6 +29,10 @@ all: holypkg holy-init
 holy-init: src/early-init.c .build-config
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o $@ $<
 
+.PHONY: bootstrap-musl
+bootstrap-musl: holypkg
+	sh tools/bootstrap-musl.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/musl-bootstrap)"
+
 .PHONY: bootstrap-image
 bootstrap-image: holypkg llm.txt
 	sh tools/bootstrap-image.sh ./holypkg "$(STATIC_HOLYPKG)" "$(STATIC_CC)" "$(BUSYBOX_PACKAGE)" "$(DINIT_PACKAGE)" "$(MDEVD_PACKAGE)" "$(KERNEL_IMAGE)" "$(KERNEL_VERSION)" "$(LIMINE_DIR)" "$(OUTPUT)"
@@ -55,6 +59,11 @@ check-bootstrap-busybox: holypkg
 
 check-static-core:
 	sh tests/static-core.sh "$(or $(STATIC_HOLYPKG),./holypkg)" "$(or $(BUSYBOX_PACKAGE),out/busybox-bootstrap/busybox.holy)" "$(DINIT_PACKAGE)"
+
+.PHONY: check-libc-recovery
+check-libc-recovery:
+	@test -x "$(STATIC_HOLYPKG)" && test -x "$(MUSL_CC)" && test -f "$(MUSL_PACKAGE)" || { echo 'STATIC_HOLYPKG, MUSL_CC and MUSL_PACKAGE are required' >&2; exit 6; }
+	HOLY_TEST_DYNAMIC_CHROOT=1 HOLY_TEST_STATIC_RECOVERY=1 MUSL_CC="$(MUSL_CC)" MUSL_PACKAGE="$(MUSL_PACKAGE)" sh tests/dynamic.sh "$(STATIC_HOLYPKG)"
 
 .PHONY: check-static-network
 check-static-network:
@@ -94,6 +103,7 @@ check: holypkg tests/resolution check-init check-solver check-install-payload ch
 	sh tests/repo.sh ./holypkg
 	sh tests/state.sh ./holypkg
 	sh tests/sets.sh ./holypkg
+	sh tests/dynamic.sh ./holypkg
 	sh tests/resolve.sh ./holypkg ./tests/resolution
 	sh tests/elf-resolve.sh ./holypkg ./tests/resolution
 	sh tests/static.sh ./holypkg
@@ -103,6 +113,7 @@ check-fixtures: check
 check-root: check-install-payload
 	sh tests/state.sh ./holypkg
 	sh tests/sets.sh ./holypkg
+	sh tests/dynamic.sh ./holypkg
 	sh tests/static.sh ./holypkg
 
 check-qemu:

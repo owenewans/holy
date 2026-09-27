@@ -693,6 +693,11 @@ const char *holy_elf_runtime(const struct holy_elf_info *info)
 {
     const char *base;
     if (!info->interpreter) {
+        if (info->type == ET_DYN && info->soname &&
+            ((!strcmp(info->soname, "libc.musl-x86_64.so.1") &&
+              info->machine == EM_X86_64 && info->elf_class == ELFCLASS64) ||
+             (!strcmp(info->soname, "libc.musl-i386.so.1") &&
+              info->machine == EM_386 && info->elf_class == ELFCLASS32))) return "musl";
         if (info->type == ET_EXEC && !info->has_dynamic && !info->needed_count)
             return "nolibc";
         return "unknown";

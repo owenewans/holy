@@ -90,7 +90,7 @@ int holy_install_preflight(const char *snapshot, int root)
     return 1;
 }
 
-int holy_install_payload(const char *snapshot, int root)
+static int install_payload(const char *snapshot, int root, int missing_only)
 {
     struct archive *archive = archive_read_new();
     struct archive_entry *entry;
@@ -120,8 +120,23 @@ int holy_install_payload(const char *snapshot, int root)
                 archive_entry_size(entry) != 0) goto done;
             parent = parent_fd(root, path + 5, &storage, &base);
             if (parent < 0) goto done;
-            if (symlinkat(target, parent, base) || fsync(parent) ||
-                archive_read_data_skip(archive) != ARCHIVE_OK) goto file_done;
+            if (symlinkat(target, parent, base)) {
+                struct stat st;
+                size_t size = strlen(target);
+                char *actual;
+                int same;
+                if (!missing_only || errno != EEXIST ||
+                    fstatat(parent, base, &st, AT_SYMLINK_NOFOLLOW) || !S_ISLNK(st.st_mode) ||
+                    (long long)st.st_uid != archive_entry_uid(entry) ||
+                    (long long)st.st_gid != archive_entry_gid(entry)) goto file_done;
+                actual = malloc(size + 1);
+                if (!actual) goto file_done;
+                got = readlinkat(parent, base, actual, size + 1);
+                same = got >= 0 && (size_t)got == size && !memcmp(target, actual, size);
+                free(actual);
+                if (!same) goto file_done;
+            }
+            if (fsync(parent) || archive_read_data_skip(archive) != ARCHIVE_OK) goto file_done;
             close(parent);
             free(storage);
             continue;
@@ -130,6 +145,34 @@ int holy_install_payload(const char *snapshot, int root)
             archive_entry_hardlink(entry) || archive_entry_size(entry) < 0) goto done;
         parent = parent_fd(root, path + 5, &storage, &base);
         if (parent < 0) goto done;
+        if (missing_only) {
+            struct stat st;
+            fd = openat(parent, base, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+            if (fd >= 0) {
+                char current[65536];
+                if (fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+                    (st.st_mode & 07777) != archive_entry_perm(entry) ||
+                    (long long)st.st_uid != archive_entry_uid(entry) ||
+                    (long long)st.st_gid != archive_entry_gid(entry) ||
+                    st.st_size != archive_entry_size(entry)) goto file_done;
+                while ((got = archive_read_data(archive, buffer, sizeof buffer)) > 0) {
+                    size_t used = 0;
+                    while (used < (size_t)got) {
+                        ssize_t n = read(fd, current + used, (size_t)got - used);
+                        if (n < 0 && errno == EINTR) continue;
+                        if (n <= 0) goto file_done;
+                        used += (size_t)n;
+                    }
+                    if (memcmp(current, buffer, (size_t)got)) goto file_done;
+                }
+                if (got || fsync(fd)) goto file_done;
+                close(fd);
+                close(parent);
+                free(storage);
+                continue;
+            }
+            if (errno != ENOENT) goto file_done;
+        }
         fd = openat(parent, base, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
         if (fd < 0) goto file_done;
         while ((got = archive_read_data(archive, buffer, sizeof buffer)) > 0) {
@@ -161,6 +204,16 @@ done:
     archive_read_free(archive);
     if (!ok) fprintf(stderr, "holypkg: install payload incomplete; inspect transaction journal\n");
     return ok;
+}
+
+int holy_install_payload(const char *snapshot, int root)
+{
+    return install_payload(snapshot, root, 0);
+}
+
+int holy_install_payload_missing(const char *snapshot, int root)
+{
+    return install_payload(snapshot, root, 1);
 }
 
 static int decimal(const char *text, int base, unsigned long long *value)
@@ -285,11 +338,11 @@ static int remove_file(int root, const char *path, const struct stat *observed)
 }
 
 static int walk_manifest(int files_fd, int root, int mode,
-                          holy_install_finding finding, void *context)
+                          holy_install_finding finding, void *context, const char *filter)
 {
     struct stat st;
     char *text = NULL;
-    size_t length, used = 0, start = 0, i, line = 0;
+    size_t length, used = 0, start = 0, i, line = 0, matches = 0;
     int result = 1;
     if (lseek(files_fd, 0, SEEK_SET) != 0 ||
         fstat(files_fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
@@ -324,6 +377,8 @@ static int walk_manifest(int files_fd, int root, int mode,
             result = -1;
             goto done;
         }
+        if (filter && strcmp(filter, v[1])) { holy_tokens_free(v, count); continue; }
+        ++matches;
         checked = check_file(root, v, &observed);
         if (checked < 0) result = -1;
         else if (checked == 2) {
@@ -343,6 +398,7 @@ static int walk_manifest(int files_fd, int root, int mode,
         holy_tokens_free(v, count);
         if (result < 0 || (mode && result != 1)) goto done;
     }
+    if (filter && matches != 1) result = -1;
 done:
     free(text);
     return result;
@@ -350,25 +406,35 @@ done:
 
 int holy_install_check_manifest(int files_fd, int root)
 {
-    return walk_manifest(files_fd, root, 0, NULL, NULL);
+    return walk_manifest(files_fd, root, 0, NULL, NULL, NULL);
 }
 
 int holy_install_check_report(int files_fd, int root,
                               holy_install_finding finding, void *context)
 {
-    return walk_manifest(files_fd, root, 0, finding, context);
+    return walk_manifest(files_fd, root, 0, finding, context, NULL);
+}
+
+int holy_install_check_path(int files_fd, int root, const char *path)
+{
+    return walk_manifest(files_fd, root, 0, NULL, NULL, path);
+}
+
+int holy_install_check_or_missing(int files_fd, int root)
+{
+    return walk_manifest(files_fd, root, 3, NULL, NULL, NULL);
 }
 
 int holy_install_remove_manifest(int files_fd, int root)
 {
     if (holy_install_check_manifest(files_fd, root) != 1) return 0;
-    return walk_manifest(files_fd, root, 1, NULL, NULL) == 1;
+    return walk_manifest(files_fd, root, 1, NULL, NULL, NULL) == 1;
 }
 
 int holy_install_finish_remove_manifest(int files_fd, int root)
 {
-    if (walk_manifest(files_fd, root, 3, NULL, NULL) != 1) return 0;
-    return walk_manifest(files_fd, root, 2, NULL, NULL) == 1;
+    if (walk_manifest(files_fd, root, 3, NULL, NULL, NULL) != 1) return 0;
+    return walk_manifest(files_fd, root, 2, NULL, NULL, NULL) == 1;
 }
 
 static int manifest_claims(int files_fd, const char *path, int other)

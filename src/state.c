@@ -9,6 +9,7 @@
 #include "install.h"
 #include "config.h"
 #include "resolve.h"
+#include "scan.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -317,17 +318,17 @@ static int journal_valid(int dir, unsigned long long generation,
         (st.st_uid != 0 && st.st_uid != geteuid())) goto done;
     got = read(fd, buffer, sizeof buffer);
     if (got != st.st_size) goto done;
-    for (attempt = 0; attempt < 4; ++attempt) {
-        if (attempt >= 2 && !generation) break;
-        recorded = generation - (unsigned long long)(attempt / 2);
-        is_removing = attempt % 2;
+    for (attempt = 0; attempt < 6; ++attempt) {
+        if (attempt >= 3 && !generation) break;
+        recorded = generation - (unsigned long long)(attempt / 3);
+        is_removing = attempt % 3;
         length = (size_t)snprintf(prefix, sizeof prefix,
             "format holy-journal-1\nstage %s\ngeneration %llu\nartifact ",
-            is_removing ? "removing" : "applying", recorded);
+            is_removing == 2 ? "repairing" : is_removing ? "removing" : "applying", recorded);
         if (length >= sizeof prefix) goto done;
         if (!memcmp(buffer, prefix, length)) break;
     }
-    if (attempt == 4 || (attempt >= 2 && !generation)) goto done;
+    if (attempt == 6 || (attempt >= 3 && !generation)) goto done;
     if (st.st_size != (off_t)(length + 65 + 5 + 65) ||
         buffer[length + 64] != '\n' ||
         memcmp(buffer + length + 65, "plan ", 5) ||
@@ -1328,6 +1329,58 @@ static int compare_check_result(const void *a, const void *b)
     return strcmp(left->digest, right->digest);
 }
 
+static int check_graph(int installed, int root, const char *digest,
+                        struct check_result *record)
+{
+    int item = child_dir(installed, digest, 0), fd, result = 1;
+    FILE *stream;
+    char *line = NULL;
+    size_t capacity = 0, number = 0;
+    ssize_t length;
+    if (item < 0) return -1;
+    fd = openat(item, "graph", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    close(item);
+    if (fd < 0) return errno == ENOENT ? 1 : -1;
+    stream = fdopen(fd, "r");
+    if (!stream) { close(fd); return -1; }
+    while ((length = getline(&line, &capacity, stream)) >= 0) {
+        char **v = NULL, *error = NULL;
+        size_t count = 0;
+        int provider, intact = 1;
+        ++number;
+        if (memchr(line, 0, (size_t)length) ||
+            !holy_lex(line, (size_t)length, &v, &count, "installed/graph", number, &error)) {
+            free(error); result = -1; break;
+        }
+        if (!count || strcmp(v[0], "edge")) { holy_tokens_free(v, count); continue; }
+        if (count != 7 || !valid_digest(v[1]) || !valid_digest(v[3])) {
+            holy_tokens_free(v, count); result = -1; break;
+        }
+        if (strcmp(v[1], digest)) { holy_tokens_free(v, count); continue; }
+        provider = child_dir(installed, v[3], 0);
+        if (provider < 0) intact = errno == ENOENT ? 0 : -1;
+        else if (!strcmp(v[5], "interpreter") || !strcmp(v[5], "needed-path")) {
+            int files = openat(provider, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+            intact = files < 0 || v[6][0] != '/' ? -1 : holy_install_check_path(files, root, v[6] + 1);
+            if (files >= 0) close(files);
+        }
+        if (provider >= 0) close(provider);
+        if (intact < 0) result = -1;
+        else if (!intact) {
+            fprintf(stderr, "holypkg: broken-provider consumer=%s requirement=%s provider=%s target=%s\n",
+                    digest, v[2], v[3], v[6]);
+            if (result == 1) result = 0;
+            if (record && !collect_finding(record, v[6], "broken-provider")) result = -1;
+        }
+        holy_tokens_free(v, count);
+        if (result < 0) break;
+    }
+    if (ferror(stream)) result = -1;
+    free(line);
+    fclose(stream);
+    return result;
+}
+
 static int check_all(int installed, int root, unsigned long long generation, int json)
 {
     struct check_result *records = NULL;
@@ -1362,6 +1415,11 @@ static int check_all(int installed, int root, unsigned long long generation, int
                     json ? collect_finding : NULL, &records[count - 1]);
         close(files);
         if (status < 0) goto done;
+        {
+            int graph = check_graph(installed, root, entry->d_name, json ? &records[count - 1] : NULL);
+            if (graph < 0) goto done;
+            if (!graph) status = 0;
+        }
         records[count - 1].intact = status;
         errno = 0;
     }
@@ -1422,6 +1480,11 @@ int holy_state_check(const char *digest, const char *root_path, int json)
     if (files < 0) goto done;
     checked = holy_install_check_report(files, root,
                 json ? collect_finding : NULL, &record);
+    if (checked >= 0) {
+        int graph = check_graph(installed, root, digest, json ? &record : NULL);
+        if (graph < 0) checked = -1;
+        else if (!graph) checked = 0;
+    }
     result = checked > 0 ? 0 : checked == 0 ? 4 : 1;
     if (json && (result == 0 || result == 4)) {
         memcpy(record.digest, digest, 65);
@@ -1642,7 +1705,7 @@ int holy_state_continue_remove(const char *root_path)
         generation == ULLONG_MAX) { result = 1; goto done; }
     found = journal_valid(dir, generation, &recorded, digest, plan, &removing);
     if (found < 0) { result = 1; goto done; }
-    if (!found || !removing || recorded != generation ||
+    if (!found || removing != 1 || recorded != generation ||
         strspn(plan, "0") != 64 || !installed_valid(dir)) goto done;
     transactions = child_dir(dir, "transactions", 0);
     installed = child_dir(dir, "installed", 0);
@@ -1902,6 +1965,29 @@ static int set_claims_valid(struct install_set *set)
     return 1;
 }
 
+static int explicit_elf_paths(const char *snapshot)
+{
+    struct holy_scan_result scan = {0};
+    size_t i, j;
+    int result = 6;
+    if (!holy_scan_collect(snapshot, &scan)) return 6;
+    result = 0;
+    for (i = 0; i < scan.count; ++i) {
+        const struct holy_scanned_file *file = &scan.files[i];
+        if (file->elf.interpreter && file->elf.interpreter[0] != '/') { result = 3; break; }
+        for (j = 0; j < file->elf.needed_count; ++j)
+            if (file->elf.needed[j][0] != '/') {
+                fprintf(stderr, "holypkg: unknown-loader-search consumer=%s requirement=%s\n",
+                        file->path, file->elf.needed[j]);
+                result = 3;
+                break;
+            }
+        if (result) break;
+    }
+    holy_scan_free(&scan);
+    return result;
+}
+
 static int build_set(const char *root_path, int root, int dir,
                       unsigned long long generation, const char *const *digests,
                       size_t count, const char *choice, int completed,
@@ -1953,11 +2039,15 @@ static int build_set(const char *root_path, int root, int dir,
         result = 6;
         if (!holy_package_identity(item->snapshot, &item->identity) ||
             strcmp(item->identity.digest, set->resolution.artifacts[i]) ||
-            strcmp(item->identity.os, "linux") || strcmp(item->identity.libc, "nolibc") ||
+            strcmp(item->identity.os, "linux") ||
+            (strcmp(item->identity.libc, "nolibc") && strcmp(item->identity.libc, "glibc") &&
+             strcmp(item->identity.libc, "musl")) ||
             (strcmp(item->identity.arch, "noarch") &&
              !((!strcmp(item->identity.arch, "x86_64") && !strcmp(host.machine, "x86_64")) ||
                (!strcmp(item->identity.arch, "x86") && !strcmp(host.machine, "i686")))) ||
             !empty_transform(item->snapshot) || !instance_preflight(item->snapshot)) goto done;
+        result = explicit_elf_paths(item->snapshot);
+        if (result) goto done;
         result = holy_preview_resolved(item->snapshot, root_path, completed);
         if (result) goto done;
         for (j = 0; j < i; ++j)
@@ -2380,4 +2470,128 @@ int holy_state_finish_set(const char *root_path)
 int holy_state_continue_set(const char *root_path)
 {
     return recover_set(root_path, 1);
+}
+
+static int repair_hash(int root, unsigned long long generation, const char *digest,
+                        const char *graph, char output[65])
+{
+    struct stat st;
+    char identity[128];
+    unsigned char hash[32];
+    unsigned int length;
+    size_t i;
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    int ok = 0;
+    if (!ctx || fstat(root, &st) || EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
+        !hash_text(ctx, "holy-repair-missing-1") || !hash_text(ctx, digest) ||
+        !hash_text(ctx, graph)) goto done;
+    snprintf(identity, sizeof identity, "%ju:%ju:%llu", (uintmax_t)st.st_dev,
+             (uintmax_t)st.st_ino, generation);
+    if (!hash_text(ctx, identity) || EVP_DigestFinal_ex(ctx, hash, &length) != 1 || length != 32) goto done;
+    for (i = 0; i < 32; ++i) snprintf(output + i * 2, 3, "%02x", hash[i]);
+    ok = 1;
+done:
+    EVP_MD_CTX_free(ctx);
+    return ok;
+}
+
+int holy_state_repair(const char *digest, const char *approved, const char *root_path)
+{
+    int root = -1, dir = -1, installed = -1, item = -1, files = -1, transactions = -1;
+    int result = 1, stage = 0, journaled = 0, resume = digest == NULL;
+    char artifact[65], expected[65], actual[65], graph[65], journal[256];
+    char *snapshot = NULL;
+    unsigned long long generation, recorded;
+    struct stat root_st;
+    size_t length;
+    if (!resume && (!valid_digest(digest) || (approved && !valid_digest(approved)))) return 2;
+    root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    dir = root < 0 ? -1 : state_dir_at(root, 0);
+    if (dir < 0 || fstat(root, &root_st) || flock(dir, approved || resume ? LOCK_EX : LOCK_SH) ||
+        !state_layout(dir, 0) || !empty_child(dir, "index") ||
+        !read_generation(dir, &generation) || generation == ULLONG_MAX) goto done;
+    recorded = generation;
+    if (resume) {
+        result = 5;
+        if (set_journal_present(dir) ||
+            journal_valid(dir, generation, &recorded, artifact, expected, &stage) != 1 ||
+            stage != 2) goto done;
+        {
+            DIR *list;
+            struct dirent *entry;
+            int valid = 1, journal_dir = child_dir(dir, "transactions", 0);
+            if (journal_dir < 0) goto done;
+            list = directory_stream(journal_dir);
+            close(journal_dir);
+            if (!list) goto done;
+            errno = 0;
+            while ((entry = readdir(list))) {
+                if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+                if (strcmp(entry->d_name, "journal")) { valid = 0; break; }
+                errno = 0;
+            }
+            if (!entry && errno) valid = 0;
+            closedir(list);
+            if (!valid) goto done;
+        }
+        journaled = 1;
+        digest = artifact;
+        approved = expected;
+    } else if (!empty_child(dir, "transactions")) { result = 5; goto done; }
+    if (!installed_valid(dir)) goto done;
+    installed = child_dir(dir, "installed", 0);
+    item = installed < 0 ? -1 : child_dir(installed, digest, 0);
+    if (item < 0) { result = 6; goto done; }
+    files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    snapshot = holy_cache_snapshot(digest, root_path);
+    if (!snapshot) { result = 6; goto done; }
+    if (files < 0 || !instance_matches_snapshot(item, snapshot) ||
+        !graph_digest(item, graph) || !repair_hash(root, recorded, digest, graph, actual)) goto done;
+    {
+        struct plan_hash claims = {0};
+        int valid;
+        claims.completed = 1;
+        claims.hash = EVP_MD_CTX_new();
+        valid = claims.hash && EVP_DigestInit_ex(claims.hash, EVP_sha256(), NULL) == 1 &&
+                holy_verify_visit(snapshot, plan_entry, &claims);
+        EVP_MD_CTX_free(claims.hash);
+        if (!valid) { result = resume ? 5 : 4; goto done; }
+    }
+    if (approved && strcmp(approved, actual)) { result = 3; goto done; }
+    if (exclusive_claims(installed, digest, files) != 1 ||
+        holy_install_check_or_missing(files, root) != 1) { result = resume ? 5 : 4; goto done; }
+    if (!same_root(root_path, &root_st)) { result = 4; goto done; }
+    if (!approved) {
+        printf("repair-plan generation %llu artifact %s sha256 %s missing-only read-only\n",
+               generation, digest, actual);
+        result = 0;
+        goto done;
+    }
+    transactions = child_dir(dir, "transactions", 0);
+    if (transactions < 0) goto done;
+    result = 5;
+    if (!resume) {
+        length = (size_t)snprintf(journal, sizeof journal,
+            "format holy-journal-1\nstage repairing\ngeneration %llu\nartifact %s\nplan %s\n",
+            recorded, digest, actual);
+        if (length >= sizeof journal || !record_file(transactions, "journal", journal, length)) goto done;
+        journaled = 1;
+    }
+    if (!holy_install_payload_missing(snapshot, root) ||
+        holy_install_check_manifest(files, root) != 1 ||
+        (generation == recorded && !set_generation(dir, recorded + 1)) || fsync(dir) ||
+        unlinkat(transactions, "journal", 0) || fsync(transactions)) goto done;
+    printf("repaired %s generation %llu missing-only\n", digest, recorded + 1);
+    result = 0;
+done:
+    if (result) fprintf(stderr, "holypkg: missing-file repair failed (status %d)%s\n", result,
+                        journaled ? "; repair journal retained" : "");
+    if (snapshot) { unlink(snapshot); free(snapshot); }
+    if (files >= 0) close(files);
+    if (item >= 0) close(item);
+    if (installed >= 0) close(installed);
+    if (transactions >= 0) close(transactions);
+    if (dir >= 0) close(dir);
+    if (root >= 0) close(root);
+    return result;
 }

@@ -23,8 +23,8 @@
 - [x] Resolve a restricted local/catalog graph with libsolv; reject unsupported semantics.
 - [x] Add observed ELF interpreter, SONAME and strong symbol edges to that graph;
   reject candidate class/ABI/version/symbol mismatches and expose stable IDs for
-  root provider choices. Unresolved launch scopes report unknown. File placement,
-  complete loader contexts and integration with dynamic-package transactions remain open.
+  root provider choices. Unresolved launch scopes report unknown. Literal absolute
+  provider paths now support dynamic set transactions; complete loader contexts remain open.
 - [x] Export canonical selected artifact/edge records from the resolver; bind the
   supported install subset to its graph in the plan hash and installed state.
   Graph integrity checks preserve legacy state compatibility.
@@ -47,12 +47,19 @@
   and generation change; persist reasons/edges, reject referenced-provider removal,
   and recover completed sets or resume untouched remaining packages after failure.
   The bootstrap image installs its base through this set engine.
+- [x] Install glibc/musl dynamic sets with explicit interpreter and DT_NEEDED
+  payload paths; execute real fixtures in a disposable x86_64 root. Report broken
+  selected provider files through installed check. Ordinary SONAME search and
+  automatic path conversion still require implementation.
+- [x] Plan and journal missing-only repair from the verified artifact cache.
+  Preserve changed/partial files, reject stale plans and resume recorded repair
+  after injected write failure. General reinstall and config merge remain open.
 - [ ] Define stable source IDs and version families; extend transactions to
   installed-provider reuse, replacements, dynamic libraries and grouped removal.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions.
 - [x] Install, run, check and remove a native static syscall-only ELF fixture;
-  foreign-architecture approval and dynamic payload installation remain open.
+  foreign-architecture approval remains open.
 - [ ] Handle hooks, service consent, modified configs, overrides, rollback and
   recovery of each interrupted mutation phase.
 - [ ] Implement native HTTPS/Git source synchronization, signed generations and
@@ -75,12 +82,20 @@
 - [x] Link the prototype holypkg with musl-static dependencies; verify native
   archive, ELF, repository, solver and HTTPS fixtures. Run local package
   cache/install/check/remove and BusyBox shell probes inside a libc-free chroot.
-  Real libc restoration remains an unfinished acceptance gate.
+  The separate dual-libc chroot gate now restores actual runtime payloads;
+  boot recovery remains an unfinished acceptance gate.
 - [x] Test the static client's DNS and HTTPS path in a private-network libc-free
   chroot, including wrong CA/digest refusals and a hashed JSON report. Network
   interface setup still uses a host fixture tool, not a finished recovery profile.
 - [ ] Package statically linked BusyBox, dinit, mdevd and the recovery chain,
   plus both dynamic libc runtimes for i686 and x86_64.
+- [x] Build pinned x86_64 musl as a native runtime package with source hashes,
+  license and a natively linked loader SONAME. Run pthread/allocation probes
+  alongside glibc. Integration of both dynamic runtimes into the boot image remains open.
+- [x] Run static holypkg inside an x86_64 root after deleting both glibc and musl
+  runtime payloads; restore from cached LZ4 .holy files and run both dynamic probes.
+  Repeat each libc separately, including loader symlink restoration. This gate
+  covers missing payload repair, not forced package removal, boot or network recovery.
 - [x] Build pinned x86_64 musl-static dinit with upstream tests; exercise
   service start/status/shutdown and stop-command effects with dinitctl in a
   libc-free chroot as an ordinary user. Install/check/remove the complete package,

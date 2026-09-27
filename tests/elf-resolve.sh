@@ -207,8 +207,17 @@ new path-consumer
 cp "$tmp/path-consumer" "$tree/DATA/usr/bin/consumer"
 pack path-consumer
 if "$bin" solve "local:$tmp/path-consumer.holy" "local:$tmp/runtime.holy" \
-    --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
-grep -q 'DT_NEEDED paths require a launch context' "$tmp/err"
+    --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+grep -q 'dependency-conflict' "$tmp/out"
+for needed_path in './libholyfixture.so.1' '/usr/$LIB/libholyfixture.so.1' '/usr/../lib/libholyfixture.so.1'; do
+    rm -f "$tmp/nonliteral-consumer.holy"
+    new nonliteral-consumer
+    cp "$tmp/path-consumer" "$tree/DATA/usr/bin/consumer"
+    patchelf --replace-needed "$tmp/no-soname.so" "$needed_path" "$tree/DATA/usr/bin/consumer"
+    pack nonliteral-consumer
+    if "$bin" solve "local:$tmp/nonliteral-consumer.holy" "local:$tmp/runtime.holy" \
+        --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+done
 if test "${HOLY_TEST_STATIC_CHROOT:-0}" = 1; then
     "$bin" elf "$bin" > "$tmp/out"
     grep -qx 'runtime nolibc' "$tmp/out"

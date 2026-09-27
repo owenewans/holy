@@ -23,6 +23,18 @@ static void print_token(const char *path)
     }
 }
 
+static const char *named_runtime(const struct holy_elf_info *info, const char *path)
+{
+    const char *base = strrchr(path, '/');
+    base = base ? base + 1 : path;
+    if (!strcmp(base, "libc.so.6")) return "glibc";
+    if ((!strcmp(holy_elf_machine(info), "x86_64") &&
+         (!strcmp(base, "libc.musl-x86_64.so.1") || !strcmp(base, "ld-musl-x86_64.so.1"))) ||
+        (!strcmp(holy_elf_machine(info), "x86") &&
+         (!strcmp(base, "libc.musl-i386.so.1") || !strcmp(base, "ld-musl-i386.so.1")))) return "musl";
+    return NULL;
+}
+
 static int scan(const char *path, int emit, size_t *needed,
                 struct holy_scan_result *collected)
 {
@@ -88,20 +100,22 @@ static int scan(const char *path, int emit, size_t *needed,
         }
         {
             size_t i;
-            for (i = 0; i < info.needed_count; ++i)
-                if (!strcmp(info.needed[i], "libc.so.6") &&
-                    strcmp(libc, "glibc")) {
-                    fprintf(stderr, "holypkg: ELF requires libc.so.6 but package libc differs: %s\n",
-                            name);
+            for (i = 0; i < info.needed_count; ++i) {
+                const char *required = named_runtime(&info, info.needed[i]);
+                if (required && strcmp(libc, required)) {
+                    fprintf(stderr, "holypkg: ELF runtime requirement conflicts with package libc: %s\n", name);
                     holy_elf_free(&info);
                     goto done;
                 }
+            }
         }
         runtime = holy_elf_runtime(&info);
         if (!strcmp(runtime, "unknown") && info.type == ET_DYN) {
             size_t i;
-            for (i = 0; i < info.needed_count; ++i)
-                if (!strcmp(info.needed[i], "libc.so.6")) runtime = "glibc";
+            for (i = 0; i < info.needed_count; ++i) {
+                const char *required = named_runtime(&info, info.needed[i]);
+                if (required) runtime = required;
+            }
             if (info.soname &&
                 ((!strcmp(info.soname, "ld-linux-x86-64.so.2") &&
                   !strcmp(holy_elf_machine(&info), "x86_64")) ||

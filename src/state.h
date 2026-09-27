@@ -42,4 +42,7 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
 int holy_state_finish_set(const char *root_path);
 int holy_state_continue_set(const char *root_path);
 
+/* missing-only repair; NULL digest resumes a recorded repair. */
+int holy_state_repair(const char *digest, const char *approved, const char *root_path);
+
 #endif

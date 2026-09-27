@@ -86,6 +86,12 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db recover --finish-set|--continue-set --root DIRECTORY
 .br
+.B holypkg db repair-plan SHA256 --root DIRECTORY
+.br
+.B holypkg db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY
+.br
+.B holypkg db recover --repair --root DIRECTORY
+.br
 .B holypkg db check SHA256 --root DIRECTORY
 .br
 .B holypkg db check --all --root DIRECTORY
@@ -289,8 +295,8 @@ These commands do not resolve chains of symlinks or prove runtime targets exist.
 The separate fetch --extract operation still refuses absolute symlinks.
 .PP
 The db plan-set command resolves one explicit root against already cached
-candidate hashes. It supports exact package dependencies between linux/nolibc
-data or native static packages, empty hooks/transforms, pre-existing safe
+candidate hashes. It supports exact package dependencies between Linux
+data, native static and restricted dynamic packages, empty hooks/transforms, pre-existing safe
 directories and the same payload subset as db apply. It reports selected
 artifacts, reasons and requirement edges without changing installed state.
 Unused candidates are excluded from the operation. The plan digest binds
@@ -302,8 +308,16 @@ root and candidates. It holds one writer lock, checks the plan again and writes
 transactions/set-journal before the first payload. All selected packages share
 one generation increment. Installed state records the explicit root and
 dependency reasons; each instance retains the selected graph. Package hooks,
-dynamic library placement, existing-provider reuse, upgrades and grouped removal
+existing-provider reuse, upgrades and grouped removal
 are not implemented by this interface.
+.PP
+Dynamic sets require literal absolute PT_INTERP and DT_NEEDED paths. Providers
+must contain those exact regular payload paths and satisfy the recorded
+architecture, runtime, symbol and version requirements. The planner rejects
+relative or tokenized dependency paths. Ordinary SONAME search returns
+decision-required because RPATH/RUNPATH and loader search are not modeled.
+Parent directories must already exist without symlink traversal. This interface
+does not automatically rewrite ELF files or resolve loader aliases.
 .PP
 An interrupted set leaves generation unchanged unless final commit already
 published it. db status returns 5 for a recognized set journal.
@@ -414,7 +428,10 @@ numeric owner/group and rejects
 symlinked parent paths. It returns 4 for changed or missing files, 6 when
 the instance is absent, and 5 while a file transaction is incomplete. The
 command neither downloads an archive nor repairs a file. This restricted
-check does not model dynamic linking, scripts or runtime behavior. --all walks
+check also checks recorded interpreter and needed-path providers against their
+installed manifests. Missing or changed provider files produce broken-provider
+findings with the absolute target path. It does not model loader search order,
+scripts or runtime behavior. --all walks
 every supported installed manifest under the same shared lock and reports each
 artifact as intact or changed in digest order. It returns 4 if any artifact
 has changed. An empty installed set reports zero checked packages. --json
@@ -427,7 +444,33 @@ manifest mismatches, including inaccessible or symlinked parents. Paths encode
 non-ASCII bytes as \eu00HH; consumers reconstruct the original bytes. Findings
 follow manifest order; intact artifacts have an empty array. The artifact-level
 changed-file code remains the aggregate failure indicator. This reports only
-data-manifest coverage.
+data-manifest coverage, including the selected literal-path provider files.
+.PP
+db repair-plan SHA256 --root DIRECTORY prepares missing-only restoration of an
+installed holy-instance-2 artifact from the target cache. db repair SHA256
+--plan PLAN_SHA256 --root DIRECTORY applies the reviewed policy. The plan binds
+the artifact, stored graph, database generation and root device/inode. Its scope
+is all absent files in that artifact, including files removed after preparation.
+Changed or partial files are preserved and require manual review; directory
+metadata must remain intact. Repair does not run hooks or change providers.
+.PP
+Repair records stage repairing before writing files, verifies restored contents
+and increments the generation once. An interrupted operation remains pending.
+db recover --repair resumes that recorded policy after verifying cache,
+installed metadata, ownership and graph. Partial files are not overwritten.
+Ordinary check remains read-only. This is not general upgrade, rollback or
+configuration-file repair.
+.PP
+make bootstrap-musl INPUTS=DIRECTORY OUTPUT=DIRECTORY builds pinned musl 1.2.5
+as an x86_64 native package, preserving source and build hashes and licenses.
+The build sets libc.musl-x86_64.so.1 as SONAME at link time; it does not rewrite
+the self-bootstrapping loader with patchelf.
+make check-libc-recovery STATIC_HOLYPKG=FILE MUSL_CC=FILE MUSL_PACKAGE=FILE
+requires a static client, a musl compiler and that runtime package. It installs
+glibc and musl fixtures, runs both, removes each runtime and both together,
+then executes cached repair inside the libc-free chroot. doas is required;
+guest commands run with the caller's UID/GID. This tests local recovery on
+x86_64, not boot, i686, network recovery or general foreign package conversion.
 .PP
 Database owner reads installed manifests and lists the artifact digest
 and kind for an exact relative or root-absolute path. Multiple packages may
@@ -666,7 +709,8 @@ without section headers. Malformed symbol names, version indices, entry sizes
 or address ranges reject the input. GNU x86
 ISA-needed properties in PT_NOTE report x86-64-baseline/v2/v3/v4 when present;
 absent or unrecognized properties report unknown. ET_EXEC without PT_INTERP,
-PT_DYNAMIC or DT_NEEDED reports nolibc. Other files without a recognized
+PT_DYNAMIC or DT_NEEDED reports nolibc. An architecture-matched musl libc
+SONAME supplies a musl hint for ET_DYN. Other files without a recognized
 interpreter report unknown. It does not model symbol lookup order or plugin loading;
 its output is not a dependency resolution or package ABI verdict.
 .PP
@@ -676,7 +720,9 @@ each file's class, machine, runtime hint and ISA using the same reader. It does
 not execute payloads. It rejects a machine mismatch with the package arch,
 including ELF in noarch, and a recognized glibc/musl interpreter that disagrees
 with the libc tag. For ET_DYN without an interpreter, an exact DT_NEEDED
-libc.so.6 is evidence for glibc and rejects a non-glibc package tag.
+libc.so.6, including the basename of an absolute path, is evidence for glibc
+and rejects a non-glibc package tag. Architecture-specific ld-musl and
+libc.musl names provide musl evidence; a bare libc.so remains unknown.
 The matching x86/x86_64 ld-linux SONAME together with a GLIBC_PRIVATE version
 definition supplies glibc loader evidence; its bytes are not executed to classify it.
 An unclassified ELF causes scan to fail instead of accepting an arbitrary

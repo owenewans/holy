@@ -154,13 +154,29 @@ static int exports_symbol(const struct holy_elf_info *elf, const struct holy_elf
     return 0;
 }
 
+static int literal_path(const char *path)
+{
+    const char *part, *end;
+    if (path[0] != '/' || !path[1] || strchr(path, '$')) return 0;
+    for (part = path + 1; ; part = end + 1) {
+        size_t length;
+        end = strchr(part, '/');
+        length = end ? (size_t)(end - part) : strlen(part);
+        if (!length || (length == 1 && part[0] == '.') ||
+            (length == 2 && !memcmp(part, "..", 2))) return 0;
+        if (!end) return 1;
+    }
+}
+
 static int needed_matches(const struct holy_scanned_file *consumer,
                            const struct holy_scanned_file *provider, const char *needed)
 {
     size_t i, j;
     if (!compatible(consumer, provider) || provider->elf.type != ET_DYN ||
-        (provider->elf.flags1 & DF_1_PIE) || !provider->elf.soname ||
-        strcmp(provider->elf.soname, needed)) return 0;
+        (provider->elf.flags1 & DF_1_PIE)) return 0;
+    if (needed[0] == '/') {
+        if (!literal_path(needed) || strcmp(provider->path, needed + 1)) return 0;
+    } else if (!provider->elf.soname || strcmp(provider->elf.soname, needed)) return 0;
     for (i = 0; i < consumer->elf.version_count; ++i) {
         const struct holy_elf_version *v = &consumer->elf.versions[i];
         if (v->weak || strcmp(v->provider, needed)) continue;
@@ -183,9 +199,11 @@ static int direct_provider(const struct holy_scanned_file *consumer,
     if (consumer == provider) return 1;
     if (consumer->elf.interpreter && consumer->elf.interpreter[0] == '/' &&
         !strcmp(consumer->elf.interpreter + 1, provider->path)) return 1;
-    if (provider->elf.soname)
-        for (i = 0; i < consumer->elf.needed_count; ++i)
-            if (!strcmp(consumer->elf.needed[i], provider->elf.soname)) return 1;
+    for (i = 0; i < consumer->elf.needed_count; ++i) {
+        const char *needed = consumer->elf.needed[i];
+        if ((needed[0] == '/' && literal_path(needed) && !strcmp(needed + 1, provider->path)) ||
+            (provider->elf.soname && !strcmp(needed, provider->elf.soname))) return 1;
+    }
     return 0;
 }
 
@@ -225,7 +243,8 @@ static int elf_requirement(struct local_item *local, struct holy_solver_item *it
         for (j = 0; j < local[i].scan.count; ++j) {
             const struct holy_scanned_file *candidate = &local[i].scan.files[j];
             int matches;
-            if (!strcmp(kind, "soname")) matches = needed_matches(file, candidate, target);
+            if (!strcmp(kind, "soname") || !strcmp(kind, "needed-path"))
+                matches = needed_matches(file, candidate, target);
             else if (!strcmp(kind, "interpreter"))
                 matches = target[0] == '/' && !strcmp(target + 1, candidate->path) &&
                           (candidate->mode & 0111) && compatible(file, candidate);
@@ -247,11 +266,13 @@ static int elf_requirements(struct local_item *local, struct holy_solver_item *i
         const struct holy_scanned_file *f = &local[i].scan.files[j];
         if (f->elf.interpreter && !elf_requirement(local, items, count, i, f, "interpreter", f->elf.interpreter, NULL)) return 0;
         for (k = 0; k < f->elf.needed_count; ++k) {
-            if (strchr(f->elf.needed[k], '/')) {
+            if (strchr(f->elf.needed[k], '/') && !literal_path(f->elf.needed[k])) {
                 fputs("holypkg: DT_NEEDED paths require a launch context\n", stderr);
                 return 0;
             }
-            if (!elf_requirement(local, items, count, i, f, "soname", f->elf.needed[k], NULL)) return 0;
+            if (!elf_requirement(local, items, count, i, f,
+                                 f->elf.needed[k][0] == '/' ? "needed-path" : "soname",
+                                 f->elf.needed[k], NULL)) return 0;
         }
         for (k = 0; k < f->elf.symbol_count; ++k) {
             const struct holy_elf_symbol *s = &f->elf.symbols[k];
@@ -292,8 +313,8 @@ static int symbol_context(const struct local_item *consumer, const struct elf_ed
             if (dependency->file != edge->file) continue;
             if ((!strcmp(dependency->kind, "soname") && f->elf.soname &&
                  !strcmp(dependency->target, f->elf.soname)) ||
-                (!strcmp(dependency->kind, "interpreter") && dependency->target[0] == '/' &&
-                 !strcmp(dependency->target + 1, f->path)))
+                ((!strcmp(dependency->kind, "interpreter") || !strcmp(dependency->kind, "needed-path")) &&
+                 dependency->target[0] == '/' && !strcmp(dependency->target + 1, f->path)))
                 if (provides(item, consumer->requirements[dependency->requirement].first)) return 1;
         }
     }

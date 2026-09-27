@@ -20,4 +20,9 @@ int holy_install_manifest_owns(int files_fd, const char *path);
 /* 1 conflicting claims, 0 disjoint/shared directories, -1 invalid input. */
 int holy_install_manifests_conflict(int left_fd, int right_fd);
 
+/* missing-only repair; caller verifies manifest, ownership and journals first. */
+int holy_install_payload_missing(const char *snapshot, int root);
+int holy_install_check_or_missing(int files_fd, int root);
+int holy_install_check_path(int files_fd, int root, const char *path);
+
 #endif
