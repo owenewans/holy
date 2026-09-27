@@ -433,3 +433,48 @@ int holy_source_list(const char *root)
     close(dir); free(data); clear_registry(&r);
     return result;
 }
+
+int holy_source_record(int database, const char *id, char **record, char registry[65])
+{
+    struct registry r = {0};
+    char *data = load_registry(database, &r), *result = NULL;
+    size_t i, size = 0;
+    int status = 1;
+    FILE *out = NULL;
+    *record = NULL;
+    if (!data || !hash(data, registry)) goto done;
+    status = 6;
+    for (i = 0; i < r.count; ++i) if (!strcmp(r.items[i].id, id)) break;
+    if (i == r.count || !r.items[i].active) goto done;
+    status = 1;
+    out = open_memstream(&result, &size);
+    if (!out) goto done;
+    fprintf(out, "source %s ", id); quote(out, r.items[i].alias); fputc('\n', out);
+    status = ferror(out) ? 1 : 0;
+    if (fclose(out)) status = 1;
+    if (size > 16 * 1024 * 1024) status = 1;
+done:
+    if (!status) *record = result; else free(result);
+    free(data); clear_registry(&r);
+    return status;
+}
+
+int holy_source_instance(int instance, char id[65], char digest[65])
+{
+    struct stat st;
+    char *data = NULL, **v = NULL;
+    size_t count = 0;
+    int fd = openat(instance, "source", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC), ok = 0;
+    if (fd < 0 || fstat(fd, &st) || (st.st_mode & 0022) ||
+        (st.st_uid != 0 && st.st_uid != geteuid())) goto done;
+    data = read_fd(fd);
+    if (!data || !tokens(data, strlen(data), &v, &count) || count != 3 ||
+        strcmp(v[0], "source") || !valid_hash(v[1]) || !v[2][0] ||
+        !strcmp(v[2], "local") || !hash(data, digest)) goto done;
+    memcpy(id, v[1], 65);
+    ok = 1;
+done:
+    if (fd >= 0) close(fd);
+    free(data); holy_tokens_free(v, count);
+    return ok;
+}

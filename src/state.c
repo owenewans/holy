@@ -11,6 +11,7 @@
 #include "resolve.h"
 #include "scan.h"
 #include "deps.h"
+#include "source.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -189,7 +190,7 @@ done:
 static int instance_state_generation(int item, const char *digest,
                                      unsigned long long *recorded)
 {
-    char buffer[384], prefix[256], graph[65], *end;
+    char buffer[640], prefix[560], graph[65], source[65], source_hash[65], *end;
     struct stat st;
     unsigned long long generation;
     ssize_t got;
@@ -198,17 +199,25 @@ static int instance_state_generation(int item, const char *digest,
     int version, fd = openat(item, "state", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0) return 0;
     if (fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        (st.st_mode & 0022) || (st.st_uid != 0 && st.st_uid != geteuid()) ||
         st.st_size < 24 || st.st_size >= (off_t)sizeof buffer) {
         close(fd);
         return 0;
     }
     got = read(fd, buffer, sizeof buffer - 1);
     close(fd);
-    if (got != st.st_size || buffer[got - 1] != '\n') return 0;
+    if (got != st.st_size || buffer[got - 1] != '\n' || memchr(buffer, 0, (size_t)got)) return 0;
     buffer[got] = '\0';
-    version = !strncmp(buffer, "format holy-instance-2\n", 23) ? 2 : 1;
+    version = !strncmp(buffer, "format holy-instance-3\n", 23) ? 3 :
+              !strncmp(buffer, "format holy-instance-2\n", 23) ? 2 : 1;
     if (strstr(buffer, "\nreason dependency\n")) reason = "dependency";
-    if (version == 2) {
+    if (version < 3 && (!fstatat(item, "source", &st, AT_SYMLINK_NOFOLLOW) || errno != ENOENT)) return 0;
+    if (version == 3) {
+        if (!graph_digest(item, graph) || !holy_source_instance(item, source, source_hash)) return 0;
+        length = (size_t)snprintf(prefix, sizeof prefix,
+            "format holy-instance-3\nsource-id %s\nsource-record %s\ndelivery local\nreason %s\nartifact %s\ngraph %s\ngeneration ",
+            source, source_hash, reason, digest, graph);
+    } else if (version == 2) {
         if (!graph_digest(item, graph)) return 0;
         length = (size_t)snprintf(prefix, sizeof prefix,
             "format holy-instance-2\nsource-id -\ndelivery local\nreason %s\nartifact %s\ngraph %s\ngeneration ",
@@ -231,7 +240,7 @@ static int instance_state_generation(int item, const char *digest,
 
 static int installed_valid(int dir)
 {
-    static const char *const required[] = { "meta", "files", "deps", "origin", "state", "graph" };
+    static const char *const required[] = { "meta", "files", "deps", "origin", "state", "graph", "source" };
     int installed = child_dir(dir, "installed", 0), ok = 1;
     DIR *list;
     struct dirent *entry;
@@ -271,7 +280,8 @@ static int installed_valid(int dir)
                     errno = 0;
                 }
                 if (!member && errno) ok = 0;
-                if (seen != (1u << 5) - 1u && seen != (1u << 6) - 1u) ok = 0;
+                if (seen != (1u << 5) - 1u && seen != (1u << 6) - 1u &&
+                    seen != (1u << 7) - 1u) ok = 0;
                 closedir(members);
             }
         }
@@ -1178,12 +1188,12 @@ done:
 
 static int save_instance(int installed, const char *digest, const char *snapshot,
                          unsigned long long generation, const char *graph, size_t graph_length,
-                         const char *reason)
+                         const char *reason, const char *source_record)
 {
     static const char *const names[] = { "meta", "files", "deps", "origin" };
     struct archive *archive = NULL;
     struct archive_entry *entry;
-    char buffer[65536], state[384], graph_hash[65];
+    char buffer[65536], state[640], graph_hash[65], source[65], source_hash[65];
     int item = -1, status, ok = 0;
     unsigned seen = 0;
     size_t i;
@@ -1226,7 +1236,13 @@ static int save_instance(int installed, const char *digest, const char *snapshot
     if (status != ARCHIVE_EOF || seen != (1u << 4) - 1u) goto done;
     if (!record_file(item, "graph", graph, graph_length) ||
         !graph_digest(item, graph_hash)) goto done;
-    i = (size_t)snprintf(state, sizeof state,
+    if (source_record) {
+        if (!record_file(item, "source", source_record, strlen(source_record)) ||
+            !holy_source_instance(item, source, source_hash)) goto done;
+        i = (size_t)snprintf(state, sizeof state,
+            "format holy-instance-3\nsource-id %s\nsource-record %s\ndelivery local\nreason %s\nartifact %s\ngraph %s\ngeneration %llu\n",
+            source, source_hash, reason, digest, graph_hash, generation + 1);
+    } else i = (size_t)snprintf(state, sizeof state,
         "format holy-instance-2\nsource-id -\ndelivery local\nreason %s\nartifact %s\ngraph %s\ngeneration %llu\n",
         reason, digest, graph_hash, generation + 1);
     if (i >= sizeof state || !record_file(item, "state", state, i) || fsync(item)) goto done;
@@ -1277,7 +1293,7 @@ int holy_state_apply(const char *root_path)
     journaled = 1;
     result = 5;
     if (!holy_install_payload(snapshot, root) ||
-        !save_instance(installed, digest, snapshot, generation, graph, graph_length, "explicit")) goto done;
+        !save_instance(installed, digest, snapshot, generation, graph, graph_length, "explicit", NULL)) goto done;
     length = (size_t)snprintf(generation_record, sizeof generation_record,
                               "%llu\n", generation + 1);
     if (length >= sizeof generation_record) goto done;
@@ -1601,6 +1617,7 @@ static int finish_remove_record(int dir, int installed, int item, int transactio
     for (i = 0; i < sizeof names / sizeof *names; ++i)
         if (unlinkat(item, names[i], 0)) goto done;
     if (unlinkat(item, "graph", 0) && errno != ENOENT) goto done;
+    if (unlinkat(item, "source", 0) && errno != ENOENT) goto done;
     if (fsync(item) || unlinkat(installed, digest, AT_REMOVEDIR) ||
         fsync(installed)) goto done;
     length = (size_t)snprintf(generation_record, sizeof generation_record,
@@ -1956,7 +1973,7 @@ done:
 }
 
 struct set_item {
-    char *snapshot;
+    char *snapshot, *source_record;
     struct holy_package_identity identity;
     int reused;
 };
@@ -1983,8 +2000,8 @@ struct set_journal {
     unsigned long long generation;
     char hash[65], root[65];
     char *choice;
-    char **digests;
-    size_t count;
+    char **digests, **bindings;
+    size_t count, binding_count;
 };
 
 static void free_set(struct install_set *set)
@@ -1993,6 +2010,7 @@ static void free_set(struct install_set *set)
     for (i = 0; i < set->count; ++i) {
         if (set->items[i].snapshot) unlink(set->items[i].snapshot);
         free(set->items[i].snapshot);
+        free(set->items[i].source_record);
         holy_package_identity_free(&set->items[i].identity);
     }
     for (i = 0; i < set->claim_count; ++i) free(set->claims[i].path);
@@ -2079,7 +2097,7 @@ static int reuse_instance(int dir, int root, struct set_item *candidate,
     int installed = child_dir(dir, "installed", 0), item = -1, files = -1, fd = -1;
     int result = -1;
     unsigned long long recorded;
-    char state[384], prefix[80], *line = NULL;
+    char state[640], prefix[80], *line = NULL;
     size_t capacity = 0, old_count = 0, new_count = 0;
     ssize_t got;
     FILE *stream = NULL;
@@ -2228,9 +2246,30 @@ done:
     return result;
 }
 
+static int binding_valid(const char *binding)
+{
+    return strlen(binding) == 129 && binding[64] == '=' &&
+           strspn(binding, "0123456789abcdef") == 64 && valid_digest(binding + 65);
+}
+
+static int instance_source_matches(int instance, const char *record)
+{
+    char id[65], actual[65], expected[65];
+    unsigned char bytes[32];
+    unsigned int size;
+    size_t i;
+    struct stat st;
+    if (!record) return fstatat(instance, "source", &st, AT_SYMLINK_NOFOLLOW) && errno == ENOENT;
+    if (!holy_source_instance(instance, id, actual) ||
+        EVP_Digest(record, strlen(record), bytes, &size, EVP_sha256(), NULL) != 1 || size != 32) return 0;
+    for (i = 0; i < 32; ++i) snprintf(expected + i * 2, 3, "%02x", bytes[i]);
+    return !strcmp(expected, actual);
+}
+
 static int build_set(const char *root_path, int root, int dir,
                       unsigned long long generation, const char *const *digests,
                       size_t count, const char *choice, int completed,
+                      const char *const *bindings, size_t binding_count,
                       struct install_set *set)
 {
     char **snapshots = NULL;
@@ -2243,8 +2282,12 @@ static int build_set(const char *root_path, int root, int dir,
     unsigned int length;
     size_t i, j;
     int result = 1;
-    if (!count || count > 10000) return 2;
+    if (!count || count > 10000 || binding_count > 10000) return 2;
     for (i = 0; i < count; ++i) if (!valid_digest(digests[i])) return 2;
+    for (i = 0; i < binding_count; ++i) {
+        if (!binding_valid(bindings[i])) return 2;
+        for (j = 0; j < i; ++j) if (!strncmp(bindings[i], bindings[j], 64)) return 2;
+    }
     if (!completed) {
         result = discover_installed(root_path, dir, digests, &count, &candidates);
         if (result) goto done;
@@ -2260,6 +2303,11 @@ static int build_set(const char *root_path, int root, int dir,
     result = holy_resolve_collect((const char *const *)snapshots, count, choice,
                                   &set->resolution);
     if (result) goto done;
+    for (i = 0; i < binding_count; ++i) {
+        for (j = 0; j < set->resolution.artifact_count; ++j)
+            if (!strncmp(bindings[i], set->resolution.artifacts[j], 64)) break;
+        if (j == set->resolution.artifact_count) { result = 3; goto done; }
+    }
     result = 1;
     set->items = calloc(set->resolution.artifact_count, sizeof *set->items);
     if (!set->items || !holy_resolution_record(&set->resolution, &set->graph,
@@ -2297,6 +2345,15 @@ static int build_set(const char *root_path, int root, int dir,
         if (result) goto done;
         result = reuse_instance(dir, root, item, generation, completed, set->graph, plan.hash);
         if (result < 0) { result = 4; goto done; }
+        for (j = 0; j < binding_count; ++j) if (!strncmp(bindings[j], item->identity.digest, 64)) {
+            char registry[65];
+            if (item->reused) { result = 3; goto done; }
+            result = holy_source_record(dir, bindings[j] + 65, &item->source_record, registry);
+            if (result) goto done;
+            if (!hash_text(plan.hash, "source-binding") || !hash_text(plan.hash, registry) ||
+                !hash_text(plan.hash, item->source_record)) { result = 1; goto done; }
+            break;
+        }
         if (item->reused && !strcmp(item->identity.digest, set->resolution.root)) {
             result = 3; goto done;
         }
@@ -2346,6 +2403,8 @@ static void free_set_journal(struct set_journal *journal)
     size_t i;
     for (i = 0; i < journal->count; ++i) free(journal->digests[i]);
     free(journal->digests);
+    for (i = 0; i < journal->binding_count; ++i) free(journal->bindings[i]);
+    free(journal->bindings);
     free(journal->choice);
     memset(journal, 0, sizeof *journal);
 }
@@ -2368,7 +2427,7 @@ static int set_choice_valid(const char *choice)
 
 static int read_set_journal(int dir, struct set_journal *journal)
 {
-    int transactions = child_dir(dir, "transactions", 0), fd = -1, result = -1;
+    int transactions = child_dir(dir, "transactions", 0), fd = -1, result = -1, version = 1;
     struct stat st;
     FILE *stream = NULL;
     char *line = NULL;
@@ -2398,7 +2457,7 @@ static int read_set_journal(int dir, struct set_journal *journal)
     fd = openat(transactions, "set-journal", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0) { result = errno == ENOENT ? 0 : -1; goto done; }
     if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 1 ||
-        st.st_size > 2 * 1024 * 1024 || (st.st_mode & 0022) ||
+        st.st_size > 4 * 1024 * 1024 || (st.st_mode & 0022) ||
         (st.st_uid != 0 && st.st_uid != geteuid())) goto done;
     stream = fdopen(fd, "r");
     if (!stream) goto done;
@@ -2406,11 +2465,12 @@ static int read_set_journal(int dir, struct set_journal *journal)
     while ((got = getline(&line, &capacity, stream)) >= 0) {
         char *end;
         bytes += (size_t)got;
-        if (bytes > 2 * 1024 * 1024 || !got || line[got - 1] != '\n' ||
+        if (bytes > 4 * 1024 * 1024 || !got || line[got - 1] != '\n' ||
             memchr(line, 0, (size_t)got)) goto done;
         line[got - 1] = 0;
         if (number == 0) {
-            if (strcmp(line, "format holy-set-journal-1")) goto done;
+            if (!strcmp(line, "format holy-set-journal-2")) version = 2;
+            else if (strcmp(line, "format holy-set-journal-1")) goto done;
         } else if (number == 1) {
             if (strncmp(line, "generation ", 11) || line[11] < '0' || line[11] > '9' ||
                 (line[11] == '0' && line[12])) goto done;
@@ -2427,9 +2487,24 @@ static int read_set_journal(int dir, struct set_journal *journal)
             if (strncmp(line, "choice ", 7) || !set_choice_valid(line + 7)) goto done;
             journal->choice = strdup(line + 7);
             if (!journal->choice) goto done;
+        } else if (version == 2 && !strncmp(line, "binding ", 8)) {
+            char **next;
+            size_t i;
+            if (!binding_valid(line + 8) || journal->binding_count >= journal->count) goto done;
+            for (i = 0; i < journal->count; ++i)
+                if (!strncmp(line + 8, journal->digests[i], 64)) break;
+            if (i == journal->count) goto done;
+            for (i = 0; i < journal->binding_count; ++i)
+                if (!strncmp(line + 8, journal->bindings[i], 64)) goto done;
+            next = realloc(journal->bindings, (journal->binding_count + 1) * sizeof *next);
+            if (!next) goto done;
+            journal->bindings = next;
+            next[journal->binding_count] = strdup(line + 8);
+            if (!next[journal->binding_count]) goto done;
+            ++journal->binding_count;
         } else {
             char **next;
-            if (strncmp(line, "artifact ", 9) || !valid_digest(line + 9) ||
+            if (journal->binding_count || strncmp(line, "artifact ", 9) || !valid_digest(line + 9) ||
                 journal->count >= 10000 ||
                 (journal->count && strcmp(journal->digests[journal->count - 1], line + 9) >= 0))
                 goto done;
@@ -2443,7 +2518,8 @@ static int read_set_journal(int dir, struct set_journal *journal)
         }
         ++number;
     }
-    if (!ferror(stream) && bytes == (size_t)st.st_size && number >= 6 && roots == 1) result = 1;
+    if (!ferror(stream) && bytes == (size_t)st.st_size && number >= 6 && roots == 1 &&
+        (version == 1 || journal->binding_count)) result = 1;
 done:
     free(line);
     if (stream) fclose(stream);
@@ -2465,17 +2541,20 @@ static int set_journal_present(int dir)
 }
 
 static int write_set_journal(int transactions, unsigned long long generation,
-                             const struct install_set *set, const char *choice)
+                             const struct install_set *set, const char *choice,
+                             const char *const *bindings, size_t binding_count)
 {
     char *record = NULL;
     size_t length = 0, i;
     FILE *stream = open_memstream(&record, &length);
     int ok = 1;
     if (!stream) return 0;
-    if (fprintf(stream, "format holy-set-journal-1\ngeneration %llu\nplan %s\nroot %s\nchoice %s\n",
-                generation, set->hash, set->resolution.root, choice ? choice : "-") < 0) ok = 0;
+    if (fprintf(stream, "format holy-set-journal-%d\ngeneration %llu\nplan %s\nroot %s\nchoice %s\n",
+                binding_count ? 2 : 1, generation, set->hash, set->resolution.root, choice ? choice : "-") < 0) ok = 0;
     for (i = 0; i < set->count && ok; ++i)
         if (fprintf(stream, "artifact %s\n", set->items[i].identity.digest) < 0) ok = 0;
+    for (i = 0; i < binding_count && ok; ++i)
+        if (fprintf(stream, "binding %s\n", bindings[i]) < 0) ok = 0;
     if (fclose(stream)) ok = 0;
     if (ok) ok = record_file(transactions, "set-journal", record, length);
     free(record);
@@ -2496,7 +2575,8 @@ static int set_generation(int dir, unsigned long long generation)
 }
 
 int holy_state_set(const char *const *digests, size_t count, const char *choice,
-                   const char *approved, const char *root_path)
+                   const char *approved, const char *root_path,
+                   const char *const *bindings, size_t binding_count)
 {
     struct install_set set = {0};
     unsigned long long generation;
@@ -2510,7 +2590,7 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
         generation == ULLONG_MAX || !empty_child(dir, "index")) goto done;
     if (!empty_child(dir, "transactions")) { result = 5; goto done; }
     if (!installed_valid(dir)) goto done;
-    result = build_set(root_path, root, dir, generation, digests, count, choice, 0, &set);
+    result = build_set(root_path, root, dir, generation, digests, count, choice, 0, bindings, binding_count, &set);
     if (result) goto done;
     if (!approved) {
         printf("plan-set generation %llu root %s artifacts %zu paths %zu sha256 %s read-only\n",
@@ -2525,13 +2605,15 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
             printf("requirement %s consumer %s provider %s %s %s\n",
                    edge->id, edge->consumer, edge->provider, edge->kind, edge->target);
         }
+        for (i = 0; i < set.count; ++i) if (set.items[i].source_record)
+            printf("binding %s %s", set.items[i].identity.digest, set.items[i].source_record);
         goto done;
     }
     if (strcmp(set.hash, approved)) { result = 3; goto done; }
     installed = child_dir(dir, "installed", 0);
     transactions = child_dir(dir, "transactions", 0);
     if (installed < 0 || transactions < 0) { result = 1; goto done; }
-    if (!write_set_journal(transactions, generation, &set, choice)) {
+    if (!write_set_journal(transactions, generation, &set, choice, bindings, binding_count)) {
         struct stat st;
         result = fstatat(transactions, "set-journal", &st, AT_SYMLINK_NOFOLLOW) ? 1 : 5;
         goto done;
@@ -2544,7 +2626,8 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
         if (!holy_install_payload(item->snapshot, root) ||
             !save_instance(installed, item->identity.digest, item->snapshot, generation,
                            set.graph, set.graph_length,
-                           strcmp(item->identity.digest, set.resolution.root) ? "dependency" : "explicit"))
+                           strcmp(item->identity.digest, set.resolution.root) ? "dependency" : "explicit",
+                           item->source_record))
             goto done;
         printf("applied %s\n", item->identity.digest);
     }
@@ -2614,7 +2697,7 @@ done:
 
 static int instance_reason_matches(int item, const char *reason)
 {
-    char buffer[384], expected[64];
+    char buffer[640], expected[64];
     ssize_t got;
     int fd = openat(item, "state", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
     if (fd < 0) return 0;
@@ -2649,7 +2732,8 @@ static int recover_set(const char *root_path, int resume)
     for (i = 0, j = 1; i < journal.count; ++i)
         if (strcmp(journal.root, journal.digests[i])) digests[j++] = journal.digests[i];
     if (build_set(root_path, root, dir, journal.generation, digests, journal.count,
-                  strcmp(journal.choice, "-") ? journal.choice : NULL, 1, &set) ||
+                  strcmp(journal.choice, "-") ? journal.choice : NULL, 1,
+                  (const char *const *)journal.bindings, journal.binding_count, &set) ||
         set.count != journal.count || strcmp(set.hash, journal.hash)) goto done;
     installed = child_dir(dir, "installed", 0);
     transactions = child_dir(dir, "transactions", 0);
@@ -2680,6 +2764,7 @@ static int recover_set(const char *root_path, int resume)
         item = child_dir(installed, candidate->identity.digest, 0);
         files = item < 0 ? -1 : openat(item, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
         ok = files >= 0 && instance_state_generation(item, candidate->identity.digest, &recorded) &&
+             instance_source_matches(item, candidate->source_record) &&
              recorded == journal.generation + 1 && graph_digest(item, graph) &&
              instance_reason_matches(item, strcmp(candidate->identity.digest, set.resolution.root) ?
                                      "dependency" : "explicit") &&
@@ -2700,7 +2785,8 @@ static int recover_set(const char *root_path, int resume)
         if (!holy_install_payload(item->snapshot, root) ||
             !save_instance(installed, item->identity.digest, item->snapshot, journal.generation,
                            set.graph, set.graph_length,
-                           strcmp(item->identity.digest, set.resolution.root) ? "dependency" : "explicit"))
+                           strcmp(item->identity.digest, set.resolution.root) ? "dependency" : "explicit",
+                           item->source_record))
             goto done;
         printf("resumed %s\n", item->identity.digest);
     }

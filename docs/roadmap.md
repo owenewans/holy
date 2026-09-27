@@ -9,6 +9,11 @@
   history; reject stale, wrong-root and history-dropping plans. Apply consumes
   the reviewed plan without rereading user includes. Installed source-ID slots,
   source-aware updates, configured sync and trust enforcement remain open.
+- [x] Bind explicitly associated local artifacts to active registered source IDs
+  in set plans and installed state. Retain the alias at installation, preserve
+  origin through source deactivation and provider reuse, and validate associations
+  during interrupted-set recovery. Signature evidence, automatic retrieval-origin
+  binding, source-aware slots and updates remain open.
 - [x] Verify local LZ4-frame `.holy` archives, file manifests, hashes and basic ELF facts.
 - [x] Read dynamic symbols, binding/visibility and per-symbol GNU versions through
   libelf, including ELF32/ELF64 without section headers when the hash tables give
@@ -68,7 +73,7 @@
   roots. Ignore stale edges belonging to removed consumers; detect unreachable
   cycles and preserve shared providers. The read-only command works without cache
   artifacts and refuses incomplete, missing-provider or unknown-graph snapshots.
-- [ ] Define stable source IDs and version families; extend transactions to
+- [ ] Complete source-aware installed slots and version families; extend transactions to
   replacements, complete dynamic-library contexts and grouped removal.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions.

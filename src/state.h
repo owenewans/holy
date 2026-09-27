@@ -36,9 +36,10 @@ int holy_state_finish_apply(const char *root_path);
 /* lookup installed data-file ownership without inspecting the live payload. */
 int holy_state_owner(const char *path, const char *root_path);
 
-/* selected cached set, one reviewed hash and one generation change. */
+/* selected cached set; borrowed bindings are artifact=source-id strings. */
 int holy_state_set(const char *const *digests, size_t count, const char *choice,
-                   const char *approved, const char *root_path);
+                   const char *approved, const char *root_path,
+                   const char *const *bindings, size_t binding_count);
 int holy_state_finish_set(const char *root_path);
 int holy_state_continue_set(const char *root_path);
 

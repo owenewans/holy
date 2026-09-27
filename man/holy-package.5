@@ -73,6 +73,17 @@ target using the holy.conf lexer. The plan hash includes these canonical bytes.
 Database operations reject a missing, modified, writable or symlink graph.
 Legacy holy-instance-1 entries remain readable without a graph. Their absence
 of recorded provider choices does not establish dependency correctness.
+.PP
+Explicitly source-associated local installations use holy-instance-3. State
+records the registered source-id and SHA-256 of a separate source record containing
+that ID and the alias at installation. The graph and reason fields retain their
+version-2 semantics. The source record is manager-owned state, not copied from
+the package. The database rejects absent, changed, writable or symlink source
+records and disagreement between the record and state. Renaming or deactivating
+the registered source does not rewrite installed origin records. Check, removal,
+orphan analysis and missing-only repair preserve this identity without requiring
+the source to remain active.
+.PP
 The set installation interface supports exact package dependencies and native
 dynamic packages with literal absolute interpreter and DT_NEEDED provider paths.
 It records explicit/dependency reasons. General loader search, automatic ELF

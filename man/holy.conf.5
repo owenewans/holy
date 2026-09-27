@@ -55,6 +55,7 @@ spellings and mirrors are not automatically identified as one source.
 Registration requires endpoints with a scheme followed by :// and rejects URL
 userinfo, queries, fragments and whitespace. Plans therefore cannot carry those
 credential forms. Two aliases with the same definition require a decision.
-Registration neither contacts a repository nor verifies its signatures. It does
-not yet bind installed instances to source IDs or apply source trust and parent
-policies during package selection.
+Registration neither contacts a repository nor verifies its signatures. Set
+installation can bind local artifacts to registered IDs through explicit --source
+associations. Source trust and parent policies during package selection remain
+unimplemented.

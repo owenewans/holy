@@ -106,6 +106,7 @@ check: holypkg tests/resolution check-init check-solver check-install-payload ch
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg
+	sh tests/source-instances.sh ./holypkg
 	sh tests/package.sh ./holypkg
 	sh tests/docs.sh
 	sh tests/installed-docs.sh ./holypkg

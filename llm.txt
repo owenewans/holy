@@ -1,77 +1,3 @@
-holy.conf.5 source=holy version=development sha256=f4d22f73b5fe5b390f051cb5d942debd32545c255de5f6b2aa868e0e2582abda
-HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
-
-NAME
-     holy.conf - Holy source configuration format
-
-STATUS
-     This  page	 describes  the syntax checker and source identity registration.
-     Configured source fetching, general multi-source resolution and general in-
-     stallation are not implemented; the restricted local data/static-ELF trans-
-     action uses separate commands.
-
-SYNOPSIS
-     holypkg config check FILE
-
-DESCRIPTION
-     Input must be UTF-8. Each record contains a  key  and  whitespace-separated
-     arguments. Double quotes retain spaces. A hash sign at the start of a token
-     begins  a comment outside quotes. Escapes are backslash-quote, double-back-
-     slash, backslash-n, backslash-t, backslash-r and  backslash-x  followed  by
-     two hexadecimal digits. NUL is rejected.  The parser does not run shell ex-
-     pansion.
-
-     Sections are [general], [resolver], [source NAME] and [rule NAME].	 Include
-     takes one path relative to the containing file. Repeated scalar keys within
-     a	section	 are  errors with both source locations. The source repo and re-
-     solver prefer keys are lists and can repeat.  Recursive  includes	are  re-
-     jected.   The  checker validates lexical and structural syntax; it does not
-     yet validate rule references. It checks that source parents  exist	 and  do
-     not  form	cycles.	  It rejects userinfo in URL authorities without echoing
-     credentials in diagnostics. It validates key names,  argument  counts,  and
-     the  scripts,  trust, ask-sources and prefer values. The alias local is re-
-     served and cannot name a source.
-
-     Each populated source section requires type and at least one url  or  repo.
-     Repository	 names	within	one source must be distinct. Each populated rule
-     requires consumer, require and provider. Empty values are	rejected.  These
-     checks  do not prove that a repository is reachable or its packages can re-
-     solve.
-
-EXAMPLE
-     [general]
-     arch x86_64
-     scripts ask
-     [source arch]
-     type pacman
-     repo core "https://mirror.example/arch/$repo/os/$arch"
-
-FILES
-     /etc/holy.conf is the proposed system path. The checker takes  an	explicit
-     file.
-
-SOURCE IDENTITIES
-     The source plan command reads this syntax, including includes, and proposes
-     a registry replacement. The source apply command consumes that frozen plan;
-     it	 does  not  reread the configuration. See holypkg(8) for the command se-
-     quence.
-
-     The current source ID is SHA-256 of a canonical, sorted  representation  of
-     type,  url	 and  repo records. Alias, parent and trust policy are excluded.
-     Renaming an alias preserves the ID. Changing an endpoint, backend	type  or
-     repository	 name  creates another ID and retains the previous definition as
-     inactive history.	Readding the same definition  reactivates  its	existing
-     ID.  Equivalent  URL spellings and mirrors are not automatically identified
-     as one source.
-
-     Registration requires endpoints with a scheme followed by ://  and	 rejects
-     URL  userinfo,  queries,  fragments  and whitespace. Plans therefore cannot
-     carry those credential forms. Two aliases with the same definition	 require
-     a	decision.   Registration  neither contacts a repository nor verifies its
-     signatures. It does not yet bind installed instances to source IDs or apply
-     source trust and parent policies during package selection.
-
-Holy				 September 2026			    HOLY.CONF(5)
 holy-image.7 source=holy version=development sha256=d664252827509f4de3cc2a00d4e2c904583fe54b3f645a6413781fb5b3c0526c
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
@@ -385,7 +311,7 @@ SEE ALSO
      holy-image(7), holypkg(8)
 
 Holy				 September 2026			    HOLY-INIT(8)
-holy-package.5 source=holy version=development sha256=22c5748070b92d7507bfe49b46c6c5f82c0be94ea3d1a667acd171c20abbe95d
+holy-package.5 source=holy version=development sha256=4c65f6622b2781b4fe6a1ece1065dd899c0f97b9016004455d9da3702da63cb6
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -464,8 +390,21 @@ INSTALLED GRAPH
      Database  operations reject a missing, modified, writable or symlink graph.
      Legacy holy-instance-1 entries remain readable without a graph.  Their  ab-
      sence  of	recorded provider choices does not establish dependency correct-
-     ness.  The set installation interface supports exact  package  dependencies
-     and native dynamic packages with literal absolute interpreter and DT_NEEDED
+     ness.
+
+     Explicitly source-associated local installations use holy-instance-3. State
+     records the registered source-id and SHA-256 of a	separate  source  record
+     containing	 that  ID  and	the  alias at installation. The graph and reason
+     fields retain their version-2 semantics. The source record is manager-owned
+     state, not copied from the package. The database rejects  absent,	changed,
+     writable  or symlink source records and disagreement between the record and
+     state. Renaming or deactivating the registered source does not rewrite  in-
+     stalled  origin  records.	Check, removal, orphan analysis and missing-only
+     repair preserve this identity without requiring the source	 to  remain  ac-
+     tive.
+
+     The  set installation interface supports exact package dependencies and na-
+     tive dynamic packages  with  literal  absolute  interpreter  and  DT_NEEDED
      provider  paths.	It  records  explicit/dependency reasons. General loader
      search, automatic ELF rewriting and source-ID slots  remain  unimplemented.
      Missing-only cache repair preserves the installed graph and refuses changed
@@ -475,7 +414,82 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=f962a80d4afb096c5f8656ca3a542d5c59c900299a7def85faabb29c23a39e4b
+holy.conf.5 source=holy version=development sha256=2767f0a0d6082fcdc5e9ed01f54fa8cfd0d0716b903d79b7d8c3c74624be4709
+HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
+
+NAME
+     holy.conf - Holy source configuration format
+
+STATUS
+     This  page	 describes  the syntax checker and source identity registration.
+     Configured source fetching, general multi-source resolution and general in-
+     stallation are not implemented; the restricted local data/static-ELF trans-
+     action uses separate commands.
+
+SYNOPSIS
+     holypkg config check FILE
+
+DESCRIPTION
+     Input must be UTF-8. Each record contains a  key  and  whitespace-separated
+     arguments. Double quotes retain spaces. A hash sign at the start of a token
+     begins  a comment outside quotes. Escapes are backslash-quote, double-back-
+     slash, backslash-n, backslash-t, backslash-r and  backslash-x  followed  by
+     two hexadecimal digits. NUL is rejected.  The parser does not run shell ex-
+     pansion.
+
+     Sections are [general], [resolver], [source NAME] and [rule NAME].	 Include
+     takes one path relative to the containing file. Repeated scalar keys within
+     a	section	 are  errors with both source locations. The source repo and re-
+     solver prefer keys are lists and can repeat.  Recursive  includes	are  re-
+     jected.   The  checker validates lexical and structural syntax; it does not
+     yet validate rule references. It checks that source parents  exist	 and  do
+     not  form	cycles.	  It rejects userinfo in URL authorities without echoing
+     credentials in diagnostics. It validates key names,  argument  counts,  and
+     the  scripts,  trust, ask-sources and prefer values. The alias local is re-
+     served and cannot name a source.
+
+     Each populated source section requires type and at least one url  or  repo.
+     Repository	 names	within	one source must be distinct. Each populated rule
+     requires consumer, require and provider. Empty values are	rejected.  These
+     checks  do not prove that a repository is reachable or its packages can re-
+     solve.
+
+EXAMPLE
+     [general]
+     arch x86_64
+     scripts ask
+     [source arch]
+     type pacman
+     repo core "https://mirror.example/arch/$repo/os/$arch"
+
+FILES
+     /etc/holy.conf is the proposed system path. The checker takes  an	explicit
+     file.
+
+SOURCE IDENTITIES
+     The source plan command reads this syntax, including includes, and proposes
+     a registry replacement. The source apply command consumes that frozen plan;
+     it	 does  not  reread the configuration. See holypkg(8) for the command se-
+     quence.
+
+     The current source ID is SHA-256 of a canonical, sorted  representation  of
+     type,  url	 and  repo records. Alias, parent and trust policy are excluded.
+     Renaming an alias preserves the ID. Changing an endpoint, backend	type  or
+     repository	 name  creates another ID and retains the previous definition as
+     inactive history.	Readding the same definition  reactivates  its	existing
+     ID.  Equivalent  URL spellings and mirrors are not automatically identified
+     as one source.
+
+     Registration requires endpoints with a scheme followed by ://  and	 rejects
+     URL  userinfo,  queries,  fragments  and whitespace. Plans therefore cannot
+     carry those credential forms. Two aliases with the same definition	 require
+     a	decision.   Registration  neither contacts a repository nor verifies its
+     signatures. Set installation can bind local  artifacts  to	 registered  IDs
+     through  explicit	--source  associations. Source trust and parent policies
+     during package selection remain unimplemented.
+
+Holy				 September 2026			    HOLY.CONF(5)
+holypkg.8 source=holy version=development sha256=e9f0bd86827defdaea8875c3baf36c5912773963f571a12206b27e9376a0257c
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -529,9 +543,9 @@ SYNOPSIS
      holypkg db recheck --root DIRECTORY
      holypkg db apply --root DIRECTORY
      holypkg  db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256]
-     --root DIRECTORY
+     [--source ARTIFACT=SOURCE_ID ...] --root DIRECTORY
      holypkg  db   apply-set   PLAN_SHA256   ROOT_SHA256   [CANDIDATE_SHA256...]
-     [--choose ID=SHA256] --root DIRECTORY
+     [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] --root DIRECTORY
      holypkg db recover --finish-set|--continue-set --root DIRECTORY
      holypkg db repair-plan SHA256 --root DIRECTORY
      holypkg db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY
@@ -793,24 +807,42 @@ DESCRIPTION
      graph. Package hooks, upgrades and grouped removal are not	 implemented  by
      this interface.
 
-     An	 already  installed dependency is reused only after its metadata matches
-     the cached archive, its payload and ownership pass checks, and its own  se-
-     lected  dependency	 edges remain unchanged. Its state, reason and graph re-
-     main intact; the new consumer records its edge to that provider.  The  plan
-     hashes  the  reused instance state as well as the selected manifests. Apply
-     and recovery verify it again and never reinstall it. The preview labels  it
-     installed.	 Re-requesting	an already installed explicit root returns deci-
-     sion-required; this interface does not yet promote	 dependency  reasons  or
+     Repeated --source ARTIFACT=SOURCE_ID explicitly associates selected new ar-
+     tifacts with active registered sources. It is a user-confirmed origin asso-
+     ciation  for  local delivery, not proof of retrieval or signature verifica-
+     tion. Payload source-name/origin metadata cannot  grant  this  association.
+     Unmapped new artifacts retain local delivery without a source ID. Duplicate
+     artifact  mappings	 are  invalid;	a mapping for an unselected artifact re-
+     quires a decision. Missing or inactive registered sources return 6.
+
+     The plan displays each association and binds the registry digest and  saved
+     alias  record.  Apply  requires the same mappings and registry; changing an
+     alias after review invalidates the plan. The version-2  set  journal  saves
+     associations  for recovery. Registry mutation is blocked while that journal
+     remains incomplete.  Recovery verifies the source record of each  completed
+     instance before continuing.  An already installed provider keeps its origi-
+     nal  source  and  alias; specifying a new association for a reused instance
+     returns 3. Source migration requires a separate operation, which is not im-
+     plemented yet.
+
+     An already installed dependency is reused only after its  metadata	 matches
+     the  cached archive, its payload and ownership pass checks, and its own se-
+     lected dependency edges remain unchanged. Its state, reason and  graph  re-
+     main  intact;  the new consumer records its edge to that provider. The plan
+     hashes the reused instance state as well as the selected  manifests.  Apply
+     and  recovery verify it again and never reinstall it. The preview labels it
+     installed. Re-requesting an already installed explicit root  returns  deci-
+     sion-required;  this  interface  does not yet promote dependency reasons or
      perform reinstalls.
 
      Candidate discovery reads installed names and manifests for the package and
-     literal  ELF-path	requirements  of  the  supplied candidates, then follows
-     their dependencies. It does not scan  every  installed  archive.  Installed
-     candidates	 currently  require  their  cached archives for ELF scanning.  A
-     missing archive returns unavailable instead of guessing  ABI  facts.  Reuse
-     requires  the  version-2  installed graph format. Multiple viable providers
-     still require --choose; automatic installed/source preference  ranking  re-
-     mains open.
+     literal ELF-path requirements of  the  supplied  candidates,  then	 follows
+     their  dependencies.  It  does  not scan every installed archive. Installed
+     candidates currently require their cached archives	 for  ELF  scanning.   A
+     missing  archive  returns	unavailable instead of guessing ABI facts. Reuse
+     requires the version-2 or version-3 installed graph format. Multiple viable
+     providers still require  --choose;	 automatic  installed/source  preference
+     ranking remains open.
 
      Dynamic  sets  require  literal  absolute	PT_INTERP  and	DT_NEEDED paths.
      Providers must contain those exact regular payload paths  and  satisfy  the
@@ -1456,10 +1488,11 @@ SOURCE REGISTRATION
      tions.
 
      An ID identifies a configured origin; it is  not  signature  evidence.  The
-     current  registry	retains inactive origins but is not yet connected to in-
-     stalled package slots, configured catalog synchronization	or  source-aware
-     update  plans.  These  commands  do  not  yet  implement  JSON  output. See
-     holy.conf(5) for identity rules and endpoint restrictions.
+     current registry retains inactive origins and supports explicit local-arti-
+     fact  associations in set installation. Source-aware package slots, config-
+     ured catalog synchronization and source-aware update plans remain	unimple-
+     mented.  These  commands do not yet implement JSON output. See holy.conf(5)
+     for identity rules and endpoint restrictions.
 
 ORPHAN PACKAGES
      orphan reads a consistent installed-state	snapshot  under	 the  database's

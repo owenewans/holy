@@ -90,9 +90,9 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db apply --root DIRECTORY
 .br
-.B holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] --root DIRECTORY
+.B holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] --root DIRECTORY
 .br
-.B holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] --root DIRECTORY
+.B holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] --root DIRECTORY
 .br
 .B holypkg db recover --finish-set|--continue-set --root DIRECTORY
 .br
@@ -352,6 +352,23 @@ one generation increment. Installed state records the explicit root and
 dependency reasons; each instance retains the selected graph. Package hooks,
 upgrades and grouped removal are not implemented by this interface.
 .PP
+Repeated --source ARTIFACT=SOURCE_ID explicitly associates selected new artifacts
+with active registered sources. It is a user-confirmed origin association for
+local delivery, not proof of retrieval or signature verification. Payload
+source-name/origin metadata cannot grant this association. Unmapped new artifacts
+retain local delivery without a source ID. Duplicate artifact mappings are invalid;
+a mapping for an unselected artifact requires a decision. Missing or inactive
+registered sources return 6.
+.PP
+The plan displays each association and binds the registry digest and saved alias
+record. Apply requires the same mappings and registry; changing an alias after
+review invalidates the plan. The version-2 set journal saves associations for
+recovery. Registry mutation is blocked while that journal remains incomplete.
+Recovery verifies the source record of each completed instance before continuing.
+An already installed provider keeps its original source and alias; specifying a
+new association for a reused instance returns 3. Source migration requires a
+separate operation, which is not implemented yet.
+.PP
 An already installed dependency is reused only after its metadata matches the
 cached archive, its payload and ownership pass checks, and its own selected
 dependency edges remain unchanged. Its state, reason and graph remain intact;
@@ -366,7 +383,7 @@ literal ELF-path requirements of the supplied candidates, then follows their
 dependencies. It does not scan every installed archive. Installed candidates
 currently require their cached archives for ELF scanning.
 A missing archive returns unavailable instead of guessing ABI facts. Reuse
-requires the version-2 installed graph format. Multiple viable providers still
+requires the version-2 or version-3 installed graph format. Multiple viable providers still
 require --choose; automatic installed/source preference ranking remains open.
 .PP
 Dynamic sets require literal absolute PT_INTERP and DT_NEEDED paths. Providers
@@ -998,8 +1015,9 @@ fsync. Registry revisions are separate from installed database generations.
 List prints identities and status without endpoint definitions.
 .PP
 An ID identifies a configured origin; it is not signature evidence. The current
-registry retains inactive origins but is not yet connected to installed package
-slots, configured catalog synchronization or source-aware update plans. These
+registry retains inactive origins and supports explicit local-artifact associations
+in set installation. Source-aware package slots, configured catalog synchronization
+and source-aware update plans remain unimplemented. These
 commands do not yet implement JSON output. See holy.conf(5) for identity rules
 and endpoint restrictions.
 .SH ORPHAN PACKAGES
