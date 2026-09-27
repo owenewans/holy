@@ -1847,7 +1847,7 @@ static int dependent_consumer(int installed, const char *digest)
 {
     DIR *list = directory_stream(installed);
     struct dirent *entry;
-    int result = 0;
+    int result = 0, found = 0;
     if (!list) return -1;
     errno = 0;
     while ((entry = readdir(list))) {
@@ -1884,7 +1884,7 @@ static int dependent_consumer(int installed, const char *digest)
                         else {
                             fprintf(stderr, "holypkg: provider %s still required by %s requirement %s\n",
                                     digest, v[1], v[2]);
-                            result = 1;
+                            found = 1;
                         }
                     } else if (errno != ENOENT) result = -1;
                 }
@@ -1900,17 +1900,17 @@ static int dependent_consumer(int installed, const char *digest)
     }
     if (!entry && errno) result = -1;
     closedir(list);
-    return result;
+    return result < 0 ? -1 : found;
 }
 
-int holy_state_remove(const char *digest, const char *root_path)
+int holy_state_remove(const char *digest, const char *root_path, int accept_broken)
 {
     unsigned long long generation;
     char journal[256];
     char reserved[65], approved[65];
     size_t length;
     int root, dir = -1, installed = -1, item = -1, files = -1;
-    int transactions = -1, journaled = 0, result = 1, pending;
+    int transactions = -1, journaled = 0, result = 1, pending, broken;
     if (!valid_digest(digest)) return 2;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0) goto done;
@@ -1929,7 +1929,10 @@ int holy_state_remove(const char *digest, const char *root_path)
     transactions = child_dir(dir, "transactions", 0);
     if (installed < 0 || transactions < 0) goto done;
     pending = dependent_consumer(installed, digest);
-    if (pending) { result = pending < 0 ? 1 : 3; goto done; }
+    if (pending < 0) goto done;
+    if (pending && !accept_broken) { result = 3; goto done; }
+    if (pending) fprintf(stderr, "holypkg: accepted broken dependents for %s\n", digest);
+    broken = pending;
     item = child_dir(installed, digest, 0);
     if (item < 0) { result = 6; goto done; }
     files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
@@ -1940,7 +1943,7 @@ int holy_state_remove(const char *digest, const char *root_path)
     if (pending != 1) { result = pending == 0 ? 4 : 1; goto done; }
     length = (size_t)snprintf(journal, sizeof journal,
         "format holy-journal-1\nstage removing\ngeneration %llu\nartifact %s\nplan %064d\n",
-        generation, digest, 0);
+        generation, digest, broken ? 1 : 0);
     if (length >= sizeof journal || !record_file(transactions, "journal", journal, length)) {
         result = journal_exists(dir) ? 5 : 1;
         goto done;
@@ -1979,7 +1982,9 @@ int holy_state_continue_remove(const char *root_path)
     found = journal_valid(dir, generation, &recorded, digest, plan, &removing);
     if (found < 0) { result = 1; goto done; }
     if (!found || removing != 1 || recorded != generation ||
-        strspn(plan, "0") != 64 || !installed_valid(dir)) goto done;
+        (strspn(plan, "0") != 64 && strcmp(plan,
+         "0000000000000000000000000000000000000000000000000000000000000001")) ||
+        !installed_valid(dir)) goto done;
     transactions = child_dir(dir, "transactions", 0);
     installed = child_dir(dir, "installed", 0);
     if (transactions < 0 || installed < 0) { result = 1; goto done; }

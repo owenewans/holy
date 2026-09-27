@@ -118,7 +118,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db check SHA256|--all --root DIRECTORY --json
 .br
-.B holypkg db rm SHA256 --root DIRECTORY
+.B holypkg db rm SHA256 [--accept-broken] --root DIRECTORY
 .br
 .B holypkg db owner PATH --root DIRECTORY
 .br
@@ -575,10 +575,14 @@ Neither mode overwrites a partial file or repeats a partially written instance. 
 changed artifacts, ownership conflicts and drift in completed package files.
 The cache must retain the selected artifacts.
 .PP
-The current db rm rejects removal of a provider still referenced by another
-installed consumer with status 3. A saved graph belonging to a removed consumer
-does not keep its former dependencies alive. Grouped removal and an explicitly
-accepted broken-dependency override remain pending.
+db rm lists installed consumers and requirements that still reference the
+provider. Without --accept-broken it returns decision-required status 3 and
+leaves the root unchanged. The explicit flag permits removal while retaining
+those consumers and their saved edges. db check then reports broken-provider.
+Installing the original provider from cache through a new plan-set restores
+the graph when the same requirement can be satisfied. A saved graph belonging
+to a removed consumer does not keep its former dependencies alive. Grouped
+removal and durable completed-transaction decisions remain pending.
 .PP
 The db plan command reads the prepared reservation at the current database
 generation. It verifies a private snapshot of the cached artifact, checks
@@ -873,6 +877,8 @@ SHA-256. It verifies all listed files before mutation, refuses changed files
 and pending reservations, then writes a removing journal. Before journaling,
 it also checks the other installed manifests for conflicting ownership claims;
 shared directories are allowed. A conflict returns 4 without deleting files.
+The removing journal records whether the operation accepted broken dependents;
+recovery accepts only the documented decision marker.
 Recovery repeats this ownership check before resuming an interrupted removal;
 conflicts retain the journal and return 5. It unlinks only
 listed regular files, symlinks and the instance record; shared directories and the
@@ -882,8 +888,7 @@ db recover --continue accepts a removing journal at its original generation
 with an intact installed record, treats absent listed files as removed, verifies
 every remaining file without mutation, then completes removal. Changed files or partial installed
 records require manual inspection. --abort-empty applies only to an installing
-journal, never to removal. This command does not resolve reverse
-dependencies or remove general packages.
+journal, never to removal. This command does not remove dependents.
 .PP
 The info command reads an LZ4-frame-compressed tar archive and prints the seven
 required fields from HOLY/meta. It reads archive data without extracting or

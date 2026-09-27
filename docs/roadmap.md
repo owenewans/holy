@@ -122,7 +122,9 @@
   cycles and preserve shared providers. The read-only command works without cache
   artifacts and refuses incomplete, missing-provider or unknown-graph snapshots.
 - [ ] Complete source-aware installed slots and version families; extend transactions to
-  replacements, complete dynamic-library contexts and grouped removal.
+  replacements, complete dynamic-library contexts and grouped removal. The
+  explicit --accept-broken removal path now retains consumers and reports their
+  broken edges; durable completed-transaction decisions remain unfinished.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions.
 - [x] Install, run, check and remove a native static syscall-only ELF fixture;

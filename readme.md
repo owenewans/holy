@@ -31,5 +31,7 @@ directories. It does not test a booted system.
 BusyBox package. See [holypkg(8)](man/holypkg.8) for inputs and its chroot test.
 `make static-deps` and `make static` build the musl-static core from pinned
 inputs; `make check-static-core` exercises package operations inside a libc-free chroot.
-`make check-qemu ARCH=x86_64 ISO=FILE BOOT_PLAN=SHA256` requires a Holy ISO and guest
-serial probes; the repository does not yet produce one.
+`make bootstrap-image` builds a test ISO from explicit pinned packages and runs
+its QEMU boot probe. See [holy-image(7)](man/holy-image.7) for required inputs
+and the current coverage. `make check-qemu ARCH=x86_64 ISO=FILE BOOT_PLAN=SHA256`
+reruns a supplied image.

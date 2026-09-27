@@ -78,6 +78,22 @@ test "${#plan}" -eq 64
 expect 0 "$bin" db apply-set "$plan" "$probe" "$provider" "$runtime_hash" --root "$root"
 expect 0 "$bin" db check --all --root "$root"
 test "$(readlink "$root/usr/lib64/ld-linux-x86-64.so.2")" = ../lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2
+cp -a "$root" "$tmp/broken-libc"
+expect 3 "$bin" db rm "$runtime_hash" --root "$tmp/broken-libc"
+expect 0 "$bin" db rm "$runtime_hash" --accept-broken --root "$tmp/broken-libc"
+test ! -e "$tmp/broken-libc$libc"
+test ! -e "$tmp/broken-libc$loader"
+expect 4 "$bin" db check --all --root "$tmp/broken-libc" --json
+grep -q '"code":"broken-provider"' "$tmp/out"
+expect 0 "$bin" db plan-set "$runtime_hash" --root "$tmp/broken-libc"
+broken_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+test "${#broken_plan}" -eq 64
+expect 0 "$bin" db apply-set "$broken_plan" "$runtime_hash" --root "$tmp/broken-libc"
+expect 0 "$bin" db check --all --root "$tmp/broken-libc"
+if test "${HOLY_TEST_DYNAMIC_CHROOT:-0}" = 1; then
+    doas -n chroot --userspec="$(id -u):$(id -g)" "$tmp/broken-libc" /usr/bin/probe > "$tmp/recovered-run"
+    grep -qx dynamic-probe "$tmp/recovered-run"
+fi
 for variant in compatible broken; do
     if test "$variant" = compatible; then symbol=holy_fixture; else symbol=wrong_fixture; fi
     printf '#include <stdio.h>\nint %s(void) { return puts("updated-probe") < 0; }\n' "$symbol" > "$tmp/update-library.c"

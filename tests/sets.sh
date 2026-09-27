@@ -75,6 +75,48 @@ expect 0 "$bin" db check --all --root "$root"
 expect 3 "$bin" db rm "$lib" --root "$root"
 test -f "$root/usr/share/lib"
 test "$(cat "$db/generation")" -eq 1
+cp -a "$root" "$tmp/broken-root"
+cp -a "$root" "$tmp/broken-recover"
+cp -a "$root" "$tmp/broken-fault"
+cat > "$tmp/remove-fault.c" <<'C'
+#define _POSIX_C_SOURCE 200809L
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+int unlinkat(int dir, const char *path, int flags)
+{
+    int (*actual)(int, const char *, int);
+    void *symbol = dlsym(RTLD_NEXT, "unlinkat");
+    memcpy(&actual, &symbol, sizeof actual);
+    if (!actual) abort();
+    if (!strcmp(path, "lib")) { errno = ENOSPC; return -1; }
+    return actual(dir, path, flags);
+}
+C
+gcc -shared -fPIC -o "$tmp/remove-fault.so" "$tmp/remove-fault.c" -ldl
+expect 5 env LD_PRELOAD="$tmp/remove-fault.so" "$bin" db rm "$lib" --accept-broken --root "$tmp/broken-fault"
+grep -qx 'plan 0000000000000000000000000000000000000000000000000000000000000001' \
+    "$tmp/broken-fault/var/lib/holypkg/transactions/journal"
+expect 0 "$bin" db recover --continue --root "$tmp/broken-fault"
+expect 4 "$bin" db check "$app" --root "$tmp/broken-fault" --json
+printf 'format holy-journal-1\nstage removing\ngeneration 1\nartifact %s\nplan %064d\n' \
+    "$lib" 1 > "$tmp/broken-recover/var/lib/holypkg/transactions/journal"
+rm "$tmp/broken-recover/usr/share/lib"
+expect 5 "$bin" db status --root "$tmp/broken-recover"
+expect 0 "$bin" db recover --continue --root "$tmp/broken-recover"
+expect 4 "$bin" db check "$app" --root "$tmp/broken-recover" --json
+grep -q '"code":"broken-provider"' "$tmp/out"
+expect 0 "$bin" db rm "$lib" --accept-broken --root "$tmp/broken-root"
+test ! -e "$tmp/broken-root/usr/share/lib"
+test -f "$tmp/broken-root/usr/share/app"
+expect 4 "$bin" db check "$app" --root "$tmp/broken-root" --json
+grep -q '"code":"broken-provider"' "$tmp/out"
+expect 0 "$bin" db plan-set "$lib" --root "$tmp/broken-root"
+broken_plan=$(plan_hash)
+expect 0 "$bin" db apply-set "$broken_plan" "$lib" --root "$tmp/broken-root"
+expect 0 "$bin" db check --all --root "$tmp/broken-root"
 journal() {
     printf 'format holy-set-journal-1\ngeneration 0\nplan %s\nroot %s\nchoice -\n' "$plan" "$app"
     printf '%s\n' "$app" "$lib" | sort | sed 's/^/artifact /'
