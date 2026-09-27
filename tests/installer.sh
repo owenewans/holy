@@ -16,6 +16,13 @@ mv "$tmp/files" "$tree/HOLY/files"
 digest=$(sha256sum "$tmp/fixture.holy" | cut -d ' ' -f 1)
 "$holypkg" db init --root "$root" > /dev/null
 "$holypkg" cache stage "local:$tmp/fixture.holy" --root "$root" > /dev/null
+menu_root="$tmp/menu β root"
+cp -a "$root" "$menu_root"
+if "$installer" --menu --config "$tmp/menu.conf" --plan "$tmp/menu.plan" --holypkg "$holypkg" \
+    < /dev/null > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+python3 tests/installer-menu.py "$installer" "$holypkg" "$menu_root" "$digest" \
+    "$tmp/menu.conf" "$tmp/menu.plan"
+"$holypkg" db check --all --root "$menu_root" > /dev/null
 printf '[install]\nroot "%s"\nartifact %s\n' "$root" "$digest" > "$tmp/install.conf"
 printf '[install]\nroot "%s"\nroot "%s"\nartifact %s\n' "$root" "$root" "$digest" > "$tmp/duplicate.conf"
 if "$installer" --config "$tmp/duplicate.conf" --plan "$tmp/duplicate.plan" --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi

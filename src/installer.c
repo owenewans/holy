@@ -357,6 +357,286 @@ done:
     return rc;
 }
 
+struct menu_state {
+    char *root;
+    char **artifacts;
+    size_t count;
+};
+
+static void free_input(struct install_input *input)
+{
+    size_t i;
+    for (i = 0; i < input->count; ++i) free(input->artifacts[i]);
+    free(input->artifacts);
+    free(input->root);
+    memset(input, 0, sizeof *input);
+}
+
+static void free_menu(struct menu_state *menu)
+{
+    size_t i;
+    for (i = 0; i < menu->count; ++i) free(menu->artifacts[i]);
+    free(menu->artifacts);
+    free(menu->root);
+}
+
+static int menu_load(const char *path, struct menu_state *menu)
+{
+    struct holy_config config = {0};
+    char *error = NULL;
+    size_t i;
+    if (access(path, F_OK) && errno == ENOENT) return 0;
+    if (!holy_config_load(path, &config, &error)) {
+        fprintf(stderr, "holyinstall: %s\n", error ? error : "invalid config");
+        free(error); return 2;
+    }
+    for (i = 0; i < config.count; ++i) {
+        const struct holy_entry *e = &config.entries[i];
+        char **next;
+        if (strcmp(e->section, "install")) {
+            fputs("holyinstall: text menu can edit only [install] configs\n", stderr);
+            holy_config_free(&config); return 2;
+        }
+        if (!strcmp(e->key, "root")) {
+            menu->root = strdup(e->values[0]);
+            if (!menu->root) { holy_config_free(&config); return 1; }
+        } else {
+            next = realloc(menu->artifacts, (menu->count + 1) * sizeof *next);
+            if (!next) { holy_config_free(&config); return 1; }
+            menu->artifacts = next;
+            menu->artifacts[menu->count] = strdup(e->values[0]);
+            if (!menu->artifacts[menu->count]) { holy_config_free(&config); return 1; }
+            ++menu->count;
+        }
+    }
+    holy_config_free(&config);
+    return 0;
+}
+
+static int menu_write(FILE *stream, const struct menu_state *menu)
+{
+    size_t i;
+    if (fputs("[install]\n", stream) == EOF) return 0;
+    if (menu->root && (fputs("root ", stream) == EOF ||
+                       !quote(stream, menu->root) || fputc('\n', stream) == EOF)) return 0;
+    for (i = 0; i < menu->count; ++i)
+        if (fprintf(stream, "artifact %s\n", menu->artifacts[i]) < 0) return 0;
+    return 1;
+}
+
+static int menu_config_file(const char *path, const struct menu_state *menu)
+{
+    size_t size = strlen(path);
+    char *temporary;
+    FILE *stream;
+    int fd, ok;
+    if (size > (size_t)-1 - 12) return 0;
+    temporary = malloc(size + 12);
+    if (!temporary) return 0;
+    snprintf(temporary, size + 12, "%s.XXXXXX", path);
+    fd = mkstemp(temporary);
+    if (fd < 0) { free(temporary); return 0; }
+    stream = fdopen(fd, "w");
+    if (!stream) { close(fd); unlink(temporary); free(temporary); return 0; }
+    ok = menu_write(stream, menu);
+    if (fflush(stream) || fsync(fd)) ok = 0;
+    if (fclose(stream)) ok = 0;
+    if (ok) ok = !rename(temporary, path) && sync_parent(path);
+    if (!ok) unlink(temporary);
+    free(temporary);
+    return ok;
+}
+
+static int menu_line(const char *prompt, char **answer)
+{
+    size_t capacity = 0;
+    ssize_t n;
+    fputs(prompt, stdout);
+    if (fflush(stdout)) return 0;
+    n = getline(answer, &capacity, stdin);
+    if (n < 0) return 0;
+    if (n && (*answer)[n - 1] == '\n') (*answer)[n - 1] = 0;
+    return 1;
+}
+
+static void menu_path(const char *path)
+{
+    const unsigned char *p = (const unsigned char *)path;
+    for (; *p; ++p)
+        if (*p < 32 || *p == 127) printf("\\x%02x", *p);
+        else putchar(*p);
+}
+
+static int menu_packages(struct menu_state *menu, int *dirty)
+{
+    for (;;) {
+        char *answer = NULL;
+        size_t i;
+        int found = 0;
+        puts("Packages: first entry is the explicit root package");
+        for (i = 0; i < menu->count; ++i) printf("%zu %s\n", i + 1, menu->artifacts[i]);
+        if (!menu_line("a add, d delete, b back > ", &answer)) { free(answer); return 0; }
+        if (!strcmp(answer, "b")) { free(answer); return 1; }
+        if (!strcmp(answer, "a")) {
+            char *digest = NULL, **next;
+            free(answer);
+            if (!menu_line("SHA-256 > ", &digest)) { free(digest); return 0; }
+            if (!digest_valid(digest) || menu->count >= 1024) {
+                puts("Invalid SHA-256 or package limit reached"); free(digest); continue;
+            }
+            for (i = 0; i < menu->count; ++i)
+                if (!strcmp(menu->artifacts[i], digest)) { found = 1; break; }
+            if (found) { puts("Already selected"); free(digest); continue; }
+            next = realloc(menu->artifacts, (menu->count + 1) * sizeof *next);
+            if (!next) { free(digest); return 0; }
+            menu->artifacts = next;
+            menu->artifacts[menu->count++] = digest;
+            *dirty = 1;
+            continue;
+        }
+        if (!strcmp(answer, "d")) {
+            char *number = NULL, *end;
+            unsigned long long index;
+            free(answer);
+            if (!menu_line("Number > ", &number)) { free(number); return 0; }
+            errno = 0;
+            index = strtoull(number, &end, 10);
+            if (errno || !number[0] || *end || !index || index > menu->count) {
+                puts("Invalid number"); free(number); continue;
+            }
+            free(menu->artifacts[index - 1]);
+            for (i = (size_t)index; i < menu->count; ++i)
+                menu->artifacts[i - 1] = menu->artifacts[i];
+            --menu->count;
+            *dirty = 1;
+            free(number);
+            continue;
+        }
+        puts("Choose a, d or b");
+        free(answer);
+    }
+}
+
+static int menu_prepare(const char *plan_path,
+                        const char *binary, const struct menu_state *menu,
+                        int save_plan)
+{
+    struct holy_config config = {0};
+    struct install_input input = {0};
+    char temporary[] = "/tmp/holyinstall-menu-XXXXXX";
+    char *output = NULL, hash[65];
+    FILE *stream;
+    int fd, rc, ok;
+    fd = mkstemp(temporary);
+    if (fd < 0) return 1;
+    stream = fdopen(fd, "w");
+    if (!stream) { close(fd); unlink(temporary); return 1; }
+    ok = menu_write(stream, menu);
+    if (fflush(stream) || fsync(fd)) ok = 0;
+    if (fclose(stream)) ok = 0;
+    if (!ok) { unlink(temporary); return 1; }
+    rc = load_input(temporary, &config, &input);
+    unlink(temporary);
+    if (rc) goto done;
+    rc = run_package_manager(binary, &input, NULL, &output);
+    if (rc) goto done;
+    if (!set_hash(output, hash)) { rc = 1; goto done; }
+    if (fputs(output, stdout) == EOF) { rc = 1; goto done; }
+    if (save_plan) {
+        rc = write_plan(plan_path, &input, hash);
+        if (!rc) printf("holyinstall plan %s set %s\n", plan_path, hash);
+    }
+done:
+    free(output);
+    free_input(&input);
+    holy_config_free(&config);
+    return rc;
+}
+
+static int menu_run(const char *config_path, const char *plan_path,
+                    const char *binary)
+{
+    struct menu_state menu = {0};
+    int rc, prepared = 0, dirty = access(config_path, F_OK) != 0;
+    if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
+        fputs("holyinstall: menu requires a terminal\n", stderr);
+        return 3;
+    }
+    rc = menu_load(config_path, &menu);
+    if (rc) goto done;
+    for (;;) {
+        char *answer = NULL;
+        fputs("\nHoly installer: prepared root package stage\n1 Target root: ", stdout);
+        menu_path(menu.root ? menu.root : "unset");
+        printf("\n2 Packages: %zu\nConfig: %s\n"
+               "3 Preview\n4 Save config\n5 Prepare plan\n6 Install prepared plan\n7 Abort\n",
+               menu.count, dirty ? "modified" : "saved");
+        if (!menu_line("Choice > ", &answer)) { free(answer); rc = 0; break; }
+        if (!strcmp(answer, "1")) {
+            char *root = NULL;
+            free(answer);
+            if (!menu_line("Target root > ", &root)) { free(root); rc = 0; break; }
+            if (root[0]) { free(menu.root); menu.root = root; dirty = 1; prepared = 0; }
+            else free(root);
+            continue;
+        }
+        if (!strcmp(answer, "2")) {
+            int changed = 0;
+            free(answer);
+            if (!menu_packages(&menu, &changed)) { rc = 0; break; }
+            if (changed) { dirty = 1; prepared = 0; }
+            continue;
+        }
+        if (!strcmp(answer, "3")) {
+            free(answer);
+            rc = menu_prepare(plan_path, binary, &menu, 0);
+            if (rc) printf("Preview failed (status %d)\n", rc);
+            continue;
+        }
+        if (!strcmp(answer, "4")) {
+            free(answer);
+            if (!menu_config_file(config_path, &menu)) puts("Save failed");
+            else { dirty = 0; puts("Config saved"); }
+            continue;
+        }
+        if (!strcmp(answer, "5")) {
+            free(answer);
+            rc = menu_prepare(plan_path, binary, &menu, 1);
+            prepared = rc == 0;
+            if (rc) printf("Plan failed (status %d)\n", rc);
+            continue;
+        }
+        if (!strcmp(answer, "6")) {
+            struct install_input input = {0};
+            char hash[65], *confirm = NULL, *output = NULL;
+            free(answer);
+            if (!prepared) { puts("Prepare and review a plan first"); continue; }
+            rc = check_plan(plan_path, &input, hash);
+            if (rc) { free_input(&input); printf("Plan failed (status %d)\n", rc); prepared = 0; continue; }
+            fputs("Root ", stdout);
+            menu_path(input.root);
+            printf("\nSet %s\nArtifacts %zu\n", hash, input.count);
+            if (!menu_line("Type yes to install > ", &confirm)) {
+                free(confirm); free_input(&input); rc = 0; break;
+            }
+            if (!strcmp(confirm, "yes")) {
+                rc = run_package_manager(binary, &input, hash, &output);
+                if (!rc) { fputs(output, stdout); puts("Package transaction complete"); }
+                else printf("Install failed (status %d)\n", rc);
+                prepared = 0;
+            }
+            free(confirm); free(output); free_input(&input);
+            continue;
+        }
+        if (!strcmp(answer, "7")) { free(answer); rc = 0; break; }
+        puts("Choose 1 through 7");
+        free(answer);
+    }
+done:
+    free_menu(&menu);
+    return rc;
+}
+
 int main(int argc, char **argv)
 {
     const char *config_path = NULL, *plan_path = NULL;
@@ -364,7 +644,7 @@ int main(int argc, char **argv)
     struct holy_config config = {0};
     struct install_input input = {0};
     char hash[65], *output = NULL;
-    int i, apply = 0, rc;
+    int i, apply = 0, menu = 0, rc;
     for (i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--config") && ++i < argc && !config_path)
             config_path = argv[i];
@@ -372,11 +652,14 @@ int main(int argc, char **argv)
             plan_path = argv[i];
         else if (!strcmp(argv[i], "--apply") && ++i < argc && !plan_path) {
             plan_path = argv[i]; apply = 1;
+        } else if (!strcmp(argv[i], "--menu") && !menu) {
+            menu = 1;
         } else if (!strcmp(argv[i], "--holypkg") && ++i < argc)
             binary = argv[i];
         else goto usage;
     }
-    if (!plan_path || (apply ? config_path != NULL : config_path == NULL)) goto usage;
+    if (!plan_path || (apply ? config_path != NULL || menu : config_path == NULL)) goto usage;
+    if (menu) return menu_run(config_path, plan_path, binary);
     if (apply) {
         rc = check_plan(plan_path, &input, hash);
         if (rc) goto done;
@@ -393,10 +676,9 @@ int main(int argc, char **argv)
         if (!rc) printf("holyinstall plan %s set %s\n", plan_path, hash);
     }
 done:
-    for (size_t j = 0; j < input.count; ++j) free(input.artifacts[j]);
-    free(output); free(input.root); free(input.artifacts); holy_config_free(&config);
+    free(output); free_input(&input); holy_config_free(&config);
     return rc;
 usage:
-    fputs("usage: holyinstall --config FILE --plan NEW_FILE [--holypkg FILE] | --apply PLAN [--holypkg FILE]\n", stderr);
+    fputs("usage: holyinstall [--menu] --config FILE --plan NEW_FILE [--holypkg FILE] | --apply PLAN [--holypkg FILE]\n", stderr);
     return 2;
 }

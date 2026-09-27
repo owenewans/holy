@@ -2,6 +2,8 @@
 .SH NAME
 holyinstall \- prepare and apply a package installation to an existing Holy root
 .SH SYNOPSIS
+.B holyinstall --menu --config FILE --plan NEW_FILE [--holypkg FILE]
+.br
 .B holyinstall --config FILE --plan NEW_FILE [--holypkg FILE]
 .br
 .B holyinstall --apply PLAN [--holypkg FILE]
@@ -15,6 +17,16 @@ It must be Holy's C package manager; the separate Slackware converter named
 holypkg does not implement this transaction interface.
 The caller must already have permission to modify the target; this stage does
 not invoke doas.
+.PP
+--menu opens a numbered text menu on a terminal. It shows the current root
+and package count, edits the root in a form, and opens a package list with
+add, delete and back actions. Preview calls the same holypkg planner as
+config-driven mode. Save writes a normalized [install] config atomically.
+Prepare plan writes the same frozen plan as noninteractive mode. Install shows
+the root, set hash and artifact count, then requires the literal answer yes.
+Abort and end-of-input leave the target unchanged before apply. Without a TTY,
+--menu exits with status 3. The text menu can edit only [install] configs;
+other sections are rejected to avoid silently discarding them on save.
 .PP
 Planning runs holypkg db plan-set read-only. It prints the selected providers
 and requirements, then creates a new plan file with mode 0600. The plan binds
@@ -46,7 +58,7 @@ is no longer consulted at that step.
 .PP
 This interface does not partition, format or mount disks; configure accounts,
 network or services; install Limine; or generate an initramfs. It does not
-claim the resulting root is bootable. The menu, disk, boot and account stages
+claim the resulting root is bootable. The full disk, boot and account menus
 and the live-ISO-to-installed-disk QEMU test remain pending.
 .SH EXIT STATUS
 0 means the requested step completed. 1 means an operational error. 2 means

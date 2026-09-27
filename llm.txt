@@ -573,7 +573,7 @@ SOURCE IDENTITIES
      during package selection remain unimplemented.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holyinstall.8 source=holy version=development sha256=7eb408e976ceff251d3cc62296b83e3b1da55550ada6a612305e0b22d1da0cc0
+holyinstall.8 source=holy version=development sha256=33205961faa876e06a307c01020b62bcdb8b112f61cc16cbc92bc747c86eac10
 HOLYINSTALL(8)		     System Manager's Manual		  HOLYINSTALL(8)
 
 NAME
@@ -581,6 +581,7 @@ NAME
      root
 
 SYNOPSIS
+     holyinstall --menu --config FILE --plan NEW_FILE [--holypkg FILE]
      holyinstall --config FILE --plan NEW_FILE [--holypkg FILE]
      holyinstall --apply PLAN [--holypkg FILE]
 
@@ -592,6 +593,17 @@ DESCRIPTION
      package manager; the separate Slackware converter named  holypkg  does  not
      implement this transaction interface.  The caller must already have permis-
      sion to modify the target; this stage does not invoke doas.
+
+     --menu  opens a numbered text menu on a terminal. It shows the current root
+     and package count, edits the root in a form, and opens a package list  with
+     add,  delete  and	back  actions. Preview calls the same holypkg planner as
+     config-driven mode. Save writes a normalized [install]  config  atomically.
+     Prepare  plan  writes  the same frozen plan as noninteractive mode. Install
+     shows the root, set hash and artifact count, then requires the literal  an-
+     swer  yes.	 Abort and end-of-input leave the target unchanged before apply.
+     Without a TTY, --menu exits with status 3. The text menu can edit only [in-
+     stall] configs; other sections are rejected to  avoid  silently  discarding
+     them on save.
 
      Planning  runs  holypkg  db  plan-set  read-only.	It  prints  the selected
      providers and requirements, then creates a new plan file  with  mode  0600.
@@ -619,12 +631,12 @@ DESCRIPTION
 
      This  interface  does  not	 partition, format or mount disks; configure ac-
      counts, network or services; install Limine; or generate an  initramfs.  It
-     does not claim the resulting root is bootable. The menu, disk, boot and ac-
-     count stages and the live-ISO-to-installed-disk QEMU test remain pending.
+     does  not claim the resulting root is bootable. The full disk, boot and ac-
+     count menus and the live-ISO-to-installed-disk QEMU test remain pending.
 
 EXIT STATUS
      0 means the requested step completed. 1 means an operational error. 2 means
-     invalid  arguments,  config or plan. holypkg statuses 3 through 6 propagate
+     invalid arguments, config or plan. holypkg statuses 3 through  6  propagate
      from the package transaction.
 
 SEE ALSO

@@ -26,8 +26,9 @@ objcopy, as and ld.
 must be available through pkg-config; the check fails if they are absent.
 `make check-root` exercises package mutations only inside disposable target
 directories. It does not test a booted system.
-`make check-install` exercises [holyinstall(8)](man/holyinstall.8) plan/apply
-against a prepared target root. Disk and boot installation are still pending.
+`make check-install` exercises [holyinstall(8)](man/holyinstall.8) text menu
+and plan/apply against a prepared target root. Disk and boot installation are
+still pending.
 `make check-qemu-gate` runs negative BIOS/TCG fixtures.
 `make bootstrap-busybox INPUTS=DIR OUTPUT=DIR` builds a pinned musl-static
 BusyBox package. See [holypkg(8)](man/holypkg.8) for inputs and its chroot test.
