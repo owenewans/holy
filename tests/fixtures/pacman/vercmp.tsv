@@ -1,0 +1,65 @@
+#   Copyright (c) 2009-2025 by Pacman Development Team <pacman-dev@lists.archlinux.org>
+#   Copyright (c) 2008 by Dan McGee <dan@archlinux.org>
+#
+#   This program is free software; you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation; either version 2 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# https://gitlab.archlinux.org/pacman/pacman/-/blob/5683f8477a0afcc6b331766175a83445b2dcfe89/test/util/vercmptest.sh
+# upstream commit 5683f8477a0afcc6b331766175a83445b2dcfe89, test/util/vercmptest.sh
+# source sha256 5f2ef659c1c96fe32f44445139e2905bf20657a3e3d63e0913ac0235b59b59fd
+1.5.0	1.5.0	0
+1.5.1	1.5.0	1
+1.5.1	1.5	1
+1.5.0-1	1.5.0-1	0
+1.5.0-1	1.5.0-2	-1
+1.5.0-1	1.5.1-1	-1
+1.5.0-2	1.5.1-1	-1
+1.5-1	1.5.1-1	-1
+1.5-2	1.5.1-1	-1
+1.5-2	1.5.1-2	-1
+1.5	1.5-1	0
+1.5-1	1.5	0
+1.1-1	1.1	0
+1.0-1	1.1	-1
+1.1-1	1.0	1
+1.5b-1	1.5-1	-1
+1.5b	1.5	-1
+1.5b-1	1.5	-1
+1.5b	1.5.1	-1
+1.0a	1.0alpha	-1
+1.0alpha	1.0b	-1
+1.0b	1.0beta	-1
+1.0beta	1.0rc	-1
+1.0rc	1.0	-1
+1.5.a	1.5	1
+1.5.b	1.5.a	1
+1.5.1	1.5.b	1
+1.5.b-1	1.5.b	0
+1.5-1	1.5.b	-1
+2.0	2_0	0
+2.0_a	2_0.a	0
+2.0a	2.0.a	-1
+2___a	2_a	1
+0:1.0	0:1.0	0
+0:1.0	0:1.1	-1
+1:1.0	0:1.0	1
+1:1.0	0:1.1	1
+1:1.0	2:1.1	-1
+1:1.0	0:1.0-1	1
+1:1.0-1	0:1.1-1	1
+0:1.0	1.0	0
+0:1.0	1.1	-1
+0:1.1	1.0	1
+1:1.0	1.0	1
+1:1.0	1.1	1
+1:1.1	1.1	1

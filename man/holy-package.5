@@ -5,7 +5,12 @@ holy-package \- prototype native archive and payload manifest
 A .holy archive is a POSIX tar/PAX stream compressed as a standard LZ4 frame.
 HOLY/meta contains one key and one value per line. The required fields are
 format (holy-package-1), name, version, release, os, arch and libc. An unknown
-requires-feature field fails inspection.
+requires-feature field fails inspection. Optional x-version-family records the
+version comparator family and is a scalar: duplicates fail inspection.
+The current resolver supports constrained package requirements for pacman;
+unknown families remain inspectable but cannot acquire guessed version semantics.
+Pacman imports store the complete foreign epoch:version-release in version,
+and use release for the native artifact revision.
 .PP
 The inspector accepts os=linux or windows, arch=x86, x86_64 or noarch,
 and libc=glibc, musl or nolibc. noarch requires nolibc. These checks
@@ -94,7 +99,7 @@ the registered source does not rewrite installed origin records. Check, removal,
 orphan analysis and missing-only repair preserve this identity without requiring
 the source to remain active.
 .PP
-The set installation interface supports exact package dependencies and native
+The set installation interface supports exact-name package dependencies, scoped pacman version constraints and native
 dynamic packages with literal absolute interpreter and DT_NEEDED provider paths.
 It records explicit/dependency reasons. General loader search, automatic ELF
 rewriting remains unimplemented. Slot conflicts compare source-id, name, os,

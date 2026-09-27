@@ -47,4 +47,7 @@ int holy_pacman_parse(const char *bytes, size_t size,
                       struct holy_pacman_metadata *out, struct holy_pacman_error *error);
 void holy_pacman_free(struct holy_pacman_metadata *metadata);
 
+/* borrowed ASCII versions; returns 1 with order -1/0/1, or 0 for invalid input. */
+int holy_pacman_version_compare(const char *a, const char *b, int *order);
+
 #endif

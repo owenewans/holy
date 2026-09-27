@@ -92,7 +92,7 @@ static:
 	$(MAKE) clean
 	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lssl -lcrypto -llz4 -lzstd -llzma -lbz2 -lz -leu -Wl,--end-group -lpthread -ldl" all
 
-HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o backends/pacman.o
+HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o backends/pacman.o backends/pacman-version.o
 
 holypkg: $(HOLY_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(SOLV_LIBS)
@@ -132,9 +132,10 @@ check: check-pacman holypkg tests/resolution check-init check-solver check-insta
 
 .PHONY: check-pacman
 check-pacman: holypkg
-	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o tests/pacman-helper tests/pacman.c backends/pacman.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o tests/pacman-helper tests/pacman.c backends/pacman.c backends/pacman-version.c
 	./tests/pacman-helper
 	python3 tests/import.py ./holypkg
+	python3 tests/versions.py ./holypkg
 
 check-fixtures: check
 

@@ -96,6 +96,27 @@ int main(void)
     require(!strcmp(metadata.name, "gzip") && !strcmp(metadata.version, "1.15-1"));
     require(!metadata.unknown_count && !strcmp(metadata.package_type, "pkg"));
     holy_pacman_free(&metadata);
-    puts("pacman metadata fixtures passed");
+    file = fopen("tests/fixtures/pacman/vercmp.tsv", "r");
+    require(file);
+    size = 0;
+    while (fgets(bytes, sizeof bytes, file)) {
+        char a[256], b[256];
+        int expected, order;
+        if (bytes[0] == '#' || bytes[0] == '\n') continue;
+        require(sscanf(bytes, "%255s %255s %d", a, b, &expected) == 3);
+        require(holy_pacman_version_compare(a, b, &order) && order == expected);
+        require(holy_pacman_version_compare(b, a, &order) && order == -expected);
+        size += 2;
+    }
+    require(!ferror(file) && size == 92);
+    fclose(file);
+    {
+        int order;
+        require(!holy_pacman_version_compare(NULL, "1", &order));
+        require(!holy_pacman_version_compare("", "1", &order));
+        require(!holy_pacman_version_compare("1\xff", "1", &order));
+        require(holy_pacman_version_compare("01:000000000000000000000002-7", "1:2-6", &order) && order == 1);
+    }
+    puts("pacman metadata and 92 upstream version fixtures passed");
     return 0;
 }

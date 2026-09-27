@@ -7,6 +7,7 @@ struct holy_package_identity {
     char *name;
     char *version;
     char *release;
+    char *version_family;
     char *os;
     char *arch;
     char *libc;

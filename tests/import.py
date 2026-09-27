@@ -19,9 +19,9 @@ with tempfile.TemporaryDirectory() as scratch:
         assert result.returncode == status, (args, result.returncode, result.stdout, result.stderr)
         return result.stdout.decode()
 
-    def package(name, members, extra="", mode="w:gz", arch="any"):
+    def package(name, members, extra="", mode="w:gz", arch="any", package_name="sample", version="1:2.0-3"):
         path = tmp / (name + ".pkg")
-        metadata = ("pkgname = sample\npkgver = 1:2.0-3\narch = " + arch + "\n" + extra).encode()
+        metadata = ("pkgname = " + package_name + "\npkgver = " + version + "\narch = " + arch + "\n" + extra).encode()
         with tarfile.open(path, mode) as archive:
             all_members = [(".PKGINFO", metadata, "file", None, 0o644)] + members
             for member, data, kind, target, permissions in all_members:
@@ -142,4 +142,11 @@ with tempfile.TemporaryDirectory() as scratch:
     assert "arch x86_64 libc glibc" in text and "arch x86 libc nolibc" in text and "arch noarch libc nolibc" in text
     for artifact in artifacts:
         assert "split-" in run("requirements", "local:" + str(artifact))
+    _, consumers, _ = convert(package("version-consumer", payload, "depend = provider>=2:1.0-2\n"), "version-consumer-output")
+    _, older, _ = convert(package("version-old", payload, package_name="provider", version="2:1.0-1"), "version-old-output")
+    _, newer, _ = convert(package("version-new", payload, package_name="provider", version="2:1.0-3"), "version-new-output")
+    result = run("solve", "local:" + str(consumers[0]), "local:" + str(older[0]), "local:" + str(newer[0]))
+    assert "selected " + hashlib.sha256(newer[0].read_bytes()).hexdigest() in result
+    assert "selected " + hashlib.sha256(older[0].read_bytes()).hexdigest() not in result
+    run("solve", "local:" + str(consumers[0]), "local:" + str(older[0]), status=4)
     print("pacman import fixtures passed")

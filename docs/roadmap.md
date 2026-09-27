@@ -3,6 +3,12 @@
 
 ## Package manager
 
+- [x] Resolve pacman package version constraints before passing exact candidate
+  identities to libsolv. Preserve the comparator family, apply arch/libc scopes,
+  reject cross-family constraint satisfaction, and validate updates against
+  installed consumer constraints. Run 92 upstream comparison cases and solver /
+  transaction fixtures. Other comparators and versioned virtual provides remain open.
+
 - [x] Build gzip, LZ4, Zstandard, XZ and bzip2 codecs into the static musl client.
   Verify foreign import and native install/check/remove in a chroot without
   dynamic libc or external decoders; reject truncated compressed inputs.

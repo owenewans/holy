@@ -161,7 +161,8 @@ facts determine output tags. Unknown ELF, unclassified executable formats,
 static library archives and pacman backup paths require a decision, status 3.
 Source packages require a recipe importer and are not treated as binary packages.
 .PP
-Package dependencies retain constraints and original expressions. Unsupported
+Package dependencies retain constraints and original expressions. Pacman package
+version constraints use the comparator described below. Unsupported
 SONAME relations, conflicts, replacements and unknown metadata fields become
 foreign requirements; the current solver refuses these with status 6.
 Optional and build requirements remain in attributed origin records.
@@ -196,6 +197,10 @@ checks and removes each converted fixture without dynamic libc or decoder
 executables. The test requires doas, unshare, mount, chroot, Python, readelf and
 host zstd/lz4 commands to create input fixtures. These host compressors are not
 available inside the chroot.
+.PP
+make check-pacman also runs 92 attributed version comparisons from pacman 7.1.0,
+plus scoped candidate selection, mixed-family rejection, installation and
+rejection of updates that violate an installed consumer's constraint.
 .PP
 The reference metadata format is
 https://alpm.archlinux.page/specifications/PKGINFO.5.html.
@@ -442,7 +447,7 @@ These commands do not resolve chains of symlinks or prove runtime targets exist.
 The separate fetch --extract operation still refuses absolute symlinks.
 .PP
 The db plan-set command resolves one explicit root against already cached
-candidate hashes and cached artifacts from the installed catalog. It supports exact package dependencies between Linux
+candidate hashes and cached artifacts from the installed catalog. It supports exact-name package dependencies and the documented pacman version constraints between Linux
 data, native static and restricted dynamic packages, empty hooks/transforms,
 existing or declared safe directories and the same payload subset as db apply. It reports selected
 artifacts, reasons and requirement edges without changing installed state.
@@ -823,11 +828,25 @@ reconstruct original bytes rather than treating them as normalized text.
 The solve command verifies and scans each explicitly supplied local archive,
 with the first archive as the requested root. Its supported subset accepts
 Linux packages with validated payload ABI facts, empty HOLY/hooks and HOLY/transform, and
-HOLY/deps package requirements with arch=any, libc=any and relation=any.
+HOLY/deps package requirements with explicit arch/libc scopes or any.
 Each consumer must equal its package name. Only the package's own metadata
 name supplies a package capability; declared aliases in HOLY/provides are parsed
-but do not satisfy requirements here. Unsupported metadata dependency forms and
-version constraints return 6. There are no source IDs, installed packages or
+but do not satisfy requirements here. Version constraints eq/ge/gt/le/lt use
+pacman ordering only when the consumer and provider declare x-version-family
+pacman. The full foreign epoch:version-release string belongs in version;
+release remains the native artifact revision and is not appended a second time.
+A missing pkgrel on one side does not constrain pkgrel. Numeric epochs,
+prerelease letters and separator widths follow pacman's comparison rules.
+The comparator accepts nonempty printable ASCII strings up to 65536 bytes;
+unsupported encodings do not receive a guessed order.
+The adapter filters candidates before the common libsolv solver receives exact
+requirement capabilities. The mixed solver pool does not compare foreign EVRs.
+Unsupported consumer version families and metadata dependency forms return 6.
+Providers from another or unknown family cannot satisfy a constrained edge;
+if no matching candidate remains, resolution returns dependency-conflict.
+A supplied --choose answer cannot bypass these checks. Unversioned requirements
+retain their ordinary exact-name matching across families. Automatic newest-version
+selection, cross-family overrides and virtual versioned provides remain pending. There are no source IDs, installed packages or
 architecture overrides in this command.
 .PP
 ELF payloads add file-scoped interpreter, DT_NEEDED and strong undefined symbol

@@ -15,7 +15,7 @@
 #define META_LIMIT (1024u * 1024u)
 
 static const char *const fields[] = {
-    "format", "name", "version", "release", "os", "arch", "libc"
+    "format", "name", "version", "release", "os", "arch", "libc", "x-version-family"
 };
 
 static const char *const members[] = {
@@ -116,7 +116,7 @@ static int read_meta(const char *path, const char *data, size_t length, int emit
         }
         start = i + 1;
     }
-    if (ok) for (i = 0; i < sizeof fields / sizeof *fields; ++i) {
+    if (ok) for (i = 0; i < 7; ++i) {
         if (!values[i]) {
             fprintf(stderr, "%s: HOLY/meta: missing %s\n", path, fields[i]);
             ok = 0;
@@ -143,7 +143,7 @@ static int read_meta(const char *path, const char *data, size_t length, int emit
         ok = 0;
     }
     if (ok && emit) for (i = 0; i < sizeof fields / sizeof *fields; ++i)
-        printf("%s %s\n", fields[i], values[i]);
+        if (values[i]) printf("%s %s\n", fields[i], values[i]);
     if (ok && arch && libc) {
         *arch = strdup(values[5]);
         *libc = strdup(values[6]);
@@ -155,6 +155,7 @@ static int read_meta(const char *path, const char *data, size_t length, int emit
         }
     }
     if (ok && identity) {
+        identity->version_family = values[7]; values[7] = NULL;
         identity->name = values[1]; values[1] = NULL;
         identity->version = values[2]; values[2] = NULL;
         identity->release = values[3]; values[3] = NULL;
@@ -310,6 +311,7 @@ void holy_package_identity_free(struct holy_package_identity *info)
     free(info->name);
     free(info->version);
     free(info->release);
+    free(info->version_family);
     free(info->os);
     free(info->arch);
     free(info->libc);

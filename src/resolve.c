@@ -7,6 +7,7 @@
 #include "solve.h"
 #include "stage.h"
 #include "verify.h"
+#include "../backends/pacman.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -24,6 +25,11 @@ struct elf_edge {
     const struct holy_elf_symbol *symbol;
 };
 
+struct package_edge {
+    size_t requirement;
+    char *arch, *libc, *relation, *version;
+};
+
 struct local_item {
     struct holy_package_identity identity;
     struct holy_solver_requirement *requirements;
@@ -34,6 +40,8 @@ struct local_item {
     struct holy_scan_result scan;
     struct elf_edge *edges;
     size_t edge_count;
+    struct package_edge *package_edges;
+    size_t package_edge_count;
 };
 
 static char *package_capability(const char *name)
@@ -94,13 +102,23 @@ static int exact_requirement(void *opaque, const char *id,
     char *capability;
     int ok;
     (void)original; (void)evidence;
-    if (strcmp(consumer, item->identity.name) || strcmp(kind, "package") ||
-        strcmp(arch, "any") || strcmp(libc, "any") ||
-        strcmp(relation, "any") || strcmp(version, "-")) return 0;
+    if (strcmp(consumer, item->identity.name) || strcmp(kind, "package")) return 0;
     capability = package_capability(name);
     if (!capability) return 0;
     ok = add_requirement(item, id, capability);
     free(capability);
+    if (ok && (strcmp(arch, "any") || strcmp(libc, "any") || strcmp(relation, "any"))) {
+        struct package_edge *grown = realloc(item->package_edges,
+            (item->package_edge_count + 1) * sizeof *grown), *edge;
+        if (!grown) return 0;
+        item->package_edges = grown;
+        edge = &grown[item->package_edge_count++];
+        memset(edge, 0, sizeof *edge);
+        edge->requirement = item->requirement_count - 1;
+        edge->arch = strdup(arch); edge->libc = strdup(libc);
+        edge->relation = strdup(relation); edge->version = strdup(version);
+        ok = edge->arch && edge->libc && edge->relation && edge->version;
+    }
     return ok;
 }
 
@@ -118,6 +136,49 @@ static int add_provide(struct holy_solver_item *item, const char *capability)
     if (!next) { free(copy); return 0; }
     item->provides = next;
     next[item->provides_count++] = copy;
+    return 1;
+}
+
+static int package_requirements(struct local_item *local, struct holy_solver_item *items, size_t count)
+{
+    size_t i, j, k;
+    for (i = 0; i < count; ++i) for (j = 0; j < local[i].package_edge_count; ++j) {
+        const struct package_edge *edge = &local[i].package_edges[j];
+        size_t index = edge->requirement;
+        const char *base = local[i].original_requirements[index];
+        const char *family = local[i].identity.version_family;
+        const char *relation = edge->relation;
+        int constrained = strcmp(relation, "any") != 0;
+        char *capability;
+        size_t length = strlen(local[i].requirement_ids[index]) + 80;
+        if (constrained && (!family || strcmp(family, "pacman"))) {
+            fprintf(stderr, "holypkg: unsupported-version-family consumer=%s requirement=%s\n",
+                local[i].identity.digest, local[i].requirement_ids[index]);
+            return 0;
+        }
+        capability = malloc(length);
+        if (!capability) return 0;
+        snprintf(capability, length, "package-edge:%s:%s", local[i].identity.digest,
+                 local[i].requirement_ids[index]);
+        free((char *)local[i].requirements[index].first);
+        local[i].requirements[index].first = capability;
+        for (k = 0; k < count; ++k) {
+            const struct holy_package_identity *candidate = &local[k].identity;
+            int order, matches = 1;
+            if (strcmp(base, local[k].capability) ||
+                (strcmp(edge->arch, "any") && strcmp(edge->arch, candidate->arch)) ||
+                (strcmp(edge->libc, "any") && strcmp(edge->libc, candidate->libc))) continue;
+            if (constrained) {
+                if (!candidate->version_family || strcmp(candidate->version_family, family)) continue;
+                if (!holy_pacman_version_compare(candidate->version, edge->version, &order)) return 0;
+                matches = !strcmp(relation, "eq") ? order == 0 :
+                          !strcmp(relation, "ge") ? order >= 0 :
+                          !strcmp(relation, "gt") ? order > 0 :
+                          !strcmp(relation, "le") ? order <= 0 : order < 0;
+            }
+            if (matches && !add_provide(&items[k], capability)) return 0;
+        }
+    }
     return 1;
 }
 
@@ -548,7 +609,7 @@ static int resolve(const char *const *paths, size_t count, int json,
         items[i].id = local[i].identity.digest;
         if (!add_provide(&items[i], local[i].capability)) goto done;
     }
-    if (!elf_requirements(local, items, count)) goto done;
+    if (!package_requirements(local, items, count) || !elf_requirements(local, items, count)) goto done;
     for (i = 0; i < count; ++i) {
         items[i].requires = local[i].requirements;
         items[i].requires_count = local[i].requirement_count;
@@ -662,6 +723,11 @@ done:
         free(local[i].original_requirements);
         free(local[i].capability);
         free(local[i].edges);
+        for (j = 0; j < local[i].package_edge_count; ++j) {
+            free(local[i].package_edges[j].arch); free(local[i].package_edges[j].libc);
+            free(local[i].package_edges[j].relation); free(local[i].package_edges[j].version);
+        }
+        free(local[i].package_edges);
         holy_scan_free(&local[i].scan);
         holy_package_identity_free(&local[i].identity);
     }
