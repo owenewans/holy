@@ -137,6 +137,16 @@ doas must be available. The chroot has no dynamic libc directories. This
 tests the static shell; host holypkg still runs outside the chroot. Boot,
 static holypkg and full libc recovery require separate acceptance tests.
 .SS Static core build
+make bootstrap-dinit INPUTS=DIRECTORY OUTPUT=DIRECTORY builds dinit 0.22.1
+as an x86_64 musl-static native package, including its C++ runtime. Inputs are
+dinit-0.22.1.tar.gz from the upstream GitHub tag and the pinned
+x86_64-linux-musl-cross.tgz toolchain from musl.cc. The script copies and hashes
+both archives before use; an updated archive at the same URL is rejected.
+It runs upstream make check, includes upstream man pages and license, and records
+compiler version, configuration, ELF facts and package hash. Capabilities support
+is disabled in this bootstrap profile. This package build does not establish
+PID 1 boot acceptance; that requires the image test. OUTPUT must be new.
+.PP
 make static-deps INPUTS=DIRECTORY OUTPUT=DIRECTORY KERNEL_HEADERS=DIRECTORY
 builds x86_64 musl dependencies from the pinned archives listed with URLs and
 SHA-256 digests in profiles/static-sources. It copies and verifies inputs

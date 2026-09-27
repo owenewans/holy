@@ -25,6 +25,10 @@ SOLV_LIBS ?= $(shell pkg-config --libs libsolv 2>/dev/null) -lz
 .PHONY: all check check-fixtures check-root check-qemu check-qemu-gate check-https check-solver check-install-payload bootstrap-busybox check-bootstrap-busybox check-static-core man
 all: holypkg
 
+.PHONY: bootstrap-dinit
+bootstrap-dinit: holypkg
+	sh tools/bootstrap-dinit.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/dinit-bootstrap)"
+
 bootstrap-busybox: holypkg
 	sh tools/bootstrap-busybox.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/busybox-bootstrap)"
 
