@@ -36,6 +36,11 @@
 static int set_journal_present(int dir);
 static int update_pending(int dir);
 static int completed_update(int transactions, const char *name);
+static int remove_record(int transactions, const char *digest,
+                         unsigned long long generation, int broken, int create);
+static int commit_remove_record(int transactions, const char *digest,
+                                unsigned long long generation, int broken);
+static char *update_record(int dir, const char *name);
 static int installed_fields(int item, const char *const *keys,
                              const char *const *values, size_t fields);
 
@@ -1782,7 +1787,7 @@ done:
 }
 
 static int finish_remove_record(int dir, int installed, int item, int transactions,
-                                const char *digest, unsigned long long generation)
+                                const char *digest, unsigned long long generation, int broken)
 {
     static const char *const names[] = { "meta", "files", "deps", "origin", "state" };
     char generation_record[32], temp_name[43] = {0};
@@ -1803,6 +1808,7 @@ static int finish_remove_record(int dir, int installed, int item, int transactio
     if (close(temp)) { temp = -1; goto done; }
     temp = -1;
     if (renameat(dir, temp_name, dir, "generation") || fsync(dir) ||
+        !commit_remove_record(transactions, digest, generation, broken) ||
         unlinkat(transactions, "journal", 0) || fsync(transactions)) goto done;
     ok = 1;
 done:
@@ -1950,10 +1956,11 @@ int holy_state_remove(const char *digest, const char *root_path, int accept_brok
     }
     journaled = 1;
     result = 5;
+    if (!remove_record(transactions, digest, generation, broken, 1)) goto done;
     if (!holy_install_remove_manifest(files, root)) goto done;
     if (close(files)) { files = -1; goto done; }
     files = -1;
-    if (!finish_remove_record(dir, installed, item, transactions, digest, generation)) goto done;
+    if (!finish_remove_record(dir, installed, item, transactions, digest, generation, broken)) goto done;
     printf("removed %s generation %llu\n", digest, generation + 1);
     result = 0;
 done:
@@ -1976,12 +1983,13 @@ int holy_state_continue_remove(const char *root_path)
     int dir = root < 0 ? -1 : state_dir_at(root, 0);
     int installed = -1, item = -1, transactions = -1, files = -1;
     int result = 5, removing = 0, found;
+    struct stat removed_st;
     if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation) ||
         generation == ULLONG_MAX) { result = 1; goto done; }
     found = journal_valid(dir, generation, &recorded, digest, plan, &removing);
     if (found < 0) { result = 1; goto done; }
-    if (!found || removing != 1 || recorded != generation ||
+    if (!found || removing != 1 ||
         (strspn(plan, "0") != 64 && strcmp(plan,
          "0000000000000000000000000000000000000000000000000000000000000001")) ||
         !installed_valid(dir)) goto done;
@@ -1990,12 +1998,23 @@ int holy_state_continue_remove(const char *root_path)
     if (transactions < 0 || installed < 0) { result = 1; goto done; }
     if (read_reservation(transactions, "pending", generation, reserved, approved) != 0)
         goto done;
+    if (recorded != generation) {
+        if (generation != recorded + 1 || !remove_record(transactions, digest, recorded,
+            plan[63] == '1', 0) || fstatat(installed, digest, &removed_st, AT_SYMLINK_NOFOLLOW) == 0 ||
+            errno != ENOENT || !commit_remove_record(transactions, digest, recorded,
+            plan[63] == '1') || unlinkat(transactions, "journal", 0) || fsync(transactions)) goto done;
+        printf("recovered removal %s generation %llu\n", digest, generation);
+        result = 0;
+        goto done;
+    }
     item = child_dir(installed, digest, 0);
     if (item < 0) goto done;
     files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (files < 0 || exclusive_claims(installed, digest, files) != 1 ||
+        !remove_record(transactions, digest, generation, plan[63] == '1', 1) ||
         !holy_install_finish_remove_manifest(files, root) ||
-        !finish_remove_record(dir, installed, item, transactions, digest, generation)) goto done;
+        !finish_remove_record(dir, installed, item, transactions, digest, generation,
+                              plan[63] == '1')) goto done;
     printf("recovered removal %s generation %llu\n", digest, generation + 1);
     result = 0;
 done:
@@ -3277,16 +3296,108 @@ done:
     return bytes;
 }
 
+static int remove_identity(const char *digest, unsigned long long generation,
+                           int broken, char plan[192], char identity[65])
+{
+    static const char digits[] = "0123456789abcdef";
+    unsigned char hash[32];
+    unsigned length = 0;
+    size_t i;
+    int n = snprintf(plan, 192,
+        "format holy-remove-1\ngeneration %llu\nartifact %s\naccept-broken %s\n",
+        generation, digest, broken ? "yes" : "no");
+    if (n < 0 || n >= 192 || EVP_Digest(plan, (size_t)n, hash, &length,
+        EVP_sha256(), NULL) != 1 || length != 32) return 0;
+    for (i = 0; i < 32; ++i) {
+        identity[i * 2] = digits[hash[i] >> 4];
+        identity[i * 2 + 1] = digits[hash[i] & 15];
+    }
+    identity[64] = 0;
+    return 1;
+}
+
+static int remove_record(int transactions, const char *digest,
+                         unsigned long long generation, int broken, int create)
+{
+    char plan[192], identity[65], decisions[32];
+    char *saved = NULL;
+    int child = -1, ok = 0;
+    if (!remove_identity(digest, generation, broken, plan, identity)) return 0;
+    if (create && mkdirat(transactions, identity, 0700) && errno != EEXIST) return 0;
+    child = child_dir(transactions, identity, 0);
+    if (child < 0) return 0;
+    saved = update_record(child, "plan");
+    if (!saved && create && errno == ENOENT) {
+        if (!record_file(child, "plan", plan, strlen(plan))) goto done;
+        saved = update_record(child, "plan");
+    }
+    if (!saved || strcmp(saved, plan)) goto done;
+    free(saved); saved = NULL;
+    snprintf(decisions, sizeof decisions, "accept-broken %s\n", broken ? "yes" : "no");
+    saved = update_record(child, "decisions");
+    if (!saved && create && errno == ENOENT) {
+        if (!record_file(child, "decisions", decisions, strlen(decisions))) goto done;
+        saved = update_record(child, "decisions");
+    }
+    ok = saved && !strcmp(saved, decisions) && !fsync(child) && !fsync(transactions);
+done:
+    free(saved);
+    close(child);
+    return ok;
+}
+
+static int commit_remove_record(int transactions, const char *digest,
+                                unsigned long long generation, int broken)
+{
+    char plan[192], identity[65], line[66];
+    char *saved;
+    int child, ok;
+    if (!remove_identity(digest, generation, broken, plan, identity) ||
+        !remove_record(transactions, digest, generation, broken, 0)) return 0;
+    child = child_dir(transactions, identity, 0);
+    if (child < 0) return 0;
+    snprintf(line, sizeof line, "%s\n", identity);
+    saved = update_record(child, "committed");
+    if (!saved && errno == ENOENT) {
+        if (!record_file(child, "committed", line, strlen(line))) {
+            close(child); return 0;
+        }
+        saved = update_record(child, "committed");
+    }
+    ok = saved && !strcmp(saved, line) && !fsync(transactions);
+    free(saved);
+    close(child);
+    return ok;
+}
+
 static int completed_update(int transactions, const char *name)
 {
     int child, ok;
-    char *record;
+    char *record, *plan;
     if (!valid_digest(name)) return 0;
     child = child_dir(transactions, name, 0);
     if (child < 0) return 0;
     record = update_record(child, "committed");
     ok = record && strlen(record) == 65 && !memcmp(record, name, 64) && record[64] == '\n';
-    free(record); close(child);
+    free(record);
+    plan = ok ? update_record(child, "plan") : NULL;
+    if (!plan) ok = 0;
+    else if (!strncmp(plan, "format holy-remove-1\n", 21)) {
+        unsigned long long generation;
+        char artifact[65], choice[4], canonical[192], identity[65];
+        char *decision = update_record(child, "decisions");
+        ok = sscanf(plan,
+            "format holy-remove-1\ngeneration %llu\nartifact %64[0-9a-f]\naccept-broken %3s",
+            &generation, artifact, choice) == 3 && valid_digest(artifact) &&
+            (!strcmp(choice, "yes") || !strcmp(choice, "no")) &&
+            remove_identity(artifact, generation, !strcmp(choice, "yes"),
+                            canonical, identity) && !strcmp(plan, canonical) &&
+            !strcmp(name, identity) && decision &&
+            !strcmp(decision, !strcmp(choice, "yes") ?
+                    "accept-broken yes\n" : "accept-broken no\n");
+        free(decision);
+    }
+    free(plan); close(child);
     return ok;
 }
 

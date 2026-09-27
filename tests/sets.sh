@@ -91,7 +91,10 @@ int unlinkat(int dir, const char *path, int flags)
     void *symbol = dlsym(RTLD_NEXT, "unlinkat");
     memcpy(&actual, &symbol, sizeof actual);
     if (!actual) abort();
-    if (!strcmp(path, "lib")) { errno = ENOSPC; return -1; }
+    if ((getenv("HOLY_FAIL_JOURNAL") && !strcmp(path, "journal")) ||
+        (!getenv("HOLY_FAIL_JOURNAL") && !strcmp(path, "lib"))) {
+        errno = ENOSPC; return -1;
+    }
     return actual(dir, path, flags);
 }
 C
@@ -101,6 +104,7 @@ grep -qx 'plan 0000000000000000000000000000000000000000000000000000000000000001'
     "$tmp/broken-fault/var/lib/holypkg/transactions/journal"
 expect 0 "$bin" db recover --continue --root "$tmp/broken-fault"
 expect 4 "$bin" db check "$app" --root "$tmp/broken-fault" --json
+grep -Rqx 'accept-broken yes' "$tmp/broken-fault/var/lib/holypkg/transactions"/*/decisions
 printf 'format holy-journal-1\nstage removing\ngeneration 1\nartifact %s\nplan %064d\n' \
     "$lib" 1 > "$tmp/broken-recover/var/lib/holypkg/transactions/journal"
 rm "$tmp/broken-recover/usr/share/lib"
@@ -108,15 +112,33 @@ expect 5 "$bin" db status --root "$tmp/broken-recover"
 expect 0 "$bin" db recover --continue --root "$tmp/broken-recover"
 expect 4 "$bin" db check "$app" --root "$tmp/broken-recover" --json
 grep -q '"code":"broken-provider"' "$tmp/out"
+grep -Rqx 'accept-broken yes' "$tmp/broken-recover/var/lib/holypkg/transactions"/*/decisions
+cp -a "$root" "$tmp/broken-after-generation"
+expect 5 env HOLY_FAIL_JOURNAL=1 LD_PRELOAD="$tmp/remove-fault.so" \
+    "$bin" db rm "$lib" --accept-broken --root "$tmp/broken-after-generation"
+test "$(cat "$tmp/broken-after-generation/var/lib/holypkg/generation")" -eq 2
+expect 5 "$bin" db status --root "$tmp/broken-after-generation"
+expect 0 "$bin" db recover --continue --root "$tmp/broken-after-generation"
+expect 4 "$bin" db check "$app" --root "$tmp/broken-after-generation" --json
+grep -Rqx 'accept-broken yes' "$tmp/broken-after-generation/var/lib/holypkg/transactions"/*/decisions
 expect 0 "$bin" db rm "$lib" --accept-broken --root "$tmp/broken-root"
 test ! -e "$tmp/broken-root/usr/share/lib"
 test -f "$tmp/broken-root/usr/share/app"
 expect 4 "$bin" db check "$app" --root "$tmp/broken-root" --json
 grep -q '"code":"broken-provider"' "$tmp/out"
+grep -Rqx 'accept-broken yes' "$tmp/broken-root/var/lib/holypkg/transactions"/*/decisions
+cp -a "$tmp/broken-root" "$tmp/broken-record-tamper"
+for decision in "$tmp/broken-record-tamper/var/lib/holypkg/transactions"/*/decisions; do
+    printf 'accept-broken no\n' > "$decision"
+    break
+done
+expect 1 "$bin" db status --root "$tmp/broken-record-tamper"
 expect 0 "$bin" db plan-set "$lib" --root "$tmp/broken-root"
 broken_plan=$(plan_hash)
 expect 0 "$bin" db apply-set "$broken_plan" "$lib" --root "$tmp/broken-root"
 expect 0 "$bin" db check --all --root "$tmp/broken-root"
+expect 0 "$bin" db rm "$app" --root "$tmp/broken-root"
+grep -Rqx 'accept-broken no' "$tmp/broken-root/var/lib/holypkg/transactions"/*/decisions
 journal() {
     printf 'format holy-set-journal-1\ngeneration 0\nplan %s\nroot %s\nchoice -\n' "$plan" "$app"
     printf '%s\n' "$app" "$lib" | sort | sed 's/^/artifact /'
