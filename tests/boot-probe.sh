@@ -74,22 +74,37 @@ $bb ls -l /dev/null | $bb grep -q '^crw-------'
 echo 'HOLY-BOOT-1 device mdevd-coldplug'
 if test "$profile" = dual-libc; then
     stage=libc-recovery
+    case "$($bb uname -m)" in
+        i686)
+            glibc_loader=/usr/lib/holy/i686-linux-gnu/ld-linux.so.2
+            glibc_runtime=/usr/lib/holy/i686-linux-gnu/libc.so.6
+            glibc_public=/lib/ld-linux.so.2
+            musl_loader=/usr/lib/holy/i686-linux-musl/ld-musl-i386.so.1
+            musl_public=/lib/ld-musl-i386.so.1 ;;
+        x86_64)
+            glibc_loader=/usr/lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2
+            glibc_runtime=/usr/lib/holy/x86_64-linux-gnu/libc.so.6
+            glibc_public=/lib64/ld-linux-x86-64.so.2
+            musl_loader=/usr/lib/holy/x86_64-linux-musl/ld-musl-x86_64.so.1
+            musl_public=/lib/ld-musl-x86_64.so.1 ;;
+        *) exit 1 ;;
+    esac
     state=$($bb cat /etc/holy/libc-boot-state)
     case "$state" in present|glibc|musl|both) ;; *) exit 1 ;; esac
     if test "$boot" = 2; then state=restored; fi
     for abi in glibc musl; do
         case "$abi" in
-            glibc) loader=/usr/lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2 ;;
-            musl) loader=/usr/lib/holy/x86_64-linux-musl/ld-musl-x86_64.so.1 ;;
+            glibc) loader=$glibc_loader ;;
+            musl) loader=$musl_loader ;;
         esac
         case "$state:$abi" in
             both:*|glibc:glibc|musl:musl)
                 test ! -e "$loader"
                 if test "$abi" = glibc; then
-                    test ! -e /usr/lib/holy/x86_64-linux-gnu/libc.so.6
-                    test ! -L /usr/lib64/ld-linux-x86-64.so.2
+                    test ! -e "$glibc_runtime"
+                    test ! -L "$glibc_public"
                 else
-                    test ! -L /usr/lib/ld-musl-x86_64.so.1
+                    test ! -L "$musl_public"
                 fi
                 probe=$($bb cat "/etc/holy/probe-$abi.sha256")
                 if $pkg db check "$probe" --root / --json > /run/broken-provider; then exit 1; else test "$?" -eq 4; fi
@@ -118,8 +133,8 @@ if test "$profile" = dual-libc; then
     done
     test "$(/usr/bin/holy-probe-glibc)" = glibc-probe
     test "$(/usr/bin/holy-probe-musl)" = musl-probe
-    test "$(/lib64/ld-linux-x86-64.so.2 /usr/bin/holy-probe-glibc)" = glibc-probe
-    test "$(/lib/ld-musl-x86_64.so.1 /usr/bin/holy-probe-musl)" = musl-probe
+    test "$("$glibc_public" /usr/bin/holy-probe-glibc)" = glibc-probe
+    test "$("$musl_public" /usr/bin/holy-probe-musl)" = musl-probe
     /usr/bin/holy-probe-glibc | /usr/bin/holy-probe-musl glibc-probe > /run/pipe-result
     $bb grep -qx musl-probe /run/pipe-result
     /usr/bin/holy-probe-musl | /usr/bin/holy-probe-glibc musl-probe > /run/pipe-result

@@ -184,8 +184,8 @@
   width, and run a static C package through pack/install/check/execute/remove
   under QEMU user mode (pentium2 or qemu64). The i686 client also passes codec
   import and DNS/HTTPS fixtures without dynamic libc on a compatible x86_64
-  kernel. i686 boot, dinit's 32-bit C++ runtime and both 32-bit dynamic libc
-  packages remain separate unfinished acceptance gates.
+  kernel. i686 BIOS boot and dinit's static C++ runtime are covered by separate
+  gates below; compiler SDK packaging remains unfinished.
 
 - [x] Generate an attributed installed-man source bundle with `holypkg docs`:
   verify source hashes, decode supported compressed pages, preserve aliases
@@ -204,26 +204,27 @@
   archive, ELF, repository, solver and HTTPS fixtures. Run local package
   cache/install/check/remove and BusyBox shell probes inside a libc-free chroot.
   The separate dual-libc chroot gate now restores actual runtime payloads;
-  boot recovery remains an unfinished acceptance gate.
+  i686 BIOS recovery is covered by the dual-libc image gate below.
 - [x] Test the static client's DNS and HTTPS path in a private-network libc-free
   chroot, including wrong CA/digest refusals and a hashed JSON report. Network
   interface setup still uses a host fixture tool, not a finished recovery profile.
-- [ ] Package statically linked BusyBox, dinit, mdevd and the recovery chain,
-  plus both dynamic libc runtimes for i686 and x86_64.
+- [x] Package statically linked BusyBox, dinit, mdevd and the local recovery
+  chain, plus both dynamic libc runtimes for i686 and x86_64. Network setup
+  inside the recovery image and independent HTTPS recovery remain unfinished.
 - [x] Build pinned i686 and x86_64 musl as native runtime packages with source hashes,
   license and a natively linked loader SONAME. Run pthread/allocation probes
   alongside glibc.
 - [x] Run musl32 and musl64 pthread/clock probes and bidirectional pipes in a
   shared disposable x86_64 root. A static i686 client installs both architecture
   slots with artifact-scoped decisions and restores either or both removed
-  runtimes from its cache. This does not close the i686 boot or glibc32 gates.
+  runtimes from its cache. The i686 BIOS boot gate is listed below.
 - [x] Build pinned i686 and x86_64 glibc 2.42 loader/libc payloads from source as a native
   bootstrap package with licenses and recorded private-path patches. Complete
   SDK, auxiliary libraries, locale/NSS packaging and upstream-suite acceptance remain open.
 - [x] Install and run glibc32, glibc64, musl32 and musl64 together on an x86_64
   kernel, including pthread/clock and pipes between ABI variants. Restore all
   four runtime packages through the static i686 client and cached artifacts.
-  Glibc compilation uses the host multilib SDK; i686 boot remains untested.
+  Glibc compilation uses the host multilib SDK; the packaged SDK is unfinished.
 - [x] Run static holypkg inside an x86_64 root after deleting both glibc and musl
   runtime payloads; restore from cached LZ4 .holy files and run both dynamic probes.
   Repeat each libc separately, including loader symlink restoration. This gate
@@ -288,8 +289,14 @@
 - [x] Run current prototype fixtures under GCC, TCC and Clang ASan/UBSan.
 - [x] Boot the i686 static core with kernel 7.2.7, BusyBox, dinit, mdevd and
   static holypkg from a BIOS optical ISO under QEMU/TCG. The guest checks PID 1,
-  man bundle, device permissions and a local package transaction. Dynamic libc
-  recovery and installed-disk boot for i686 remain separate gates.
+  man bundle, device permissions and a local package transaction. Installed-disk
+  boot for i686 remains a separate gate.
+- [x] Boot an i686 BIOS dual-libc RAM ISO under QEMU/TCG with glibc and musl
+  payloads absent at startup. The guest checks broken providers, restores both
+  packages from cached native artifacts and runs C probes plus bidirectional
+  pipes. The same fixture also checks a local package transaction. Separate
+  present, glibc-only and musl-only initial-state runs are recorded in the
+  build reports.
 - [x] Run `make check-root` against disposable target-root install, check,
   remove and recovery fixtures; this gate does not boot a system.
 - [x] Add a BIOS/UEFI `make check-qemu ARCH=... ISO=... BOOT_PLAN=...` runner

@@ -48,8 +48,8 @@ case "$storage:$profile" in
         ;;
     *) echo 'ROOT_STORAGE must be ram, or ext4/gpt-ext4 with dual-libc' >&2; exit 2 ;;
 esac
-if test "$arch" = i686 && { test "$storage" != ram || test "$profile" != static-core; }; then
-    echo 'i686 image currently requires static-core and ram root' >&2
+if test "$arch" = i686 && test "$storage" != ram; then
+    echo 'i686 image currently requires a ram root' >&2
     exit 6
 fi
 if test "$storage" != gpt-ext4; then command -v xorriso >/dev/null || exit 6; fi
@@ -135,10 +135,25 @@ done
 if test "$profile" = dual-libc; then
     for abi in glibc musl; do
         case "$abi" in
-            glibc) compiler=$glibc_cc; loader=/usr/lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2; needed=libc.so.6; provider=/usr/lib/holy/x86_64-linux-gnu/libc.so.6 ;;
-            musl) compiler=$musl_cc; loader=/usr/lib/holy/x86_64-linux-musl/ld-musl-x86_64.so.1; needed=libc.so; provider=$loader ;;
+            glibc)
+                compiler=$glibc_cc; needed=libc.so.6
+                if test "$arch" = i686; then
+                    loader=/usr/lib/holy/i686-linux-gnu/ld-linux.so.2
+                    provider=/usr/lib/holy/i686-linux-gnu/libc.so.6
+                else
+                    loader=/usr/lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2
+                    provider=/usr/lib/holy/x86_64-linux-gnu/libc.so.6
+                fi ;;
+            musl)
+                compiler=$musl_cc; needed=libc.so
+                if test "$arch" = i686; then
+                    loader=/usr/lib/holy/i686-linux-musl/ld-musl-i386.so.1
+                else
+                    loader=/usr/lib/holy/x86_64-linux-musl/ld-musl-x86_64.so.1
+                fi
+                provider=$loader ;;
         esac
-        metadata "probe-$abi" 1 x86_64
+        metadata "probe-$abi" 1 "$package_arch"
         sed "s/libc nolibc/libc $abi/" "$tree/HOLY/meta" > "$work/meta"
         mv "$work/meta" "$tree/HOLY/meta"
         mkdir -p "$tree/DATA/usr/bin"
@@ -238,8 +253,14 @@ mkdir -p "$root/usr/bin" "$root/usr/lib/holy" "$root/usr/lib32" "$root/usr/lib64
     "$root/etc/holy" "$root/boot" "$root/dev" "$root/proc" "$root/sys" \
     "$root/run" "$root/tmp" "$root/root"
 if test "$profile" = dual-libc; then
-    mkdir -p "$root/usr/lib/holy/x86_64-linux-gnu" "$root/usr/lib/holy/x86_64-linux-musl" \
-        "$root/usr/share/licenses/glibc" "$root/usr/share/doc/glibc" "$root/usr/share/doc/musl"
+    if test "$arch" = i686; then
+        mkdir -p "$root/usr/lib/holy/i686-linux-gnu" "$root/usr/lib/holy/i686-linux-musl" \
+            "$root/usr/share/licenses/glibc-i686" "$root/usr/share/doc/glibc-i686" \
+            "$root/usr/share/licenses/musl-i686" "$root/usr/share/doc/musl-i686"
+    else
+        mkdir -p "$root/usr/lib/holy/x86_64-linux-gnu" "$root/usr/lib/holy/x86_64-linux-musl" \
+            "$root/usr/share/licenses/glibc" "$root/usr/share/doc/glibc" "$root/usr/share/doc/musl"
+    fi
 fi
 "$bin" db init --root "$root"
 set --
@@ -279,8 +300,18 @@ for abi in glibc musl; do
     case "$boot_state:$abi" in
         both:*|glibc:glibc|musl:musl)
             case "$abi" in
-                glibc) paths='usr/lib/holy/x86_64-linux-gnu/libc.so.6 usr/lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2 usr/lib64/ld-linux-x86-64.so.2' ;;
-                musl) paths='usr/lib/holy/x86_64-linux-musl/ld-musl-x86_64.so.1 usr/lib/ld-musl-x86_64.so.1' ;;
+                glibc)
+                    if test "$arch" = i686; then
+                        paths='usr/lib/holy/i686-linux-gnu/libc.so.6 usr/lib/holy/i686-linux-gnu/ld-linux.so.2 usr/lib/ld-linux.so.2'
+                    else
+                        paths='usr/lib/holy/x86_64-linux-gnu/libc.so.6 usr/lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2 usr/lib64/ld-linux-x86-64.so.2'
+                    fi ;;
+                musl)
+                    if test "$arch" = i686; then
+                        paths='usr/lib/holy/i686-linux-musl/ld-musl-i386.so.1 usr/lib/ld-musl-i386.so.1'
+                    else
+                        paths='usr/lib/holy/x86_64-linux-musl/ld-musl-x86_64.so.1 usr/lib/ld-musl-x86_64.so.1'
+                    fi ;;
             esac
             for path in $paths; do
                 rm "$root/$path"
@@ -334,13 +365,20 @@ HOLY_ROOT="$root" DRACUT_LDCONFIG='ldconfig -X' DRACUT_NO_MKNOD=1 DRACUT_TESTBIN
 mkdir "$work/audit"
 gzip -dc "$out/initramfs.img" > "$work/initramfs.cpio"
 (cd "$work/audit" && cpio -id --no-absolute-filenames < "$work/initramfs.cpio")
-python3 - "$root" "$work/audit" "$bin" "$profile" > "$out/initramfs.audit" <<'PY'
+python3 - "$root" "$work/audit" "$bin" "$profile" "$arch" > "$out/initramfs.audit" <<'PY'
 import hashlib, os, pathlib, stat, subprocess, sys
 root, unpacked = map(pathlib.Path, sys.argv[1:3])
-dynamic = {'usr/lib/holy/x86_64-linux-gnu/libc.so.6',
-           'usr/lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2',
-           'usr/lib/holy/x86_64-linux-musl/ld-musl-x86_64.so.1',
-           'usr/bin/holy-probe-glibc', 'usr/bin/holy-probe-musl'} if sys.argv[4] == 'dual-libc' else set()
+dynamic = set()
+if sys.argv[4] == 'dual-libc':
+    if sys.argv[5] == 'i686':
+        dynamic.update({'usr/lib/holy/i686-linux-gnu/libc.so.6',
+                        'usr/lib/holy/i686-linux-gnu/ld-linux.so.2',
+                        'usr/lib/holy/i686-linux-musl/ld-musl-i386.so.1'})
+    else:
+        dynamic.update({'usr/lib/holy/x86_64-linux-gnu/libc.so.6',
+                        'usr/lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2',
+                        'usr/lib/holy/x86_64-linux-musl/ld-musl-x86_64.so.1'})
+    dynamic.update({'usr/bin/holy-probe-glibc', 'usr/bin/holy-probe-musl'})
 generated = {'etc/ld.so.cache', 'var/cache/ldconfig/aux-cache',
              'usr/lib/dracut/modules.txt', 'usr/lib/dracut/build-parameter.txt'}
 def digest(path):

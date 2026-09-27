@@ -3,12 +3,13 @@
 holy-image \- image build and libc recovery boot tests
 .SH BUILD
 make bootstrap-image builds a live ISO and runs its QEMU boot test. ARCH defaults
-to x86_64. ARCH=i686 selects a BIOS ISO with IMAGE_PROFILE=static-core and
-ROOT_STORAGE=ram. This i686 ISO boots as BIOS optical media through El Torito;
+to x86_64. ARCH=i686 selects a BIOS ISO with ROOT_STORAGE=ram and either
+IMAGE_PROFILE=static-core or IMAGE_PROFILE=dual-libc. This i686 ISO boots as BIOS optical media through El Torito;
 it is not a hybrid USB image. The i686 profile requires an i686 kernel and matching static
 BusyBox, dinit, mdevd, holypkg and C compiler inputs. The builder checks
-package and executable architectures before installation. Dynamic libc and
-disk recovery profiles for i686 remain separate acceptance work.
+package and executable architectures before installation. The dual-libc profile
+also requires matching i686 glibc and musl runtime packages and C compilers.
+Installed-disk recovery for i686 remains separate acceptance work.
 IMAGE_PROFILE defaults to dual-libc; static-core explicitly selects the earlier
 profile without dynamic libraries. LIBC_BOOT_STATE is present by default.
 For dual-libc, glibc, musl or both remove those runtime payloads and their loader
@@ -124,7 +125,7 @@ Limine loads the kernel and initramfs from the ISO. The default entry selects
 the guest test service with holy.test=1. Remove that argument in Limine's
 entry editor to reach the BusyBox console service.
 .PP
-The output includes packages/, inputs/, root/, initramfs.img, holy-x86_64.iso,
+The output includes packages/, inputs/, root/, initramfs.img, holy-ARCH.iso,
 build.log, build.record, root-check.record, a frozen plan and its boot-plan
 SHA-256. The record lists artifact hashes and the build result. Input
 retention permits repeating an experiment; bit-identical ISO reproduction
