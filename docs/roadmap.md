@@ -23,7 +23,7 @@ it does not mean a bootable distribution or general package support.
   redirected requests. Configured source sync and signatures remain open.
 - [x] Build and seal a local repository catalog; search and fetch its verified objects.
 - [x] Resolve a restricted local/catalog graph with libsolv; reject unsupported semantics.
-- [x] Journal installation, check and removal of **data-only** `linux/noarch/nolibc`
+- [x] Journal installation, check and removal of `linux/nolibc` data and native static ELF
   artifacts into existing directories. Recovery covers empty aborted installs,
   completed installs and interrupted removals under documented conditions.
 - [x] Query exact installed data-file ownership; report duplicate regular-file
@@ -39,6 +39,8 @@ it does not mean a bootable distribution or general package support.
   dependency edges for general packages; implement multi-package transactions.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions.
+- [x] Install, run, check and remove a native static syscall-only ELF fixture;
+  foreign-architecture approval and dynamic payload installation remain open.
 - [ ] Handle hooks, service consent, modified configs, overrides, rollback and
   recovery of each interrupted mutation phase.
 - [ ] Implement native HTTPS/Git source synchronization, signed generations and

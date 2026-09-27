@@ -160,8 +160,9 @@ The separate fetch --extract operation still refuses absolute symlinks.
 The db plan command reads the prepared reservation at the current database
 generation. It verifies a private snapshot of the cached artifact, checks
 root-path collisions and refuses unresolved requirements, interpreters and
-ELF dependencies. The supported planning subset is linux/noarch/nolibc with
-empty hooks and transform, ordinary directories and non-executable regular
+ELF dependencies. The supported planning subset is linux/nolibc with
+noarch data or the native host architecture (x86_64 on x86_64, x86 on i686).
+Hooks and transform must be empty. Payloads may contain ordinary directories and regular
 files owned by the current UID/GID. Symlinks, hardlinks, privileged modes
 and writes inside holypkg state or cache trees are excluded. Output includes
 target-root device/inode, generation, artifact SHA-256, path count and a
@@ -194,9 +195,9 @@ removed; another package cannot acquire that path by recreating it. Shared
 directory claims remain permitted. These checks read manifests directly;
 generated ownership indexes are not required for correctness.
 .PP
-Database apply installs only an approved linux/noarch/nolibc data package
+Database apply installs only an approved linux/nolibc package
 with empty hooks, transform and requirements. Its payload may contain
-ordinary non-executable regular files and directory entries; every directory
+ordinary regular files, including native static ELF executables, and directory entries; every directory
 must already exist in the target root with the manifest's mode and numeric
 owner/group. A changed directory is rejected before writing a journal.
 No symlink, hardlink, privileged mode
@@ -224,7 +225,14 @@ generation publication. General ownership replacement and automatic rollback
 are not implemented. The command is not an installer for
 arbitrary .holy packages.
 .PP
-Database check reads one installed data manifest and compares its regular
+Static executable installation verifies ELF architecture and nolibc facts;
+it does not execute package programs. The caller may run an installed program
+as a separate action. Executable payloads with an unknown format are refused;
+shebang interpreters remain unresolved requirements in the current planner.
+Foreign architecture, including x86 on x86_64, returns requirement error 6
+until architecture override decisions are implemented. No metadata is relabeled.
+.PP
+Database check reads one installed manifest and compares its regular
 files against the target root by path, type, size, mode, numeric ownership
 and SHA-256. It checks listed directories against their manifest mode and
 numeric owner/group and rejects
@@ -232,7 +240,7 @@ symlinked parent paths. It returns 4 for changed or missing files, 6 when
 the instance is absent, and 5 while a file transaction is incomplete. The
 command neither downloads an archive nor repairs a file. This restricted
 check does not model dynamic linking, scripts or runtime behavior. --all walks
-every installed data manifest under the same shared lock and reports each
+every supported installed manifest under the same shared lock and reports each
 artifact as intact or changed in digest order. It returns 4 if any artifact
 has changed. An empty installed set reports zero checked packages. --json
 emits one holy-installed-check-1 JSON line per artifact followed by a summary
@@ -246,14 +254,14 @@ follow manifest order; intact artifacts have an empty array. The artifact-level
 changed-file code remains the aggregate failure indicator. This reports only
 data-manifest coverage.
 .PP
-Database owner reads installed data manifests and lists the artifact digest
+Database owner reads installed manifests and lists the artifact digest
 and kind for an exact relative or root-absolute path. Multiple packages may
 list the same directory. If multiple records claim one regular file, the
 command returns conflict status 4 without listing an arbitrary owner. An
 absent path returns 6. It holds a shared database lock and does not require
 the path to exist in the live rootfs; db check compares actual contents.
 .PP
-Database rm removes one intact data-only installed instance by artifact
+Database rm removes one intact supported installed instance by artifact
 SHA-256. It verifies all listed files before mutation, refuses changed files
 and pending reservations, then writes a removing journal. Before journaling,
 it also checks the other installed manifests for conflicting ownership claims;

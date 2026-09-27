@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/utsname.h>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -678,7 +679,6 @@ static int plan_entry(void *context, const struct holy_manifest_entry *entry)
         !strcmp(entry->path, "var/cache/holypkg") ||
         !strncmp(entry->path, "var/cache/holypkg/", 18) ||
         (entry->mode & 07000) ||
-        (!entry->directory && (entry->mode & 0111)) ||
         entry->uid != (long long)geteuid() ||
         entry->gid != (long long)getegid()) {
         fprintf(stderr, "holypkg: plan requires ordinary files and local ownership; unsupported path: %s\n",
@@ -809,6 +809,7 @@ static int inspect_plan(const char *root_path, int root, int dir,
     unsigned int checksum_size;
     size_t i;
     struct stat root_st;
+    struct utsname host;
     int result = 1;
     char *snapshot = NULL;
     if (fstat(root, &root_st)) goto done;
@@ -819,8 +820,15 @@ static int inspect_plan(const char *root_path, int root, int dir,
     result = 6;
     if (!holy_extract_preflight(snapshot) || !empty_transform(snapshot) ||
         !holy_package_identity(snapshot, &identity) ||
-        strcmp(identity.os, "linux") || strcmp(identity.arch, "noarch") ||
+        strcmp(identity.os, "linux") ||
         strcmp(identity.libc, "nolibc") || strcmp(identity.digest, digest)) goto done;
+    if (strcmp(identity.arch, "noarch") &&
+        (uname(&host) ||
+         !((!strcmp(identity.arch, "x86_64") && !strcmp(host.machine, "x86_64")) ||
+           (!strcmp(identity.arch, "x86") && !strcmp(host.machine, "i686"))))) {
+        fprintf(stderr, "holypkg: plan requires native host architecture for static executables\n");
+        goto done;
+    }
     plan.hash = EVP_MD_CTX_new();
     plan.dir = dir;
     if (!plan.hash) { result = 1; goto done; }

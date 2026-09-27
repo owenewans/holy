@@ -44,7 +44,7 @@ It can download a pinned native `.holy` over verified HTTPS to a local directory
 It can initialize an empty target-root package database and reserve or cancel
 one verified cached artifact at a fixed generation. `db preflight` checks that
 reservation against the target root. `db plan`, `db approve` and `db apply`
-install a restricted, data-only package into existing directories with a
+install a restricted data or native static-ELF package into existing directories with a
 journal. `db check` compares installed data with rootfs; `db rm` removes an
 intact instance. Restricted recovery handles untouched installs, completed
 installs with a stale journal, and interrupted removals.

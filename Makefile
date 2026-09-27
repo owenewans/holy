@@ -28,11 +28,13 @@ check: holypkg check-solver check-install-payload check-https
 	sh tests/repo.sh ./holypkg
 	sh tests/state.sh ./holypkg
 	sh tests/resolve.sh ./holypkg
+	sh tests/static.sh ./holypkg
 
 check-fixtures: check
 
 check-root: check-install-payload
 	sh tests/state.sh ./holypkg
+	sh tests/static.sh ./holypkg
 
 check-qemu:
 	ARCH="$(ARCH)" ISO="$(or $(ISO),out/holy-$(ARCH).iso)" BOOT_PLAN="$(BOOT_PLAN)" QEMU_TIMEOUT="$(or $(QEMU_TIMEOUT),120)" sh tests/qemu.sh

@@ -49,7 +49,7 @@ special files, ACLs or extended attributes. The verifier rejects DATA entries
 that carry archive xattrs or ACLs, even if HOLY/files says XATTRS=-. The
 planned full format includes those attributes.
 .PP
-The narrow database apply command installs only approved data-only archives
+The narrow database apply command installs approved data and native static ELF archives
 into pre-existing safe directories. The pack command writes and verifies
 this archive format from a prepared tree of regular files, directories and symlinks.
 The verifier does not verify dependencies,

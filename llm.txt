@@ -1,4 +1,4 @@
-holy.conf.5 source=holy version=development sha256=9665502bdd33f468a5b2cd95810ba11bd19ee4ad53b53c2da40c7270b5daee4d
+holy.conf.5 source=holy version=development sha256=2b55062677cdd7da0de1b2d2049b90e865a526830400b71035a22e27217bed11
 HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
 
 NAME
@@ -7,35 +7,35 @@ NAME
 STATUS
      This page describes the implemented syntax checker. Configured source acti-
      vation,  general  multi-source  resolution and general installation are not
-     implemented; the restricted local data-only transaction uses separate  com-
-     mands.
+     implemented; the restricted local data/static-ELF transaction uses separate
+     commands.
 
 SYNOPSIS
      holypkg config check FILE
 
 DESCRIPTION
-     Input  must  be  UTF-8. Each record contains a key and whitespace-separated
+     Input must be UTF-8. Each record contains a  key  and  whitespace-separated
      arguments. Double quotes retain spaces. A hash sign at the start of a token
-     begins a comment outside quotes. Escapes are backslash-quote,  double-back-
-     slash,  backslash-n,  backslash-t,	 backslash-r and backslash-x followed by
+     begins  a comment outside quotes. Escapes are backslash-quote, double-back-
+     slash, backslash-n, backslash-t, backslash-r and  backslash-x  followed  by
      two hexadecimal digits. NUL is rejected.  The parser does not run shell ex-
      pansion.
 
      Sections are [general], [resolver], [source NAME] and [rule NAME].	 Include
      takes one path relative to the containing file. Repeated scalar keys within
-     a section are errors with both source locations. The source  repo	and  re-
-     solver  prefer  keys  are	lists and can repeat. Recursive includes are re-
-     jected.  The checker validates lexical and structural syntax; it  does  not
-     yet  validate  rule  references. It checks that source parents exist and do
-     not form cycles.  It rejects userinfo in URL  authorities	without	 echoing
-     credentials  in  diagnostics.  It validates key names, argument counts, and
-     the scripts, trust, ask-sources and prefer values. The alias local	 is  re-
+     a	section	 are  errors with both source locations. The source repo and re-
+     solver prefer keys are lists and can repeat.  Recursive  includes	are  re-
+     jected.   The  checker validates lexical and structural syntax; it does not
+     yet validate rule references. It checks that source parents  exist	 and  do
+     not  form	cycles.	  It rejects userinfo in URL authorities without echoing
+     credentials in diagnostics. It validates key names,  argument  counts,  and
+     the  scripts,  trust, ask-sources and prefer values. The alias local is re-
      served and cannot name a source.
 
-     Each  populated  source section requires type and at least one url or repo.
-     Repository names within one source must be distinct.  Each	 populated  rule
-     requires  consumer,  require and provider. Empty values are rejected. These
-     checks do not prove that a repository is reachable or its packages can  re-
+     Each populated source section requires type and at least one url  or  repo.
+     Repository	 names	within	one source must be distinct. Each populated rule
+     requires consumer, require and provider. Empty values are	rejected.  These
+     checks  do not prove that a repository is reachable or its packages can re-
      solve.
 
 EXAMPLE
@@ -47,11 +47,11 @@ EXAMPLE
      repo core "https://mirror.example/arch/$repo/os/$arch"
 
 FILES
-     /etc/holy.conf  is	 the proposed system path. The checker takes an explicit
+     /etc/holy.conf is the proposed system path. The checker takes  an	explicit
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=d9a16ab1baf819076c7ea3e2b7a569d533c3238c3bc35412d1dde45e7074df6e
+holypkg.8 source=holy version=development sha256=264d046055d3f3556bcc2b2f785c8c1bf5de837ecbc4d6decdcab1d288363b8e
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -170,83 +170,92 @@ DESCRIPTION
      The  db plan command reads the prepared reservation at the current database
      generation. It verifies a private snapshot of the cached  artifact,  checks
      root-path	collisions and refuses unresolved requirements, interpreters and
-     ELF dependencies. The supported planning subset is linux/noarch/nolibc with
-     empty hooks and transform, ordinary directories and non-executable	 regular
-     files  owned  by the current UID/GID. Symlinks, hardlinks, privileged modes
-     and writes inside holypkg state or cache trees  are  excluded.  Output  in-
-     cludes  target-root  device/inode, generation, artifact SHA-256, path count
-     and a SHA-256 over those identities and ordered manifest entries. The  nar-
-     row  local	 planner  rejects a second installed package with the same name,
-     even when its payload paths differ; general source-ID and ABI slot	 manage-
-     ment  is pending.	This command does not persist a plan, reserve ownership,
-     authorize apply or recheck the target root	 at  mutation  time.  Concurrent
-     changes  can  invalidate  the collision check. Apply revalidates inputs and
-     paths under its writer lock.
+     ELF dependencies. The supported planning subset is linux/nolibc with noarch
+     data or the native host architecture  (x86_64  on	x86_64,	 x86  on  i686).
+     Hooks  and	 transform must be empty. Payloads may contain ordinary directo-
+     ries and regular files owned by the current UID/GID.  Symlinks,  hardlinks,
+     privileged	 modes	and  writes  inside holypkg state or cache trees are ex-
+     cluded. Output  includes  target-root  device/inode,  generation,	artifact
+     SHA-256,  path  count and a SHA-256 over those identities and ordered mani-
+     fest entries. The narrow local planner rejects a second  installed	 package
+     with  the	same name, even when its payload paths differ; general source-ID
+     and ABI slot management is pending.  This command does not persist a  plan,
+     reserve  ownership,  authorize apply or recheck the target root at mutation
+     time. Concurrent changes can invalidate the collision check. Apply	 revali-
+     dates inputs and paths under its writer lock.
 
-     The db approve command recomputes the  plan  under	 an  exclusive	database
-     lock.   If	 its  SHA-256 matches PLAN_SHA256, the command replaces the pre-
+     The  db  approve  command	recomputes  the plan under an exclusive database
+     lock.  If its SHA-256 matches PLAN_SHA256, the command  replaces  the  pre-
      pared reservation with an approved record bound to its artifact and genera-
-     tion.  Status reports the approved digest; cancel	removes	 the  record.  A
+     tion.   Status  reports  the  approved digest; cancel removes the record. A
      mismatched plan returns decision-required without changing the reservation.
-     Approval  does  not  install  files or authorize a future implementation to
+     Approval does not install files or authorize  a  future  implementation  to
      skip path, artifact and generation checks under the same writer lock at ap-
      ply time.
 
-     Database recheck compares an approved record with a  fresh	 verified  cache
-     snapshot  and  target-root	 collision preview under a shared database lock.
+     Database  recheck	compares  an approved record with a fresh verified cache
+     snapshot and target-root collision preview under a	 shared	 database  lock.
      It returns 5 without an approved record, 3 if the plan digest differs and 4
-     for a path conflict. The check changes neither database nor  rootfs.  Other
-     processes	can  change  rootfs  paths  after recheck; it cannot replace the
+     for  a  path conflict. The check changes neither database nor rootfs. Other
+     processes can change rootfs paths after  recheck;	it  cannot  replace  the
      writer-locked validation required by apply.
 
-     Plan construction checks each payload path against installed  manifests  as
-     well  as  rootfs. An absent file remains owned until its installed claim is
-     removed; another package cannot acquire that path by recreating it.  Shared
-     directory	claims	remain	permitted. These checks read manifests directly;
+     Plan  construction	 checks each payload path against installed manifests as
+     well as rootfs. An absent file remains owned until its installed  claim  is
+     removed;  another package cannot acquire that path by recreating it. Shared
+     directory claims remain permitted. These checks  read  manifests  directly;
      generated ownership indexes are not required for correctness.
 
-     Database apply installs only an approved linux/noarch/nolibc  data	 package
-     with empty hooks, transform and requirements. Its payload may contain ordi-
-     nary  non-executable  regular  files and directory entries; every directory
-     must already exist in the target root with the manifest's mode and	 numeric
-     owner/group.  A changed directory is rejected before writing a journal.  No
-     symlink, hardlink, privileged mode	 or  file  collision  is  accepted.  The
-     caller  must  review  the db plan digest and invoke db approve first. Apply
-     holds the database writer lock, recomputes the approved plan  and	rechecks
-     every path against opened directory descriptors.  It creates each file with
-     O_EXCL,  then  synchronizes  it and its parent. It records a journal before
-     changing the rootfs and publishes installed metadata and the next	database
-     generation after copying payload files. The installed record contains meta,
-     files, deps, origin and state; local delivery has no trusted source-id. Ap-
-     ply does not run package hooks or configure services.  An I/O failure after
-     journal  publication  leaves  an  incomplete transaction for inspection; db
-     status returns 5 and db recover does not retry file mutations.  db	 recover
-     --abort-empty  can clear an incomplete journal only at its original genera-
-     tion, with the same approved artifact and no installed instance or	 payload
-     files.  It retains approval for a later apply or cancel.  Otherwise the op-
-     erator must inspect the rootfs and journal manually.  A  crash  after  pub-
-     lishing  the next generation can leave the journal and approved reservation
-     behind. db recover --finish-apply verifies the installed instance, its gen-
-     eration, all listed payload files and any remaining approval before  clear-
-     ing  those	 records.  It  refuses an incomplete payload and does not resume
-     file extraction.  A regular successful return requires both  the  installed
-     record  and generation publication. General ownership replacement and auto-
-     matic rollback are not implemented. The command is not an installer for ar-
-     bitrary .holy packages.
+     Database  apply  installs	only an approved linux/nolibc package with empty
+     hooks, transform and requirements. Its payload may contain ordinary regular
+     files, including native static  ELF  executables,	and  directory	entries;
+     every  directory  must already exist in the target root with the manifest's
+     mode and numeric owner/group. A changed directory is rejected before  writ-
+     ing  a journal.  No symlink, hardlink, privileged mode or file collision is
+     accepted. The caller must review the db plan digest and invoke  db	 approve
+     first.  Apply  holds the database writer lock, recomputes the approved plan
+     and rechecks every path against opened directory descriptors.   It	 creates
+     each  file	 with  O_EXCL, then synchronizes it and its parent. It records a
+     journal before changing the rootfs and publishes installed metadata and the
+     next database generation after copying payload files. The installed  record
+     contains meta, files, deps, origin and state; local delivery has no trusted
+     source-id.	 Apply does not run package hooks or configure services.  An I/O
+     failure after journal publication leaves an incomplete transaction for  in-
+     spection; db status returns 5 and db recover does not retry file mutations.
+     db recover --abort-empty can clear an incomplete journal only at its origi-
+     nal  generation,  with the same approved artifact and no installed instance
+     or payload files. It retains approval for a later apply or cancel.	  Other-
+     wise  the	operator  must inspect the rootfs and journal manually.	 A crash
+     after publishing the next generation can leave  the  journal  and	approved
+     reservation  behind.  db  recover --finish-apply verifies the installed in-
+     stance, its generation, all listed payload files and any remaining approval
+     before clearing those records. It refuses an incomplete  payload  and  does
+     not  resume file extraction.  A regular successful return requires both the
+     installed record and generation publication. General ownership  replacement
+     and automatic rollback are not implemented. The command is not an installer
+     for arbitrary .holy packages.
 
-     Database check reads one installed data manifest and compares  its	 regular
-     files  against the target root by path, type, size, mode, numeric ownership
-     and SHA-256. It checks listed directories against their manifest  mode  and
-     numeric  owner/group  and	rejects symlinked parent paths. It returns 4 for
+     Static  executable installation verifies ELF architecture and nolibc facts;
+     it does not execute package programs. The caller may run an installed  pro-
+     gram  as  a separate action. Executable payloads with an unknown format are
+     refused; shebang interpreters remain unresolved requirements in the current
+     planner.  Foreign architecture, including x86 on x86_64,  returns	require-
+     ment  error  6  until  architecture  override decisions are implemented. No
+     metadata is relabeled.
+
+     Database check reads one installed manifest and compares its regular  files
+     against  the  target  root by path, type, size, mode, numeric ownership and
+     SHA-256. It checks listed directories against their manifest mode	and  nu-
+     meric  owner/group	 and  rejects  symlinked  parent paths. It returns 4 for
      changed or missing files, 6 when the instance is absent, and 5 while a file
      transaction is incomplete. The command neither downloads an archive nor re-
      pairs a file. This restricted check does not model dynamic linking, scripts
-     or runtime behavior. --all walks every installed data  manifest  under  the
-     same  shared  lock and reports each artifact as intact or changed in digest
-     order. It returns 4 if any artifact has changed. An empty installed set re-
-     ports zero checked packages. --json emits one  holy-installed-check-1  JSON
-     line  per artifact followed by a summary of passes and failures, or one er-
-     ror line on an invalid database, missing instance	or  incomplete	transac-
+     or runtime behavior. --all walks every supported installed	 manifest  under
+     the  same shared lock and reports each artifact as intact or changed in di-
+     gest order. It returns 4 if any artifact has changed.  An	empty  installed
+     set  reports zero checked packages. --json emits one holy-installed-check-1
+     JSON line per artifact followed by a summary of passes and failures, or one
+     error line on an invalid database, missing instance or incomplete	transac-
      tion. Each artifact includes a findings array with code, severity and rela-
      tive path for each mismatch. missing-file identifies an absent regular file
      under  accessible	parents;  changed-file covers other manifest mismatches,
@@ -256,14 +265,14 @@ DESCRIPTION
      changed-file  code	 remains  the  aggregate failure indicator. This reports
      only data-manifest coverage.
 
-     Database owner reads installed data manifests and lists the artifact digest
-     and kind for an exact relative or root-absolute path. Multiple packages may
+     Database owner reads installed manifests and lists the artifact digest  and
+     kind  for	an  exact  relative or root-absolute path. Multiple packages may
      list the same directory. If multiple records claim one  regular  file,  the
      command  returns  conflict	 status 4 without listing an arbitrary owner. An
      absent path returns 6. It holds a shared database lock and does not require
      the path to exist in the live rootfs; db check compares actual contents.
 
-     Database rm removes one intact data-only  installed  instance  by	artifact
+     Database rm removes one intact supported  installed  instance  by	artifact
      SHA-256.  It  verifies  all  listed  files before mutation, refuses changed
      files and pending reservations, then  writes  a  removing	journal.  Before
      journaling,  it  also  checks the other installed manifests for conflicting
@@ -655,7 +664,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-package.5 source=holy version=development sha256=bf1941dd0bf71e52325b9bd6376570fb12d3390d48b0264075cc020b3cab2223
+holy-package.5 source=holy version=development sha256=01f85860c267490e4e599decc347c599542597e99f8b34fa1010779100b48f64
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -708,13 +717,13 @@ DESCRIPTION
      if HOLY/files says XATTRS=-. The planned full format includes those attrib-
      utes.
 
-     The narrow database apply command installs only approved data-only archives
-     into  pre-existing	 safe  directories. The pack command writes and verifies
-     this archive format from a prepared tree of regular files, directories  and
-     symlinks.	 The verifier does not verify dependencies, signatures, symbolic
-     owner names or the installed filesystem. A full format implementation  must
-     verify  file ownership, links, xattrs, hooks, origin and transaction seman-
-     tics before accepting an artifact for installation.
+     The  narrow database apply command installs approved data and native static
+     ELF archives into pre-existing safe directories. The  pack	 command  writes
+     and verifies this archive format from a prepared tree of regular files, di-
+     rectories	and symlinks.  The verifier does not verify dependencies, signa-
+     tures, symbolic owner names or the installed filesystem. A full format  im-
+     plementation  must	 verify file ownership, links, xattrs, hooks, origin and
+     transaction semantics before accepting an artifact for installation.
 
 SEE ALSO
      holypkg(8), holy.conf(5)

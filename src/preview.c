@@ -164,8 +164,7 @@ int holy_preview_local_format(const char *package, const char *root_path,
         if (state == 2) ++conflicts;
         if (archive_entry_filetype(entry) == AE_IFREG &&
             !archive_entry_hardlink(entry) &&
-            (archive_entry_perm(entry) & 0111) &&
-            archive_entry_size(entry) >= 2) {
+            (archive_entry_perm(entry) & 0111)) {
             char prefix[257];
             size_t used = 0, limit = archive_entry_size(entry) < 256 ?
                           (size_t)archive_entry_size(entry) : 256;
@@ -175,7 +174,7 @@ int holy_preview_local_format(const char *package, const char *root_path,
                 if (got <= 0) goto done;
                 used += (size_t)got;
             }
-            if (!memcmp(prefix, "#!", 2)) {
+            if (used >= 2 && !memcmp(prefix, "#!", 2)) {
                 size_t start = 2, end;
                 if (script_interpreters == (size_t)-1) goto done;
                 ++script_interpreters;
@@ -200,6 +199,10 @@ int holy_preview_local_format(const char *package, const char *root_path,
                     if (!actions[count - 1].helper) { rc = 1; goto done; }
                     ++helper_commands;
                 }
+            } else if (used < 4 || memcmp(prefix, "\177ELF", 4)) {
+                fprintf(stderr, "holypkg: executable format unknown; interpreter decision required\n");
+                rc = 6;
+                goto done;
             }
         }
         if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;

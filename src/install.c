@@ -63,7 +63,6 @@ static int check_entry(void *context, const struct holy_manifest_entry *entry)
     int parent, ok = 0;
     if (entry->link || entry->hardlink || entry->group ||
         (entry->mode & 07000) ||
-        (!entry->directory && (entry->mode & 0111)) ||
         entry->uid != (long long)geteuid() ||
         entry->gid != (long long)getegid()) return 0;
     parent = parent_fd(check->root, entry->path, &storage, &base);
