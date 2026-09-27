@@ -2,3 +2,6 @@
 /src/*.o
 /tests/solver
 /tests/install-helper
+/.build-config
+/.build-config.tmp
+/out/

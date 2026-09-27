@@ -13,6 +13,23 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+/* older libc headers omit these x86 psabi note constants. */
+#ifndef GNU_PROPERTY_X86_ISA_1_NEEDED
+#define GNU_PROPERTY_X86_ISA_1_NEEDED 0xc0008002
+#endif
+#ifndef GNU_PROPERTY_X86_ISA_1_BASELINE
+#define GNU_PROPERTY_X86_ISA_1_BASELINE (1U << 0)
+#endif
+#ifndef GNU_PROPERTY_X86_ISA_1_V2
+#define GNU_PROPERTY_X86_ISA_1_V2 (1U << 1)
+#endif
+#ifndef GNU_PROPERTY_X86_ISA_1_V3
+#define GNU_PROPERTY_X86_ISA_1_V3 (1U << 2)
+#endif
+#ifndef GNU_PROPERTY_X86_ISA_1_V4
+#define GNU_PROPERTY_X86_ISA_1_V4 (1U << 3)
+#endif
+
 static int read_exact(int fd, char *out, size_t length, off_t offset)
 {
     size_t done = 0;

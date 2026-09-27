@@ -60,6 +60,10 @@ it does not mean a bootable distribution or general package support.
   installed shell in a chroot without dynamic libc directories. Build logs,
   source/config/artifact hashes and upstream license files are retained.
   This bootstrap profile does not supply static holypkg or network recovery.
+- [x] Link the prototype holypkg with musl-static dependencies; verify native
+  archive, ELF, repository, solver and HTTPS fixtures. Run local package
+  cache/install/check/remove and BusyBox shell probes inside a libc-free chroot.
+  Real libc restoration and boot remain separate unfinished acceptance gates.
 - [ ] Package statically linked BusyBox, dinit, mdevd and the recovery chain,
   plus both dynamic libc runtimes for i686 and x86_64.
 - [ ] Package Limine, dracut, kernel, firmware, SDK/sysroots and the default

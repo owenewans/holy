@@ -1,0 +1,114 @@
+#!/bin/sh
+set -eu
+umask 022
+if [ "$#" -ne 3 ]; then
+    printf 'usage: static-deps.sh INPUT-DIRECTORY OUTPUT-DIRECTORY KERNEL-HEADERS\n' >&2
+    exit 2
+fi
+inputs=$(realpath "$1")
+headers=$(realpath "$3")
+sources=$(realpath "$(dirname "$0")/../profiles/static-sources")
+test "$(uname -m)" = x86_64 || { printf 'static dependencies currently require x86_64\n' >&2; exit 6; }
+for tool in gcc make cmake autoreconf automake libtoolize perl tar sha256sum pkg-config; do
+    command -v "$tool" >/dev/null || { printf 'missing tool: %s\n' "$tool" >&2; exit 6; }
+done
+for dir in linux asm asm-generic; do
+    test -d "$headers/$dir" || { printf 'missing Linux headers: %s\n' "$dir" >&2; exit 6; }
+done
+mkdir -p "$(dirname "$2")"
+mkdir "$2"
+out=$(realpath "$2")
+case "$out" in
+    *[!a-zA-Z0-9_./-]*) printf 'build prefix requires an ASCII path without spaces\n' >&2; exit 2 ;;
+esac
+work=$(mktemp -d "$out/work.XXXXXX")
+started=$(date +%s)
+cleanup() {
+    rc=$?
+    trap - EXIT HUP INT TERM
+    printf 'exit %s\nelapsed-seconds %s\n' "$rc" "$(($(date +%s) - started))" >> "$out/build.record"
+    rm -rf "$work"
+    exit "$rc"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+exec > "$out/build.log" 2>&1
+cp "$sources" "$out/sources"
+gcc --version > "$out/build.record"
+sha256sum "$0" "$sources" >> "$out/build.record"
+while read -r digest archive url; do
+    cp "$inputs/$archive" "$work/$archive"
+    printf '%s  %s\n' "$digest" "$work/$archive" | sha256sum -c -
+done < "$sources"
+while read -r digest archive url; do
+    tar -xf "$work/$archive" -C "$work"
+done < "$sources"
+unset CC CFLAGS CPPFLAGS LDFLAGS LDLIBS
+jobs=${JOBS:-2}
+(
+    cd "$work/musl-1.2.5"
+    CC=gcc ./configure --prefix="$out/toolchain" --syslibdir="$out/toolchain/lib"
+    make -j"$jobs"
+    make install
+)
+cp -aL "$headers/linux" "$headers/asm" "$headers/asm-generic" "$out/toolchain/include/"
+find "$out/toolchain/include/linux" "$out/toolchain/include/asm" \
+    "$out/toolchain/include/asm-generic" -type f -exec sha256sum {} + > "$out/kernel-headers.sha256"
+flag=
+if gcc -fno-link-libatomic -x c -c /dev/null -o "$work/flag.o" 2>/dev/null; then
+    flag=-fno-link-libatomic
+fi
+mkdir -p "$out/bin" "$out/include" "$out/lib"
+printf '#!/bin/sh\nexec "%s/toolchain/bin/musl-gcc" %s "$@"\n' "$out" "$flag" > "$out/bin/holy-musl-gcc"
+chmod 755 "$out/bin/holy-musl-gcc"
+CC="$out/bin/holy-musl-gcc"
+CPPFLAGS="-I$out/include"
+LDFLAGS="-L$out/lib"
+PKG_CONFIG_LIBDIR="$out/lib/pkgconfig"
+export CC CPPFLAGS LDFLAGS PKG_CONFIG_LIBDIR
+unset PKG_CONFIG_PATH
+build_configure() (
+    source=$1
+    shift
+    cd "$work/$source"
+    ./configure --prefix="$out" "$@"
+    make -j"$jobs"
+    make install
+)
+build_configure zlib-1.3.2 --static
+make -C "$work/lz4-1.10.0/lib" -j"$jobs" BUILD_SHARED=no PREFIX="$out" install
+(
+    cd "$work/openssl-3.5.8"
+    ./Configure linux-x86_64 no-shared no-module no-tests --prefix="$out" --libdir=lib
+    make -j"$jobs"
+    make install_sw
+)
+build_configure curl-8.22.0 --disable-shared --enable-static \
+    --with-openssl="$out" --with-zlib="$out" --without-libpsl --without-libidn2 \
+    --without-librtmp --without-libssh2 --without-brotli --without-zstd --disable-ldap --disable-ldaps
+build_configure libarchive-3.8.9 --disable-shared --enable-static --without-bz2lib \
+    --without-lzma --without-zstd --without-xml2 --without-expat --without-openssl \
+    --without-nettle --without-iconv --disable-acl --disable-xattr --disable-bsdtar \
+    --disable-bsdcpio --disable-bsdcat --disable-bsdunzip
+for source in argp-standalone-1.5.0 musl-fts-1.2.7 musl-obstack-1.2.3; do
+    (cd "$work/$source" && autoreconf -fi)
+    build_configure "$source" --disable-shared
+done
+install -m 644 "$work/argp-standalone-1.5.0/libargp.a" "$out/lib/"
+install -m 644 "$work/argp-standalone-1.5.0/argp.h" "$out/include/"
+(
+    cd "$work/elfutils-0.196"
+    ./configure --prefix="$out" --disable-debuginfod --disable-libdebuginfod \
+        --disable-nls --disable-demangler --without-zstd --without-bzlib --without-lzma
+    make -C libelf -j"$jobs" libelf.a
+    make -C lib -j"$jobs" libeu.a
+    install -m 644 libelf/libelf.a lib/libeu.a "$out/lib/"
+    install -m 644 libelf/libelf.h libelf/gelf.h libelf/nlist.h "$out/include/"
+)
+cmake -S "$work/libsolv-0.7.40" -B "$work/solv-build" \
+    -DCMAKE_C_COMPILER="$CC" -DCMAKE_PREFIX_PATH="$out" -DCMAKE_INSTALL_PREFIX="$out" \
+    -DCMAKE_INSTALL_LIBDIR=lib -DDISABLE_SHARED=ON -DENABLE_STATIC=ON -DMULTI_SEMANTICS=ON \
+    -DZLIB_LIBRARY="$out/lib/libz.a" -DZLIB_INCLUDE_DIR="$out/include"
+cmake --build "$work/solv-build" -j"$jobs"
+cmake --install "$work/solv-build"
+sha256sum "$out"/lib/*.a "$out/toolchain/lib/libc.a" >> "$out/build.record"

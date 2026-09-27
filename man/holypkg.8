@@ -136,6 +136,35 @@ and chroot --userspec, checks files and removes the package. Noninteractive
 doas must be available. The chroot has no dynamic libc directories. This
 tests the static shell; host holypkg still runs outside the chroot. Boot,
 static holypkg and full libc recovery require separate acceptance tests.
+.SS Static core build
+make static-deps INPUTS=DIRECTORY OUTPUT=DIRECTORY KERNEL_HEADERS=DIRECTORY
+builds x86_64 musl dependencies from the pinned archives listed with URLs and
+SHA-256 digests in profiles/static-sources. It copies and verifies inputs
+before unpacking. The caller supplies Linux userspace headers with linux,
+asm and asm-generic subdirectories. Their installed copies receive a hash
+inventory. GCC, make, CMake, autotools, libtool, Perl and archive tools are
+host build requirements. JOBS controls parallelism, default 2.
+.PP
+The output is a new private prefix containing static libarchive/LZ4, zlib,
+libelf, libsolv, curl and OpenSSL, plus build compatibility libraries.
+Its musl toolchain includes a private dynamic loader for upstream configure
+probes; the final holypkg link uses -static. No host libc is replaced.
+Source manifests, build logs, library hashes, exit status and elapsed seconds
+remain in the prefix. Archive support in this bootstrap configuration is
+limited to the enabled codecs, including native LZ4; full foreign codec
+coverage is a separate build profile.
+.PP
+make static STATIC_DEPS=DIRECTORY checks the completed dependency prefix,
+cleans existing object files and builds holypkg with its musl compiler.
+make check-static-core STATIC_HOLYPKG=FILE BUSYBOX_PACKAGE=FILE copies that
+binary into a disposable root without dynamic libc directories. Inside the
+chroot, holypkg verifies and caches the supplied BusyBox package, installs,
+checks and removes it twice using the cached artifact. The original package
+is removed after caching. A BusyBox shell probe runs after each install.
+doas creates the chroot and drops to the caller's numeric UID/GID.
+Both artifact hashes are printed on success. This verifies the local static
+package path; removal and restoration of real dynamic libc packages, network
+recovery and dinit boot still require their own tests.
 .SS Package operations
 The config check command checks source and rule configuration without changing
 the system. General package installation, foreign import, source sync and
@@ -302,7 +331,7 @@ cached artifact remain. The database generation advances after removal. If
 an I/O failure interrupts deletion, db status reports an incomplete journal.
 db recover --continue accepts a removing journal at its original generation
 with an intact installed record, treats absent listed files as removed, verifies
-every remaining file and completes removal. Changed files or partial installed
+every remaining file without mutation, then completes removal. Changed files or partial installed
 records require manual inspection. --abort-empty applies only to an installing
 journal, never to removal. This command does not resolve reverse
 dependencies or remove general packages.
