@@ -1,11 +1,5 @@
 # Holy roadmap
 
-This file tracks implementation, not the project contract. The man pages describe
-the implemented CLI; HOLY(7) defines the target. `holypkg` in this repository is
-independent of [owenewans/holypkg](https://github.com/owenewans/holypkg).
-
-Status: 26 September 2026. `done` means the named, narrow behavior has fixtures;
-it does not mean a bootable distribution or general package support.
 
 ## Package manager
 
@@ -103,5 +97,3 @@ it does not mean a bootable distribution or general package support.
   install/removal and recovery after removing either or both dynamic libc runtimes.
 - [ ] Run compiler/SDK, language, GUI, graphics, gaming, workstation and foreign
   source cases with pinned artifacts, logs, elapsed time and explicit coverage.
-
-Do not mark the distribution ready until the image boot and recovery gates pass.

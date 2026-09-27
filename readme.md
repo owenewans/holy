@@ -2,7 +2,7 @@
 
 # holy
 
-independent linux distribution in development.
+independent linux distribution.
 
 <a href="https://count.owenewans.org/owenewans/holy?theme=moebooru-h&amp;notitle"><img src="https://count.owenewans.org/owenewans/holy?theme=moebooru-h&amp;notitle" alt="repository views"></a>
 
@@ -34,31 +34,6 @@ BusyBox package. See [holypkg(8)](man/holypkg.8) for inputs and its chroot test.
 inputs; `make check-static-core` exercises package operations inside a libc-free chroot.
 `make check-qemu ARCH=x86_64 ISO=FILE BOOT_PLAN=SHA256` requires a Holy ISO and guest
 serial probes; the repository does not yet produce one.
-
-## status
-
-The C99 prototype verifies local `.holy` archives, inspects ELF, typed
-requirements and capability claims, and checks root path conflicts.
-`holypkg pack` writes a verified `.holy` from a prepared tree of ordinary
-files, directories and symlinks; recipes and foreign conversion remain open.
-`holypkg manifest generate TREE --output FILE` computes HOLY/files records
-for TREE/DATA without changing the tree.
-It stages verified archives in a target-root cache.
-It can download a pinned native `.holy` over verified HTTPS to a local directory.
-It can initialize an empty target-root package database and reserve or cancel
-one verified cached artifact at a fixed generation. `db preflight` checks that
-reservation against the target root. `db plan`, `db approve` and `db apply`
-install a restricted data or native static-ELF package into existing directories with a
-journal. `db check` compares installed data with rootfs; `db rm` removes an
-intact instance. Restricted recovery handles untouched installs, completed
-installs with a stale journal, and interrupted removals.
-It can build, seal, search exact provider claims and fetch an unsigned local
-repository catalog. The catalog records package capability claims; candidate
-lookup validates matching artifacts against those claims.
-`holypkg solve` and `repo solve` check narrow, read-only package graphs; source
-resolution and version-family comparators are pending.
-General installed-state transactions, a bootable image and QEMU acceptance are pending.
-The [Slackware holypkg](https://github.com/owenewans/holypkg) is a separate project.
 
 ## documentation
 
