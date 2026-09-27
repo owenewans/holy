@@ -1,5 +1,8 @@
 #!/bin/sh
 set -eu
+export QEMU_ACCEL=tcg
+export FIRMWARE=bios
+unset KERNEL_IMAGE INITRAMFS ROOT_IMAGE KERNEL_VERSION
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp/opencode}/holy-qemu-fixture-XXXXXX")
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
@@ -27,5 +30,38 @@ for arch in i686 x86_64; do
     grep -qx "arch $arch" "$report"
     grep -qx 'firmware bios' "$report"
     grep -qx 'accelerator tcg' "$report"
+    python3 - "$report.json" "$tmp/blank.iso" <<'PY'
+import hashlib, json, pathlib, sys
+report = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert report['result'] == 'fail'
+assert report['reason'] == 'boot-timeout'
+assert report['network'] == 'disabled'
+assert report['missing_markers']
+assert set(report['checks'].values()) == {'unknown'}
+assert report['inputs']['iso']['sha256'] == hashlib.sha256(pathlib.Path(sys.argv[2]).read_bytes()).hexdigest()
+PY
 done
+ARCH=x86_64 ISO="$tmp/blank.iso" BOOT_PLAN="$plan" REPORT_DIR="$tmp" \
+    python3 - <<'PY'
+import json, os, pathlib, signal, subprocess, time
+p = subprocess.Popen(['sh', 'tests/qemu.sh'], stdout=subprocess.PIPE, text=True)
+try:
+    children = pathlib.Path(f'/proc/{p.pid}/task/{p.pid}/children')
+    deadline = time.monotonic() + 10
+    while not children.read_text().strip():
+        assert p.poll() is None and time.monotonic() < deadline
+        time.sleep(0.05)
+    p.send_signal(signal.SIGTERM)
+    output, _ = p.communicate(timeout=10)
+    assert p.returncode == 4, output
+    report_path = output.strip().split(' report ', 1)[1]
+    report = json.loads(pathlib.Path(report_path + '.json').read_text())
+    assert report['result'] == 'fail' and report['reason'] == 'cancelled'
+    assert report['cancel_signal'] == signal.SIGTERM
+    assert not pathlib.Path(f'/proc/{report["pid"]}').exists()
+finally:
+    if p.poll() is None:
+        p.terminate()
+        p.wait(timeout=10)
+PY
 printf 'qemu negative gate fixtures passed\n'

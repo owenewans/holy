@@ -1,0 +1,113 @@
+.TH HOLY-IMAGE 7 "September 2026" "Holy" "System Overview"
+.SH NAME
+holy-image \- static core image build and boot tests
+.SH BUILD
+make bootstrap-image builds an x86_64 live ISO and runs its QEMU boot test.
+The following make variables are required:
+.TP
+STATIC_HOLYPKG
+Previously built musl-static holypkg executable.
+.TP
+STATIC_CC
+Path to the musl C compiler driver for the early init helper.
+.TP
+BUSYBOX_PACKAGE, DINIT_PACKAGE, MDEVD_PACKAGE
+Native .holy outputs of the matching bootstrap targets.
+.TP
+KERNEL_IMAGE, KERNEL_VERSION
+Local Linux kernel image and its expected uname release. The selected kernel
+must include initramfs/gzip, devtmpfs, proc, sysfs, tmpfs, devpts and serial
+console support. No kernel modules are included by this profile.
+.TP
+LIMINE_DIR
+Directory containing limine-bios.sys, limine-bios-cd.bin,
+limine-uefi-cd.bin and BOOTX64.EFI. Use the matching host limine tool.
+.TP
+OUTPUT
+New output directory. Existing directories are refused.
+.PP
+Host tools include unshare with user namespaces, a C toolchain, dracut,
+xorriso, Limine, GNU file tools, gzip, cpio, Python 3 and QEMU.
+DRACUT_BASE selects dracut's helper directory; the default is
+/usr/lib64/dracut. Compilation and installation run as mapped root in a user
+namespace owned by the ordinary caller. Host root invocation is refused.
+.SH INPUTS AND ROOT
+The builder snapshots the three native packages, normalizes numeric ownership
+to root and directory modes to 0755, regenerates manifests and records the
+parent hashes and normalization in origin. These are new unsigned local
+artifacts. The original archives remain in inputs/.
+.PP
+The static core binary, selected kernel, Limine data and Holy boot configuration
+also become native packages. holypkg installs the resulting seven packages
+through cache, reservation, plan approval and journaled apply into root/.
+The builder prepares the profile's directories first. It does not extract
+foreign distro roots or modify the host package database.
+.PP
+The profile installs merged-/usr links, a locked root account and the dinit
+services boot, console, mdevd, coldplug and holy-test. mdevd reports readiness
+through a pipe before synchronous coldplug starts. The fixture checks that
+coldplug applied the /dev/null permission rule. This is device-manager
+coverage, not client libudev compatibility.
+.SH INITRAMFS AND ISO
+The private dracut module copies the installed root with preserved ownership
+and file contents. dracut includes only the Holy module, with no host-only
+configuration, dynamic runtime dependencies, microcode or kernel modules.
+The builder points dracut's sysroot at the installed root. It extracts the
+finished initramfs, compares payload bytes, modes and symlinks with that root,
+and checks each ELF with holypkg. Only dracut's module list, build parameters
+and generated loader caches may be additional files. The audit rejects
+non-static ELF.
+holy-init mounts the live runtime filesystems and executes dinit.
+Limine loads the kernel and initramfs from the ISO. The default entry selects
+the guest test service with holy.test=1. Remove that argument in Limine's
+entry editor to reach the BusyBox console service.
+.PP
+The output includes packages/, inputs/, root/, initramfs.img, holy-x86_64.iso,
+build.log, build.record, root-check.record, a frozen plan and its boot-plan
+SHA-256. The record lists artifact hashes and the build result. Input
+retention permits repeating an experiment; bit-identical ISO reproduction
+is not established.
+.SH QEMU
+make check-qemu ARCH=x86_64 ISO=FILE BOOT_PLAN=SHA256 runs the test separately.
+ARCH=i686 chooses qemu-system-i386 and requires an i686 guest image.
+REPORT_DIR chooses an existing report parent directory, defaulting to the
+system temporary directory. QEMU_TIMEOUT bounds boot in seconds (1..600,
+default 120). QEMU_ACCEL=auto selects usable KVM or TCG; kvm and tcg force
+the accelerator, with unavailable KVM returning 6.
+.PP
+FIRMWARE=bios is the default. FIRMWARE=uefi requires UEFI_CODE and UEFI_VARS.
+The runner copies both firmware inputs and gives the guest a new writable
+VARS file. It copies and hashes the ISO before starting QEMU. Networking is
+disabled, and no host writable disks or directories are attached.
+.PP
+Guest markers must confirm the expected plan and architecture, dinit as
+PID 1 by /proc/1/exe, a BusyBox shell probe, mdevd/coldplug and a complete
+local package install/check/remove. The guest checks the critical executables'
+static ELF classification and absence of the four expected dynamic loaders.
+KERNEL_VERSION additionally requires the
+matching release marker. A failure marker overrides pass markers.
+The runner sends QMP quit after the probes or a boot timeout, waits up to
+five seconds, then kills a process which did not exit. Process launch or
+exit status alone cannot pass a boot test.
+.PP
+Each run retains serial.log, QEMU output, a text report and report.json
+(holy-qemu-report-2). Reports include argv, accelerator, firmware, input
+hashes, elapsed time, stage deadlines, exit reason and per-marker status.
+Optional KERNEL_IMAGE, INITRAMFS and ROOT_IMAGE inputs add their hashes.
+They identify caller-supplied files, not guest measurements of running code.
+.SH COVERAGE
+This profile tests the static core in RAM. The reference image still needs
+both dynamic libc packages, libc removal/restoration, networking, storage,
+the installer and i686. Those gates remain separate from this boot result.
+The repository documentation bundle currently contains Holy pages; the
+installed dinit pages accompany its package but are not yet merged into that
+bundle. QEMU virtual devices do not establish physical GPU support.
+.SH SOURCES
+Limine configuration and ISO layout:
+https://github.com/limine-bootloader/limine/blob/v12.x/CONFIG.md
+and https://github.com/limine-bootloader/limine/blob/v12.x/USAGE.md.
+dracut module interface:
+https://github.com/dracut-ng/dracut-ng/blob/main/man/dracut.modules.7.adoc.
+.SH SEE ALSO
+.BR holy-init (8),
+.BR holypkg (8)

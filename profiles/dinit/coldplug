@@ -1,0 +1,5 @@
+type = scripted
+command = /usr/bin/mdevd-coldplug -O 4
+depends-on = mdevd
+start-timeout = 30
+options = shares-console

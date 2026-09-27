@@ -5,6 +5,7 @@ LDFLAGS ?=
 LDLIBS ?= -larchive -lcrypto -lelf -lcurl
 PREFIX ?= /usr
 DESTDIR ?=
+MANPAGES = $(wildcard man/*.[578])
 SOLV_CFLAGS ?= $(patsubst -I%,-isystem %,$(shell pkg-config --cflags-only-I libsolv 2>/dev/null)) $(shell pkg-config --cflags-only-other libsolv 2>/dev/null)
 SOLV_LIBS ?= $(shell pkg-config --libs libsolv 2>/dev/null) -lz
 
@@ -23,7 +24,14 @@ SOLV_LIBS ?= $(shell pkg-config --libs libsolv 2>/dev/null) -lz
 .DEFAULT_GOAL := all
 
 .PHONY: all check check-fixtures check-root check-qemu check-qemu-gate check-https check-solver check-install-payload bootstrap-busybox check-bootstrap-busybox check-static-core man
-all: holypkg
+all: holypkg holy-init
+
+holy-init: src/early-init.c .build-config
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o $@ $<
+
+.PHONY: bootstrap-image
+bootstrap-image: holypkg llm.txt
+	sh tools/bootstrap-image.sh ./holypkg "$(STATIC_HOLYPKG)" "$(STATIC_CC)" "$(BUSYBOX_PACKAGE)" "$(DINIT_PACKAGE)" "$(MDEVD_PACKAGE)" "$(KERNEL_IMAGE)" "$(KERNEL_VERSION)" "$(LIMINE_DIR)" "$(OUTPUT)"
 
 .PHONY: bootstrap-dinit check-bootstrap-dinit
 .PHONY: bootstrap-mdevd check-bootstrap-mdevd
@@ -60,7 +68,7 @@ static:
 	@test -n "$(STATIC_DEPS)" || { echo 'STATIC_DEPS must name the musl dependency prefix' >&2; exit 6; }
 	@test -x "$(STATIC_DEPS)/bin/holy-musl-gcc" && grep -qx 'exit 0' "$(STATIC_DEPS)/build.record" || { echo 'static dependency build is incomplete' >&2; exit 6; }
 	$(MAKE) clean
-	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lssl -lcrypto -llz4 -lz -leu -Wl,--end-group -lpthread -ldl" holypkg
+	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lssl -lcrypto -llz4 -lz -leu -Wl,--end-group -lpthread -ldl" all
 
 holypkg: src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(SOLV_LIBS)
@@ -71,7 +79,11 @@ src/solve.o: src/solve.c $(wildcard src/*.h) .build-config
 src/%.o: src/%.c $(wildcard src/*.h) .build-config
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -c -o $@ $<
 
-check: holypkg check-solver check-install-payload check-https
+.PHONY: check-init
+check-init: holy-init
+	@./holy-init >/dev/null 2>&1; test $$? -eq 2
+
+check: holypkg check-init check-solver check-install-payload check-https
 	sh tests/config.sh ./holypkg
 	sh tests/package.sh ./holypkg
 	sh tests/docs.sh
@@ -108,19 +120,18 @@ check-solver:
 	./tests/solver
 
 man:
-	@for page in man/holy.conf.5 man/holypkg.8 man/holy-package.5; do groff -Tascii -man "$$page" > /dev/null || exit; done
+	@for page in $(MANPAGES); do groff -Tascii -man "$$page" > /dev/null || exit; done
 
-llm.txt: man/holy.conf.5 man/holypkg.8 man/holy-package.5 tools/docs.sh
-	sh tools/docs.sh "$@" man/holy.conf.5 man/holypkg.8 man/holy-package.5
+llm.txt: $(MANPAGES) tools/docs.sh
+	sh tools/docs.sh "$@" $(MANPAGES)
 
-install: holypkg llm.txt
-	install -d "$(DESTDIR)$(PREFIX)/bin" "$(DESTDIR)$(PREFIX)/share/man/man5" "$(DESTDIR)$(PREFIX)/share/man/man8" "$(DESTDIR)$(PREFIX)/share/holy"
-	install -m 755 holypkg "$(DESTDIR)$(PREFIX)/bin/holypkg"
-	install -m 644 man/holy.conf.5 "$(DESTDIR)$(PREFIX)/share/man/man5/holy.conf.5"
-	install -m 644 man/holy-package.5 "$(DESTDIR)$(PREFIX)/share/man/man5/holy-package.5"
-	install -m 644 man/holypkg.8 "$(DESTDIR)$(PREFIX)/share/man/man8/holypkg.8"
+install: all llm.txt
+	install -d "$(DESTDIR)$(PREFIX)/bin" "$(DESTDIR)$(PREFIX)/share/man/man5" "$(DESTDIR)$(PREFIX)/share/man/man7" "$(DESTDIR)$(PREFIX)/share/man/man8" "$(DESTDIR)$(PREFIX)/share/holy"
+	install -m 755 holypkg holy-init "$(DESTDIR)$(PREFIX)/bin/"
+	@for page in $(MANPAGES); do install -m 644 "$$page" "$(DESTDIR)$(PREFIX)/share/man/man$${page##*.}/" || exit; done
 	install -m 644 llm.txt "$(DESTDIR)$(PREFIX)/share/holy/llm.txt"
 
 clean:
+	rm -f holy-init
 	rm -f .build-config .build-config.tmp
 	rm -f holypkg tests/solver tests/install-helper src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o

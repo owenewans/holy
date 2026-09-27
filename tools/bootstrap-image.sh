@@ -1,0 +1,257 @@
+#!/bin/sh
+set -eu
+test "$#" -eq 10 || {
+    echo 'usage: bootstrap-image.sh HOLYPKG STATIC_HOLYPKG STATIC_CC BUSYBOX DINIT MDEVD KERNEL KERNEL_VERSION LIMINE_DIR OUTPUT' >&2
+    exit 2
+}
+if test "${HOLY_IMAGE_NAMESPACE:-}" != 1; then
+    test "$(id -u)" != 0 || { echo 'run the builder as an ordinary user' >&2; exit 6; }
+    export HOLY_IMAGE_NAMESPACE=1
+    exec unshare --map-root-user -- sh "$0" "$@"
+fi
+test "$(id -u)" = 0 && awk '$1 == 0 && $2 != 0 && $3 == 1 { ok = 1 } END { exit !ok }' /proc/self/uid_map || exit 6
+umask 022
+bin=$(realpath "$1")
+static=$(realpath "$2")
+cc=$(realpath "$3")
+busybox=$(realpath "$4")
+dinit=$(realpath "$5")
+mdevd=$(realpath "$6")
+kernel=$(realpath "$7")
+version=$8
+limine_dir=$(realpath "$9")
+shift 9
+case "$version" in ''|*[!a-zA-Z0-9._+-]*) exit 2 ;; esac
+test "$(uname -m)" = x86_64 || exit 6
+for tool in dracut xorriso limine sha256sum cpio gzip python3 qemu-system-x86_64; do
+    command -v "$tool" >/dev/null || { echo "$tool required" >&2; exit 6; }
+done
+project=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+mkdir -p "$(dirname "$1")"
+mkdir -m 0700 "$1"
+out=$(realpath "$1")
+work="$out/work"
+root="$out/root"
+mkdir "$work" "$root" "$out/packages" "$out/inputs" "$out/reports"
+started=$(date +%s)
+record="$out/build.record"
+printf 'format holy-bootstrap-image-1\narch x86_64\nprofile static-core\nkernel-version %s\n' "$version" > "$record"
+finish() {
+    rc=$?
+    trap - EXIT
+    printf 'exit %s\nelapsed-seconds %s\n' "$rc" "$(($(date +%s) - started))" >> "$record"
+    test "$rc" -eq 0 || printf 'result incomplete\n' >> "$record"
+    exit "$rc"
+}
+trap finish EXIT
+trap 'exit 1' HUP INT TERM
+exec > "$out/build.log" 2>&1
+"$bin" elf "$static" > "$out/core.elf"
+grep -qx 'runtime nolibc' "$out/core.elf"
+grep -qx 'machine x86_64' "$out/core.elf"
+"$cc" --version > "$out/compiler.record"
+"$cc" -std=c99 -Wall -Wextra -Werror -pedantic -Os -static -fno-pie -no-pie \
+    "$project/src/early-init.c" -o "$work/holy-init"
+"$bin" elf "$work/holy-init" > "$out/init.elf"
+grep -qx 'runtime nolibc' "$out/init.elf"
+if "$work/holy-init" > "$work/init.out" 2> "$work/init.err"; then exit 1; else test "$?" -eq 2; fi
+
+tree="$work/tree"
+metadata() {
+    mkdir -p "$tree/HOLY" "$tree/DATA"
+    printf 'format holy-package-1\nname %s\nversion %s\nrelease 1\nos linux\narch %s\nlibc nolibc\n' \
+        "$1" "$2" "$3" > "$tree/HOLY/meta"
+    for field in deps provides hooks origin transform; do : > "$tree/HOLY/$field"; done
+}
+pack() {
+    "$bin" manifest generate "$tree" --output "$work/files"
+    cp "$work/files" "$tree/HOLY/files"
+    rm "$work/files"
+    "$bin" pack "$tree" --output "$out/packages/$1.holy"
+    rm -rf "$tree"
+}
+for name in busybox dinit mdevd; do
+    case "$name" in busybox) input=$busybox ;; dinit) input=$dinit ;; mdevd) input=$mdevd ;; esac
+    cp "$input" "$out/inputs/$name.holy"
+    parent=$(sha256sum "$out/inputs/$name.holy")
+    parent=${parent%% *}
+    "$bin" fetch "local:$out/inputs/$name.holy" --extract --output "$tree"
+    test ! -s "$tree/HOLY/transform" || exit 6
+    find "$tree/DATA" -type d -exec chmod 0755 '{}' +
+    printf '\nbootstrap-parent-sha256 %s\nbootstrap-ownership 0 0\nbootstrap-directory-mode 0755\n' "$parent" >> "$tree/HOLY/origin"
+    pack "$name"
+done
+metadata holypkg bootstrap x86_64
+mkdir -p "$tree/DATA/usr/bin" "$tree/DATA/usr/share/man/man5" \
+    "$tree/DATA/usr/share/man/man7" "$tree/DATA/usr/share/man/man8" "$tree/DATA/usr/share/holy"
+cp "$static" "$out/inputs/holypkg"
+cp "$out/inputs/holypkg" "$tree/DATA/usr/bin/holypkg"
+for section in 5 7 8; do cp "$project/man/"*."$section" "$tree/DATA/usr/share/man/man$section/"; done
+cp "$project/llm.txt" "$tree/DATA/usr/share/holy/llm.txt"
+sha256sum "$out/inputs/holypkg" >> "$tree/HOLY/origin"
+pack holypkg
+metadata linux "$version" x86_64
+mkdir -p "$tree/DATA/boot"
+cp "$kernel" "$out/inputs/kernel"
+cp "$out/inputs/kernel" "$tree/DATA/boot/vmlinuz"
+chmod 0644 "$tree/DATA/boot/vmlinuz"
+sha256sum "$out/inputs/kernel" > "$tree/HOLY/origin"
+pack linux
+metadata limine bootstrap x86_64
+mkdir -p "$tree/DATA/usr/share/limine"
+for file in limine-bios.sys limine-bios-cd.bin limine-uefi-cd.bin BOOTX64.EFI; do
+    cp "$limine_dir/$file" "$tree/DATA/usr/share/limine/$file"
+    chmod 0644 "$tree/DATA/usr/share/limine/$file"
+    sha256sum "$tree/DATA/usr/share/limine/$file" >> "$tree/HOLY/origin"
+done
+limine --version >> "$tree/HOLY/origin"
+pack limine
+metadata boot-fixture 1 noarch
+mkdir -p "$tree/DATA/usr/share/holy"
+printf 'installed-in-guest\n' > "$tree/DATA/usr/share/holy/fixture-installed"
+pack boot-fixture
+metadata holy-boot bootstrap x86_64
+mkdir -p "$tree/DATA/usr/bin" "$tree/DATA/usr/lib/holy" "$tree/DATA/etc/dinit.d" \
+    "$tree/DATA/etc/holy" "$tree/DATA/usr/share/holy"
+cp "$work/holy-init" "$tree/DATA/usr/bin/holy-init"
+cp "$project/profiles/dinit/"* "$tree/DATA/etc/dinit.d/"
+cp "$project/tests/boot-probe.sh" "$tree/DATA/usr/lib/holy/boot-probe.sh"
+chmod 0644 "$tree/DATA/usr/lib/holy/boot-probe.sh"
+cp "$out/packages/boot-fixture.holy" "$tree/DATA/usr/share/holy/fixture.holy"
+chmod 0644 "$tree/DATA/usr/share/holy/fixture.holy"
+printf '%s\n' "$version" > "$tree/DATA/etc/holy/kernel-version"
+printf 'root:x:0:0:root:/root:/bin/sh\n' > "$tree/DATA/etc/passwd"
+printf 'root:x:0:\n' > "$tree/DATA/etc/group"
+printf 'root:!:0:0:99999:7:::\n' > "$tree/DATA/etc/shadow"
+chmod 0600 "$tree/DATA/etc/shadow"
+printf 'null 0:0 0600\n.* 0:0 0600\n' > "$tree/DATA/etc/mdev.conf"
+for name in bin sbin; do ln -s usr/bin "$tree/DATA/$name"; done
+for name in lib lib32 lib64; do ln -s "usr/$name" "$tree/DATA/$name"; done
+ln -s bin "$tree/DATA/usr/sbin"
+ln -s dinit "$tree/DATA/usr/bin/init"
+ln -s busybox "$tree/DATA/usr/bin/sh"
+ln -s usr/bin/holy-init "$tree/DATA/init"
+sha256sum "$project/src/early-init.c" "$project/tests/boot-probe.sh" \
+    "$project/profiles/dinit/"* > "$tree/HOLY/origin"
+pack holy-boot
+mkdir -p "$root/usr/bin" "$root/usr/lib/holy" "$root/usr/lib32" "$root/usr/lib64" \
+    "$root/usr/share/man/man5" "$root/usr/share/man/man7" "$root/usr/share/man/man8" "$root/usr/share/holy" \
+    "$root/usr/share/licenses/busybox" "$root/usr/share/licenses/musl" \
+    "$root/usr/share/licenses/dinit" "$root/usr/share/licenses/mdevd" \
+    "$root/usr/share/licenses/skalibs" "$root/usr/share/doc/mdevd" \
+    "$root/usr/include/mdevd" "$root/usr/share/limine" "$root/etc/dinit.d" \
+    "$root/etc/holy" "$root/boot" "$root/dev" "$root/proc" "$root/sys" \
+    "$root/run" "$root/tmp" "$root/root"
+"$bin" db init --root "$root"
+for name in busybox dinit mdevd holypkg linux limine holy-boot; do
+    package="$out/packages/$name.holy"
+    digest=$(sha256sum "$package")
+    digest=${digest%% *}
+    printf 'package %s %s\n' "$name" "$digest" >> "$record"
+    "$bin" cache stage "local:$package" --root "$root"
+    "$bin" db reserve "$digest" --root "$root"
+    "$bin" db plan --root "$root" > "$work/plan"
+    cat "$work/plan"
+    plan=$(sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' "$work/plan")
+    test "${#plan}" -eq 64
+    "$bin" db approve "$plan" --root "$root"
+    "$bin" db apply --root "$root"
+done
+"$bin" db check --all --root "$root" > "$out/root-check.record"
+sha256sum "$project/tools/bootstrap-image.sh" "$project/profiles/dracut/module-setup.sh" >> "$record"
+cp "$record" "$out/plan"
+plan=$(sha256sum "$out/plan")
+plan=${plan%% *}
+printf '%s\n' "$plan" > "$root/etc/holy/boot-plan"
+printf '%s\n' "$plan" > "$out/boot-plan"
+mkdir -p "$work/dracut/modules.d/90holy" "$work/dracut/dracut.conf.d" "$work/empty-conf"
+dracut_base=${DRACUT_BASE:-/usr/lib64/dracut}
+for file in dracut-functions.sh dracut-logger.sh dracut-install dracut-util dracut-cpio; do
+    test ! -e "$dracut_base/$file" || cp "$dracut_base/$file" "$work/dracut/"
+done
+cp "$project/profiles/dracut/module-setup.sh" "$work/dracut/modules.d/90holy/"
+mkdir -p "$root/usr/lib/modules/$version" "$work/dracut-tmp"
+HOLY_ROOT="$root" DRACUT_NO_MKNOD=1 DRACUT_TESTBIN=/usr/bin/busybox dracutbasedir="$work/dracut" dracut --conf /dev/null \
+    --sysroot "$root" --tmpdir "$work/dracut-tmp" \
+    --confdir "$work/empty-conf" --modules holy --no-kernel --no-hostonly \
+    --no-hostonly-cmdline --no-early-microcode --nohardlink --nostrip --gzip \
+    "$out/initramfs.img" "$version"
+mkdir "$work/audit"
+gzip -dc "$out/initramfs.img" > "$work/initramfs.cpio"
+(cd "$work/audit" && cpio -id --no-absolute-filenames < "$work/initramfs.cpio")
+python3 - "$root" "$work/audit" "$bin" > "$out/initramfs.audit" <<'PY'
+import hashlib, os, pathlib, stat, subprocess, sys
+root, unpacked = map(pathlib.Path, sys.argv[1:3])
+generated = {'etc/ld.so.cache', 'var/cache/ldconfig/aux-cache',
+             'usr/lib/dracut/modules.txt', 'usr/lib/dracut/build-parameter.txt'}
+def digest(path):
+    h = hashlib.sha256()
+    with path.open('rb') as f:
+        for block in iter(lambda: f.read(1048576), b''):
+            h.update(block)
+    return h.digest()
+for parent, dirs, files in os.walk(unpacked):
+    for name in dirs + files:
+        path = pathlib.Path(parent) / name
+        relative = path.relative_to(unpacked)
+        original = root / relative
+        actual = path.lstat()
+        mode = actual.st_mode
+        if stat.S_ISDIR(mode):
+            continue
+        if relative.as_posix() in generated:
+            if not stat.S_ISREG(mode):
+                raise SystemExit('invalid generated file: ' + str(relative))
+            continue
+        before = original.lstat()
+        if (mode, actual.st_uid, actual.st_gid) != (before.st_mode, before.st_uid, before.st_gid):
+            raise SystemExit('changed mode or owner: ' + str(relative))
+        if stat.S_ISLNK(mode):
+            if os.readlink(path) != os.readlink(original):
+                raise SystemExit('changed link: ' + str(relative))
+        elif stat.S_ISREG(mode):
+            if digest(path) != digest(original):
+                raise SystemExit('changed content: ' + str(relative))
+            with path.open('rb') as f:
+                elf = f.read(4) == b'\x7fELF'
+            if elf:
+                facts = subprocess.check_output([sys.argv[3], 'elf', str(path)], text=True)
+                if 'runtime nolibc' not in facts.splitlines():
+                    raise SystemExit('non-static ELF: ' + str(relative))
+                print('static-elf', relative)
+        else:
+            raise SystemExit('unexpected object: ' + str(relative))
+for parent, dirs, files in os.walk(root):
+    for name in dirs + files:
+        relative = (pathlib.Path(parent) / name).relative_to(root)
+        if not os.path.lexists(unpacked / relative):
+            raise SystemExit('missing path: ' + str(relative))
+print('result pass')
+PY
+rm "$work/initramfs.cpio"
+mkdir -p "$work/iso/boot/limine" "$work/iso/EFI/BOOT"
+cp "$root/boot/vmlinuz" "$work/iso/boot/vmlinuz"
+cp "$out/initramfs.img" "$work/iso/boot/initramfs.img"
+cp "$root/usr/share/limine/"*.bin "$root/usr/share/limine/limine-bios.sys" "$work/iso/boot/limine/"
+cp "$root/usr/share/limine/BOOTX64.EFI" "$work/iso/EFI/BOOT/"
+cat > "$work/iso/boot/limine/limine.conf" <<EOF
+timeout: 0
+serial: yes
+verbose: yes
+/Holy static core test
+    protocol: linux
+    kernel_path: boot():/boot/vmlinuz
+    module_path: boot():/boot/initramfs.img
+    cmdline: console=ttyS0,115200 rdinit=/init holy.test=1 panic=1
+EOF
+xorriso -as mkisofs -R -r -J -b boot/limine/limine-bios-cd.bin \
+    -no-emul-boot -boot-load-size 4 -boot-info-table \
+    --efi-boot boot/limine/limine-uefi-cd.bin -efi-boot-part --efi-boot-image \
+    --protective-msdos-label "$work/iso" -o "$out/holy-x86_64.iso"
+limine bios-install "$out/holy-x86_64.iso"
+sha256sum "$out/holy-x86_64.iso" "$out/initramfs.img" "$root/boot/vmlinuz" >> "$record"
+ARCH=x86_64 ISO="$out/holy-x86_64.iso" BOOT_PLAN="$plan" REPORT_DIR="$out/reports" \
+    KERNEL_IMAGE="$root/boot/vmlinuz" KERNEL_VERSION="$version" INITRAMFS="$out/initramfs.img" \
+    sh "$project/tests/qemu.sh"
+printf 'result boot-tested-static-core\n' >> "$record"
+printf 'not-tested dynamic-libc-recovery i686 installer network graphics\n' >> "$record"

@@ -1,3 +1,229 @@
+holy-image.7 source=holy version=development sha256=902a09f16b03b2d0f85a51c7886b800b02daa743f60a7f2f62cbe2e89560d053
+HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
+
+NAME
+     holy-image - static core image build and boot tests
+
+BUILD
+     make bootstrap-image builds an x86_64 live ISO and runs its QEMU boot test.
+     The following make variables are required:
+
+     STATIC_HOLYPKG
+	    Previously built musl-static holypkg executable.
+
+     STATIC_CC
+	    Path to the musl C compiler driver for the early init helper.
+
+     BUSYBOX_PACKAGE, DINIT_PACKAGE, MDEVD_PACKAGE
+	    Native .holy outputs of the matching bootstrap targets.
+
+     KERNEL_IMAGE, KERNEL_VERSION
+	    Local  Linux  kernel  image	 and its expected uname release. The se-
+	    lected kernel must include initramfs/gzip,	devtmpfs,  proc,  sysfs,
+	    tmpfs,  devpts and serial console support. No kernel modules are in-
+	    cluded by this profile.
+
+     LIMINE_DIR
+	    Directory containing  limine-bios.sys,  limine-bios-cd.bin,	 limine-
+	    uefi-cd.bin and BOOTX64.EFI. Use the matching host limine tool.
+
+     OUTPUT
+	    New output directory. Existing directories are refused.
+
+     Host  tools  include  unshare  with user namespaces, a C toolchain, dracut,
+     xorriso, Limine, GNU file tools, gzip,  cpio,  Python  3  and  QEMU.   DRA-
+     CUT_BASE  selects dracut's helper directory; the default is /usr/lib64/dra-
+     cut. Compilation and installation run as mapped root in  a	 user  namespace
+     owned by the ordinary caller. Host root invocation is refused.
+
+INPUTS AND ROOT
+     The  builder snapshots the three native packages, normalizes numeric owner-
+     ship to root and directory modes to 0755, regenerates manifests and records
+     the parent hashes and normalization in origin. These are new unsigned local
+     artifacts. The original archives remain in inputs/.
+
+     The static core binary, selected kernel, Limine data and Holy boot configu-
+     ration also become native packages. holypkg installs  the	resulting  seven
+     packages through cache, reservation, plan approval and journaled apply into
+     root/.   The  builder prepares the profile's directories first. It does not
+     extract foreign distro roots or modify the host package database.
+
+     The profile installs merged-/usr links, a locked root account and the dinit
+     services boot, console, mdevd, coldplug and holy-test. mdevd reports readi-
+     ness through a pipe before synchronous coldplug starts. The fixture  checks
+     that coldplug applied the /dev/null permission rule. This is device-manager
+     coverage, not client libudev compatibility.
+
+INITRAMFS AND ISO
+     The  private  dracut module copies the installed root with preserved owner-
+     ship and file contents. dracut includes only the Holy module, with no host-
+     only configuration, dynamic runtime dependencies, microcode or kernel  mod-
+     ules.   The  builder  points dracut's sysroot at the installed root. It ex-
+     tracts the finished initramfs, compares payload bytes, modes  and	symlinks
+     with  that	 root,	and  checks  each ELF with holypkg. Only dracut's module
+     list, build parameters and generated loader caches may be additional files.
+     The audit rejects	non-static  ELF.   holy-init  mounts  the  live	 runtime
+     filesystems and executes dinit.  Limine loads the kernel and initramfs from
+     the ISO. The default entry selects the guest test service with holy.test=1.
+     Remove  that argument in Limine's entry editor to reach the BusyBox console
+     service.
+
+     The  output  includes  packages/,	inputs/,  root/,  initramfs.img,   holy-
+     x86_64.iso,  build.log,  build.record, root-check.record, a frozen plan and
+     its boot-plan SHA-256. The record lists artifact hashes and the  build  re-
+     sult.  Input  retention  permits repeating an experiment; bit-identical ISO
+     reproduction is not established.
+
+QEMU
+     make check-qemu ARCH=x86_64 ISO=FILE BOOT_PLAN=SHA256 runs the  test  sepa-
+     rately.   ARCH=i686 chooses qemu-system-i386 and requires an i686 guest im-
+     age.  REPORT_DIR chooses an existing report parent directory, defaulting to
+     the  system  temporary  directory.	 QEMU_TIMEOUT  bounds  boot  in	 seconds
+     (1..600,  default	120). QEMU_ACCEL=auto selects usable KVM or TCG; kvm and
+     tcg force the accelerator, with unavailable KVM returning 6.
+
+     FIRMWARE=bios  is	the  default.  FIRMWARE=uefi  requires	 UEFI_CODE   and
+     UEFI_VARS.	  The  runner  copies both firmware inputs and gives the guest a
+     new writable VARS file. It copies and hashes the ISO before starting  QEMU.
+     Networking	 is  disabled, and no host writable disks or directories are at-
+     tached.
+
+     Guest markers must confirm the expected plan and architecture, dinit as PID
+     1 by /proc/1/exe, a BusyBox shell probe, mdevd/coldplug and a complete  lo-
+     cal  package  install/check/remove.  The guest checks the critical executa-
+     bles' static ELF classification and absence of the	 four  expected	 dynamic
+     loaders.  KERNEL_VERSION additionally requires the matching release marker.
+     A	failure	 marker overrides pass markers.	 The runner sends QMP quit after
+     the probes or a boot timeout, waits  up  to  five	seconds,  then	kills  a
+     process which did not exit. Process launch or exit status alone cannot pass
+     a boot test.
+
+     Each  run	retains	 serial.log,  QEMU output, a text report and report.json
+     (holy-qemu-report-2). Reports include argv,  accelerator,	firmware,  input
+     hashes,  elapsed  time, stage deadlines, exit reason and per-marker status.
+     Optional KERNEL_IMAGE, INITRAMFS and ROOT_IMAGE inputs  add  their	 hashes.
+     They  identify  caller-supplied  files,  not  guest measurements of running
+     code.
+
+COVERAGE
+     This profile tests the static core in RAM. The reference image still  needs
+     both  dynamic libc packages, libc removal/restoration, networking, storage,
+     the installer and i686. Those gates remain separate from this boot	 result.
+     The  repository documentation bundle currently contains Holy pages; the in-
+     stalled dinit pages accompany its package but are not yet merged into  that
+     bundle. QEMU virtual devices do not establish physical GPU support.
+
+SOURCES
+     Limine   configuration   and  ISO	layout:	 https://github.com/limine-boot-
+     loader/limine/blob/v12.x/CONFIG.md	  and	 https://github.com/limine-boot-
+     loader/limine/blob/v12.x/USAGE.md.	      dracut	  module      interface:
+     https://github.com/dracut-ng/dracut-ng/blob/main/man/dracut.modules.7.adoc.
+
+SEE ALSO
+     holy-init(8), holypkg(8)
+
+Holy				 September 2026			   HOLY-IMAGE(7)
+holy-init.8 source=holy version=development sha256=c48366e78a065a55953a21e5c665296926f6337e06be8cb9899a48c6fdfa776a
+HOLY-INIT(8)		      System Administration		    HOLY-INIT(8)
+
+NAME
+     holy-init - prepare live runtime mounts and execute dinit
+
+DESCRIPTION
+     holy-init runs as PID 1 from a live initramfs. It mounts devtmpfs, attaches
+     standard  descriptors to /dev/console, makes mount propagation private, and
+     mounts proc, sysfs, tmpfs at /run and /tmp, and a new devpts instance.   It
+     then executes /sbin/init, supplied as a link to dinit by the image profile.
+     dinit  retains  PID 1. Mount and exec failures print a diagnostic and leave
+     the process waiting for intervention; they do not report a successful boot.
+
+     The boot profile uses /etc/dinit.d,  a  control  socket  at  /run/dinitctl,
+     PATH=/usr/bin  and	 HOME=/root.  The  default  service  is	 boot.	An exact
+     holy.test=1 kernel argument selects holy-test instead. Other  kernel  words
+     are not interpreted as shell code.
+
+     Calling  holy-init	 outside  PID 1 returns 2 before mounting anything.  The
+     current helper boots an in-memory live root. It does not yet  unlock  disks
+     or switch from an initramfs to an installed disk root.
+
+BUILD
+     make  builds holy-init with the configured C99 compiler. make static builds
+     it with the selected musl toolchain. The image builder also compiles it us-
+     ing its explicit STATIC_CC input and verifies static ELF classification.
+
+SEE ALSO
+     holy-image(7), holypkg(8)
+
+Holy				 September 2026			    HOLY-INIT(8)
+holy-package.5 source=holy version=development sha256=a65a15393c28701bde21a6daf1673532d3fefac1ff19e0ce3b775cc3ed4c5711
+HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
+
+NAME
+     holy-package - prototype native archive and payload manifest
+
+DESCRIPTION
+     A	.holy  archive	is  a  POSIX tar/PAX stream compressed as a standard LZ4
+     frame.  HOLY/meta contains one key and one value  per  line.  The	required
+     fields  are  format  (holy-package-1), name, version, release, os, arch and
+     libc. An unknown requires-feature field fails inspection.
+
+     The inspector accepts os=linux or windows, arch=x86, x86_64 or noarch,  and
+     libc=glibc,  musl	or nolibc. noarch requires nolibc. These checks validate
+     declared metadata values; they do not scan ELF files to prove ABI or  prove
+     that a purported noarch payload has no machine code.
+
+     The  separate  holypkg  scan command examines regular ELF payload files and
+     rejects known arch/libc tag mismatches. The basic info and verify	commands
+     do not perform this ABI check.
+
+     The scanner accepts ET_EXEC without PT_INTERP and PT_DYNAMIC as nolibc, and
+     ET_DYN  requiring	libc.so.6  as glibc evidence. It rejects ELF files whose
+     runtime remains unknown. A plugin without such evidence  needs  classifica-
+     tion and review before a package can pass scan.
+
+     The  archive  contains  one  regular file at each of HOLY/meta, HOLY/files,
+     HOLY/deps, HOLY/provides, HOLY/hooks, HOLY/origin and  HOLY/transform.  The
+     inspector	checks	their presence and type. Empty metadata placeholders can
+     pass this structural check; it does not  validate	dependency,  capability,
+     hook  or  origin  content.	 The separate requirements and provides commands
+     parse supported subsets of HOLY/deps and HOLY/provides.
+
+     The prototype verifier reads HOLY/files. For each regular payload file  un-
+     der DATA/, one manifest line contains twelve whitespace-separated tokens:
+     file PATH MODE OWNER GROUP UID GID SIZE SHA256 FLAGS XATTRS HARDLINK-GROUP
+     MODE  is  octal;  UID,  GID and SIZE are decimal. PATH is relative to DATA.
+     SHA256 has 64 hexadecimal digits. The current verifier accepts  FLAGS=none,
+     XATTRS=-  and  HARDLINK-GROUP=-  only. A symlink uses one additional TARGET
+     token, SIZE=0 and SHA256=-. A hardlinked file uses TYPE=hardlink,	a  group
+     identifier	 in  HARDLINK-GROUP  and one extra TARGET token naming a regular
+     file in DATA.  The target file carries the same group identifier. SIZE  and
+     SHA256  describe the target content. The verifier rejects chained hardlinks
+     and checks mode, UID and GID against the target. A directory uses the  same
+     twelve  tokens  as a file, with TYPE=dir, SIZE=0 and SHA256=-. The verifier
+     rejects symlink targets that escape the root by lexical traversal. The text
+     lexer follows holy.conf(5), so quotes and escapes can  preserve  spaces  in
+     paths. Every archived directory except DATA itself needs a manifest record.
+     The  verifier  does not support special files, ACLs or extended attributes.
+     The verifier rejects DATA entries that carry archive xattrs or  ACLs,  even
+     if HOLY/files says XATTRS=-. The planned full format includes those attrib-
+     utes.
+
+     The narrow database apply command installs approved data, native static ELF
+     files  and	 relative  symlinks into pre-existing safe directories. Symlinks
+     require mode 0777 and  the	 caller's  numeric  ownership.	The  transaction
+     records  their  targets,  checks  them without following links, and removes
+     only intact owned entries. Absolute symlinks and hardlink installation  re-
+     main unsupported.	The pack command writes and verifies this archive format
+     from a prepared tree of regular files, directories and symlinks.  The veri-
+     fier  does not verify dependencies, signatures, symbolic owner names or the
+     installed filesystem. A full format implementation must verify file  owner-
+     ship, links, xattrs, hooks, origin and transaction semantics before accept-
+     ing an artifact for installation.
+
+SEE ALSO
+     holypkg(8), holy.conf(5)
+
+Holy				 September 2026			 HOLY-PACKAGE(5)
 holy.conf.5 source=holy version=development sha256=2b55062677cdd7da0de1b2d2049b90e865a526830400b71035a22e27217bed11
 HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
 
@@ -806,72 +1032,3 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-package.5 source=holy version=development sha256=a65a15393c28701bde21a6daf1673532d3fefac1ff19e0ce3b775cc3ed4c5711
-HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
-
-NAME
-     holy-package - prototype native archive and payload manifest
-
-DESCRIPTION
-     A	.holy  archive	is  a  POSIX tar/PAX stream compressed as a standard LZ4
-     frame.  HOLY/meta contains one key and one value  per  line.  The	required
-     fields  are  format  (holy-package-1), name, version, release, os, arch and
-     libc. An unknown requires-feature field fails inspection.
-
-     The inspector accepts os=linux or windows, arch=x86, x86_64 or noarch,  and
-     libc=glibc,  musl	or nolibc. noarch requires nolibc. These checks validate
-     declared metadata values; they do not scan ELF files to prove ABI or  prove
-     that a purported noarch payload has no machine code.
-
-     The  separate  holypkg  scan command examines regular ELF payload files and
-     rejects known arch/libc tag mismatches. The basic info and verify	commands
-     do not perform this ABI check.
-
-     The scanner accepts ET_EXEC without PT_INTERP and PT_DYNAMIC as nolibc, and
-     ET_DYN  requiring	libc.so.6  as glibc evidence. It rejects ELF files whose
-     runtime remains unknown. A plugin without such evidence  needs  classifica-
-     tion and review before a package can pass scan.
-
-     The  archive  contains  one  regular file at each of HOLY/meta, HOLY/files,
-     HOLY/deps, HOLY/provides, HOLY/hooks, HOLY/origin and  HOLY/transform.  The
-     inspector	checks	their presence and type. Empty metadata placeholders can
-     pass this structural check; it does not  validate	dependency,  capability,
-     hook  or  origin  content.	 The separate requirements and provides commands
-     parse supported subsets of HOLY/deps and HOLY/provides.
-
-     The prototype verifier reads HOLY/files. For each regular payload file  un-
-     der DATA/, one manifest line contains twelve whitespace-separated tokens:
-     file PATH MODE OWNER GROUP UID GID SIZE SHA256 FLAGS XATTRS HARDLINK-GROUP
-     MODE  is  octal;  UID,  GID and SIZE are decimal. PATH is relative to DATA.
-     SHA256 has 64 hexadecimal digits. The current verifier accepts  FLAGS=none,
-     XATTRS=-  and  HARDLINK-GROUP=-  only. A symlink uses one additional TARGET
-     token, SIZE=0 and SHA256=-. A hardlinked file uses TYPE=hardlink,	a  group
-     identifier	 in  HARDLINK-GROUP  and one extra TARGET token naming a regular
-     file in DATA.  The target file carries the same group identifier. SIZE  and
-     SHA256  describe the target content. The verifier rejects chained hardlinks
-     and checks mode, UID and GID against the target. A directory uses the  same
-     twelve  tokens  as a file, with TYPE=dir, SIZE=0 and SHA256=-. The verifier
-     rejects symlink targets that escape the root by lexical traversal. The text
-     lexer follows holy.conf(5), so quotes and escapes can  preserve  spaces  in
-     paths. Every archived directory except DATA itself needs a manifest record.
-     The  verifier  does not support special files, ACLs or extended attributes.
-     The verifier rejects DATA entries that carry archive xattrs or  ACLs,  even
-     if HOLY/files says XATTRS=-. The planned full format includes those attrib-
-     utes.
-
-     The narrow database apply command installs approved data, native static ELF
-     files  and	 relative  symlinks into pre-existing safe directories. Symlinks
-     require mode 0777 and  the	 caller's  numeric  ownership.	The  transaction
-     records  their  targets,  checks  them without following links, and removes
-     only intact owned entries. Absolute symlinks and hardlink installation  re-
-     main unsupported.	The pack command writes and verifies this archive format
-     from a prepared tree of regular files, directories and symlinks.  The veri-
-     fier  does not verify dependencies, signatures, symbolic owner names or the
-     installed filesystem. A full format implementation must verify file  owner-
-     ship, links, xattrs, hooks, origin and transaction semantics before accept-
-     ing an artifact for installation.
-
-SEE ALSO
-     holypkg(8), holy.conf(5)
-
-Holy				 September 2026			 HOLY-PACKAGE(5)

@@ -1,0 +1,5 @@
+type = scripted
+command = /usr/bin/busybox ash /usr/lib/holy/boot-probe.sh
+depends-on = coldplug
+start-timeout = 120
+options = shares-console

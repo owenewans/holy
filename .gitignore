@@ -1,7 +1,9 @@
 /holypkg
+/holy-init
 /src/*.o
 /tests/solver
 /tests/install-helper
+/tests/__pycache__/
 /.build-config
 /.build-config.tmp
 /out/

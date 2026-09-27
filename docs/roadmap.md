@@ -60,7 +60,7 @@
 - [x] Link the prototype holypkg with musl-static dependencies; verify native
   archive, ELF, repository, solver and HTTPS fixtures. Run local package
   cache/install/check/remove and BusyBox shell probes inside a libc-free chroot.
-  Real libc restoration and boot remain separate unfinished acceptance gates.
+  Real libc restoration remains an unfinished acceptance gate.
 - [x] Test the static client's DNS and HTTPS path in a private-network libc-free
   chroot, including wrong CA/digest refusals and a hashed JSON report. Network
   interface setup still uses a host fixture tool, not a finished recovery profile.
@@ -70,11 +70,17 @@
   service start/status/shutdown and stop-command effects with dinitctl in a
   libc-free chroot as an ordinary user. Install/check/remove the complete package,
   including command and man-page symlinks, through the transaction engine.
-  PID 1 boot remains open.
+  The static-core image also exercises dinit as PID 1.
 - [x] Build pinned x86_64 musl-static mdevd/skalibs with licenses and upstream
   HTML docs. Install, check and remove the package; parse valid symbolic-owner
   configuration and reject invalid regex inside a libc-free chroot with a
-  private network namespace. Uevents, coldplug and dinit integration remain open.
+  private network namespace. The static-core image exercises readiness, coldplug
+  and dinit integration; client libudev compatibility remains separate.
+- [x] Build an x86_64 static-core ISO through native package transactions, a
+  private dracut sysroot and Limine. Audit initramfs payloads against the installed
+  root and reject dynamic ELF. Boot with dinit as PID 1, BusyBox, mdevd/coldplug
+  and a local package install/check/remove in QEMU. This RAM profile does not
+  yet install an on-disk system or restore dynamic libc.
 - [ ] Package Limine, dracut, kernel, firmware, SDK/sysroots and the default
   ConnMan+iwd network profile; test static local and HTTPS libc recovery.
 - [ ] Implement C99 `holyinstall` with reviewed disk/boot/account/network plans
@@ -87,12 +93,13 @@
 - [x] Run current prototype fixtures under GCC, TCC and Clang ASan/UBSan.
 - [x] Run `make check-root` against disposable target-root install, check,
   remove and recovery fixtures; this gate does not boot a system.
-- [x] Add a BIOS/TCG `make check-qemu ARCH=... ISO=... BOOT_PLAN=...` runner
+- [x] Add a BIOS/UEFI `make check-qemu ARCH=... ISO=... BOOT_PLAN=...` runner
   with serial markers, ISO hash, QEMU argv, exit status, elapsed time and logs.
   Missing images return a requirement error; blank ISO fails both architecture
-  fixtures via `make check-qemu-gate`. No Holy boot image has passed it.
+  fixtures via `make check-qemu-gate`. Cancellation reaps the guest and records
+  failure. The x86_64 static-core ISO passes BIOS/TCG and UEFI/TCG boot contracts.
 - [ ] Add real `make check-install` and `check-hardware` targets; extend the
-  QEMU runner to UEFI, qcow2 trial overlays, stage timeouts and result channels.
+  QEMU runner to qcow2 trial overlays and per-probe timeouts/result channels.
 - [ ] Boot both target architectures in QEMU and prove PID 1, shell, package
   install/removal and recovery after removing either or both dynamic libc runtimes.
 - [ ] Run compiler/SDK, language, GUI, graphics, gaming, workstation and foreign

@@ -1,0 +1,26 @@
+.TH HOLY-INIT 8 "September 2026" "Holy" "System Administration"
+.SH NAME
+holy-init \- prepare live runtime mounts and execute dinit
+.SH DESCRIPTION
+holy-init runs as PID 1 from a live initramfs. It mounts devtmpfs, attaches
+standard descriptors to /dev/console, makes mount propagation private, and
+mounts proc, sysfs, tmpfs at /run and /tmp, and a new devpts instance.
+It then executes /sbin/init, supplied as a link to dinit by the image profile.
+dinit retains PID 1. Mount and exec failures print a diagnostic and leave
+the process waiting for intervention; they do not report a successful boot.
+.PP
+The boot profile uses /etc/dinit.d, a control socket at /run/dinitctl,
+PATH=/usr/bin and HOME=/root. The default service is boot. An exact
+holy.test=1 kernel argument selects holy-test instead. Other kernel words
+are not interpreted as shell code.
+.PP
+Calling holy-init outside PID 1 returns 2 before mounting anything.
+The current helper boots an in-memory live root. It does not yet unlock
+disks or switch from an initramfs to an installed disk root.
+.SH BUILD
+make builds holy-init with the configured C99 compiler. make static builds
+it with the selected musl toolchain. The image builder also compiles it
+using its explicit STATIC_CC input and verifies static ELF classification.
+.SH SEE ALSO
+.BR holy-image (7),
+.BR holypkg (8)

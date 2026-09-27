@@ -1,0 +1,6 @@
+type = process
+command = /usr/bin/mdevd -D 3 -O 4
+ready-notification = pipefd:3
+start-timeout = 15
+stop-timeout = 5
+options = shares-console

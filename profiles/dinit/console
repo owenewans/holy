@@ -1,0 +1,5 @@
+type = process
+command = /usr/bin/busybox ash -i
+depends-on = coldplug
+options = runs-on-console
+restart = true
