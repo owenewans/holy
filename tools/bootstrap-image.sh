@@ -57,11 +57,15 @@ boot_state=${LIBC_BOOT_STATE:-present}
 storage=${ROOT_STORAGE:-ram}
 network_recovery=${NETWORK_RECOVERY:-off}
 install_test=${INSTALL_TEST:-0}
+install_firmware=${INSTALL_FIRMWARE:-both}
 case "$install_test:$storage:$profile:$boot_state:$arch" in
     0:*) ;;
     1:ram:static-core:present:x86_64) ;;
     *) echo 'INSTALL_TEST=1 requires x86_64 static-core RAM ISO' >&2; exit 2 ;;
 esac
+if test "$install_test" = 1; then
+    case "$install_firmware" in bios|both) ;; *) echo 'INSTALL_FIRMWARE must be bios or both' >&2; exit 2 ;; esac
+fi
 case "$network_recovery" in
     off) ;;
     fixture)
@@ -114,6 +118,7 @@ printf 'format holy-bootstrap-image-1\narch %s\nprofile %s\nlibc-boot-state %s\n
 printf 'root-storage %s\n' "$storage" >> "$record"
 printf 'network-recovery %s\n' "$network_recovery" >> "$record"
 printf 'install-test %s\n' "$install_test" >> "$record"
+if test "$install_test" = 1; then printf 'install-firmware %s\n' "$install_firmware" >> "$record"; fi
 finish() {
     rc=$?
     trap - EXIT
@@ -622,7 +627,7 @@ fi
 sha256sum "$out/initramfs.img" "$root/boot/vmlinuz" >> "$record"
 if test "$install_test" = 1; then
     ARCH="$arch" ISO="$iso_image" BOOT_PLAN="$plan" REPORT_DIR="$out/reports" \
-        STATIC_HOLYINSTALL="$installer" \
+        STATIC_HOLYINSTALL="$installer" INSTALL_FIRMWARE="$install_firmware" \
         python3 "$project/tests/install-vm.py"
 else
     ARCH="$arch" BOOT_MEDIA="$boot_media" ISO="$iso_image" BOOT_PLAN="$plan" REPORT_DIR="$out/reports" \

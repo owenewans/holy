@@ -164,13 +164,16 @@ the guest. The live guest mounts the target root, stages its local .holy
 archives, reviews and applies one holyinstall package plan, generates the
 installed man bundle, and copies kernel, initramfs and Limine files from the
 ISO to the ESP. The runner shuts down that guest after serial success markers,
-then boots the same overlay without the ISO. The second guest checks dinit,
-BusyBox, holypkg, package state, documentation and the mounted ESP.
+then forks the installed overlay for separate BIOS and UEFI disk boots. Both
+guests check dinit, BusyBox, holypkg, package state, documentation and the
+mounted ESP. The UEFI boot uses fresh writable firmware variables.
 .PP
-The holy-install-vm-1 report records both QEMU commands, serial hashes,
+The holy-install-vm-2 report records each QEMU command, serial hashes,
 ISO and disk hashes, base-image integrity and missing markers. It lists
-guest partitioning, guest Limine BIOS installation, UEFI, i686, user login
-and network as untested. This fixture verifies package installation and
+guest partitioning, guest Limine BIOS installation, i686, user login
+and network as untested. INSTALL_FIRMWARE=bios runs only BIOS and records
+UEFI as untested; the default both mode requires UEFI_CODE and UEFI_VARS,
+which default to the local QEMU edk2 images. This fixture verifies package installation and
 boot from a separate disk; it does not claim the whole interactive installer
 acceptance matrix. Run an existing fixture ISO with
 make check-install-vm ISO=FILE BOOT_PLAN=SHA256 STATIC_HOLYINSTALL=FILE.

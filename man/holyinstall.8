@@ -123,7 +123,7 @@ the full interactive install acceptance matrix remain pending.
 .PP
 The optional install VM fixture described in holy-image(7) mounts a
 prepartitioned guest disk from the live ISO and applies a package plan to its
-root. It boots the installed disk in a second QEMU run. The fixture prepares
+root. It boots the installed disk through BIOS and UEFI in separate QEMU runs. The fixture prepares
 GPT, filesystems and Limine BIOS stage on the host; holyinstall does not yet
 perform those operations on a guest block device.
 .SH EXIT STATUS

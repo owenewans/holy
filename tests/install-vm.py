@@ -21,7 +21,8 @@ def command(*args):
     subprocess.run(args, check=True)
 
 
-def boot(qemu, accel, run, overlay, iso, stage, expected, seconds):
+def boot(qemu, accel, run, overlay, iso, stage, expected, seconds,
+         firmware=None):
     serial = run / (stage + '.serial.log')
     qmp = run / (stage + '.qmp')
     args = [qemu, '-accel', accel, '-m', '1024', '-display', 'none',
@@ -29,6 +30,10 @@ def boot(qemu, accel, run, overlay, iso, stage, expected, seconds):
             '-serial', 'file:' + str(serial)]
     if iso:
         args.extend(['-cdrom', str(iso)])
+    if firmware:
+        code, variables = firmware
+        args.extend(['-drive', 'if=pflash,format=raw,readonly=on,file=' + str(code),
+                     '-drive', 'if=pflash,format=raw,file=' + str(variables)])
     args.extend(['-blockdev', json.dumps({'driver': 'qcow2', 'node-name': 'holy-target',
                  'file': {'driver': 'file', 'filename': str(overlay)}}),
                  '-device', 'virtio-blk-pci,drive=holy-target' + ('' if iso else ',bootindex=1'),
@@ -91,6 +96,13 @@ def main():
     qemu_img = shutil.which('qemu-img')
     limine = shutil.which('limine')
     require(qemu and qemu_img and limine, 'QEMU, qemu-img and Limine required')
+    firmware = os.environ.get('INSTALL_FIRMWARE', 'both')
+    require(firmware in ('bios', 'both'), 'INSTALL_FIRMWARE must be bios or both', 2)
+    code = Path(os.environ.get('UEFI_CODE') or '/usr/share/qemu/edk2-x86_64-code.fd')
+    variables = Path(os.environ.get('UEFI_VARS') or '/usr/share/qemu/edk2-i386-vars.fd')
+    if firmware == 'both':
+        require(code.is_file() and variables.is_file(),
+                'UEFI_CODE and UEFI_VARS firmware files required')
     accel = accelerator()
     run = Path(tempfile.mkdtemp(prefix='holy-install-vm-', dir=report_dir)).resolve()
     frozen_iso = run / 'input.iso'
@@ -132,22 +144,44 @@ def main():
         'HOLY-BOOT-1 result pass',
     }
     first = boot(qemu, accel, run, overlay, frozen_iso, 'install', expected_install, 600)
-    second = None
+    second = third = None
     if first['result'] == 'pass':
-        second = boot(qemu, accel, run, overlay, None, 'installed', expected_boot, 180)
+        overlay.chmod(0o444)
+        bios_overlay = run / 'bios.qcow2'
+        command(qemu_img, 'create', '-q', '-f', 'qcow2', '-F', 'qcow2',
+                '-b', str(overlay), str(bios_overlay))
+        second = boot(qemu, accel, run, bios_overlay, None,
+                      'installed-bios', expected_boot, 180)
+        if second['result'] == 'pass' and firmware == 'both':
+            code_copy = run / 'uefi-code.fd'
+            vars_copy = run / 'uefi-vars.fd'
+            shutil.copyfile(code, code_copy)
+            code_copy.chmod(0o444)
+            shutil.copyfile(variables, vars_copy)
+            uefi_overlay = run / 'uefi.qcow2'
+            command(qemu_img, 'create', '-q', '-f', 'qcow2', '-F', 'qcow2',
+                    '-b', str(overlay), str(uefi_overlay))
+            third = boot(qemu, accel, run, uefi_overlay, None,
+                         'installed-uefi', expected_boot, 180,
+                         (code_copy, vars_copy))
     unchanged = digest(disk) == base_hash
-    result = 'pass' if unchanged and second and second['result'] == 'pass' else 'fail'
-    report = {'schema': 'holy-install-vm-1', 'result': result, 'arch': 'x86_64',
+    result = ('pass' if unchanged and second and second['result'] == 'pass' and
+              (firmware == 'bios' or third and third['result'] == 'pass') else 'fail')
+    report = {'schema': 'holy-install-vm-2', 'result': result, 'arch': 'x86_64',
               'accelerator': accel, 'boot_plan': plan,
               'inputs': {'iso_sha256': digest(frozen_iso), 'target_base_sha256': base_hash,
                          'disk_plan_sha256': digest(disk_plan)},
               'base_unchanged': unchanged, 'overlay_sha256': digest(overlay),
-              'install': first, 'installed_boot': second,
+              'firmware': {'mode': firmware,
+                           'code_sha256': digest(code_copy) if third else None,
+                           'vars_input_sha256': digest(variables) if third else None},
+              'install': first, 'installed_boot': second, 'uefi_boot': third,
               'coverage': ['live-iso', 'guest-root-package-set', 'guest-esp-files',
-                           'bios-installed-disk-boot'],
+                           'bios-installed-disk-boot'] +
+                          (['uefi-installed-disk-boot'] if third and third['result'] == 'pass' else []),
               'not_tested': ['guest-partitioning', 'guest-limine-bios-install',
-                             'uefi-installed-boot', 'i686-installed-boot',
-                             'user-login', 'network']}
+                             'i686-installed-boot', 'user-login', 'network'] +
+                            (['uefi-installed-boot'] if firmware == 'bios' else [])}
     (run / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     print('holy-install-vm:', result, 'report', run / 'report.json')
     return 0 if result == 'pass' else 4
