@@ -2,9 +2,12 @@
 
 # holy
 
+![logo](./assets/logo.png)
+
+
 independent linux distribution.
 
-<a href="https://count.owenewans.org/owenewans/holy?theme=moebooru-h&amp;notitle"><img src="https://count.owenewans.org/owenewans/holy?theme=moebooru-h&amp;notitle" alt="repository views"></a>
+<a href="https://count.owenewans.org/owenewans/holy?theme=moebooru&amp;notitle"><img src="https://count.owenewans.org/owenewans/holy?theme=moebooru&amp;notitle" alt="repository views"></a>
 
 `c` `linux` `distribution`
 
