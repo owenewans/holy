@@ -94,13 +94,17 @@ grep -qx musl-static-shell "$out/shell.record"
 tree="$work/package"
 mkdir -p "$tree/HOLY" "$tree/DATA/usr/bin" "$tree/DATA/usr/share/licenses/busybox" "$tree/DATA/usr/share/licenses/musl"
 cp "$binary" "$tree/DATA/usr/bin/busybox"
+for applet in login getty su passwd adduser addgroup; do
+    grep -qx "$applet" "$out/applets"
+    ln -s busybox "$tree/DATA/usr/bin/$applet"
+done
 cp "$work/busybox-1.37.0/LICENSE" "$tree/DATA/usr/share/licenses/busybox/LICENSE"
 cp "$work/musl-1.2.5/COPYRIGHT" "$tree/DATA/usr/share/licenses/musl/COPYRIGHT"
 cat > "$tree/HOLY/meta" <<EOF
 format holy-package-1
 name busybox-bootstrap
 version 1.37.0
-release 1
+release 2
 os linux
 arch $arch
 libc nolibc

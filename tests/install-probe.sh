@@ -69,6 +69,19 @@ test "$($bb cat /mnt/holy/var/lib/holypkg/generation)" = 1
 $pkg db check --all --root /mnt/holy > /run/install-check
 echo 'HOLY-INSTALL-1 package-set committed'
 
+stage=account
+$bb mkdir -p /mnt/holy/home/holytest
+$bb chown 10001:10001 /mnt/holy/home/holytest
+$bb chmod 0700 /mnt/holy/home/holytest
+$bb cat > /mnt/holy/home/holytest/.profile <<'EOF'
+/usr/bin/busybox printf 'HOLY-LOGIN-UID '
+/usr/bin/busybox id -u
+exit
+EOF
+$bb chown 10001:10001 /mnt/holy/home/holytest/.profile
+$bb chmod 0600 /mnt/holy/home/holytest/.profile
+echo 'HOLY-INSTALL-1 account prepared'
+
 stage=boot
 $bb cp /etc/holy/boot-plan /mnt/holy/etc/holy/boot-plan
 $pkg docs --root /mnt/holy --output /mnt/holy/usr/share/holy/llm.txt

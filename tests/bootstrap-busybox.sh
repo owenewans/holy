@@ -30,7 +30,12 @@ test "${#plan}" -eq 64
 grep -qx 'runtime nolibc' "$tmp/out"
 grep -qx "machine $arch" "$tmp/out"
 "$tmp/root/usr/bin/busybox" --list > "$tmp/applets"
-for applet in ip nslookup udhcpc; do grep -qx "$applet" "$tmp/applets"; done
+for applet in ip nslookup udhcpc login getty su passwd adduser addgroup; do
+    grep -qx "$applet" "$tmp/applets"
+done
+for applet in login getty su passwd adduser addgroup; do
+    test "$(readlink "$tmp/root/usr/bin/$applet")" = busybox
+done
 if [ "$arch" = x86 ]; then
     command -v qemu-i386 >/dev/null || exit 6
     qemu-i386 -cpu pentium2 "$tmp/root/usr/bin/busybox" ash -c 'printf "i686 shell\n"' > "$tmp/emulator"

@@ -120,11 +120,13 @@ def main():
         'HOLY-INSTALL-1 disk prepared',
         'HOLY-INSTALL-1 root mounted',
         'HOLY-INSTALL-1 package-set committed',
+        'HOLY-INSTALL-1 account prepared',
         'HOLY-INSTALL-1 esp files-and-package-state',
         'HOLY-INSTALL-1 result pass',
     }
     expected_boot = {
         'HOLY-BOOT-1 installed-disk ext4',
+        'HOLY-BOOT-1 user-login authenticated',
         'HOLY-BOOT-1 root ext4',
         'HOLY-BOOT-1 plan ' + plan,
         'HOLY-BOOT-1 pid1 dinit',
@@ -164,7 +166,7 @@ def main():
     unchanged = digest(disk) == base_hash
     result = ('pass' if unchanged and guest_disk_plan and second and second['result'] == 'pass' and
               (firmware == 'bios' or third and third['result'] == 'pass') else 'fail')
-    report = {'schema': 'holy-install-vm-3', 'result': result, 'arch': 'x86_64',
+    report = {'schema': 'holy-install-vm-4', 'result': result, 'arch': 'x86_64',
               'accelerator': accel, 'boot_plan': plan,
               'inputs': {'iso_sha256': digest(frozen_iso), 'target_base_sha256': base_hash,
                          'guest_disk_plan_sha256': guest_disk_plan},
@@ -175,9 +177,10 @@ def main():
               'install': first, 'installed_boot': second, 'uefi_boot': third,
               'coverage': ['live-iso', 'guest-partitioning', 'guest-filesystems',
                            'guest-limine-bios-install', 'guest-root-package-set',
-                           'guest-esp-files', 'bios-installed-disk-boot'] +
+                           'guest-esp-files', 'guest-user-password-login',
+                           'bios-installed-disk-boot'] +
                           (['uefi-installed-disk-boot'] if third and third['result'] == 'pass' else []),
-              'not_tested': ['i686-installed-boot', 'user-login', 'network'] +
+              'not_tested': ['i686-installed-boot', 'account-menu', 'doas', 'pam-nss', 'network'] +
                             (['uefi-installed-boot'] if firmware == 'bios' else [])}
     (run / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     print('holy-install-vm:', result, 'report', run / 'report.json')

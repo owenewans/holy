@@ -297,6 +297,19 @@ printf 'root:x:0:0:root:/root:/bin/sh\n' > "$tree/DATA/etc/passwd"
 printf 'root:x:0:\n' > "$tree/DATA/etc/group"
 printf 'root:!:0:0:99999:7:::\n' > "$tree/DATA/etc/shadow"
 chmod 0600 "$tree/DATA/etc/shadow"
+if test "$install_test" = 1; then
+    printf 'holytest:x:10001:10001:Holy fixture account:/home/holytest:/usr/bin/sh\n' >> "$tree/DATA/etc/passwd"
+    printf 'holytest:x:10001:\n' >> "$tree/DATA/etc/group"
+    cat >> "$tree/DATA/etc/shadow" <<'EOF'
+holytest:$6$holyfixture$dWRvmlTx76Ezgh55faR0FP7brdbDJrBSlGfNEW5bbcQDRvj4uwCOeDgUSHkXHQEedvoyZH55dtVIl9Aie1eMh.:0:0:99999:7:::
+EOF
+    "$cc" -O2 -std=c99 -Wall -Wextra -Werror -pedantic -static \
+        "$project/tests/login-probe.c" -o "$tree/DATA/usr/lib/holy/login-probe"
+    "$bin" elf "$tree/DATA/usr/lib/holy/login-probe" > "$out/login-probe.elf"
+    grep -qx 'runtime nolibc' "$out/login-probe.elf"
+    sha256sum "$project/tests/login-probe.c" "$tree/DATA/usr/lib/holy/login-probe" \
+        >> "$tree/HOLY/origin"
+fi
 printf 'null 0:0 0600\n.* 0:0 0600\n' > "$tree/DATA/etc/mdev.conf"
 for name in bin sbin; do ln -s usr/bin "$tree/DATA/$name"; done
 for name in lib lib32 lib64; do ln -s "usr/$name" "$tree/DATA/$name"; done

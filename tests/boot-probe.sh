@@ -11,6 +11,10 @@ if test -f /etc/holy/installed-from-live; then
     $bb grep -Eq '^[^ ]+ / ext4 ' /proc/mounts
     reported_storage=ext4
     echo 'HOLY-BOOT-1 installed-disk ext4'
+    stage=login
+    /usr/lib/holy/login-probe > /run/login-probe
+    $bb grep -qx 'login rejected wrong password and authenticated uid=10001' /run/login-probe
+    echo 'HOLY-BOOT-1 user-login authenticated'
 fi
 profile=$($bb cat /etc/holy/image-profile)
 storage=$($bb cat /etc/holy/root-storage)
