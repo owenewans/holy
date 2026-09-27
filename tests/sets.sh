@@ -187,5 +187,42 @@ test "$(cat "$db/generation")" -eq 5
 test ! -e "$db/transactions/journal"
 grep -qx app "$root/usr/share/app"
 expect 0 "$bin" db check --all --root "$root"
+expect 0 "$bin" db rm "$app" --root "$root"
+cp "$db/installed/$lib/state" "$tmp/provider-state"
+cp "$db/installed/$lib/graph" "$tmp/provider-graph"
+inode=$(stat -c '%i:%Y' "$root/usr/share/lib")
+expect 0 "$bin" db plan-set "$app" --root "$root"
+plan=$(plan_hash)
+grep -qx "selected $lib lib installed" "$tmp/out"
+printf damaged > "$root/usr/share/lib"
+expect 4 "$bin" db apply-set "$plan" "$app" --root "$root"
+test ! -e "$root/usr/share/app"
+printf 'lib\n' > "$root/usr/share/lib"
+inode=$(stat -c '%i:%Y' "$root/usr/share/lib")
+sed 's/reason dependency/reason explicit/' "$tmp/provider-state" > "$db/installed/$lib/state"
+expect 3 "$bin" db apply-set "$plan" "$app" --root "$root"
+cp "$tmp/provider-state" "$db/installed/$lib/state"
+mv "$root/var/cache/holypkg/objects/sha256/$lib.holy" "$tmp/provider-cache"
+expect 6 "$bin" db plan-set "$app" --root "$root"
+mv "$tmp/provider-cache" "$root/var/cache/holypkg/objects/sha256/$lib.holy"
+expect 5 env LD_PRELOAD="$tmp/fault.so" HOLY_FAIL_PATH=app "$bin" db apply-set "$plan" "$app" --root "$root"
+test "$(cat "$db/generation")" -eq 6
+printf damaged > "$root/usr/share/lib"
+expect 5 "$bin" db recover --continue-set --root "$root"
+printf 'lib\n' > "$root/usr/share/lib"
+inode=$(stat -c '%i:%Y' "$root/usr/share/lib")
+expect 0 "$bin" db recover --continue-set --root "$root"
+test "$(cat "$db/generation")" -eq 7
+test "$(stat -c '%i:%Y' "$root/usr/share/lib")" = "$inode"
+cmp "$tmp/provider-state" "$db/installed/$lib/state"
+cmp "$tmp/provider-graph" "$db/installed/$lib/graph"
+expect 0 "$bin" db check --all --root "$root"
+expect 3 "$bin" db rm "$lib" --root "$root"
+expect 0 "$bin" db plan-set "$unused" --root "$root"
+unused_plan=$(plan_hash)
+expect 0 "$bin" db apply-set "$unused_plan" "$unused" --root "$root"
+rm "$root/var/cache/holypkg/objects/sha256/$unused.holy"
+expect 0 "$bin" db rm "$app" --root "$root"
+expect 0 "$bin" db plan-set "$app" --root "$root"
+grep -qx "selected $lib lib installed" "$tmp/out"
 printf 'package set fixtures passed\n'
-

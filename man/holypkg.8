@@ -329,7 +329,7 @@ These commands do not resolve chains of symlinks or prove runtime targets exist.
 The separate fetch --extract operation still refuses absolute symlinks.
 .PP
 The db plan-set command resolves one explicit root against already cached
-candidate hashes. It supports exact package dependencies between Linux
+candidate hashes and cached artifacts from the installed catalog. It supports exact package dependencies between Linux
 data, native static and restricted dynamic packages, empty hooks/transforms, pre-existing safe
 directories and the same payload subset as db apply. It reports selected
 artifacts, reasons and requirement edges without changing installed state.
@@ -342,8 +342,24 @@ root and candidates. It holds one writer lock, checks the plan again and writes
 transactions/set-journal before the first payload. All selected packages share
 one generation increment. Installed state records the explicit root and
 dependency reasons; each instance retains the selected graph. Package hooks,
-existing-provider reuse, upgrades and grouped removal
-are not implemented by this interface.
+upgrades and grouped removal are not implemented by this interface.
+.PP
+An already installed dependency is reused only after its metadata matches the
+cached archive, its payload and ownership pass checks, and its own selected
+dependency edges remain unchanged. Its state, reason and graph remain intact;
+the new consumer records its edge to that provider. The plan hashes the reused
+instance state as well as the selected manifests. Apply and recovery verify it
+again and never reinstall it. The preview labels it installed. Re-requesting an
+already installed explicit root returns decision-required; this interface does
+not yet promote dependency reasons or perform reinstalls.
+.PP
+Candidate discovery reads installed names and manifests for the package and
+literal ELF-path requirements of the supplied candidates, then follows their
+dependencies. It does not scan every installed archive. Installed candidates
+currently require their cached archives for ELF scanning.
+A missing archive returns unavailable instead of guessing ABI facts. Reuse
+requires the version-2 installed graph format. Multiple viable providers still
+require --choose; automatic installed/source preference ranking remains open.
 .PP
 Dynamic sets require literal absolute PT_INTERP and DT_NEEDED paths. Providers
 must contain those exact regular payload paths and satisfy the recorded

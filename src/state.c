@@ -10,6 +10,7 @@
 #include "config.h"
 #include "resolve.h"
 #include "scan.h"
+#include "deps.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -1933,6 +1934,7 @@ done:
 struct set_item {
     char *snapshot;
     struct holy_package_identity identity;
+    int reused;
 };
 
 struct set_claim {
@@ -2044,12 +2046,171 @@ static int explicit_elf_paths(const char *snapshot)
     return result;
 }
 
+static int instance_matches_snapshot(int item, const char *snapshot);
+
+static int reuse_instance(int dir, int root, struct set_item *candidate,
+                          unsigned long long generation, int completed,
+                          const char *graph, EVP_MD_CTX *hash)
+{
+    int installed = child_dir(dir, "installed", 0), item = -1, files = -1, fd = -1;
+    int result = -1;
+    unsigned long long recorded;
+    char state[384], prefix[80], *line = NULL;
+    size_t capacity = 0, old_count = 0, new_count = 0;
+    ssize_t got;
+    FILE *stream = NULL;
+    const char *part;
+    if (installed < 0) goto done;
+    item = child_dir(installed, candidate->identity.digest, 0);
+    if (item < 0) { if (errno == ENOENT) result = 0; goto done; }
+    if (!instance_state_generation(item, candidate->identity.digest, &recorded)) goto done;
+    if (recorded > generation) {
+        if (completed && recorded == generation + 1) result = 0;
+        goto done;
+    }
+    files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (files < 0 || !instance_matches_snapshot(item, candidate->snapshot) ||
+        exclusive_claims(installed, candidate->identity.digest, files) != 1 ||
+        holy_install_check_manifest(files, root) != 1 ||
+        check_graph(installed, root, candidate->identity.digest, NULL) != 1) goto done;
+    fd = openat(item, "graph", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0 || !(stream = fdopen(fd, "r"))) goto done;
+    fd = -1;
+    snprintf(prefix, sizeof prefix, "edge \"%s\" ", candidate->identity.digest);
+    for (part = graph; *part; ) {
+        if (!strncmp(part, prefix, strlen(prefix))) ++new_count;
+        part = strchr(part, '\n');
+        if (!part) goto done;
+        ++part;
+    }
+    while ((got = getline(&line, &capacity, stream)) >= 0) {
+        const char *match;
+        if (strncmp(line, prefix, strlen(prefix))) continue;
+        ++old_count;
+        match = strstr(graph, line);
+        if (!match || (match != graph && match[-1] != '\n')) goto done;
+    }
+    if (ferror(stream) || old_count != new_count) goto done;
+    fd = openat(item, "state", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0 || (got = read(fd, state, sizeof state - 1)) <= 0) goto done;
+    state[got] = 0;
+    if (!hash_text(hash, "reuse-installed") || !hash_text(hash, state)) goto done;
+    candidate->reused = 1;
+    result = 1;
+done:
+    if (stream) fclose(stream);
+    free(line);
+    if (fd >= 0) close(fd);
+    if (files >= 0) close(files);
+    if (item >= 0) close(item);
+    if (installed >= 0) close(installed);
+    return result;
+}
+
+struct installed_candidates {
+    int installed;
+    char **digests;
+    size_t count;
+};
+
+static int add_installed_candidates(struct installed_candidates *catalog,
+                                    const char *name, const char *path)
+{
+    DIR *list = directory_stream(catalog->installed);
+    struct dirent *entry;
+    int ok = 0;
+    if (!list) return 0;
+    errno = 0;
+    while ((entry = readdir(list))) {
+        int item, matches;
+        size_t i;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        for (i = 0; i < catalog->count; ++i)
+            if (!strcmp(entry->d_name, catalog->digests[i])) break;
+        if (i != catalog->count) { errno = 0; continue; }
+        item = child_dir(catalog->installed, entry->d_name, 0);
+        if (item < 0) goto done;
+        if (name) matches = installed_name(item, name);
+        else {
+            int files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+            matches = files < 0 ? -1 : holy_install_manifest_owns(files, path);
+            if (files >= 0) close(files);
+        }
+        close(item);
+        if (matches < 0) goto done;
+        if (matches) {
+            if (catalog->count == 10000 ||
+                !(catalog->digests[catalog->count] = strdup(entry->d_name))) goto done;
+            ++catalog->count;
+        }
+        errno = 0;
+    }
+    ok = errno == 0;
+done:
+    closedir(list);
+    return ok;
+}
+
+static int installed_requirement(void *context, const char *id,
+    const char *consumer, const char *kind, const char *name,
+    const char *arch, const char *libc, const char *relation,
+    const char *version, const char *original, const char *evidence)
+{
+    (void)id; (void)consumer; (void)arch; (void)libc; (void)relation;
+    (void)version; (void)original; (void)evidence;
+    return strcmp(kind, "package") || add_installed_candidates(context, name, NULL);
+}
+
+static int discover_installed(const char *root_path, int dir,
+                              const char *const *digests, size_t *count, char ***output)
+{
+    struct installed_candidates catalog = {-1, NULL, 0};
+    size_t i, j, k;
+    int result = 1;
+    catalog.digests = calloc(10000, sizeof *catalog.digests);
+    if (!catalog.digests) return 1;
+    catalog.installed = child_dir(dir, "installed", 0);
+    if (catalog.installed < 0) goto done;
+    for (i = 0; i < *count; ++i) {
+        catalog.digests[i] = strdup(digests[i]);
+        if (!catalog.digests[i]) goto done;
+        ++catalog.count;
+    }
+    for (i = 0; i < catalog.count; ++i) {
+        struct holy_scan_result scan = {0};
+        char *snapshot = holy_cache_snapshot(catalog.digests[i], root_path);
+        int ok;
+        if (!snapshot) { result = 6; goto done; }
+        ok = holy_deps_visit(snapshot, installed_requirement, &catalog) &&
+             holy_scan_collect(snapshot, &scan);
+        unlink(snapshot);
+        free(snapshot);
+        for (j = 0; ok && j < scan.count; ++j) {
+            const struct holy_elf_info *elf = &scan.files[j].elf;
+            if (elf->interpreter && elf->interpreter[0] == '/')
+                ok = add_installed_candidates(&catalog, NULL, elf->interpreter + 1);
+            for (k = 0; ok && k < elf->needed_count; ++k)
+                if (elf->needed[k][0] == '/')
+                    ok = add_installed_candidates(&catalog, NULL, elf->needed[k] + 1);
+        }
+        holy_scan_free(&scan);
+        if (!ok) { result = 6; goto done; }
+    }
+    result = 0;
+done:
+    if (catalog.installed >= 0) close(catalog.installed);
+    *count = catalog.count;
+    *output = catalog.digests;
+    return result;
+}
+
 static int build_set(const char *root_path, int root, int dir,
                       unsigned long long generation, const char *const *digests,
                       size_t count, const char *choice, int completed,
                       struct install_set *set)
 {
     char **snapshots = NULL;
+    char **candidates = NULL;
     struct plan_hash plan = {0};
     struct stat st;
     struct utsname host;
@@ -2060,6 +2221,12 @@ static int build_set(const char *root_path, int root, int dir,
     int result = 1;
     if (!count || count > 10000) return 2;
     for (i = 0; i < count; ++i) if (!valid_digest(digests[i])) return 2;
+    if (!completed) {
+        result = discover_installed(root_path, dir, digests, &count, &candidates);
+        if (result) goto done;
+        digests = (const char *const *)candidates;
+        result = 1;
+    }
     snapshots = calloc(count, sizeof *snapshots);
     if (!snapshots || fstat(root, &st) || uname(&host)) goto done;
     for (i = 0; i < count; ++i) {
@@ -2104,18 +2271,24 @@ static int build_set(const char *root_path, int root, int dir,
             !empty_transform(item->snapshot) || !instance_preflight(item->snapshot)) goto done;
         result = explicit_elf_paths(item->snapshot);
         if (result) goto done;
-        result = holy_preview_resolved(item->snapshot, root_path, completed);
+        result = reuse_instance(dir, root, item, generation, completed, set->graph, plan.hash);
+        if (result < 0) { result = 4; goto done; }
+        if (item->reused && !strcmp(item->identity.digest, set->resolution.root)) {
+            result = 3; goto done;
+        }
+        result = holy_preview_resolved(item->snapshot, root_path, completed || item->reused);
         if (result) goto done;
         for (j = 0; j < i; ++j)
             if (!strcmp(set->items[j].identity.name, item->identity.name)) {
                 result = 4; goto done;
             }
-        if (!completed) {
+        if (!completed && !item->reused) {
             result = name_available(dir, item->identity.name);
             if (result != 1) { result = result < 0 ? 1 : 4; goto done; }
             if (!holy_install_preflight(item->snapshot, root)) { result = 4; goto done; }
         }
         result = 6;
+        plan.completed = completed || item->reused;
         if (!hash_text(plan.hash, item->identity.digest) ||
             !holy_verify_visit(item->snapshot, plan_entry, &plan)) {
             if (plan.claim_error) result = plan.claim_error;
@@ -2136,6 +2309,10 @@ done:
         free(snapshots[i]);
     }
     free(snapshots);
+    if (candidates) {
+        for (i = 0; i < count; ++i) free(candidates[i]);
+        free(candidates);
+    }
     EVP_MD_CTX_free(plan.hash);
     return result;
 }
@@ -2317,6 +2494,7 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
         for (i = 0; i < set.count; ++i)
             printf("selected %s %s %s\n", set.items[i].identity.digest,
                    set.items[i].identity.name,
+                   set.items[i].reused ? "installed" :
                    strcmp(set.items[i].identity.digest, set.resolution.root) ? "dependency" : "explicit");
         for (i = 0; i < set.resolution.edge_count; ++i) {
             const struct holy_resolved_edge *edge = &set.resolution.edges[i];
@@ -2338,6 +2516,7 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
     result = 5;
     for (i = 0; i < set.count; ++i) {
         struct set_item *item = &set.items[i];
+        if (item->reused) continue;
         if (!holy_install_payload(item->snapshot, root) ||
             !save_instance(installed, item->identity.digest, item->snapshot, generation,
                            set.graph, set.graph_length,
@@ -2459,6 +2638,7 @@ static int recover_set(const char *root_path, int resume)
         struct stat st;
         int item, files, ok;
         const struct set_item *candidate = &set.items[i];
+        if (candidate->reused) { present[i] = 1; continue; }
         if (fstatat(installed, candidate->identity.digest, &st, AT_SYMLINK_NOFOLLOW)) {
             struct plan_hash claims = {0};
             if (errno != ENOENT || !resume || generation != journal.generation ||

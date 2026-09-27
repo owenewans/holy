@@ -54,8 +54,13 @@
 - [x] Plan and journal missing-only repair from the verified artifact cache.
   Preserve changed/partial files, reject stale plans and resume recorded repair
   after injected write failure. General reinstall and config merge remain open.
+- [x] Discover installed providers through package names and literal ELF paths;
+  scan cached archives of the resulting candidate closure. Reuse intact version-2
+  instances without changing their state, reason, graph or payload. Bind reused
+  state into plans and validate it during interrupted-set recovery. Named loader
+  search, automatic preference ranking and cache-independent discovery remain open.
 - [ ] Define stable source IDs and version families; extend transactions to
-  installed-provider reuse, replacements, dynamic libraries and grouped removal.
+  replacements, complete dynamic-library contexts and grouped removal.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions.
 - [x] Install, run, check and remove a native static syscall-only ELF fixture;
