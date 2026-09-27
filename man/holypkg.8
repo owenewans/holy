@@ -165,6 +165,23 @@ doas creates the chroot and drops to the caller's numeric UID/GID.
 Both artifact hashes are printed on success. This verifies the local static
 package path; removal and restoration of real dynamic libc packages, network
 recovery and dinit boot still require their own tests.
+.PP
+make check-static-network STATIC_HOLYPKG=FILE BUSYBOX_PACKAGE=FILE REPORT=FILE
+tests that static client in a libc-free chroot with private network namespace,
+local DNS and HTTPS fixtures, and a generated test CA. It verifies real DNS
+queries, certificate rejection, digest rejection, downloading and native archive
+verification. The client drops to the caller's UID/GID. The fixture creates no
+external route and supplies no proxy credentials. Python, OpenSSL, ip, unshare,
+chroot and noninteractive doas are host test tools, not guest recovery helpers.
+Host ip configures the fixture's loopback interface; static interface setup and
+physical network recovery remain separate tests.
+.PP
+The holy-static-network-test-1 JSON report records architecture, host kernel,
+input and fixture hashes, CA hash, per-command argv/status/time/logs, observed
+DNS query types, completed coverage and unexecuted cases. A dynamic binary
+fails the libc-free probe. REPORT defaults to out/static-network.json. No VM
+image is involved, so its report field is null. Temporary keys and rootfs
+are removed after the test.
 .SS Package operations
 The config check command checks source and rule configuration without changing
 the system. General package installation, foreign import, source sync and

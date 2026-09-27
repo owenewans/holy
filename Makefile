@@ -34,6 +34,10 @@ check-bootstrap-busybox: holypkg
 check-static-core:
 	sh tests/static-core.sh "$(or $(STATIC_HOLYPKG),./holypkg)" "$(or $(BUSYBOX_PACKAGE),out/busybox-bootstrap/busybox.holy)"
 
+.PHONY: check-static-network
+check-static-network:
+	python3 tests/static-network.py "$(or $(STATIC_HOLYPKG),./holypkg)" "$(or $(BUSYBOX_PACKAGE),out/busybox-bootstrap/busybox.holy)" "$(or $(REPORT),out/static-network.json)"
+
 .PHONY: static-deps static
 static-deps:
 	sh tools/static-deps.sh "$(INPUTS)" "$(or $(OUTPUT),out/static-deps)" "$(KERNEL_HEADERS)"

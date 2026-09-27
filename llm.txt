@@ -51,7 +51,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=39c565695867fcd6f7a7d0d72ec15714b5f1c02aaee74dc98373c9272c538b36
+holypkg.8 source=holy version=development sha256=b231be4bcbaed6ca002f7fbc9c0e0d87f3d72ed2dcb52305e4405ff58bdca9a2
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -175,6 +175,24 @@ DESCRIPTION
      artifact hashes are printed on success.  This  verifies  the  local  static
      package  path;  removal and restoration of real dynamic libc packages, net-
      work recovery and dinit boot still require their own tests.
+
+     make  check-static-network	 STATIC_HOLYPKG=FILE  BUSYBOX_PACKAGE=FILE   RE-
+     PORT=FILE	tests that static client in a libc-free chroot with private net-
+     work namespace, local DNS and HTTPS fixtures, and a generated test	 CA.  It
+     verifies  real  DNS queries, certificate rejection, digest rejection, down-
+     loading and native archive verification. The client drops to  the	caller's
+     UID/GID.  The  fixture creates no external route and supplies no proxy cre-
+     dentials. Python, OpenSSL, ip, unshare, chroot and noninteractive doas  are
+     host  test	 tools, not guest recovery helpers.  Host ip configures the fix-
+     ture's loopback interface; static interface setup and physical network  re-
+     covery remain separate tests.
+
+     The  holy-static-network-test-1 JSON report records architecture, host ker-
+     nel, input and fixture hashes, CA hash, per-command  argv/status/time/logs,
+     observed  DNS  query  types, completed coverage and unexecuted cases. A dy-
+     namic binary fails the libc-free probe. REPORT defaults to	 out/static-net-
+     work.json.	 No VM image is involved, so its report field is null. Temporary
+     keys and rootfs are removed after the test.
 
    Package operations
      The config check command  checks  source  and  rule  configuration	 without

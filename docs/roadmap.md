@@ -64,6 +64,9 @@ it does not mean a bootable distribution or general package support.
   archive, ELF, repository, solver and HTTPS fixtures. Run local package
   cache/install/check/remove and BusyBox shell probes inside a libc-free chroot.
   Real libc restoration and boot remain separate unfinished acceptance gates.
+- [x] Test the static client's DNS and HTTPS path in a private-network libc-free
+  chroot, including wrong CA/digest refusals and a hashed JSON report. Network
+  interface setup still uses a host fixture tool, not a finished recovery profile.
 - [ ] Package statically linked BusyBox, dinit, mdevd and the recovery chain,
   plus both dynamic libc runtimes for i686 and x86_64.
 - [ ] Package Limine, dracut, kernel, firmware, SDK/sysroots and the default
