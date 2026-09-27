@@ -77,6 +77,40 @@ with tempfile.TemporaryDirectory() as scratch:
         return artifacts
 
     artifact = convert(foreign("basic"), "basic-output")[0]
+    control_part = tar([("control", b"Package: debfixture\nVersion: 1\nArchitecture: all\n", "file")])
+    data_part = tar([("item", b"x", "file")])
+    convert(foreign("extended-format", order=[("debian-binary", b"2.1\nfuture field\n"),
+        ("_optional", b"ignored"), ("control.tar.gz", control_part),
+        ("data.tar.gz", data_part), ("future", b"ignored")]), "extended-format-output")
+    convert(foreign("bad-minor", order=[("debian-binary", b"2.x\n"),
+        ("control.tar.gz", control_part), ("data.tar.gz", data_part)]),
+        "bad-minor-output", status=2)
+    convert(foreign("misnamed-codec", order=[("debian-binary", b"2.0\n"),
+        ("control.tar.xz", control_part), ("data.tar.gz", data_part)]),
+        "misnamed-codec-output", status=2)
+    convert(foreign("misnamed-plain", order=[("debian-binary", b"2.0\n"),
+        ("control.tar.gz", control_part), ("data.tar", data_part)]),
+        "misnamed-plain-output", status=2)
+    convert(foreign("unexpected-before-data", order=[("debian-binary", b"2.0\n"),
+        ("control.tar.gz", control_part), ("future", b"ignored"),
+        ("data.tar.gz", data_part)]), "unexpected-before-data-output", status=2)
+    convert(foreign("missing-data", order=[("debian-binary", b"2.0\n"),
+        ("control.tar.gz", control_part)]), "missing-data-output", status=2)
+    zstd_control = subprocess.run(["zstd", "-q", "-c"], input=tar(
+        [("control", b"Package: debfixture\nVersion: 1\nArchitecture: all\n", "file")], "w"),
+        capture_output=True, check=True).stdout
+    zstd_data = subprocess.run(["zstd", "-q", "-c"], input=tar([("item", b"x", "file")], "w"),
+                               capture_output=True, check=True).stdout
+    convert(foreign("zstd", order=[("debian-binary", b"2.0\n"),
+        ("control.tar.zst", zstd_control), ("data.tar.zst", zstd_data)]), "zstd-output")
+    convert(foreign("misnamed-zstd", order=[("debian-binary", b"2.0\n"),
+        ("control.tar.gz", zstd_control), ("data.tar.zst", zstd_data)]),
+        "misnamed-zstd-output", status=2)
+    lz4_data = subprocess.run(["lz4", "-q", "-c"], input=tar([("item", b"x", "file")], "w"),
+                              capture_output=True, check=True).stdout
+    convert(foreign("unsupported-lz4", order=[("debian-binary", b"2.0\n"),
+        ("control.tar.gz", control_part), ("data.tar", lz4_data)]),
+        "unsupported-lz4-output", status=2)
     payload = b"deb import\n"
     md5_line = hashlib.md5(payload).hexdigest().encode() + b"  usr/share/debfixture\n"
     def with_md5(name, checksums, body=payload):

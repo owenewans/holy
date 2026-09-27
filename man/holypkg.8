@@ -171,6 +171,10 @@ payload file before writing native outputs. MD5 detects payload mismatch here;
 it does not authenticate the source archive.
 make check-deb exercises valid and malformed ar members, codecs, dependencies,
 inactive hooks and native install/check/remove in a temporary root.
+The Debian reader accepts a numeric 2.x debian-binary version with following
+version-file lines, ignores additional ar members after data.tar, and checks
+that the control/data compression matches its member suffix. The version file
+is limited to 4096 bytes.
 .PP
 The importer reads .PKGINFO identities, full epoch/version/release strings,
 package relations and original field values. It preserves .PKGINFO, .BUILDINFO,

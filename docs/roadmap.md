@@ -62,8 +62,9 @@
   foreign relation/hook/transform installation remain open.
 
 - [x] Import local Debian .deb binary archives into native outputs with original
-  ar bytes, control fields and scripts retained. Check ar order, payload paths,
-  codecs, architecture claims and install/check/remove for a data package.
+  ar bytes, control fields and scripts retained. Check ar order, 2.x version
+  headers, optional post-data members, codec suffixes, payload paths,
+  architecture claims and install/check/remove for a data package.
   Resolve simple Depends entries and exact/unversioned Provides claims with
   Debian version ordering within the deb family. Alternatives, Pre-Depends and
   other unsupported relationships stay foreign requirements; conffiles require

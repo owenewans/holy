@@ -270,6 +270,41 @@ done:
     return result;
 }
 
+static int deb_version(struct archive *ar, long long size)
+{
+    char data[4096];
+    size_t used = 0, i;
+    if (size < 4 || size > (long long)sizeof data) return 0;
+    while (used < (size_t)size) {
+        la_ssize_t got = archive_read_data(ar, data + used, (size_t)size - used);
+        if (got <= 0) return 0;
+        used += (size_t)got;
+    }
+    if (data[0] != '2' || data[1] != '.' || data[size - 1] != '\n' ||
+        memchr(data, 0, (size_t)size)) return 0;
+    for (i = 2; i < (size_t)size && data[i] >= '0' && data[i] <= '9'; ++i) {}
+    return i > 2 && i < (size_t)size && data[i] == '\n';
+}
+
+static int deb_codec_matches(FILE *part, const char *suffix)
+{
+    unsigned char header[6];
+    ssize_t size = pread(fileno(part), header, sizeof header, 0);
+    int gzip, xz, zstd, bzip2, lz4;
+    if (size < 0) return 0;
+    gzip = size >= 2 && header[0] == 0x1f && header[1] == 0x8b;
+    xz = size >= 6 && !memcmp(header, "\xfd""7zXZ\0", 6);
+    zstd = size >= 4 && !memcmp(header, "\x28\xb5\x2f\xfd", 4);
+    bzip2 = size >= 3 && !memcmp(header, "BZh", 3);
+    lz4 = size >= 4 && !memcmp(header, "\x04\x22\x4d\x18", 4);
+    if (lz4) return 0;
+    if (!strcmp(suffix, ".gz")) return gzip;
+    if (!strcmp(suffix, ".xz")) return xz;
+    if (!strcmp(suffix, ".zst")) return zstd;
+    if (!strcmp(suffix, ".bz2")) return bzip2;
+    return !gzip && !xz && !zstd && !bzip2;
+}
+
 static int collect_deb(const char *snapshot, struct foreign_input *input)
 {
     struct archive *ar = archive_read_new();
@@ -292,16 +327,19 @@ static int collect_deb(const char *snapshot, struct foreign_input *input)
         FILE *part = NULL;
         char descriptor[64], buffer[65536];
         la_ssize_t got;
+        result = 2;
         if (!name || size < 0 || size > 1024LL * 1024 * 1024) goto done;
         if (name[0] == '_' && stage && stage < 3) {
             if (archive_read_data_skip(ar) != ARCHIVE_OK) goto done;
             continue;
         }
         if (stage == 0) {
-            char version[5];
-            if (strcmp(name, "debian-binary") || size != 4 ||
-                archive_read_data(ar, version, 4) != 4 || memcmp(version, "2.0\n", 4)) goto done;
+            if (strcmp(name, "debian-binary") || !deb_version(ar, size)) goto done;
             stage = 1;
+            continue;
+        }
+        if (stage == 3) {
+            if (archive_read_data_skip(ar) != ARCHIVE_OK) goto done;
             continue;
         }
         if (stage == 1) {
@@ -320,7 +358,11 @@ static int collect_deb(const char *snapshot, struct foreign_input *input)
             if (got > size - total || fwrite(buffer, 1, (size_t)got, part) != (size_t)got) break;
             total += got;
         }
-        if (got || total != size || fflush(part) || fsync(fileno(part))) { fclose(part); goto done; }
+        if (got || total != size || fflush(part) || fsync(fileno(part)) ||
+            (strcmp(stage == 1 ? name + 11 : name + 8, ".lzma") &&
+             !deb_codec_matches(part, stage == 1 ? name + 11 : name + 8))) {
+            fclose(part); goto done;
+        }
         snprintf(descriptor, sizeof descriptor, "/proc/self/fd/%d", fileno(part));
         result = collect_archive(descriptor, input, stage == 1 ? FOREIGN_DEB_CONTROL : FOREIGN_DEB_DATA,
                                  stage == 2 && !strcmp(name + 8, ".lzma"));
