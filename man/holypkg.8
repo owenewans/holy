@@ -102,9 +102,9 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db repair-plan SHA256 --root DIRECTORY
 .br
-.B holypkg db plan-update OLD_SHA256 NEW_SHA256 --root DIRECTORY
+.B holypkg db plan-update OLD_SHA256 NEW_SHA256 [--accept-privileged NEW_SHA256] --root DIRECTORY
 .br
-.B holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 --root DIRECTORY
+.B holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-privileged NEW_SHA256] --root DIRECTORY
 .br
 .B holypkg db recover --update --root DIRECTORY
 .br
@@ -699,6 +699,12 @@ arbitrary .holy packages.
 db plan-update OLD_SHA256 NEW_SHA256 --root DIRECTORY previews one explicit
 cached replacement. It keeps the installed source-id, name, OS, architecture
 and libc slot; a different slot or an already active target artifact conflicts.
+If the new artifact contains a setuid executable, plan-update requires
+--accept-privileged NEW_SHA256. The old installed decision only authorizes
+checking and replacing the old file; it does not approve the new hash. Apply
+must repeat the same flag. The plan and version-2 update journal bind this
+decision to the new artifact, and recovery reads it from the journal.
+Setgid, sticky and privileged hardlink groups remain unsupported.
 It requires the old archive, the proposed archive and archives for every other
 installed package in the cache. It does not select versions or download missing
 dependencies. The caller explicitly proposes local delivery in the installed
@@ -767,6 +773,9 @@ and returns 5 for inspection; it does not delete them automatically. Missing
 cached inputs must be restored. Interruption before publishing the immutable
 journal requires manual inspection. Unchanged files must still match their
 recorded state. Recovery does not execute hooks or merge modified configs.
+An interrupted setuid update can leave a reviewed executable under a reserved
+.holy-update name until recovery or manual inspection. The reserved name and
+mode are shown in the file plan; root operators must treat it as installed code.
 .PP
 The internal resolver can also validate a complete proposed artifact set.
 It requires every supplied artifact, including disconnected consumers and

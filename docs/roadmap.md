@@ -168,6 +168,11 @@
   injected SIGKILL and ENOSPC; preserve partial staging for explicit inspection.
   Test file addition/removal, regular/symlink transitions and a compatible ELF
   provider update. Hooks, config merging and general rollback remain open.
+- [x] Require a fresh artifact-hash approval when a cached replacement contains
+  a setuid executable. The plan, journal, installed state and recovery retain
+  the decision; a previous package's approval is not inherited. Fixtures
+  cover refusal, mode 4755 publication, injected ENOSPC recovery and removal
+  of setuid on the next replacement. Privileged hardlinks remain unsupported.
 - [x] Create missing manifest directories before payload installation, update or
   repair. Validate every absent parent, preserve existing modes/owners and publish
   prepared directories without replacement. Handle arbitrary archive entry order;

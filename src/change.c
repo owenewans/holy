@@ -300,9 +300,12 @@ int holy_file_plan_record(const struct holy_file_plan *plan, char **record, size
     return ok;
 }
 
-static int supported(const struct holy_manifest_entry *entry)
+static int supported(const struct holy_manifest_entry *entry, int privileged)
 {
-    return !entry || (!(entry->mode & 07000) &&
+    return !entry || ((!(entry->mode & 07000) ||
+                      (privileged && (entry->mode & 07000) == 04000 &&
+                       (entry->mode & 0111) && !entry->directory &&
+                       !entry->link && !entry->hardlink && !entry->group)) &&
                      entry->uid == (long long)geteuid() && entry->gid == (long long)getegid() &&
                      (!entry->link || entry->link[0] != '/'));
 }
@@ -313,7 +316,8 @@ int holy_file_plan_check(const struct holy_file_plan *plan, int root, int recove
     for (i = 0; i < plan->count; ++i) {
         const struct holy_file_change *c = &plan->changes[i];
         if (failed) *failed = i;
-        if (!supported(c->before) || !supported(c->after) ||
+        if (!supported(c->before, plan->before_privileged) ||
+            !supported(c->after, plan->after_privileged) ||
             (c->kind == HOLY_REPLACE && ((c->before && c->before->directory) ||
                                         (c->after && c->after->directory)))) return 6;
     }

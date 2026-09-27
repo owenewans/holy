@@ -14,6 +14,7 @@ struct holy_file_change {
 
 struct holy_file_plan {
     char old_artifact[65], new_artifact[65];
+    int before_privileged, after_privileged;
     struct holy_manifest_entry *old_entries, *new_entries;
     size_t old_count, new_count;
     struct holy_file_change *changes;

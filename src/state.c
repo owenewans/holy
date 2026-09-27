@@ -2220,7 +2220,7 @@ static int scan_privileged(void *context, const struct holy_manifest_entry *entr
 {
     struct privileged_scan *scan = context;
     if (!(entry->mode & 07000)) return 1;
-    if (entry->directory || entry->link || entry->hardlink ||
+    if (entry->directory || entry->link || entry->hardlink || entry->group ||
         (entry->mode & 03000) || !(entry->mode & 0111)) {
         scan->unsupported = 1;
         return 0;
@@ -3403,6 +3403,7 @@ done:
 struct update_journal {
     unsigned long long generation;
     char old[65], next[65], plan[65];
+    int privileged;
 };
 
 static char *update_record(int dir, const char *name)
@@ -3574,22 +3575,29 @@ done:
 static int read_update_journal(int work, unsigned long long current, struct update_journal *journal)
 {
     char *record = update_record(work, "journal"), prefix[128];
-    size_t length;
-    int attempt, ok = 0;
+    size_t length, record_length;
+    int attempt, version, ok = 0;
     if (!record) return 0;
-    for (attempt = 0; attempt < 2; ++attempt) {
+    record_length = strlen(record);
+    for (attempt = 0; attempt < 2 && !ok; ++attempt) for (version = 1; version <= 2; ++version) {
         const char *p;
         if (attempt && !current) break;
         journal->generation = current - (unsigned)attempt;
         length = (size_t)snprintf(prefix, sizeof prefix,
-            "format holy-update-journal-1\ngeneration %llu\nold ", journal->generation);
-        if (strlen(record) != length + 204 || memcmp(record, prefix, length)) continue;
+            "format holy-update-journal-%d\ngeneration %llu\nold ",
+            version, journal->generation);
+        if (record_length != length + 204 + (version == 2 ? 83 : 0) ||
+            memcmp(record, prefix, length)) continue;
         p = record + length;
         if (p[64] != '\n' || memcmp(p + 65, "new ", 4) || p[133] != '\n' ||
             memcmp(p + 134, "plan ", 5) || p[203] != '\n') continue;
         memcpy(journal->old, p, 64); journal->old[64] = 0;
         memcpy(journal->next, p + 69, 64); journal->next[64] = 0;
         memcpy(journal->plan, p + 139, 64); journal->plan[64] = 0;
+        journal->privileged = version == 2;
+        if (journal->privileged &&
+            (memcmp(p + 204, "accept-privileged ", 18) ||
+             memcmp(p + 222, journal->next, 64) || p[286] != '\n')) continue;
         ok = valid_digest(journal->old) && valid_digest(journal->next) &&
              valid_digest(journal->plan) && strcmp(journal->old, journal->next) &&
              journal->generation != ULLONG_MAX;
@@ -3674,7 +3682,8 @@ done:
 static int update_instances(int next_db, int before, char **names, char **snapshots,
                              size_t count, size_t replaced, const char *new_digest,
                              const char *new_source, unsigned long long generation,
-                             const struct holy_resolution *resolution, int create)
+                             const struct holy_resolution *resolution,
+                             int new_privileged, int create)
 {
     int installed = -1, item = -1, proposed = -1, ok = 0;
     char *source = NULL, *graph = NULL;
@@ -3701,7 +3710,8 @@ static int update_instances(int next_db, int before, char **names, char **snapsh
             char *state_record = update_record(item, "state");
             int privileged;
             if (!state_record) goto done;
-            privileged = strstr(state_record, "\nprivileged ") != NULL;
+            privileged = i == replaced ? new_privileged :
+                         strstr(state_record, "\nprivileged ") != NULL;
             free(state_record);
             if (!save_instance(installed, digest, snapshots[i], generation, graph, length,
                                reason, source, architecture[0] ? architecture : NULL,
@@ -3713,6 +3723,15 @@ static int update_instances(int next_db, int before, char **names, char **snapsh
             !instance_architecture_matches(proposed, architecture) ||
             !instance_matches_snapshot(proposed, snapshots[i]) || !graph_digest(proposed, actual) ||
             EVP_Digest(graph, length, hash, &hash_size, EVP_sha256(), NULL) != 1 || hash_size != 32) goto done;
+        if (i == replaced) {
+            char marker[96], *state_record = update_record(proposed, "state");
+            int observed_privileged;
+            if (!state_record) goto done;
+            snprintf(marker, sizeof marker, "\nprivileged %s\n", digest);
+            observed_privileged = strstr(state_record, marker) != NULL;
+            free(state_record);
+            if (observed_privileged != new_privileged) goto done;
+        }
         for (j = 0; j < 32; ++j) snprintf(expected + j * 2, 3, "%02x", hash[j]);
         if (strcmp(expected, actual)) goto done;
         free(source); source = NULL; free(graph); graph = NULL;
@@ -3793,7 +3812,8 @@ static int finish_update(int root, int db, int transactions, int work, int befor
     if (!swapped) {
         if (current != journal->generation || !update_exchange_available(work) ||
             !update_instances(next_db, before, names, snapshots, count, replaced,
-                              journal->next, source, journal->generation, resolution, 1) ||
+                              journal->next, source, journal->generation, resolution,
+                              journal->privileged, 1) ||
             !update_replace(work, "progress", "stage prepared\n")) goto done;
         if (holy_file_plan_stage(files, snapshots[replaced], root, resume, &failed) ||
             holy_file_plan_apply(files, root, update_progress, &progress, &failed)) {
@@ -3817,7 +3837,8 @@ static int finish_update(int root, int db, int transactions, int work, int befor
     if (fsync(next_db) || fsync(db)) goto done;
     if (holy_file_plan_finished(files, root) ||
         !update_instances(db, before, names, snapshots, count, replaced,
-                          journal->next, source, journal->generation, resolution, 0) ||
+                          journal->next, source, journal->generation, resolution,
+                          journal->privileged, 0) ||
         (current == journal->generation && !set_generation(db, journal->generation + 1)) || fsync(db)) goto done;
     snprintf(committed, sizeof committed, "%s\n", journal->plan);
     if (holy_file_plan_cleanup(files, root) ||
@@ -3837,9 +3858,11 @@ done:
 }
 
 static int state_update(const char *old_digest, const char *new_digest,
-                         const char *expected, const char *root_path, int resume)
+                         const char *expected, const char *accepted_privileged,
+                         const char *root_path, int resume)
 {
     int root = -1, dir = -1, installed = -1, item = -1, files = -1, result = 1, pending;
+    int old_privileged = 0, new_privileged = 0;
     int transactions = -1, work = -1, old_db = -1, reference_db = -1, swapped = 0, journaled = 0;
     struct update_journal journal = {0};
     char *saved = NULL;
@@ -3861,7 +3884,9 @@ static int state_update(const char *old_digest, const char *new_digest,
     unsigned char bytes[32];
     unsigned length;
     if (!resume && (!valid_digest(old_digest) || !valid_digest(new_digest) ||
-                    (expected && !valid_digest(expected)))) return 2;
+                    (expected && !valid_digest(expected)) ||
+                    (accepted_privileged && (!valid_digest(accepted_privileged) ||
+                                             strcmp(accepted_privileged, new_digest))))) return 2;
     if (!resume && !strcmp(old_digest, new_digest)) return 3;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0 || fstat(root, &root_st) || (dir = state_dir_at(root, 0)) < 0 ||
@@ -3879,6 +3904,7 @@ static int state_update(const char *old_digest, const char *new_digest,
         journaled = 1; result = 5;
         if (!read_update_journal(work, generation, &journal)) goto done;
         old_digest = journal.old; new_digest = journal.next; expected = journal.plan;
+        accepted_privileged = journal.privileged ? journal.next : NULL;
         generation = journal.generation;
         saved = update_record(work, "plan");
         if (!saved && errno != ENOENT) goto done;
@@ -3940,6 +3966,13 @@ static int state_update(const char *old_digest, const char *new_digest,
         if (files < 0 || !instance_state_generation(item, names[i], &recorded) ||
             recorded > generation || !instance_matches_snapshot(item, snapshots[i]) ||
             !instance_record_digest(item, "state", state)) goto done;
+        if (i == old_index) {
+            char *state_record = update_record(item, "state"), marker[96];
+            if (!state_record) goto done;
+            snprintf(marker, sizeof marker, "\nprivileged %s\n", old_digest);
+            old_privileged = strstr(state_record, marker) != NULL;
+            free(state_record);
+        }
         states[i] = strdup(state);
         if (!states[i]) goto done;
         if (exclusive_claims(installed, names[i], files) != 1 ||
@@ -3961,6 +3994,23 @@ static int state_update(const char *old_digest, const char *new_digest,
         !empty_transform(new_snapshot) || !instance_preflight(new_snapshot)) goto done;
     if (!same_slot(&old, source, &next, source)) { result = 4; goto done; }
     {
+        struct privileged_scan scan = {0};
+        int scanned = holy_verify_visit(new_snapshot, scan_privileged, &scan);
+        if (!scanned) {
+            result = scan.unsupported ? 6 : 1;
+            free(scan.first); goto done;
+        }
+        new_privileged = scan.count != 0;
+        if (new_privileged && !accepted_privileged) {
+            fprintf(stderr, "holypkg: decision-required privileged update artifact=%s path=%s mode=%04o; --accept-privileged %s permits setuid placement\n",
+                    new_digest, scan.first, scan.mode, new_digest);
+            result = 3;
+            free(scan.first); goto done;
+        }
+        free(scan.first);
+        if (accepted_privileged && !new_privileged) { result = 2; goto done; }
+    }
+    {
         struct utsname host;
         if (uname(&host)) { result = 1; goto done; }
         if (!native_architecture(host.machine, next.arch)) {
@@ -3971,17 +4021,20 @@ static int state_update(const char *old_digest, const char *new_digest,
     }
     pending = slot_available_except(reference_db, &next, source, old_digest);
     if (pending != 1) { result = pending < 0 ? 1 : 4; goto done; }
-    result = holy_preview_resolved(new_snapshot, root_path, 1, 0);
+    result = holy_preview_resolved(new_snapshot, root_path, 1, new_privileged);
     if (result) goto done;
     result = explicit_elf_paths(new_snapshot);
     if (result) goto done;
     validation.completed = 1;
+    validation.accepted_privileged = new_privileged;
     validation.hash = EVP_MD_CTX_new();
     result = 6;
     if (!validation.hash || EVP_DigestInit_ex(validation.hash, EVP_sha256(), NULL) != 1 ||
         !holy_verify_visit(new_snapshot, plan_entry, &validation) ||
         !holy_file_plan_collect(snapshots[old_index], new_snapshot, &changes) ||
         !holy_file_plan_record(&changes, &file_record, &file_size)) goto done;
+    changes.before_privileged = old_privileged;
+    changes.after_privileged = new_privileged;
     result = holy_file_plan_check(&changes, root, resume, &failed);
     if (result) {
         fprintf(stderr, "holypkg: update file preflight failed at change %zu\n", failed);
@@ -4003,6 +4056,7 @@ static int state_update(const char *old_digest, const char *new_digest,
             "root %ju %ju\ndatabase %ju %ju\nold %s\nnew %s\nregistry %s\n",
             generation, (uintmax_t)root_st.st_dev, (uintmax_t)root_st.st_ino,
             (uintmax_t)db_st.st_dev, (uintmax_t)db_st.st_ino, old_digest, new_digest, registry);
+    if (new_privileged) fprintf(out, "accept-privileged %s\n", new_digest);
     if (source_record) fputs(source_record, out);
     else fputs("source - local\n", out);
     fputs("delivery local\n[installed]\n", out);
@@ -4038,8 +4092,11 @@ static int state_update(const char *old_digest, const char *new_digest,
         journal.generation = generation;
         memcpy(journal.old, old_digest, 65); memcpy(journal.next, new_digest, 65); memcpy(journal.plan, checksum, 65);
         snprintf(header, sizeof header,
-            "format holy-update-journal-1\ngeneration %llu\nold %s\nnew %s\nplan %s\n",
-            generation, old_digest, new_digest, checksum);
+            "format holy-update-journal-%d\ngeneration %llu\nold %s\nnew %s\nplan %s\n%s%s%s",
+            new_privileged ? 2 : 1, generation, old_digest, new_digest, checksum,
+            new_privileged ? "accept-privileged " : "",
+            new_privileged ? new_digest : "", new_privileged ? "\n" : "");
+        journal.privileged = new_privileged;
         if (!update_replace(work, "journal", header)) goto done;
     }
     if (!saved && !update_replace(work, "plan", record)) goto done;
@@ -4077,18 +4134,20 @@ done:
     return result;
 }
 
-int holy_state_update_plan(const char *old_digest, const char *new_digest, const char *root_path)
+int holy_state_update_plan(const char *old_digest, const char *new_digest,
+                           const char *accepted_privileged, const char *root_path)
 {
-    return state_update(old_digest, new_digest, NULL, root_path, 0);
+    return state_update(old_digest, new_digest, NULL, accepted_privileged, root_path, 0);
 }
 
 int holy_state_apply_update(const char *plan, const char *old_digest,
-                            const char *new_digest, const char *root_path)
+                            const char *new_digest, const char *accepted_privileged,
+                            const char *root_path)
 {
-    return state_update(old_digest, new_digest, plan, root_path, 0);
+    return state_update(old_digest, new_digest, plan, accepted_privileged, root_path, 0);
 }
 
 int holy_state_recover_update(const char *root_path)
 {
-    return state_update(NULL, NULL, NULL, root_path, 1);
+    return state_update(NULL, NULL, NULL, NULL, root_path, 1);
 }

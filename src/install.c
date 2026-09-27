@@ -958,7 +958,11 @@ static int transition_entry_valid(const struct holy_manifest_entry *entry)
     return entry && entry->path && entry->path[0] && entry->path[0] != '/' &&
            entry->path[strlen(entry->path) - 1] != '/' &&
            !entry->directory && !(entry->link && (entry->hardlink || entry->group)) &&
-           !(entry->mode & ~0777u) && entry->uid == (long long)geteuid() &&
+           !(entry->mode & ~07777u) &&
+           (!(entry->mode & 07000) ||
+            ((entry->mode & 07000) == 04000 && (entry->mode & 0111) &&
+             !entry->link && !entry->hardlink && !entry->group)) &&
+           entry->uid == (long long)geteuid() &&
            entry->gid == (long long)getegid() && entry->size >= 0 &&
            (entry->link ? entry->mode == 0777 && !entry->size &&
                           entry->link[0] != '/' && holy_safe_link(entry->path, entry->link) :
