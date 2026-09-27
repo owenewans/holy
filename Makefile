@@ -8,8 +8,14 @@ DESTDIR ?=
 SOLV_CFLAGS ?= $(patsubst -I%,-isystem %,$(shell pkg-config --cflags-only-I libsolv 2>/dev/null)) $(shell pkg-config --cflags-only-other libsolv 2>/dev/null)
 SOLV_LIBS ?= $(shell pkg-config --libs libsolv 2>/dev/null) -lz
 
-.PHONY: all check check-fixtures check-root check-qemu check-qemu-gate check-https check-solver check-install-payload man
+.PHONY: all check check-fixtures check-root check-qemu check-qemu-gate check-https check-solver check-install-payload bootstrap-busybox check-bootstrap-busybox man
 all: holypkg
+
+bootstrap-busybox: holypkg
+	sh tools/bootstrap-busybox.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/busybox-bootstrap)"
+
+check-bootstrap-busybox: holypkg
+	sh tests/bootstrap-busybox.sh ./holypkg "$(or $(BUSYBOX_PACKAGE),out/busybox-bootstrap/busybox.holy)"
 
 holypkg: src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(SOLV_LIBS)

@@ -56,6 +56,10 @@ it does not mean a bootable distribution or general package support.
 
 ## Base system and images
 
+- [x] Build pinned x86_64 musl-static BusyBox as a native package and test its
+  installed shell in a chroot without dynamic libc directories. Build logs,
+  source/config/artifact hashes and upstream license files are retained.
+  This bootstrap profile does not supply static holypkg or network recovery.
 - [ ] Package statically linked BusyBox, dinit, mdevd and the recovery chain,
   plus both dynamic libc runtimes for i686 and x86_64.
 - [ ] Package Limine, dracut, kernel, firmware, SDK/sysroots and the default

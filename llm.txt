@@ -51,7 +51,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=264d046055d3f3556bcc2b2f785c8c1bf5de837ecbc4d6decdcab1d288363b8e
+holypkg.8 source=holy version=development sha256=55cc624b95e57c9f059a1434f83a160f4b8b3e1e0dbbea35a519bdca45a3ae3d
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -115,6 +115,38 @@ SYNOPSIS
      holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 
 DESCRIPTION
+   Bootstrap shell package
+     The repository target make bootstrap-busybox INPUTS=DIRECTORY OUTPUT=DIREC-
+     TORY builds a small x86_64 BusyBox package with static musl linkage. INPUTS
+     must  contain  musl-1.2.5.tar.gz  and busybox-1.37.0.tar.bz2 from their up-
+     stream release URLs.  The build checks pinned SHA-256  digests  before  un-
+     packing,  uses  GCC  and upstream make builds, and installs the build tool-
+     chain only in a temporary directory.  OUTPUT must not exist.  Its	absolute
+     path must use ASCII letters, digits, underscore, dot, slash or hyphen. JOBS
+     controls build parallelism, default 2.  The optional GCC flag -fno-link-li-
+     batomic  disables the host compiler's automatic libatomic linkage when that
+     flag is available; the musl link otherwise uses only  the	selected  static
+     libraries.
+
+     Outputs  include  busybox.holy, build.log, build.record, busybox.config, an
+     applet list, ELF inspection and shell probe records.  Source  URLs,  source
+     hashes,  compiler	version,  config  hash,	 artifact  hash, exit status and
+     elapsed seconds are recorded. Upstream BusyBox and musl copyright files ac-
+     company the payload.  The package contains /usr/bin/busybox; invoke applets
+     as busybox APPLET.	 The configuration is profiles/busybox-bootstrap.config.
+     It includes ash, basic file utilities and mount tools; it	has  no	 network
+     recovery profile.	The manifest records the builder's numeric UID/GID. This
+     is	 a  local  bootstrap experiment, not an official base image or a general
+     recipe engine.
+
+     make check-bootstrap-busybox BUSYBOX_PACKAGE=FILE installs the package in a
+     disposable root with prepared directories, runs its shell there  with  doas
+     and chroot --userspec, checks files and removes the package. Noninteractive
+     doas  must	 be  available. The chroot has no dynamic libc directories. This
+     tests the static shell; host holypkg still runs outside the  chroot.  Boot,
+     static holypkg and full libc recovery require separate acceptance tests.
+
+   Package operations
      The  config  check	 command  checks  source  and rule configuration without
      changing the system. General package installation, foreign	 import,  source
      sync  and multi-source resolution are not available yet. This executable is
