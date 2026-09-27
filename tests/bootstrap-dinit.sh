@@ -14,16 +14,24 @@ mkdir -p "$root/usr/bin" "$root/run" "$root/services" "$root/dev" \
     "$root/usr/share/licenses/dinit" "$root/usr/share/licenses/busybox" \
     "$root/usr/share/licenses/musl" "$root/usr/share/man/man5" "$root/usr/share/man/man8"
 "$bin" db init --root "$root" > "$tmp/out"
+place() {
+    "$bin" info "local:$package" > "$tmp/info"
+    arch=$(sed -n 's/^arch //p' "$tmp/info")
+    set -- "$digest"
+    case "$arch:$(uname -m)" in
+        x86_64:x86_64|x86:i686) ;;
+        *) set -- "$@" --accept-arch "$digest" ;;
+    esac
+    "$bin" db plan-set "$@" --root "$root" > "$tmp/out"
+    plan=$(sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+    test "${#plan}" -eq 64
+    "$bin" db apply-set "$plan" "$@" --root "$root" > "$tmp/out"
+}
 for package in "$2" "$3"; do
     "$bin" cache stage "local:$package" --root "$root" > "$tmp/out"
     digest=$(sha256sum "$package")
     digest=${digest%% *}
-    "$bin" db reserve "$digest" --root "$root" > "$tmp/out"
-    "$bin" db plan --root "$root" > "$tmp/out"
-    plan=$(sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
-    test "${#plan}" -eq 64
-    "$bin" db approve "$plan" --root "$root" > "$tmp/out"
-    "$bin" db apply --root "$root" > "$tmp/out"
+    place
 done
 doas -n mknod -m 666 "$root/dev/null" c 1 3
 test "$(readlink "$root/usr/bin/reboot")" = shutdown
@@ -32,6 +40,12 @@ for name in dinit dinitctl busybox; do
     "$bin" elf "$root/usr/bin/$name" > "$tmp/elf"
     grep -qx 'runtime nolibc' "$tmp/elf"
 done
+"$bin" elf "$root/usr/bin/dinit" > "$tmp/elf"
+if grep -qx 'machine x86' "$tmp/elf"; then
+    command -v qemu-i386 >/dev/null || exit 6
+    qemu-i386 -cpu pentium2 "$root/usr/bin/dinit" --version > "$tmp/emulator"
+    grep -q 'Dinit version' "$tmp/emulator"
+fi
 cat > "$root/services/probe" <<'EOF'
 type = scripted
 command = /usr/bin/busybox touch /run/started

@@ -60,7 +60,7 @@ check-bootstrap-mdevd: holypkg
 	sh tests/bootstrap-mdevd.sh ./holypkg "$(or $(MDEVD_PACKAGE),out/mdevd-bootstrap/mdevd.holy)"
 
 bootstrap-dinit: holypkg
-	sh tools/bootstrap-dinit.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/dinit-bootstrap)"
+	ARCH="$(or $(ARCH),x86_64)" sh tools/bootstrap-dinit.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/dinit-bootstrap)"
 
 check-bootstrap-dinit: holypkg
 	sh tests/bootstrap-dinit.sh ./holypkg "$(or $(DINIT_PACKAGE),out/dinit-bootstrap/dinit.holy)" "$(or $(BUSYBOX_PACKAGE),out/busybox-bootstrap/busybox.holy)"

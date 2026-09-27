@@ -228,7 +228,7 @@
   runtime payloads; restore from cached LZ4 .holy files and run both dynamic probes.
   Repeat each libc separately, including loader symlink restoration. This gate
   covers missing payload repair, not forced package removal, boot or network recovery.
-- [x] Build pinned x86_64 musl-static dinit with upstream tests; exercise
+- [x] Build pinned i686 and x86_64 musl-static dinit with upstream tests; exercise
   service start/status/shutdown and stop-command effects with dinitctl in a
   libc-free chroot as an ordinary user. Install/check/remove the complete package,
   including command and man-page symlinks, through the transaction engine.

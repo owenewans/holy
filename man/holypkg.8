@@ -333,10 +333,11 @@ This covers installation, static configuration parsing and removal. Uevent
 handling, coldplug, dinit integration and client libudev compatibility remain
 separate acceptance cases.
 .PP
-make bootstrap-dinit INPUTS=DIRECTORY OUTPUT=DIRECTORY builds dinit 0.22.1
-as an x86_64 musl-static native package, including its C++ runtime. Inputs are
+make bootstrap-dinit ARCH=i686|x86_64 INPUTS=DIRECTORY OUTPUT=DIRECTORY builds dinit 0.22.1
+as a musl-static native package, including its C++ runtime. The default target
+is x86_64. Inputs are
 dinit-0.22.1.tar.gz from the upstream GitHub tag and the pinned
-x86_64-linux-musl-cross.tgz toolchain from musl.cc. The script copies and hashes
+i686-linux-musl-cross.tgz or x86_64-linux-musl-cross.tgz from musl.cc. The script copies and hashes
 both archives before use; an updated archive at the same URL is rejected.
 It runs upstream make check, includes upstream man pages and license, and records
 compiler version, configuration, ELF facts and package hash. Capabilities support
@@ -351,6 +352,7 @@ the control socket, requests shutdown and checks the stop-command effect.
 The service manager runs with the caller's UID/GID in user mode. Host doas,
 chroot, mknod and timeout are required; the fixture supplies only /dev/null
 and enforces a 20-second timeout. It prints the tested package hashes.
+For i686 it verifies dinit under qemu-i386 with the pentium2 CPU model.
 After service shutdown it checks both installed manifests and removes both
 packages through the database. This covers package installation, service
 control and the static C++ runtime. PID 1 boot remains a separate test.
