@@ -54,6 +54,7 @@ paths. A minimal config is:
 root "/mnt/holy"
 artifact SHA256_OF_ROOT_PACKAGE
 artifact SHA256_OF_DEPENDENCY_CANDIDATE
+accept-arch SHA256_OF_CONFIRMED_CROSS_ARCH_PACKAGE
 .fi
 .RE
 .PP
@@ -61,6 +62,12 @@ SHA256 values must be lowercase. The root path cannot be /. Config comments
 do not change the effective-config hash. Changes to parsed values or artifact
 order require a new plan. The plan must be reviewed before apply; the config
 is no longer consulted at that step.
+.PP
+accept-arch names an artifact already selected in [install]. It preserves an
+explicit architecture-placement decision in plan format 2. Preview and apply
+pass the same approval to holypkg. It permits placement; it does not claim the
+target executable can run on the host. The text menu toggles this decision in
+the package list and shows accepted artifacts before installation.
 .SH DISK IMAGE
 The disk command accepts a regular file of at least 1 GiB. The supported
 layout is GPT with a 1 MiB BIOS boot partition, a 256 MiB FAT32 ESP and an

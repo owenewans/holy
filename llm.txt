@@ -1,4 +1,4 @@
-holy-image.7 source=holy version=development sha256=14a8542ba205a89a752b4628167bfc67cf38161de0f26a4a143fab4cf4d8ebfd
+holy-image.7 source=holy version=development sha256=e248a3176ca47603b43f16c92a1608ddb35a53c4ab36adfdcfe0ee60dcb6a08f
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
 NAME
@@ -99,12 +99,13 @@ INPUTS AND ROOT
      The static core binary, selected kernel, Limine data and Holy boot configu-
      ration  also become native packages. The holy-base metapackage requires the
      resulting eight packages, including holyinstall. The dual-libc profile adds
-     the two runtime packages and two C probe packages. holypkg resolves the se-
-     lected set, prints its plan and applies its reviewed digest with one writer
-     lock and one generation change into root/.	 install.plan  retains	the  se-
-     lected artifacts and requirement edges.  The builder prepares the profile's
-     directories  first.  It does not extract foreign distro roots or modify the
-     host package database.
+     the two runtime packages and two C probe packages. holyinstall asks holypkg
+     to resolve the selected  set,  writes  install.preview  and  a  frozen  in-
+     stall.plan,  then applies that plan with one writer lock and one generation
+     change into root/. The preview records selected providers and requirements;
+     the plan records artifacts and architecture approvals.   The  builder  pre-
+     pares  the	 profile's directories first. It does not extract foreign distro
+     roots or modify the host package database.
 
      For ROOT_STORAGE=ext4, mke2fs copies that prepared root into a 512 MiB  raw
      root.ext4 without mounting it on the host. Limine passes holy.root=/dev/vda
@@ -499,7 +500,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holy.conf.5 source=holy version=development sha256=3012e908062e2f91ed431fe8bb0bcf4028e57c99baa2547252b44dc16dc6a3ab
+holy.conf.5 source=holy version=development sha256=05c9a441fa7ccb5da7a082c83cb0e9f56066f7068c25dcd0500646fd85287d60
 HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
 
 NAME
@@ -544,10 +545,12 @@ DESCRIPTION
      [install] accepts one root directory and ordered artifact	SHA-256	 entries
      for  holyinstall's pre-mounted-root package transaction. The first artifact
      is the explicit package. The installer checks required fields, digest  syn-
-     tax and duplicate artifacts before planning. See holyinstall(8).
+     tax  and  duplicate  artifacts before planning. See holyinstall(8).  An ad-
+     dressable accept-arch list can approve placement of selected artifacts with
+     a different target architecture. The frozen plan retains each approval.
 
-     [disk]  accepts  one  image path and layout gpt-ext4. The disk plan accepts
-     regular image files, not block devices. Its fixed plan schema  forbids  in-
+     [disk] accepts one image path and layout gpt-ext4. The  disk  plan	 accepts
+     regular  image  files, not block devices. Its fixed plan schema forbids in-
      clude.  See holyinstall(8).
 
 EXAMPLE
@@ -559,33 +562,33 @@ EXAMPLE
      repo core "https://mirror.example/arch/$repo/os/$arch"
 
 FILES
-     /etc/holy.conf  is	 the proposed system path. The checker takes an explicit
+     /etc/holy.conf is the proposed system path. The checker takes  an	explicit
      file.
 
 SOURCE IDENTITIES
      The source plan command reads this syntax, including includes, and proposes
      a registry replacement. The source apply command consumes that frozen plan;
-     it does not reread the configuration. See holypkg(8) for  the  command  se-
+     it	 does  not  reread the configuration. See holypkg(8) for the command se-
      quence.
 
-     The  current  source ID is SHA-256 of a canonical, sorted representation of
-     type, url and repo records. Alias, parent and trust  policy  are  excluded.
-     Renaming  an  alias preserves the ID. Changing an endpoint, backend type or
-     repository name creates another ID and retains the previous  definition  as
-     inactive  history.	  Readding  the same definition reactivates its existing
-     ID. Equivalent URL spellings and mirrors are not  automatically  identified
+     The current source ID is SHA-256 of a canonical, sorted  representation  of
+     type,  url	 and  repo records. Alias, parent and trust policy are excluded.
+     Renaming an alias preserves the ID. Changing an endpoint, backend	type  or
+     repository	 name  creates another ID and retains the previous definition as
+     inactive history.	Readding the same definition  reactivates  its	existing
+     ID.  Equivalent  URL spellings and mirrors are not automatically identified
      as one source.
 
-     Registration  requires  endpoints with a scheme followed by :// and rejects
-     URL userinfo, queries, fragments and  whitespace.	Plans  therefore  cannot
-     carry  those credential forms. Two aliases with the same definition require
-     a decision.  Registration neither contacts a repository  nor  verifies  its
-     signatures.  Set  installation  can  bind local artifacts to registered IDs
-     through explicit --source associations. Source trust  and	parent	policies
+     Registration requires endpoints with a scheme followed by ://  and	 rejects
+     URL  userinfo,  queries,  fragments  and whitespace. Plans therefore cannot
+     carry those credential forms. Two aliases with the same definition	 require
+     a	decision.   Registration  neither contacts a repository nor verifies its
+     signatures. Set installation can bind local  artifacts  to	 registered  IDs
+     through  explicit	--source  associations. Source trust and parent policies
      during package selection remain unimplemented.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holyinstall.8 source=holy version=development sha256=18c3bf5fc4d99d339eab47d0cc54efe823106e0b103be34fc510b3ad55dc288f
+holyinstall.8 source=holy version=development sha256=b050c8a5acd5862c5ef23e496dffa4192c6ee1a394c089484de12d99f0eaa927
 HOLYINSTALL(8)		     System Manager's Manual		  HOLYINSTALL(8)
 
 NAME
@@ -639,11 +642,19 @@ DESCRIPTION
 	    root "/mnt/holy"
 	    artifact SHA256_OF_ROOT_PACKAGE
 	    artifact SHA256_OF_DEPENDENCY_CANDIDATE
+	    accept-arch SHA256_OF_CONFIRMED_CROSS_ARCH_PACKAGE
 
      SHA256 values must be lowercase. The root path cannot be /. Config comments
      do not change the effective-config hash. Changes to parsed values or  arti-
      fact  order require a new plan. The plan must be reviewed before apply; the
      config is no longer consulted at that step.
+
+     accept-arch names an artifact already selected in [install].  It  preserves
+     an	 explicit  architecture-placement decision in plan format 2. Preview and
+     apply pass the same approval to holypkg. It permits placement; it does  not
+     claim the target executable can run on the host. The text menu toggles this
+     decision  in the package list and shows accepted artifacts before installa-
+     tion.
 
 DISK IMAGE
      The disk command accepts a regular file of at least 1  GiB.  The  supported

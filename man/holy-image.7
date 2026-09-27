@@ -92,9 +92,10 @@ The dynamic musl package owns its own license file.
 The static core binary, selected kernel, Limine data and Holy boot configuration
 also become native packages. The holy-base metapackage requires the resulting
 eight packages, including holyinstall. The dual-libc profile adds the two runtime packages and two C
-probe packages. holypkg resolves the selected set, prints its plan and
-applies its reviewed digest with one writer lock and one generation change
-into root/. install.plan retains the selected artifacts and requirement edges.
+probe packages. holyinstall asks holypkg to resolve the selected set, writes
+install.preview and a frozen install.plan, then applies that plan with one
+writer lock and one generation change into root/. The preview records selected
+providers and requirements; the plan records artifacts and architecture approvals.
 The builder prepares the profile's directories first. It does not extract
 foreign distro roots or modify the host package database.
 .PP

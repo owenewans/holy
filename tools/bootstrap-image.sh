@@ -320,7 +320,17 @@ if test "$profile" = dual-libc; then
     fi
 fi
 "$bin" db init --root "$root"
-set --
+python3 - "$root" "$work/install.conf" <<'PY'
+import sys
+
+def quoted(value):
+    return '"' + ''.join('\\x%02x' % ord(char) if ord(char) < 32 or ord(char) == 127
+                       else '\\' + char if char in ('"', '\\') else char
+                       for char in value) + '"'
+
+with open(sys.argv[2], 'w', encoding='utf-8') as output:
+    output.write('[install]\nroot ' + quoted(sys.argv[1]) + '\n')
+PY
 accepted_arch=
 for name in holy-base busybox dinit mdevd holypkg holyinstall linux limine holy-boot $extra_packages; do
     package="$out/packages/$name.holy"
@@ -328,7 +338,7 @@ for name in holy-base busybox dinit mdevd holypkg holyinstall linux limine holy-
     digest=${digest%% *}
     printf 'package %s %s\n' "$name" "$digest" >> "$record"
     "$bin" cache stage "local:$package" --root "$root"
-    set -- "$@" "$digest"
+    printf 'artifact %s\n' "$digest" >> "$work/install.conf"
     if test "$arch" = i686; then
         "$bin" info "local:$package" > "$work/package-info"
         if grep -qx 'arch x86' "$work/package-info"; then accepted_arch="$accepted_arch $digest"; fi
@@ -336,14 +346,14 @@ for name in holy-base busybox dinit mdevd holypkg holyinstall linux limine holy-
 done
 for digest in $accepted_arch; do
     printf 'architecture-placement host x86_64 target x86 artifact %s accepted-unverified\n' "$digest" >> "$record"
-    set -- "$@" --accept-arch "$digest"
+    printf 'accept-arch %s\n' "$digest" >> "$work/install.conf"
 done
-"$bin" db plan-set "$@" --root "$root" > "$out/install.plan"
-cat "$out/install.plan"
-plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$out/install.plan")
+"$installer" --config "$work/install.conf" --plan "$out/install.plan" --holypkg "$bin" > "$out/install.preview"
+cat "$out/install.preview"
+plan=$(sed -n 's/^set-sha256 \([0-9a-f]*\)$/\1/p' "$out/install.plan")
 test "${#plan}" -eq 64
 printf 'install-plan %s\n' "$plan" >> "$record"
-"$bin" db apply-set "$plan" "$@" --root "$root"
+"$installer" --apply "$out/install.plan" --holypkg "$bin" > "$out/install.apply"
 test "$(cat "$root/var/lib/holypkg/generation")" -eq 1
 "$bin" db check --all --root "$root" > "$out/root-check.record"
 "$bin" docs --root "$root" --output "$root/usr/share/holy/llm.txt"
