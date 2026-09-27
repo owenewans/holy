@@ -521,17 +521,19 @@ static int transition_matches(int root, const struct holy_manifest_entry *entry,
 {
     char numbers[4][32], hash[65], *v[13];
     size_t i;
-    if (!transition_entry_valid(entry)) return -1;
+    if (!entry || !entry->path || (entry->directory != 0 && entry->directory != 1) ||
+        (entry->directory && entry->link) || entry->hardlink || entry->group ||
+        (!entry->directory && !entry->link && !entry->hash)) return -1;
     snprintf(numbers[0], sizeof numbers[0], "%o", entry->mode);
     snprintf(numbers[1], sizeof numbers[1], "%lld", entry->uid);
     snprintf(numbers[2], sizeof numbers[2], "%lld", entry->gid);
     snprintf(numbers[3], sizeof numbers[3], "%lld", entry->size);
-    if (!entry->link) for (i = 0; i < 32; ++i)
+    if (!entry->link && !entry->directory) for (i = 0; i < 32; ++i)
         snprintf(hash + i * 2, 3, "%02x", entry->hash[i]);
-    v[0] = entry->link ? "symlink" : "file";
+    v[0] = entry->directory ? "dir" : entry->link ? "symlink" : "file";
     v[1] = (char *)entry->path; v[2] = numbers[0]; v[3] = v[4] = "-";
     v[5] = numbers[1]; v[6] = numbers[2]; v[7] = numbers[3];
-    v[8] = entry->link ? "-" : hash; v[9] = "none"; v[10] = v[11] = "-";
+    v[8] = entry->link || entry->directory ? "-" : hash; v[9] = "none"; v[10] = v[11] = "-";
     v[12] = (char *)entry->link;
     return check_file(root, v, observed);
 }
@@ -548,6 +550,13 @@ static int transition_absent(int root, const char *path)
     }
     free(storage);
     return absent;
+}
+
+int holy_install_check_entry(int root, const struct holy_manifest_entry *entry)
+{
+    int result = transition_matches(root, entry, NULL);
+    if (!result && entry->directory && transition_absent(root, entry->path)) return 2;
+    return result;
 }
 
 static char *transition_temporary(const char *path, const char *name)

@@ -89,6 +89,12 @@
   or new files across injected rename failure and process termination. These
   internal primitives still require the update planner, ownership decisions and
   durable transaction journal before a package-update command can use them.
+- [x] Compare verified old/new archive manifests into a canonical file plan with
+  stable change IDs and both artifact hashes. Check the entire payload delta
+  without writing files, accepting exact before/after states during recovery.
+  Preserve unsupported entries in the record and reject their application;
+  directory creation, source/graph/ownership binding and update journaling remain
+  open. This is an internal component, not a public package-update command.
 - [ ] Implement native HTTPS/Git source synchronization, signed generations and
   cache retention with provenance.
 - [x] Mirror an explicitly pinned HTTPS native catalog into a new sealed local

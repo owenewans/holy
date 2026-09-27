@@ -26,6 +26,8 @@ int holy_install_manifests_conflict(int left_fd, int right_fd);
 int holy_install_payload_missing(const char *snapshot, int root);
 int holy_install_check_or_missing(int files_fd, int root);
 int holy_install_check_path(int files_fd, int root, const char *path);
+/* read-only normalized entry check: 1 matches, 2 absent, 0 drift, -1 unsupported. */
+int holy_install_check_entry(int root, const struct holy_manifest_entry *entry);
 
 /* caller owns the journal reservation for a temporary basename beside next.
    prepare verifies content before publishing it; fd is borrowed, read at offset 0. */

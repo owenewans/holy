@@ -531,6 +531,15 @@ generation publication. General ownership replacement and automatic rollback
 are not implemented. The command is not an installer for
 arbitrary .holy packages.
 .PP
+Internal update preparation compares verified old/new manifests and records
+retained, added, replaced and removed paths with stable IDs and archive hashes.
+Its read-only preflight checks the whole file plan; recovery checking accepts
+exact old or new objects and rejects unrelated changes. Unsupported entries
+remain in the record and prevent application. This component does not yet bind
+database generation, ownership, source or dependency decisions and is not a
+public update command. Directory creation and durable update journaling remain
+unimplemented.
+.PP
 Static executable installation verifies ELF architecture and nolibc facts;
 it does not execute package programs. The caller may run an installed program
 as a separate action. Executable payloads with an unknown format are refused;

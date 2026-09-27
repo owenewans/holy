@@ -1,10 +1,12 @@
 #define _POSIX_C_SOURCE 200809L
 #include "install.h"
 #include "verify.h"
+#include "change.h"
 
 #include <fcntl.h>
 #include <openssl/evp.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -115,6 +117,22 @@ static int transitions(int root, int resume)
 int main(int argc, char **argv)
 {
     int root, ok;
+    if (argc == 5 && (!strcmp(argv[1], "--file-plan") || !strcmp(argv[1], "--file-plan-recovery"))) {
+        struct holy_file_plan plan = {0};
+        char *record = NULL;
+        size_t size = 0, failed = 0;
+        int status = 2;
+        root = open(argv[4], O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (root >= 0 && holy_file_plan_collect(argv[2], argv[3], &plan) &&
+            holy_file_plan_record(&plan, &record, &size)) {
+            status = holy_file_plan_check(&plan, root, !strcmp(argv[1], "--file-plan-recovery"), &failed);
+            if (fwrite(record, 1, size, stdout) != size) status = 1;
+            if (status) fprintf(stderr, "file-plan status %d change %zu\n", status, failed);
+        }
+        free(record); holy_file_plan_free(&plan);
+        if (root >= 0) close(root);
+        return status;
+    }
     if (argc != 3) return 2;
     if (strcmp(argv[1], "--transitions") && strcmp(argv[1], "--resume-transition") &&
         strcmp(argv[1], "--resume-addition") &&
