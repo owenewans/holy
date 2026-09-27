@@ -533,7 +533,7 @@ SOURCE IDENTITIES
      during package selection remain unimplemented.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=2ea59d9e070f3770c2ebc70413889da1ad28386f3a92b7bbb2fb898a45b48e25
+holypkg.8 source=holy version=development sha256=a7b94d4dbc7cff2c25dd7d9918460136e110cebcfe09f46ad99aa4f29177cfdd
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1319,14 +1319,26 @@ DESCRIPTION
      written.  Ordinary check remains read-only. This is  not  general	upgrade,
      rollback or configuration-file repair.
 
-     make  bootstrap-musl  INPUTS=DIRECTORY  OUTPUT=DIRECTORY builds pinned musl
-     1.2.5 as an x86_64 native package, preserving source and build  hashes  and
-     licenses.	 The build sets libc.musl-x86_64.so.1 as SONAME at link time; it
-     does not rewrite the self-bootstrapping loader with patchelf.  make  check-
-     libc-recovery STATIC_HOLYPKG=FILE MUSL_CC=FILE MUSL_PACKAGE=FILE requires a
-     static  client, a musl compiler and that runtime package. It installs glibc
-     and musl fixtures, runs both, removes each runtime and both together,  then
-     executes cached repair inside the libc-free chroot. doas is required; guest
+     make   bootstrap-musl  ARCH=i686|x86_64  INPUTS=DIRECTORY	OUTPUT=DIRECTORY
+     builds pinned musl 1.2.5 as a native runtime package, preserving source and
+     build hashes and licenses. The default target is x86_64. The i686 build re-
+     quires multilib GCC and uses the x86 package architecture	and  i686-linux-
+     musl  private runtime path.  Both packages can coexist; their documentation
+     and public loader paths differ.
+
+     make check-musl-abi STATIC_HOLYPKG=FILE MUSL32_PACKAGE=FILE  MUSL32_CC=FILE
+     MUSL_PACKAGE=FILE	MUSL_CC=FILE  compiles	and runs ELF32 and ELF64 pthread
+     probes in one disposable root on an x86_64 kernel. The  fixture  explicitly
+     approves  the 32-bit artifacts, tests pipes in both directions and restores
+     either or both removed runtimes through the static client and local  cache.
+     It	 requires doas, mount namespaces, patchelf and working 32-bit execution.
+     This test does not boot an i686 kernel or test glibc32  or	 hardware.   The
+     build  sets  libc.musl-x86_64.so.1	 as  SONAME  at	 link  time; it does not
+     rewrite the self-bootstrapping loader with patchelf.   make  check-libc-re-
+     covery STATIC_HOLYPKG=FILE MUSL_CC=FILE MUSL_PACKAGE=FILE requires a static
+     client,  a	 musl  compiler	 and that runtime package. It installs glibc and
+     musl fixtures, runs both, removes each runtime and both together, then exe-
+     cutes cached repair inside the libc-free chroot. doas  is	required;  guest
      commands  run  with  the  caller's	 UID/GID.  This	 tests local recovery on
      x86_64, not boot, i686, network recovery or general foreign package conver-
      sion.

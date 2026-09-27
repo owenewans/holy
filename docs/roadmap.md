@@ -210,9 +210,13 @@
   interface setup still uses a host fixture tool, not a finished recovery profile.
 - [ ] Package statically linked BusyBox, dinit, mdevd and the recovery chain,
   plus both dynamic libc runtimes for i686 and x86_64.
-- [x] Build pinned x86_64 musl as a native runtime package with source hashes,
+- [x] Build pinned i686 and x86_64 musl as native runtime packages with source hashes,
   license and a natively linked loader SONAME. Run pthread/allocation probes
   alongside glibc.
+- [x] Run musl32 and musl64 pthread/clock probes and bidirectional pipes in a
+  shared disposable x86_64 root. A static i686 client installs both architecture
+  slots with artifact-scoped decisions and restores either or both removed
+  runtimes from its cache. This does not close the i686 boot or glibc32 gates.
 - [x] Build pinned glibc 2.42 loader/libc payloads from source as a native
   bootstrap package with licenses and recorded private-path patches. Complete
   SDK, auxiliary libraries, locale/NSS packaging and upstream-suite acceptance remain open.

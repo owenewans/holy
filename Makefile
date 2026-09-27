@@ -29,9 +29,12 @@ all: holypkg holy-init
 holy-init: src/early-init.c .build-config
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o $@ $<
 
-.PHONY: bootstrap-musl
+.PHONY: bootstrap-musl check-musl-abi
 bootstrap-musl: holypkg
-	sh tools/bootstrap-musl.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/musl-bootstrap)"
+	ARCH="$(or $(ARCH),x86_64)" sh tools/bootstrap-musl.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/musl-bootstrap)"
+
+check-musl-abi:
+	python3 tests/musl-abi.py "$(STATIC_HOLYPKG)" "$(MUSL32_PACKAGE)" "$(MUSL32_CC)" "$(MUSL_PACKAGE)" "$(MUSL_CC)"
 
 .PHONY: bootstrap-glibc check-bootstrap-glibc
 bootstrap-glibc: holypkg

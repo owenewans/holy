@@ -798,8 +798,19 @@ installed metadata, ownership and graph. Partial files are not overwritten.
 Ordinary check remains read-only. This is not general upgrade, rollback or
 configuration-file repair.
 .PP
-make bootstrap-musl INPUTS=DIRECTORY OUTPUT=DIRECTORY builds pinned musl 1.2.5
-as an x86_64 native package, preserving source and build hashes and licenses.
+make bootstrap-musl ARCH=i686|x86_64 INPUTS=DIRECTORY OUTPUT=DIRECTORY builds
+pinned musl 1.2.5 as a native runtime package, preserving source and build hashes
+and licenses. The default target is x86_64. The i686 build requires multilib GCC
+and uses the x86 package architecture and i686-linux-musl private runtime path.
+Both packages can coexist; their documentation and public loader paths differ.
+.PP
+make check-musl-abi STATIC_HOLYPKG=FILE MUSL32_PACKAGE=FILE MUSL32_CC=FILE
+MUSL_PACKAGE=FILE MUSL_CC=FILE compiles and runs ELF32 and ELF64 pthread probes
+in one disposable root on an x86_64 kernel. The fixture explicitly approves the
+32-bit artifacts, tests pipes in both directions and restores either or both
+removed runtimes through the static client and local cache. It requires doas,
+mount namespaces, patchelf and working 32-bit execution. This test does not boot
+an i686 kernel or test glibc32 or hardware.
 The build sets libc.musl-x86_64.so.1 as SONAME at link time; it does not rewrite
 the self-bootstrapping loader with patchelf.
 make check-libc-recovery STATIC_HOLYPKG=FILE MUSL_CC=FILE MUSL_PACKAGE=FILE
