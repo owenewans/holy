@@ -9,3 +9,6 @@ c29eae929dfebd575c38174f2c8c315766092cec99a8f987569d0cad3c6d64f6 argp-standalone
 49ae567a96dbab22823d045ffebe0d6b14b9b799925e9ca9274d47d26ff482a6 musl-fts-1.2.7.tar.gz https://github.com/void-linux/musl-fts/archive/refs/tags/v1.2.7.tar.gz
 9ffb3479b15df0170eba4480e51723c3961dbe0b461ec289744622db03a69395 musl-obstack-1.2.3.tar.gz https://github.com/void-linux/musl-obstack/archive/refs/tags/v1.2.3.tar.gz
 30f529ad39d23bdc284b81ea3ed29679162011fc5fb9392635db0b4d1c8e3511 libsolv-0.7.40.tar.gz https://github.com/openSUSE/libsolv/archive/refs/tags/0.7.40.tar.gz
+eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3 zstd-1.5.7.tar.gz https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
+0b54f79df85912504de0b14aec7971e3f964491af1812d83447005807513cd9e xz-5.8.1.tar.xz https://github.com/tukaani-project/xz/releases/download/v5.8.1/xz-5.8.1.tar.xz
+ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269 bzip2-1.0.8.tar.gz https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz

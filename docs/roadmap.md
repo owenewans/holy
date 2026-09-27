@@ -3,6 +3,10 @@
 
 ## Package manager
 
+- [x] Build gzip, LZ4, Zstandard, XZ and bzip2 codecs into the static musl client.
+  Verify foreign import and native install/check/remove in a chroot without
+  dynamic libc or external decoders; reject truncated compressed inputs.
+
 - [x] Import local pacman binary archives through libarchive into verified native
   outputs, preserve original artifacts and metadata, classify/split known ELF ABIs,
   and bind outputs with a conversion receipt. Fixtures cover an actual gzip

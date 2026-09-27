@@ -77,6 +77,13 @@ build_configure() (
 )
 build_configure zlib-1.3.2 --static
 make -C "$work/lz4-1.10.0/lib" -j"$jobs" BUILD_SHARED=no PREFIX="$out" install
+make -C "$work/zstd-1.5.7/lib" -j"$jobs" CC="$CC" PREFIX="$out" libzstd.a-release
+make -C "$work/zstd-1.5.7/lib" CC="$CC" PREFIX="$out" install-static install-includes install-pc
+make -C "$work/bzip2-1.0.8" -j"$jobs" CC="$CC" libbz2.a
+install -m 644 "$work/bzip2-1.0.8/libbz2.a" "$out/lib/"
+install -m 644 "$work/bzip2-1.0.8/bzlib.h" "$out/include/"
+build_configure xz-5.8.1 --disable-shared --enable-static --disable-nls \
+    --disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo --disable-scripts
 (
     cd "$work/openssl-3.5.8"
     ./Configure linux-x86_64 no-shared no-module no-tests --prefix="$out" --libdir=lib
@@ -86,10 +93,16 @@ make -C "$work/lz4-1.10.0/lib" -j"$jobs" BUILD_SHARED=no PREFIX="$out" install
 build_configure curl-8.22.0 --disable-shared --enable-static \
     --with-openssl="$out" --with-zlib="$out" --without-libpsl --without-libidn2 \
     --without-librtmp --without-libssh2 --without-brotli --without-zstd --disable-ldap --disable-ldaps
-build_configure libarchive-3.8.9 --disable-shared --enable-static --without-bz2lib \
-    --without-lzma --without-zstd --without-xml2 --without-expat --without-openssl \
+build_configure libarchive-3.8.9 --disable-shared --enable-static --with-bz2lib \
+    --with-lzma --with-zstd --without-xml2 --without-expat --without-openssl \
     --without-nettle --without-iconv --disable-acl --disable-xattr --disable-bsdtar \
     --disable-bsdcpio --disable-bsdcat --disable-bsdunzip
+for feature in HAVE_LIBBZ2 HAVE_LIBLZMA HAVE_LIBZSTD HAVE_LIBLZ4 HAVE_LIBZ; do
+    grep -qx "#define $feature 1" "$work/libarchive-3.8.9/config.h" || {
+        printf 'required libarchive codec missing: %s\n' "$feature" >&2
+        exit 6
+    }
+done
 for source in argp-standalone-1.5.0 musl-fts-1.2.7 musl-obstack-1.2.3; do
     (cd "$work/$source" && autoreconf -fi)
     build_configure "$source" --disable-shared

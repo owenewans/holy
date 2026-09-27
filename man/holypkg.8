@@ -179,8 +179,8 @@ executable build attestation and publisher verification remain unimplemented.
 .PP
 Libarchive supplies tar and built-in gzip, bzip2, XZ, Zstandard and LZ4 codecs
 when available in the selected build. A missing codec returns status 6 and does
-not invoke an external decoder. The current static dependency profile lacks
-bzip2, XZ and Zstandard. Import uses anonymous spool files instead of extracting
+not invoke an external decoder. The static dependency profile builds all five codecs with musl and rejects a
+libarchive configuration missing any of them. Import uses anonymous spool files instead of extracting
 foreign paths on the host. It rejects duplicate paths, unsafe links, non-directory
 ancestors, unsupported special nodes, ACLs and xattrs. Limits are 1 GiB compressed
 input, 1 GiB per entry, 4 GiB payload spool, 100000 entries and 1 MiB .PKGINFO.
@@ -189,6 +189,14 @@ The native writer verifies outputs through /proc/self/fd before publication.
 make check-pacman runs parser and archive fixtures, including a retained
 \&.PKGINFO from Arch gzip 1.15-1, malformed archives, hooks that must not execute,
 mixed ELF outputs and installation of a converted data package in a temporary root.
+make check-static-import STATIC_HOLYPKG=FILE verifies the six tar/codec paths,
+including truncated compressed inputs, in a private mount/PID namespace and a
+chroot containing the client, inputs, /tmp and a private /proc. It installs,
+checks and removes each converted fixture without dynamic libc or decoder
+executables. The test requires doas, unshare, mount, chroot, Python, readelf and
+host zstd/lz4 commands to create input fixtures. These host compressors are not
+available inside the chroot.
+.PP
 The reference metadata format is
 https://alpm.archlinux.page/specifications/PKGINFO.5.html.
 .SS Pinned HTTPS catalog mirrors
