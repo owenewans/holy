@@ -371,6 +371,32 @@ printf 'install-plan %s\n' "$plan" >> "$record"
 "$installer" --apply "$out/install.plan" --holypkg "$bin" > "$out/install.apply"
 test "$(cat "$root/var/lib/holypkg/generation")" -eq 1
 "$bin" db check --all --root "$root" > "$out/root-check.record"
+if test "$install_test" = 1; then
+    storage_tools=$(realpath "${STORAGE_TOOLS_PACKAGE:?STORAGE_TOOLS_PACKAGE required}")
+    "$bin" info "local:$storage_tools" > "$work/storage-info"
+    grep -qx 'name holy-storage-tools' "$work/storage-info"
+    grep -qx 'arch x86_64' "$work/storage-info"
+    grep -qx 'libc nolibc' "$work/storage-info"
+    cp "$storage_tools" "$out/inputs/holy-storage-tools.holy"
+    storage_parent=$(sha256sum "$out/inputs/holy-storage-tools.holy")
+    storage_parent=${storage_parent%% *}
+    "$bin" fetch "local:$out/inputs/holy-storage-tools.holy" --extract --output "$tree"
+    find "$tree/DATA" -type d -exec chmod 0755 '{}' +
+    printf '\nbootstrap-parent-sha256 %s\nbootstrap-ownership 0 0\nbootstrap-directory-mode 0755\n' \
+        "$storage_parent" >> "$tree/HOLY/origin"
+    pack holy-storage-tools
+    mkdir -p "$root/usr/share/man/man1" "$root/usr/share/licenses/holy-storage-tools"
+    storage_digest=$(sha256sum "$out/packages/holy-storage-tools.holy")
+    storage_digest=${storage_digest%% *}
+    printf 'live-only-package holy-storage-tools %s parent %s\n' \
+        "$storage_digest" "$storage_parent" >> "$record"
+    "$bin" cache stage "local:$out/packages/holy-storage-tools.holy" --root "$root"
+    printf '[install]\nroot "%s"\nartifact %s\n' "$root" "$storage_digest" > "$work/storage.conf"
+    "$installer" --config "$work/storage.conf" --plan "$out/storage.plan" \
+        --holypkg "$bin" > "$out/storage.preview"
+    "$installer" --apply "$out/storage.plan" --holypkg "$bin" > "$out/storage.apply"
+    "$bin" db check --all --root "$root" > "$out/root-check.record"
+fi
 "$bin" docs --root "$root" --output "$root/usr/share/holy/llm.txt"
 chmod 0644 "$root/usr/share/holy/llm.txt"
 cp "$root/usr/share/holy/llm.txt" "$out/llm.txt"

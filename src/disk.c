@@ -7,14 +7,18 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <linux/fs.h>
 #include <openssl/evp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/sysmacros.h>
+#include <time.h>
 #include <unistd.h>
 
 enum { sector = 512, sample = 1048576, esp_start = 4096,
@@ -24,6 +28,17 @@ struct disk_plan {
     char *image;
     uintmax_t device, inode, size, root_sectors;
     char head[65], tail[65];
+    int block;
+    uintmax_t rdev;
+    char serial[128];
+    char tools[4][65];
+};
+
+static const char *const block_tools[] = {
+    "/usr/bin/sfdisk", "/usr/bin/mkfs.fat", "/usr/bin/mke2fs", "/usr/bin/limine"
+};
+static const char *const block_tool_keys[] = {
+    "sfdisk-sha256", "mkfs-fat-sha256", "mke2fs-sha256", "limine-sha256"
 };
 
 static const char *value(const struct holy_config *c, const char *section,
@@ -112,6 +127,72 @@ static int image_facts(int fd, struct disk_plan *p)
            hash_region(fd, st.st_size - sample, p->tail);
 }
 
+static int sysfs_serial(dev_t device, char out[128])
+{
+    char path[128];
+    const char *suffixes[] = { "/serial", "/device/serial" };
+    size_t i;
+    for (i = 0; i < sizeof suffixes / sizeof *suffixes; ++i) {
+        FILE *input;
+        size_t length, j;
+        int complete;
+        int n = snprintf(path, sizeof path, "/sys/dev/block/%u:%u%s",
+                         major(device), minor(device), suffixes[i]);
+        if (n < 0 || (size_t)n >= sizeof path) return 0;
+        input = fopen(path, "r");
+        if (!input) continue;
+        if (!fgets(out, 128, input)) { fclose(input); continue; }
+        complete = strchr(out, '\n') != NULL || feof(input);
+        fclose(input);
+        if (!complete) return 0;
+        length = strlen(out);
+        while (length && (out[length - 1] == '\n' || out[length - 1] == '\r'))
+            out[--length] = 0;
+        if (length) {
+            for (j = 0; j < length; ++j)
+                if ((unsigned char)out[j] < 32 || (unsigned char)out[j] > 126)
+                    return 0;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int block_facts(int fd, struct disk_plan *p)
+{
+    struct stat st;
+    unsigned long long bytes;
+    int logical;
+    char partition[128];
+    int n;
+    if (fstat(fd, &st) || !S_ISBLK(st.st_mode) ||
+        ioctl(fd, (int)BLKGETSIZE64, &bytes) || ioctl(fd, BLKSSZGET, &logical) ||
+        logical != sector || bytes < (1ULL << 30) ||
+        bytes > INT64_MAX || bytes % sector) return 0;
+    n = snprintf(partition, sizeof partition, "/sys/dev/block/%u:%u/partition",
+                 major(st.st_rdev), minor(st.st_rdev));
+    if (n < 0 || (size_t)n >= sizeof partition || !access(partition, F_OK)) return 0;
+    p->device = (uintmax_t)st.st_dev;
+    p->inode = (uintmax_t)st.st_ino;
+    p->rdev = (uintmax_t)st.st_rdev;
+    p->size = (uintmax_t)bytes;
+    p->root_sectors = ((p->size / sector - root_start - 34) / 2048) * 2048;
+    return p->root_sectors && sysfs_serial(st.st_rdev, p->serial) &&
+           hash_region(fd, 0, p->head) &&
+           hash_region(fd, (off_t)(p->size - sample), p->tail);
+}
+
+static int tool_hash(const char *path, char out[65])
+{
+    struct stat st;
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    int ok = fd >= 0 && !fstat(fd, &st) && S_ISREG(st.st_mode) &&
+             st.st_size > 0 && (uintmax_t)st.st_size <= SIZE_MAX &&
+             hash_span(fd, 0, (uintmax_t)st.st_size, out);
+    if (fd >= 0) close(fd);
+    return ok;
+}
+
 static int quote(FILE *f, const char *s)
 {
     const unsigned char *p = (const unsigned char *)s;
@@ -152,11 +233,19 @@ static int write_plan(const char *path, const struct disk_plan *p)
     if (fd < 0) { perror("holyinstall: plan"); return 1; }
     f = fdopen(fd, "w");
     if (!f) { close(fd); unlink(path); return 1; }
-    ok = fputs("[disk-plan]\nformat 1\nimage ", f) >= 0 && quote(f, p->image) &&
+    ok = fprintf(f, "[disk-plan]\nformat %d\nimage ", p->block ? 2 : 1) >= 0 &&
+         quote(f, p->image) &&
          fprintf(f, "\ndevice %" PRIuMAX "\ninode %" PRIuMAX
                  "\nsize %" PRIuMAX "\nroot-sectors %" PRIuMAX
                  "\nhead-sha256 %s\ntail-sha256 %s\n", p->device, p->inode,
                  p->size, p->root_sectors, p->head, p->tail) >= 0;
+    if (ok && p->block) {
+        size_t i;
+        ok = fputs("kind block\nserial ", f) >= 0 && quote(f, p->serial) &&
+             fprintf(f, "\nrdev %" PRIuMAX "\n", p->rdev) >= 0;
+        for (i = 0; ok && i < 4; ++i)
+            ok = fprintf(f, "%s %s\n", block_tool_keys[i], p->tools[i]) >= 0;
+    }
     if (fflush(f) || fsync(fd)) ok = 0;
     if (fclose(f)) ok = 0;
     if (ok) ok = sync_parent(path);
@@ -172,10 +261,11 @@ static int read_plan(const char *path, struct disk_plan *p)
     size_t i;
     int ok = holy_config_load_plan(path, &c, &error);
     if (!ok) { fprintf(stderr, "holyinstall: %s\n", error ? error : "invalid plan"); free(error); return 2; }
-    ok = c.count == 8;
-    for (i = 0; i < c.count; ++i) if (strcmp(c.entries[i].section, "disk-plan")) ok = 0;
     s = value(&c, "disk-plan", "format");
-    ok = ok && s && !strcmp(s, "1");
+    p->block = s && !strcmp(s, "2");
+    ok = s && (!strcmp(s, "1") || p->block) &&
+         c.count == (size_t)(p->block ? 15 : 8);
+    for (i = 0; i < c.count; ++i) if (strcmp(c.entries[i].section, "disk-plan")) ok = 0;
     s = value(&c, "disk-plan", "image");
     if (ok && s) p->image = strdup(s); else ok = 0;
     ok = ok && p->image && p->image[0] == '/';
@@ -192,6 +282,28 @@ static int read_plan(const char *path, struct disk_plan *p)
               (p->head[i] >= 'a' && p->head[i] <= 'f')) ||
             !((p->tail[i] >= '0' && p->tail[i] <= '9') ||
               (p->tail[i] >= 'a' && p->tail[i] <= 'f'))) ok = 0;
+    if (ok && p->block) {
+        s = value(&c, "disk-plan", "kind");
+        ok = s && !strcmp(s, "block") &&
+             !strncmp(p->image, "/dev/", 5) &&
+             number(value(&c, "disk-plan", "rdev"), &p->rdev);
+        s = value(&c, "disk-plan", "serial");
+        if (!s || !*s || strlen(s) >= sizeof p->serial) ok = 0;
+        else {
+            strcpy(p->serial, s);
+            for (i = 0; i < strlen(s); ++i)
+                if ((unsigned char)s[i] < 32 || (unsigned char)s[i] > 126) ok = 0;
+        }
+        for (i = 0; i < 4; ++i) {
+            size_t j;
+            s = value(&c, "disk-plan", block_tool_keys[i]);
+            if (!s || strlen(s) != 64) { ok = 0; continue; }
+            memcpy(p->tools[i], s, 65);
+            for (j = 0; j < 64; ++j)
+                if (!((s[j] >= '0' && s[j] <= '9') ||
+                      (s[j] >= 'a' && s[j] <= 'f'))) ok = 0;
+        }
+    }
     if (ok) ok = p->size >= (1ULL << 30) && p->size % sector == 0 &&
                  p->root_sectors == ((p->size / sector - root_start - 34) / 2048) * 2048;
     holy_config_free(&c);
@@ -272,7 +384,7 @@ static int disk_plan(const char *config_path, const char *plan_path)
 {
     struct holy_config c = {0};
     struct disk_plan p = {0};
-    const char *image, *layout;
+    const char *image, *device, *layout;
     char *error = NULL;
     int fd, rc = 1;
     if (!holy_config_load(config_path, &c, &error)) {
@@ -280,26 +392,41 @@ static int disk_plan(const char *config_path, const char *plan_path)
         free(error); return 2;
     }
     image = value(&c, "disk", "image");
+    device = value(&c, "disk", "device");
     layout = value(&c, "disk", "layout");
-    if (!image || !layout || strcmp(layout, "gpt-ext4")) { rc = 2; goto done; }
-    p.image = realpath(image, NULL);
-    if (!p.image) { perror("holyinstall: image"); rc = 6; goto done; }
+    if (!!image == !!device || !layout || strcmp(layout, "gpt-ext4")) {
+        rc = 2; goto done;
+    }
+    p.block = device != NULL;
+    p.image = realpath(p.block ? device : image, NULL);
+    if (!p.image) { perror("holyinstall: disk path"); rc = 6; goto done; }
+    if (p.block && strncmp(p.image, "/dev/", 5)) { rc = 2; goto done; }
     fd = open(p.image, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-    if (fd < 0 || !image_facts(fd, &p)) {
-        fputs("holyinstall: image must be a regular file of at least 1 GiB\n", stderr);
+    if (fd < 0 || !(p.block ? block_facts(fd, &p) : image_facts(fd, &p))) {
+        fputs(p.block ? "holyinstall: device requires 512-byte sectors, a serial and at least 1 GiB\n" :
+              "holyinstall: image must be a regular file of at least 1 GiB\n", stderr);
         if (fd >= 0) close(fd);
         rc = 6; goto done;
     }
     close(fd);
-    if (loop_status(p.image)) {
+    if (!p.block && loop_status(p.image)) {
         fputs("holyinstall: image is attached to a loop device or losetup is unavailable\n", stderr);
         rc = 6; goto done;
     }
-    printf("disk image %s\nidentity %" PRIuMAX ":%" PRIuMAX " size %" PRIuMAX
+    if (p.block) {
+        size_t i;
+        for (i = 0; i < 4; ++i)
+            if (!tool_hash(block_tools[i], p.tools[i])) {
+                fprintf(stderr, "holyinstall: missing tool %s\n", block_tools[i]);
+                rc = 6; goto done;
+            }
+    }
+    printf("disk %s %s\nidentity %" PRIuMAX ":%" PRIuMAX " size %" PRIuMAX
            "\nGPT: BIOS 2048+2048; ESP %d+%d FAT32; root %d+%" PRIuMAX
-           " ext4\nall existing data in this image will be destroyed\n",
-           p.image, p.device, p.inode, p.size, esp_start, esp_sectors,
-           root_start, p.root_sectors);
+           " ext4\nall existing data on this %s will be destroyed\n",
+           p.block ? "device" : "image", p.image, p.device, p.inode, p.size, esp_start, esp_sectors,
+           root_start, p.root_sectors, p.block ? "device" : "image");
+    if (p.block) printf("serial %s\nrdev %" PRIuMAX "\n", p.serial, p.rdev);
     rc = write_plan(plan_path, &p);
 done:
     free(p.image); holy_config_free(&c);
@@ -311,14 +438,183 @@ static int disk_show(const char *plan_path)
     struct disk_plan p = {0};
     int rc = read_plan(plan_path, &p);
     if (!rc)
-        printf("disk image %s\nidentity %" PRIuMAX ":%" PRIuMAX
+        printf("disk %s %s\nidentity %" PRIuMAX ":%" PRIuMAX
                " size %" PRIuMAX "\nGPT: BIOS 2048+2048; ESP %d+%d FAT32; "
                "root %d+%" PRIuMAX " ext4\nhead-sha256 %s\n"
-               "tail-sha256 %s\nall existing data in this image "
-               "will be destroyed\n",
-               p.image, p.device, p.inode, p.size, esp_start, esp_sectors,
-               root_start, p.root_sectors, p.head, p.tail);
+               "tail-sha256 %s\nall existing data on this %s will be destroyed\n",
+               p.block ? "device" : "image", p.image, p.device, p.inode,
+               p.size, esp_start, esp_sectors, root_start, p.root_sectors,
+               p.head, p.tail, p.block ? "device" : "image");
+    if (!rc && p.block) {
+        size_t i;
+        printf("serial %s\nrdev %" PRIuMAX "\n", p.serial, p.rdev);
+        for (i = 0; i < 4; ++i)
+            printf("%s %s\n", block_tool_keys[i], p.tools[i]);
+    }
     free(p.image);
+    return rc;
+}
+
+static char *partition_path(const char *disk, unsigned index)
+{
+    size_t length = strlen(disk);
+    int suffix = length && disk[length - 1] >= '0' && disk[length - 1] <= '9';
+    char *path = malloc(length + (size_t)suffix + 2);
+    if (path) snprintf(path, length + (size_t)suffix + 2, "%s%s%u",
+                       disk, suffix ? "p" : "", index);
+    return path;
+}
+
+static int sysfs_number(const char *directory, const char *name, uintmax_t *number_out)
+{
+    char *path;
+    FILE *input;
+    char text[64];
+    size_t length = strlen(directory) + strlen(name) + 2;
+    int ok;
+    path = malloc(length);
+    if (!path) return 0;
+    snprintf(path, length, "%s/%s", directory, name);
+    input = fopen(path, "r");
+    free(path);
+    if (!input) return 0;
+    ok = fgets(text, sizeof text, input) &&
+         (strchr(text, '\n') || feof(input));
+    fclose(input);
+    if (!ok) return 0;
+    text[strcspn(text, "\r\n")] = 0;
+    return number(text, number_out);
+}
+
+static int partition_matches(const char *path, dev_t disk_device,
+                             unsigned index, uintmax_t start, uintmax_t sectors)
+{
+    struct stat st;
+    char disk_link[128], part_link[128], *disk_sys, *part_sys, *slash;
+    uintmax_t actual_index, actual_start, actual_sectors;
+    int n, ok = 0;
+    if (stat(path, &st) || !S_ISBLK(st.st_mode)) return 0;
+    n = snprintf(disk_link, sizeof disk_link, "/sys/dev/block/%u:%u",
+                 major(disk_device), minor(disk_device));
+    if (n < 0 || (size_t)n >= sizeof disk_link) return 0;
+    n = snprintf(part_link, sizeof part_link, "/sys/dev/block/%u:%u",
+                 major(st.st_rdev), minor(st.st_rdev));
+    if (n < 0 || (size_t)n >= sizeof part_link) return 0;
+    disk_sys = realpath(disk_link, NULL);
+    part_sys = realpath(part_link, NULL);
+    if (!disk_sys || !part_sys) goto done;
+    ok = sysfs_number(part_sys, "partition", &actual_index) &&
+         sysfs_number(part_sys, "start", &actual_start) &&
+         sysfs_number(part_sys, "size", &actual_sectors) &&
+         actual_index == index && actual_start == start &&
+         actual_sectors == sectors;
+    slash = strrchr(part_sys, '/');
+    if (!slash) ok = 0;
+    else { *slash = 0; if (strcmp(part_sys, disk_sys)) ok = 0; }
+done:
+    free(disk_sys); free(part_sys);
+    return ok;
+}
+
+static int wait_partition(const char *path, dev_t disk_device,
+                          unsigned index, uintmax_t start, uintmax_t sectors)
+{
+    const struct timespec delay = {0, 100000000};
+    unsigned attempt;
+    for (attempt = 0; attempt < 300; ++attempt) {
+        if (partition_matches(path, disk_device, index, start, sectors)) return 1;
+        nanosleep(&delay, NULL);
+    }
+    return 0;
+}
+
+static int disk_apply_block(const char *plan_path, const char *confirm,
+                            const struct disk_plan *expected)
+{
+    struct disk_plan actual = {0};
+    char *journal_path = NULL, *script = NULL, *esp = NULL, *root = NULL;
+    int fd = -1, rc = 1, n;
+    size_t i;
+    char *const partition[] = {"sfdisk", "--no-reread", "--no-tell-kernel", "/proc/self/fd/9", NULL};
+    char *const verify[] = {"sfdisk", "--verify", "/proc/self/fd/9", NULL};
+    char *fat[] = {"mkfs.fat", "-F", "32", "-s", "4", "-n", "HOLYBOOT", NULL, NULL};
+    char *ext[] = {"mke2fs", "-q", "-t", "ext4", "-F", "-b", "4096", NULL, NULL};
+    char *const boot[] = {"limine", "bios-install", "/proc/self/fd/9", "1", NULL};
+    if (strcmp(confirm, expected->image)) {
+        fputs("holyinstall: confirmation must match device path\n", stderr);
+        return 3;
+    }
+    fd = open(expected->image, O_RDWR | O_EXCL | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0 || flock(fd, LOCK_EX | LOCK_NB) || !block_facts(fd, &actual)) {
+        fputs("holyinstall: device is busy, changed or unavailable\n", stderr);
+        rc = 6; goto done;
+    }
+    if (actual.device != expected->device || actual.inode != expected->inode ||
+        actual.rdev != expected->rdev || actual.size != expected->size ||
+        strcmp(actual.serial, expected->serial) ||
+        strcmp(actual.head, expected->head) || strcmp(actual.tail, expected->tail)) {
+        fputs("holyinstall: device changed since plan\n", stderr);
+        rc = 3; goto done;
+    }
+    for (i = 0; i < 4; ++i) {
+        char hash[65];
+        if (!tool_hash(block_tools[i], hash) || strcmp(hash, expected->tools[i])) {
+            fprintf(stderr, "holyinstall: tool changed since plan: %s\n", block_tools[i]);
+            rc = 3; goto done;
+        }
+    }
+    journal_path = malloc(strlen(plan_path) + 9);
+    if (!journal_path) goto done;
+    sprintf(journal_path, "%s.journal", plan_path);
+    if (!access(journal_path, F_OK)) {
+        fputs("holyinstall: disk journal exists; inspect before recovery\n", stderr);
+        rc = 5; goto done;
+    }
+    esp = partition_path(expected->image, 2);
+    root = partition_path(expected->image, 3);
+    if (!esp || !root) goto done;
+    fat[7] = esp;
+    ext[7] = root;
+    n = snprintf(NULL, 0,
+        "label: gpt\nunit: sectors\nfirst-lba: 2048\n"
+        "start=2048, size=2048, type=21686148-6449-6E6F-744E-656564454649\n"
+        "start=4096, size=524288, type=U\n"
+        "start=528384, size=%" PRIuMAX ", type=L\n", expected->root_sectors);
+    if (n < 0) goto done;
+    script = malloc((size_t)n + 1);
+    if (!script) goto done;
+    snprintf(script, (size_t)n + 1,
+        "label: gpt\nunit: sectors\nfirst-lba: 2048\n"
+        "start=2048, size=2048, type=21686148-6449-6E6F-744E-656564454649\n"
+        "start=4096, size=524288, type=U\n"
+        "start=528384, size=%" PRIuMAX ", type=L\n", expected->root_sectors);
+    if (!journal(journal_path, "prepared", 1)) goto done;
+    rc = 5;
+    if (!journal(journal_path, "partitioning", 0) ||
+        child(block_tools[0], partition, script, fd) ||
+        fsync(fd) || ioctl(fd, BLKRRPART) ||
+        child(block_tools[0], verify, NULL, fd) ||
+        !wait_partition(esp, (dev_t)expected->rdev, 2, esp_start, esp_sectors) ||
+        !wait_partition(root, (dev_t)expected->rdev, 3, root_start, expected->root_sectors) ||
+        !journal(journal_path, "partitioned", 0)) goto done;
+    close(fd);
+    fd = -1;
+    if (!journal(journal_path, "formatting-esp", 0) ||
+        child(block_tools[1], fat, NULL, -1) ||
+        !journal(journal_path, "formatted-esp", 0) ||
+        !journal(journal_path, "formatting-root", 0) ||
+        child(block_tools[2], ext, NULL, -1) ||
+        !journal(journal_path, "formatted-root", 0)) goto done;
+    fd = open(expected->image, O_RDWR | O_EXCL | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0 || !journal(journal_path, "installing-bios", 0) ||
+        child(block_tools[3], boot, NULL, fd) || fsync(fd) ||
+        !journal(journal_path, "committed", 0)) goto done;
+    puts("block device prepared with GPT, FAT32, ext4 and Limine BIOS stage");
+    rc = 0;
+done:
+    if (rc == 5) fputs("holyinstall: device mutation may be partial; inspect journal and device\n", stderr);
+    if (fd >= 0) close(fd);
+    free(journal_path); free(script); free(esp); free(root);
     return rc;
 }
 
@@ -333,6 +629,7 @@ static int disk_apply(const char *plan_path, const char *confirm)
     char *const fat[] = {"mkfs.fat", "-F", "32", "-s", "4", "--offset=4096", "-n", "HOLYBOOT", "/proc/self/fd/9", "262144", NULL};
     char *const ext[] = {"mke2fs", "-q", "-t", "ext4", "-F", "-b", "4096", "-E", offset, "/proc/self/fd/9", root_blocks, NULL};
     if (rc) goto done;
+    if (p.block) { rc = disk_apply_block(plan_path, confirm, &p); goto done; }
     if (strcmp(confirm, p.image)) { fputs("holyinstall: confirmation must match image path\n", stderr); rc = 3; goto done; }
     fd = open(p.image, O_RDWR | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0 || flock(fd, LOCK_EX | LOCK_NB) || !image_facts(fd, &actual)) { rc = 6; goto done; }

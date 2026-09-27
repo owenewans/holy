@@ -1,6 +1,6 @@
 .TH HOLYINSTALL 8
 .SH NAME
-holyinstall \- prepare a disk image and install packages to an existing Holy root
+holyinstall \- prepare a disk or image and install packages to an existing Holy root
 .SH SYNOPSIS
 .B holyinstall --menu --config FILE --plan NEW_FILE [--holypkg FILE]
 .br
@@ -12,7 +12,7 @@ holyinstall \- prepare a disk image and install packages to an existing Holy roo
 .br
 .B holyinstall disk show --plan PLAN
 .br
-.B holyinstall disk apply --plan PLAN --confirm IMAGE
+.B holyinstall disk apply --plan PLAN --confirm IMAGE_OR_DEVICE
 .br
 .B holyinstall disk finalize-plan --disk-plan PLAN --esp FILE --root-image FILE --output NEW_PLAN
 .br
@@ -82,12 +82,12 @@ explicit architecture-placement decision in plan format 2. Preview and apply
 pass the same approval to holypkg. It permits placement; it does not claim the
 target executable can run on the host. The text menu toggles this decision in
 the package list and shows accepted artifacts before installation.
-.SH DISK IMAGE
-The disk command accepts a regular file of at least 1 GiB. The supported
+.SH DISK PREPARATION
+The disk command accepts a regular file or a block disk of at least 1 GiB. The supported
 layout is GPT with a 1 MiB BIOS boot partition, a 256 MiB FAT32 ESP and an
-ext4 root partition. It uses sfdisk, mkfs.fat and mke2fs, and requires
-losetup to confirm that the image is not attached to a loop device. It never
-accepts a block device. A minimal config is:
+ext4 root partition. Image mode uses sfdisk, mkfs.fat and mke2fs, and requires
+losetup to confirm that the image is not attached to a loop device.
+A minimal image config is:
 .PP
 .RS
 .nf
@@ -107,6 +107,16 @@ The show command prints the saved geometry without changing the image.
 After an interrupted stage, inspect the image and journal before starting a
 new plan. The command does not silently repeat a format operation.
 .PP
+For a block disk, use device instead of image in [disk]. Planning records
+the disk node, block-device number, size, serial, first and last MiB hashes,
+and SHA-256 of the four static tools used by apply: sfdisk, mkfs.fat,
+mke2fs and Limine. Apply requires the exact device path as --confirm and
+rechecks those inputs before mutation. It holds an exclusive disk descriptor,
+writes the GPT, asks the kernel to reread the partition table, checks the
+partition geometry, formats FAT32 and ext4, and installs the Limine BIOS
+stage. The journal records each stage. This operation destroys existing
+partitions and filesystems. It does not mount the new root or install packages.
+.PP
 Disk preparation destroys existing image contents. It does not mount the
 partitions or generate an initramfs. The finalize-plan command requires a
 committed disk preparation journal, a valid GPT, an exact-size ESP image and
@@ -121,11 +131,10 @@ requires inspection before recovery. The command does not configure UEFI,
 mount the partitions or prove the image can boot. Boot and account menus and
 the full interactive install acceptance matrix remain pending.
 .PP
-The optional install VM fixture described in holy-image(7) mounts a
-prepartitioned guest disk from the live ISO and applies a package plan to its
-root. It boots the installed disk through BIOS and UEFI in separate QEMU runs. The fixture prepares
-GPT, filesystems and Limine BIOS stage on the host; holyinstall does not yet
-perform those operations on a guest block device.
+The optional install VM fixture described in holy-image(7) gives the live
+guest a blank disk. holyinstall creates the GPT and filesystems and installs
+the Limine BIOS stage inside that guest before applying a package plan to its
+root. The runner then boots the installed disk through BIOS and UEFI.
 .SH EXIT STATUS
 0 means the requested step completed. 1 means an operational error. 2 means
 invalid arguments, config or plan. Disk apply returns 3 for a changed image

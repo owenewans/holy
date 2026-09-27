@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -36,7 +37,8 @@ def boot(qemu, accel, run, overlay, iso, stage, expected, seconds,
                      '-drive', 'if=pflash,format=raw,file=' + str(variables)])
     args.extend(['-blockdev', json.dumps({'driver': 'qcow2', 'node-name': 'holy-target',
                  'file': {'driver': 'file', 'filename': str(overlay)}}),
-                 '-device', 'virtio-blk-pci,drive=holy-target' + ('' if iso else ',bootindex=1'),
+                 '-device', 'virtio-blk-pci,drive=holy-target,serial=HOLY-INSTALL-VM-1' +
+                            ('' if iso else ',bootindex=1'),
                  '-qmp', 'unix:' + str(qmp) + ',server=on,wait=off'])
     started = time.monotonic()
     reason = 'timeout'
@@ -85,17 +87,15 @@ def boot(qemu, accel, run, overlay, iso, stage, expected, seconds,
 def main():
     require(os.environ.get('ARCH') == 'x86_64', 'x86_64 target required', 2)
     iso = Path(os.environ.get('ISO', ''))
-    installer = Path(os.environ.get('STATIC_HOLYINSTALL', ''))
     report_dir = Path(os.environ.get('REPORT_DIR', ''))
     plan = os.environ.get('BOOT_PLAN', '')
-    require(iso.is_file() and installer.is_file() and report_dir.is_dir(),
-            'ISO, static installer and report directory required')
+    require(iso.is_file() and report_dir.is_dir(),
+            'ISO and report directory required')
     require(len(plan) == 64 and all(c in '0123456789abcdef' for c in plan),
             'BOOT_PLAN must be SHA-256', 2)
     qemu = shutil.which('qemu-system-x86_64')
     qemu_img = shutil.which('qemu-img')
-    limine = shutil.which('limine')
-    require(qemu and qemu_img and limine, 'QEMU, qemu-img and Limine required')
+    require(qemu and qemu_img, 'QEMU and qemu-img required')
     firmware = os.environ.get('INSTALL_FIRMWARE', 'both')
     require(firmware in ('bios', 'both'), 'INSTALL_FIRMWARE must be bios or both', 2)
     code = Path(os.environ.get('UEFI_CODE') or '/usr/share/qemu/edk2-x86_64-code.fd')
@@ -111,19 +111,13 @@ def main():
     disk = run / 'target.raw'
     with disk.open('wb') as stream:
         stream.truncate(1 << 30)
-    config = run / 'disk.conf'
-    config.write_text('[disk]\nimage "' + str(disk) + '"\nlayout gpt-ext4\n')
-    disk_plan = run / 'disk.plan'
-    command(str(installer), 'disk', 'plan', '--config', str(config), '--output', str(disk_plan))
-    command(str(installer), 'disk', 'apply', '--plan', str(disk_plan), '--confirm', str(disk))
-    command(limine, 'bios-install', str(disk), '1')
-    command('/usr/sbin/sfdisk', '--verify', str(disk))
     base_hash = digest(disk)
     disk.chmod(0o444)
     overlay = run / 'target.qcow2'
     command(qemu_img, 'create', '-q', '-f', 'qcow2', '-F', 'raw', '-b', str(disk), str(overlay))
     expected_install = {
         'HOLY-INSTALL-1 devices target-and-media',
+        'HOLY-INSTALL-1 disk prepared',
         'HOLY-INSTALL-1 root mounted',
         'HOLY-INSTALL-1 package-set committed',
         'HOLY-INSTALL-1 esp files-and-package-state',
@@ -144,6 +138,9 @@ def main():
         'HOLY-BOOT-1 result pass',
     }
     first = boot(qemu, accel, run, overlay, frozen_iso, 'install', expected_install, 600)
+    disk_plans = re.findall(r'^HOLY-INSTALL-1 disk-plan ([0-9a-f]{64})\r?$',
+                            Path(first['serial']).read_text(errors='replace'), re.MULTILINE)
+    guest_disk_plan = disk_plans[0] if len(disk_plans) == 1 else None
     second = third = None
     if first['result'] == 'pass':
         overlay.chmod(0o444)
@@ -165,22 +162,22 @@ def main():
                          'installed-uefi', expected_boot, 180,
                          (code_copy, vars_copy))
     unchanged = digest(disk) == base_hash
-    result = ('pass' if unchanged and second and second['result'] == 'pass' and
+    result = ('pass' if unchanged and guest_disk_plan and second and second['result'] == 'pass' and
               (firmware == 'bios' or third and third['result'] == 'pass') else 'fail')
-    report = {'schema': 'holy-install-vm-2', 'result': result, 'arch': 'x86_64',
+    report = {'schema': 'holy-install-vm-3', 'result': result, 'arch': 'x86_64',
               'accelerator': accel, 'boot_plan': plan,
               'inputs': {'iso_sha256': digest(frozen_iso), 'target_base_sha256': base_hash,
-                         'disk_plan_sha256': digest(disk_plan)},
+                         'guest_disk_plan_sha256': guest_disk_plan},
               'base_unchanged': unchanged, 'overlay_sha256': digest(overlay),
               'firmware': {'mode': firmware,
                            'code_sha256': digest(code_copy) if third else None,
                            'vars_input_sha256': digest(variables) if third else None},
               'install': first, 'installed_boot': second, 'uefi_boot': third,
-              'coverage': ['live-iso', 'guest-root-package-set', 'guest-esp-files',
-                           'bios-installed-disk-boot'] +
+              'coverage': ['live-iso', 'guest-partitioning', 'guest-filesystems',
+                           'guest-limine-bios-install', 'guest-root-package-set',
+                           'guest-esp-files', 'bios-installed-disk-boot'] +
                           (['uefi-installed-disk-boot'] if third and third['result'] == 'pass' else []),
-              'not_tested': ['guest-partitioning', 'guest-limine-bios-install',
-                             'i686-installed-boot', 'user-login', 'network'] +
+              'not_tested': ['i686-installed-boot', 'user-login', 'network'] +
                             (['uefi-installed-boot'] if firmware == 'bios' else [])}
     (run / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     print('holy-install-vm:', result, 'report', run / 'report.json')

@@ -6,10 +6,31 @@ installer=/usr/bin/holyinstall
 stage=devices
 trap 'echo "HOLY-INSTALL-1 failed $stage"; echo "HOLY-INSTALL-1 result fail"' EXIT
 
-for device in /dev/vda2 /dev/vda3 /dev/sr0; do
+for device in /dev/vda /dev/sr0; do
     test -b "$device"
 done
 echo 'HOLY-INSTALL-1 devices target-and-media'
+
+stage=disk
+test ! -e /dev/vda2 && test ! -e /dev/vda3
+printf '[disk]\ndevice "/dev/vda"\nlayout gpt-ext4\n' > /run/install-disk.conf
+$installer disk plan --config /run/install-disk.conf --output /run/install-disk.plan \
+    > /run/install-disk-preview
+$installer disk show --plan /run/install-disk.plan > /run/install-disk-show
+$bb grep -q '^disk device /dev/vda$' /run/install-disk-show
+$bb grep -q '^serial HOLY-INSTALL-VM-1$' /run/install-disk-show
+disk_plan=$($bb sha256sum /run/install-disk.plan)
+echo "HOLY-INSTALL-1 disk-plan ${disk_plan%% *}"
+if $installer disk apply --plan /run/install-disk.plan --confirm /dev/vdb \
+    > /run/install-disk-rejected 2>&1; then exit 1; else test "$?" -eq 3; fi
+test ! -e /run/install-disk.plan.journal
+test ! -e /dev/vda2 && test ! -e /dev/vda3
+$installer disk apply --plan /run/install-disk.plan --confirm /dev/vda \
+    > /run/install-disk-apply
+test "$($bb tail -n 1 /run/install-disk.plan.journal)" = committed
+/usr/bin/sfdisk --verify /dev/vda > /run/install-disk-verify
+test -b /dev/vda2 && test -b /dev/vda3
+echo 'HOLY-INSTALL-1 disk prepared'
 
 stage=mount
 $bb mkdir -p /mnt/holy /mnt/media

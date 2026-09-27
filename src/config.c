@@ -218,9 +218,14 @@ static int key_arity(const char *section, const char *key)
         if (!strcmp(key, "format") || !strcmp(key, "image") ||
             !strcmp(key, "device") || !strcmp(key, "inode") ||
             !strcmp(key, "size") || !strcmp(key, "head-sha256") ||
-            !strcmp(key, "tail-sha256") || !strcmp(key, "root-sectors")) return 1;
+            !strcmp(key, "tail-sha256") || !strcmp(key, "root-sectors") ||
+            !strcmp(key, "kind") || !strcmp(key, "serial") ||
+            !strcmp(key, "rdev") || !strcmp(key, "sfdisk-sha256") ||
+            !strcmp(key, "mkfs-fat-sha256") || !strcmp(key, "mke2fs-sha256") ||
+            !strcmp(key, "limine-sha256")) return 1;
     } else if (!strcmp(section, "disk")) {
-        if (!strcmp(key, "image") || !strcmp(key, "layout")) return 1;
+        if (!strcmp(key, "image") || !strcmp(key, "device") ||
+            !strcmp(key, "layout")) return 1;
     } else if (!strcmp(section, "install")) {
         if (!strcmp(key, "root") || !strcmp(key, "artifact") ||
             !strcmp(key, "accept-arch")) return 1;
