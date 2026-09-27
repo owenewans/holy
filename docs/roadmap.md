@@ -212,7 +212,7 @@
   credential-bearing redirects. Publisher signatures, persistent source cache
   and multi-source search remain open.
 - [ ] Implement remaining foreign binary adapters and file indexes with real
-  fixtures: APT indexes, RPM, APK, XBPS, Slackware and eopkg.
+  fixtures: APT indexes, RPM, APK, XBPS, Slackware, eopkg, homebrew and guix.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
   Gentoo and Pacstall recipe conversion with helper environments and split outputs.
 - [ ] Implement Nix closure, Flatpak, Snap, AppImage, Scoop and WinGet imports
