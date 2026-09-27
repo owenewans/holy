@@ -183,6 +183,89 @@ char *holy_fetch_child_url(const char *base, const char *filename)
     return url;
 }
 
+struct current_download {
+    char bytes[4096];
+    size_t used;
+};
+
+static size_t receive_current(void *data, size_t size, size_t count, void *context)
+{
+    struct current_download *download = context;
+    size_t length;
+    if (size && count > (size_t)-1 / size) return 0;
+    length = size * count;
+    if (length > sizeof download->bytes - download->used) return 0;
+    memcpy(download->bytes + download->used, data, length);
+    download->used += length;
+    return length;
+}
+
+int holy_fetch_https_current(const char *base, const char *ca_file, char digest[65])
+{
+    struct current_download download = {{0}, 0};
+    struct timespec started, now;
+    CURL *curl = NULL;
+    char *url = holy_fetch_child_url(base, "current");
+    int initialized = 0, result = 1, redirect;
+    size_t i;
+    if (!url) return 2;
+    if (clock_gettime(CLOCK_MONOTONIC, &started) ||
+        curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) goto done;
+    initialized = 1;
+    curl = curl_easy_init();
+    if (!curl ||
+        curl_easy_setopt(curl, CURLOPT_URL, url) != CURLE_OK ||
+        curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "https") != CURLE_OK ||
+        curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "https") != CURLE_OK ||
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L) != CURLE_OK ||
+        curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L) != CURLE_OK ||
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L) != CURLE_OK ||
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L) != CURLE_OK ||
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L) != CURLE_OK ||
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receive_current) != CURLE_OK ||
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &download) != CURLE_OK ||
+        (ca_file && curl_easy_setopt(curl, CURLOPT_CAINFO, ca_file) != CURLE_OK)) goto done;
+    result = 6;
+    for (redirect = 0; ; ++redirect) {
+        long response = 0, remaining;
+        char *target = NULL, *copy;
+        if (clock_gettime(CLOCK_MONOTONIC, &now)) { result = 1; goto done; }
+        if (now.tv_sec - started.tv_sec > 300) goto done;
+        remaining = 300000L - (long)(now.tv_sec - started.tv_sec) * 1000L -
+                    (long)(now.tv_nsec - started.tv_nsec) / 1000000L;
+        if (remaining <= 0 ||
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, remaining) != CURLE_OK) goto done;
+        if (curl_easy_perform(curl) != CURLE_OK ||
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response) != CURLE_OK) goto done;
+        if (response == 200) break;
+        if (response < 300 || response >= 400 || redirect == 5 ||
+            curl_easy_getinfo(curl, CURLINFO_REDIRECT_URL, &target) != CURLE_OK ||
+            !target || !secure_url(target)) goto done;
+        copy = strdup(target);
+        if (!copy) { result = 1; goto done; }
+        if (curl_easy_setopt(curl, CURLOPT_URL, copy) != CURLE_OK) {
+            free(copy); goto done;
+        }
+        free(copy);
+        download.used = 0;
+    }
+    result = 4;
+    if (download.used != 72 || memcmp(download.bytes, "sha256 ", 7) ||
+        download.bytes[71] != '\n') goto done;
+    memcpy(digest, download.bytes + 7, 64);
+    digest[64] = 0;
+    for (i = 0; i < 64; ++i)
+        if (!((digest[i] >= '0' && digest[i] <= '9') ||
+              (digest[i] >= 'a' && digest[i] <= 'f'))) goto done;
+    result = 0;
+done:
+    if (result) fprintf(stderr, "holypkg: HTTPS current unavailable or invalid (status %d)\n", result);
+    if (curl) curl_easy_cleanup(curl);
+    if (initialized) curl_global_cleanup();
+    free(url);
+    return result;
+}
+
 static int https_object(const char *url, const char *expected,
                         const char *output, const char *ca_file, int native, int emit)
 {

@@ -192,11 +192,13 @@
   duplicate/truncated indexes, false claims, bad hashes, missing URLs and limits.
   Configured source activation and publisher signatures remain open.
 - [x] Resolve an active registered holy-http alias to its immutable source-id
-  and HTTPS URL, then mirror a pinned index into a new local catalog. Store the
-  source-id in mirror-origin before sealing. The local TLS fixture covers
-  alias lookup, unrelated backend refusal, wrong digest and missing CA.
-  Automatic index discovery, persistent source cache and multi-source search
-  remain open.
+  and HTTPS URL, then mirror a pinned index into a new local catalog. An
+  unsigned remote current pointer can propose a digest; a separate exact-hash
+  confirmation rereads it before mirroring. Store source-id and selection in
+  mirror-origin before sealing. Local TLS fixtures cover alias changes,
+  unrelated backends, wrong digest, missing CA, changed/malformed pointers and
+  credential-bearing redirects. Publisher signatures, persistent source cache
+  and multi-source search remain open.
 - [ ] Implement foreign binary adapters and file indexes with real fixtures:
   pacman, APT/DEB, RPM, APK, XBPS, Slackware and eopkg.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,

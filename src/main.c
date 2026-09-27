@@ -53,12 +53,24 @@ int main(int argc, char **argv)
     }
 
     if (argc > 1 && !strcmp(argv[1], "sync")) {
-        if ((argc == 9 || argc == 11) && !strcmp(argv[3], "--root") &&
-            !strcmp(argv[5], "--sha256") && !strcmp(argv[7], "--output") &&
-            (argc == 9 || !strcmp(argv[9], "--ca-file")))
-            return holy_source_sync(argv[2], argv[4], argv[6], argv[8],
-                                    argc == 11 ? argv[10] : NULL);
-        fputs("usage: holypkg sync SOURCE --root DIRECTORY --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--ca-file FILE]\n", stderr);
+        const char *root = "/", *digest = NULL, *accepted = NULL;
+        const char *output = NULL, *ca_file = NULL;
+        int i, root_seen = 0, valid = argc >= 3;
+        for (i = 3; valid && i < argc; i += 2) {
+            if (i + 1 >= argc) { valid = 0; break; }
+            if (!strcmp(argv[i], "--root") && !root_seen) {
+                root = argv[i + 1]; root_seen = 1;
+            }
+            else if (!strcmp(argv[i], "--sha256") && !digest) digest = argv[i + 1];
+            else if (!strcmp(argv[i], "--accept-unsigned") && !accepted) accepted = argv[i + 1];
+            else if (!strcmp(argv[i], "--output") && !output) output = argv[i + 1];
+            else if (!strcmp(argv[i], "--ca-file") && !ca_file) ca_file = argv[i + 1];
+            else valid = 0;
+        }
+        if (valid && !(digest && accepted) &&
+            (output || (!digest && !accepted)))
+            return holy_source_sync(argv[2], root, digest, accepted, output, ca_file);
+        fputs("usage: holypkg sync SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256 INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--ca-file FILE]\n", stderr);
         return 2;
     }
 

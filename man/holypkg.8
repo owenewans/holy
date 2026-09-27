@@ -12,7 +12,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg source list --root DIRECTORY
 .br
-.B holypkg sync SOURCE --root DIRECTORY --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--ca-file FILE]
+.B holypkg sync SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256 INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--ca-file FILE]
 .br
 .B holypkg orphan [--root DIRECTORY] [--json]
 .br
@@ -1373,19 +1373,39 @@ An ID identifies a configured origin; it is not signature evidence. The current
 registry retains inactive origins and supports explicit local-artifact associations
 in set installation and cached slot replacement. The sync command reads one
 active registered SOURCE alias under the database shared lock. For a holy-http
-source with one URL, it mirrors an explicitly pinned index and all referenced
-artifacts into NEW_DIRECTORY through the same validator as repo mirror. The
+source with one URL, --sha256 INDEX_SHA256 mirrors an explicitly pinned index
+and all referenced artifacts into NEW_DIRECTORY through the same validator as
+repo mirror. The
 URL must be an HTTPS directory URL ending in slash. It writes the registered
 source-id in mirror-origin before sealing current. The snapshot stays in the
 chosen directory; repo search, solve and fetch can use it. No root mutation,
 package installation, script execution or automatic source migration occurs.
+.PP
+Without --sha256, sync reads the remote current pointer over certificate-checked
+HTTPS. It accepts only one line of the form "sha256" followed by a lowercase
+64-digit digest and newline. The first call reports decision-required (3),
+including that digest, without creating NEW_DIRECTORY; --output can be omitted
+for this preview. --root defaults to /. A second call with
+--accept-unsigned INDEX_SHA256 rereads current and mirrors index.INDEX_SHA256
+only if the pointer still matches. A changed pointer requires a new decision.
+The selected immutable index may remain usable if remote current advances
+during the later download. The snapshot records selection
+current-accepted-unsigned in mirror-origin. Both pointer and index remain
+unsigned; the confirmation accepts this exact generation without claiming
+publisher signature verification. Malformed pointer data returns 4; missing
+network or CA inputs and oversized responses return 6. The current transfer
+has a 4 KiB response cap,
+the same HTTPS-only redirect policy and a five-minute deadline. --sha256 and
+--accept-unsigned are mutually exclusive. There is no hidden TTY behavior.
+.PP
 The source registry is read before network transfer, so a later alias change
 does not change the snapshot's recorded ID. A source with another backend,
 an inactive alias or an untrusted TLS certificate is unavailable (6). The
-index digest is an explicit user pin; the mirror remains unsigned and does not
-establish publisher identity. The recorded source-id is provenance for this
+index digest is an explicit user pin or an accepted unsigned current value;
+the mirror remains unsigned and does not establish publisher identity. The
+recorded source-id is provenance for this
 snapshot, not an installation authority derived from package metadata.
-Automatic signed generation discovery, cache publication under the target root,
+Signed generation discovery, cache publication under the target root,
 multi-source search and update candidate selection remain unimplemented.
 Explicit cached
 replacement uses db plan-update and db apply-update. These

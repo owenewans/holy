@@ -783,7 +783,8 @@ int holy_repo_seal(const char *directory)
 }
 
 int holy_repo_mirror_source(const char *base, const char *digest, const char *output,
-                            const char *ca_file, const char *source_id)
+                            const char *ca_file, const char *source_id,
+                            int current_accepted)
 {
     struct mirror mirror = { base, ca_file, NULL, 0 };
     char index_name[71], *url = NULL, *downloads = NULL;
@@ -794,6 +795,7 @@ int holy_repo_mirror_source(const char *base, const char *digest, const char *ou
     for (i = 0; i < 64; ++i)
         if (!((digest[i] >= '0' && digest[i] <= '9') ||
               (digest[i] >= 'a' && digest[i] <= 'f'))) return 2;
+    if (current_accepted && !source_id) return 2;
     if (source_id) {
         if (strlen(source_id) != 64) return 2;
         for (i = 0; i < 64; ++i)
@@ -822,6 +824,7 @@ int holy_repo_mirror_source(const char *base, const char *digest, const char *ou
     fputs("format holy-mirror-1\nurl ", record);
     if (!quote(record, base) || fprintf(record, "\nindex-sha256 %s\nverification digest-pinned-unsigned\n", digest) < 0 ||
         (source_id && fprintf(record, "source-id %s\n", source_id) < 0) ||
+        (current_accepted && fputs("selection current-accepted-unsigned\n", record) == EOF) ||
         fflush(record) || fsync(provenance)) goto done;
     if (fclose(record)) { record = NULL; provenance = -1; goto done; }
     record = NULL; provenance = -1;
@@ -842,5 +845,5 @@ done:
 int holy_repo_mirror(const char *base, const char *digest, const char *output,
                      const char *ca_file)
 {
-    return holy_repo_mirror_source(base, digest, output, ca_file, NULL);
+    return holy_repo_mirror_source(base, digest, output, ca_file, NULL, 0);
 }

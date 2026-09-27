@@ -36,10 +36,12 @@ import http.server, os, ssl, sys
 os.chdir(sys.argv[1])
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
-        if self.path in ("/redirect.holy", "/credential.holy"):
-            userinfo = "user:pass@" if self.path == "/credential.holy" else ""
+        if self.path.startswith("/redirect/") or self.path in ("/redirect.holy", "/credential.holy", "/credential/current"):
+            userinfo = "user:pass@" if self.path.startswith("/credential") else ""
+            target = self.path[len("/redirect/"):] if self.path.startswith("/redirect/") else (
+                "current" if self.path.endswith("/current") else "native.holy")
             self.send_response(302)
-            self.send_header("Location", f"https://{userinfo}localhost:{self.server.server_port}/native.holy")
+            self.send_header("Location", f"https://{userinfo}localhost:{self.server.server_port}/{target}")
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
@@ -91,6 +93,43 @@ expect 0 "$bin" sync fixture --root "$tmp/source-root" --sha256 "$index" \
     --output "$tmp/source-mirror" --ca-file "$tmp/cert.pem"
 grep -qx "source-id $source_id" "$tmp/source-mirror/mirror-origin"
 cmp "$tmp/serve/current" "$tmp/source-mirror/current"
+before_current=$(grep -c '"GET /index\.' "$tmp/server.log" || true)
+expect 3 "$bin" sync fixture --root "$tmp/source-root" --ca-file "$tmp/cert.pem"
+grep -q "decision-required unsigned current source=$source_id index=$index" "$tmp/error"
+expect 3 "$bin" sync fixture --root "$tmp/source-root" \
+    --output "$tmp/source-current-preview" --ca-file "$tmp/cert.pem"
+grep -q "decision-required unsigned current source=$source_id index=$index" "$tmp/error"
+test ! -e "$tmp/source-current-preview"
+test "$(grep -c '"GET /index\.' "$tmp/server.log" || true)" -eq "$before_current"
+expect 2 "$bin" sync fixture --root "$tmp/source-root" --sha256 "$index"
+expect 6 "$bin" sync fixture --root "$tmp/source-root" \
+    --output "$tmp/source-current-untrusted" --accept-unsigned "$index"
+test ! -e "$tmp/source-current-untrusted"
+expect 2 "$bin" sync fixture --root "$tmp/source-root" \
+    --output "$tmp/source-current-invalid-answer" --accept-unsigned bad --ca-file "$tmp/cert.pem"
+test ! -e "$tmp/source-current-invalid-answer"
+expect 2 "$bin" sync fixture --root "$tmp/source-root" \
+    --output "$tmp/source-current-two-modes" --sha256 "$index" \
+    --accept-unsigned "$index" --ca-file "$tmp/cert.pem"
+test ! -e "$tmp/source-current-two-modes"
+stale=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+expect 3 "$bin" sync fixture --root "$tmp/source-root" \
+    --output "$tmp/source-current-stale" --accept-unsigned "$stale" --ca-file "$tmp/cert.pem"
+test ! -e "$tmp/source-current-stale"
+expect 0 "$bin" sync fixture --root "$tmp/source-root" \
+    --output "$tmp/source-current" --accept-unsigned "$index" --ca-file "$tmp/cert.pem"
+grep -qx 'selection current-accepted-unsigned' "$tmp/source-current/mirror-origin"
+cmp "$tmp/serve/current" "$tmp/source-current/current"
+cp "$tmp/serve/current" "$tmp/current.saved"
+printf 'sha256 %s\n' "$stale" > "$tmp/serve/current"
+expect 3 "$bin" sync fixture --root "$tmp/source-root" \
+    --output "$tmp/source-current-changed" --accept-unsigned "$index" --ca-file "$tmp/cert.pem"
+test ! -e "$tmp/source-current-changed"
+printf 'sha256 invalid\n' > "$tmp/serve/current"
+expect 4 "$bin" sync fixture --root "$tmp/source-root" \
+    --output "$tmp/source-current-malformed" --accept-unsigned "$index" --ca-file "$tmp/cert.pem"
+test ! -e "$tmp/source-current-malformed"
+mv "$tmp/current.saved" "$tmp/serve/current"
 expect 0 "$bin" repo solve "$tmp/source-mirror" https-second --json
 grep -q '"count":2' "$tmp/result"
 expect 6 "$bin" sync absent --root "$tmp/source-root" --sha256 "$index" \
@@ -102,6 +141,31 @@ test ! -e "$tmp/source-untrusted/current"
 expect 2 "$bin" sync fixture --root "$tmp/source-root" --sha256 bad \
     --output "$tmp/source-invalid" --ca-file "$tmp/cert.pem"
 test ! -e "$tmp/source-invalid"
+printf '[source fixture]\ntype holy-http\nurl "%sredirect/"\n' "$base" > "$tmp/source.conf"
+expect 0 "$bin" source plan --config "$tmp/source.conf" --root "$tmp/source-root"
+cp "$tmp/result" "$tmp/source.plan"
+source_plan=$(sha256sum "$tmp/source.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" source apply "$tmp/source.plan" --sha256 "$source_plan" --root "$tmp/source-root"
+expect 3 "$bin" sync fixture --root "$tmp/source-root" \
+    --output "$tmp/source-redirect-preview" --ca-file "$tmp/cert.pem"
+grep -q "index=$index" "$tmp/error"
+expect 0 "$bin" sync fixture --root "$tmp/source-root" \
+    --output "$tmp/source-redirect" --accept-unsigned "$index" --ca-file "$tmp/cert.pem"
+grep -qx 'selection current-accepted-unsigned' "$tmp/source-redirect/mirror-origin"
+printf '[source fixture]\ntype holy-http\nurl "%scredential/"\n' "$base" > "$tmp/source.conf"
+expect 0 "$bin" source plan --config "$tmp/source.conf" --root "$tmp/source-root"
+cp "$tmp/result" "$tmp/source.plan"
+source_plan=$(sha256sum "$tmp/source.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" source apply "$tmp/source.plan" --sha256 "$source_plan" --root "$tmp/source-root"
+expect 6 "$bin" sync fixture --root "$tmp/source-root" \
+    --output "$tmp/source-credential" --accept-unsigned "$index" --ca-file "$tmp/cert.pem"
+test ! -e "$tmp/source-credential"
+! grep -Eq 'user|pass' "$tmp/error"
+printf '[source fixture]\ntype holy-http\nurl "%s"\n' "$base" > "$tmp/source.conf"
+expect 0 "$bin" source plan --config "$tmp/source.conf" --root "$tmp/source-root"
+cp "$tmp/result" "$tmp/source.plan"
+source_plan=$(sha256sum "$tmp/source.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" source apply "$tmp/source.plan" --sha256 "$source_plan" --root "$tmp/source-root"
 printf '[source renamed]\ntype holy-http\nurl "%s"\n' "$base" > "$tmp/source.conf"
 expect 0 "$bin" source plan --config "$tmp/source.conf" --root "$tmp/source-root"
 cp "$tmp/result" "$tmp/source.plan"

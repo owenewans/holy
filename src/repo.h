@@ -6,7 +6,8 @@ int holy_repo_mirror(const char *base, const char *digest, const char *output,
                      const char *ca_file);
 /* identical validation, with a registered source ID in sealed provenance. */
 int holy_repo_mirror_source(const char *base, const char *digest, const char *output,
-                            const char *ca_file, const char *source_id);
+                            const char *ca_file, const char *source_id,
+                            int current_accepted);
 
 /* writes an unsigned local prototype index after validating native objects. */
 int holy_repo_index(const char *directory);

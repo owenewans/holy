@@ -4,6 +4,7 @@
 #include "state.h"
 #include "stage.h"
 #include "repo.h"
+#include "fetch.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -463,16 +464,22 @@ static char *native_endpoint(const char *definition)
 }
 
 int holy_source_sync(const char *alias, const char *root, const char *digest,
-                     const char *output, const char *ca_file)
+                     const char *accepted_unsigned, const char *output,
+                     const char *ca_file)
 {
     struct registry registry = {0};
     char *data = NULL, *url = NULL;
     char source_id[65] = {0};
+    char current[65];
     unsigned long long generation;
     int dir, result = 1;
     size_t i;
-    if (!alias || !*alias || !strcmp(alias, "local") || !digest || !valid_hash(digest) ||
-        !output || !*output) return 2;
+    if (!alias || !*alias || !strcmp(alias, "local") ||
+        (digest && accepted_unsigned) ||
+        (digest && !valid_hash(digest)) ||
+        (accepted_unsigned && !valid_hash(accepted_unsigned)) ||
+        (!output && (digest || accepted_unsigned)) ||
+        (output && !*output)) return 2;
     dir = holy_state_lock(root, 0, &generation, &result);
     if (dir < 0) return result;
     result = 1;
@@ -494,7 +501,18 @@ int holy_source_sync(const char *alias, const char *root, const char *digest,
     }
     memcpy(source_id, registry.items[i].id, sizeof source_id);
     close(dir); dir = -1;
-    result = holy_repo_mirror_source(url, digest, output, ca_file, source_id);
+    if (!digest) {
+        result = holy_fetch_https_current(url, ca_file, current);
+        if (result) goto done;
+        if (!accepted_unsigned || strcmp(accepted_unsigned, current)) {
+            fprintf(stderr, "holypkg: decision-required unsigned current source=%s index=%s; --accept-unsigned %s confirms this generation\n",
+                    source_id, current, current);
+            result = 3; goto done;
+        }
+        digest = current;
+    }
+    result = holy_repo_mirror_source(url, digest, output, ca_file, source_id,
+                                     accepted_unsigned != NULL);
     if (!result) printf("synced source %s index %s\n", source_id, digest);
 done:
     if (dir >= 0) close(dir);
