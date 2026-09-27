@@ -21,6 +21,21 @@ echo "HOLY-BOOT-1 boot $boot"
 echo "HOLY-BOOT-1 root $storage"
 echo "HOLY-BOOT-1 plan $plan"
 echo "HOLY-BOOT-1 profile $profile"
+if test -f /etc/holy/esp-device; then
+    stage=esp
+    esp=$($bb cat /etc/holy/esp-device)
+    $bb grep -F "$esp /boot vfat rw," /proc/mounts
+    test -s /boot/vmlinuz
+    test -s /boot/initramfs.img
+    test -s /boot/limine.conf
+    if test "$boot" = 1; then
+        test ! -e /boot/holy-reboot-witness
+        printf '%s\n' "$plan" > /boot/holy-reboot-witness
+    else
+        test "$($bb cat /boot/holy-reboot-witness)" = "$plan"
+    fi
+    echo 'HOLY-BOOT-1 esp mounted-writable'
+fi
 test "$($bb readlink /proc/1/exe)" = /usr/bin/dinit
 echo "HOLY-BOOT-1 pid1-exe $($bb readlink /proc/1/exe)"
 echo 'HOLY-BOOT-1 pid1 dinit'

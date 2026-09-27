@@ -132,7 +132,15 @@
   ext4 root. Boot through Limine without a CD-ROM in BIOS/TCG and UEFI/TCG:
   present and both-libcs-missing cases each pass two complete boots, including
   cache repair, dynamic/IPC and package probes. The raw base remains unchanged.
-  ESP mounting and kernel-update integration remain open, as does holyinstall.
+  Kernel-update integration and holyinstall remain open.
+- [x] Mount the GPT ESP at /boot before starting dinit. BIOS/UEFI recovery
+  runs each pass two boots with both libc payloads initially missing; the
+  guest checks the mounted kernel manifest and a FAT write across reboot.
+- [ ] Resolve the glibc 2.42 upstream-check failures on the current host.
+  The completed run has 6995 PASS, 4 FAIL, 89 UNSUPPORTED, 13 XFAIL and
+  7 XPASS. Failures concern mount-header redefinition, two invalid-I/O-flag
+  tests and rseq registration-length assumptions. Boot recovery proofs do
+  not establish a passing upstream suite.
 - [ ] Package Limine, dracut, kernel, firmware, SDK/sysroots and the default
   ConnMan+iwd network profile; test static local and HTTPS libc recovery.
 - [ ] Implement C99 `holyinstall` with reviewed disk/boot/account/network plans

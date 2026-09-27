@@ -185,6 +185,7 @@ chmod 0644 "$tree/DATA/usr/share/holy/fixture-root.holy"
 printf '%s\n' "$version" > "$tree/DATA/etc/holy/kernel-version"
 printf '%s\n' "$profile" > "$tree/DATA/etc/holy/image-profile"
 case "$storage" in gpt-ext4) printf 'ext4\n' ;; *) printf '%s\n' "$storage" ;; esac > "$tree/DATA/etc/holy/root-storage"
+if test "$storage" = gpt-ext4; then printf '/dev/vda2\n' > "$tree/DATA/etc/holy/esp-device"; fi
 printf '%s\n' "$boot_state" > "$tree/DATA/etc/holy/libc-boot-state"
 if test "$profile" = dual-libc; then
     for name in $extra_packages; do
@@ -286,7 +287,7 @@ if test "$storage" != ram; then
     chmod 0444 "$root_disk"
     sha256sum "$root_disk" >> "$record"
     root_cmdline='holy.root=/dev/vda holy.rootfstype=ext4'
-    if test "$storage" = gpt-ext4; then root_cmdline='holy.root=/dev/vda3 holy.rootfstype=ext4'; fi
+    if test "$storage" = gpt-ext4; then root_cmdline='holy.root=/dev/vda3 holy.rootfstype=ext4 holy.esp=/dev/vda2'; fi
 fi
 mkdir -p "$work/dracut/modules.d/90holy" "$work/dracut/dracut.conf.d" "$work/empty-conf"
 dracut_base=${DRACUT_BASE:-/usr/lib64/dracut}

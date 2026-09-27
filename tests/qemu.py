@@ -172,6 +172,8 @@ def main():
                 expected.update({f'HOLY-BOOT-1 missing-libc {abi}', f'HOLY-BOOT-1 restored-libc {abi}'})
     if 'KERNEL_VERSION' in os.environ:
         expected.add('HOLY-BOOT-1 kernel ' + os.environ['KERNEL_VERSION'])
+    if media == 'disk':
+        expected.add('HOLY-BOOT-1 esp mounted-writable')
     expected_boots = [expected]
     if disk_path:
         first = expected - {'HOLY-BOOT-1 result pass'}

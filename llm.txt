@@ -1,4 +1,4 @@
-holy-image.7 source=holy version=development sha256=b7a16ee8b9cd56ee2bc2cbd197609ba14fc97e8c843111dc87e35a6a7456a746
+holy-image.7 source=holy version=development sha256=e0e5fd1e0e96d964dc98d9d7f8bc392c4930ff5e443c641388fcd88e3abf58b5
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
 NAME
@@ -92,133 +92,143 @@ INPUTS AND ROOT
      uses  EFI/BOOT/BOOTX64.EFI.  The  kernel mounts /dev/vda3. Host filesystems
      are not mounted and physical disks are not accepted as output.
 
+     The GPT profile passes holy.esp=/dev/vda2. holy-init mounts that FAT parti-
+     tion at /boot before starting dinit, using	 nosuid,nodev,noexec  and  masks
+     matching the kernel package's file and directory modes. The kernel must in-
+     clude vfat, the default FAT codepage and NLS charset. The boot probe checks
+     the  mount,  kernel/initramfs/config  presence  and a plan-bound write that
+     survives reboot.  Installed package checking validates the	 mounted  kernel
+     payload  against  its recorded manifest. This exposes the actual boot files
+     to subsequent operations; coordinated kernel/initramfs update  transactions
+     remain to be implemented.
+
      The profile installs merged-/usr links, a locked root account and the dinit
      services boot, console, mdevd, coldplug and holy-test. mdevd reports readi-
-     ness through a pipe before synchronous coldplug starts. The fixture  checks
+     ness  through a pipe before synchronous coldplug starts. The fixture checks
      that coldplug applied the /dev/null permission rule. This is device-manager
      coverage, not client libudev compatibility.
 
 INITRAMFS AND ISO
-     The  private  dracut module copies the installed root with preserved owner-
+     The private dracut module copies the installed root with  preserved  owner-
      ship and file contents. dracut includes only the Holy module, with no host-
      only configuration, host runtime dependencies, microcode or kernel modules.
-     The builder points dracut's sysroot at the installed root. It extracts  the
-     finished  initramfs,  compares  payload bytes, modes and symlinks with that
-     root, and checks each ELF with holypkg. Only dracut's  module  list,  build
-     parameters	 and  generated loader caches may be additional files. The audit
-     rejects unexpected loader aliases. dracut uses ldconfig -X so package  sym-
-     links  remain  unchanged. The audit also rejects non-static ELF outside the
-     five declared libc and probe paths in dual-libc;  static-core  rejects  all
-     non-static	 ELF.  The prior package-set scan validates the libc/probe graph
+     The  builder points dracut's sysroot at the installed root. It extracts the
+     finished initramfs, compares payload bytes, modes and  symlinks  with  that
+     root,  and	 checks	 each ELF with holypkg. Only dracut's module list, build
+     parameters and generated loader caches may be additional files.  The  audit
+     rejects  unexpected loader aliases. dracut uses ldconfig -X so package sym-
+     links remain unchanged. The audit also rejects non-static ELF  outside  the
+     five  declared  libc  and probe paths in dual-libc; static-core rejects all
+     non-static ELF. The prior package-set scan validates the  libc/probe  graph
      and payload manifests. Omitted files are listed in the build record and re-
      main absent from the image until guest recovery.  holy-init mounts the live
-     runtime filesystems and  executes	dinit.	 Limine	 loads	the  kernel  and
-     initramfs	from  the  ISO. The default entry selects the guest test service
-     with holy.test=1. Remove that argument in Limine's entry  editor  to  reach
+     runtime  filesystems  and	executes  dinit.   Limine  loads  the kernel and
+     initramfs from the ISO. The default entry selects the  guest  test	 service
+     with  holy.test=1.	 Remove	 that argument in Limine's entry editor to reach
      the BusyBox console service.
 
-     The   output  includes  packages/,	 inputs/,  root/,  initramfs.img,  holy-
-     x86_64.iso, build.log, build.record, root-check.record, a frozen  plan  and
-     its  boot-plan  SHA-256. The record lists artifact hashes and the build re-
-     sult. Input retention permits repeating an	 experiment;  bit-identical  ISO
+     The  output  includes  packages/,	inputs/,  root/,  initramfs.img,   holy-
+     x86_64.iso,  build.log,  build.record, root-check.record, a frozen plan and
+     its boot-plan SHA-256. The record lists artifact hashes and the  build  re-
+     sult.  Input  retention  permits repeating an experiment; bit-identical ISO
      reproduction is not established.
 
 QEMU
-     make  check-qemu  ARCH=x86_64 ISO=FILE BOOT_PLAN=SHA256 runs the test sepa-
-     rately.  IMAGE_PROFILE defaults to dual-libc.  LIBC_BOOT_STATE  must  match
-     the  image's  declared initial state. The runner requires the corresponding
+     make check-qemu ARCH=x86_64 ISO=FILE BOOT_PLAN=SHA256 runs the  test  sepa-
+     rately.   IMAGE_PROFILE  defaults	to dual-libc. LIBC_BOOT_STATE must match
+     the image's declared initial state. The runner requires  the  corresponding
      recovery  markers;	 a  static-only	 boot  cannot  pass  a	dual-libc  test.
-     ARCH=i686	chooses	 qemu-system-i386 and requires an i686 guest image.  RE-
-     PORT_DIR chooses an existing report parent	 directory,  defaulting	 to  the
-     system  temporary	directory.  QEMU_TIMEOUT bounds boot in seconds (1..600,
-     default 120). QEMU_ACCEL=auto selects usable KVM or TCG; kvm and tcg  force
+     ARCH=i686 chooses qemu-system-i386 and requires an i686 guest  image.   RE-
+     PORT_DIR  chooses	an  existing  report parent directory, defaulting to the
+     system temporary directory. QEMU_TIMEOUT bounds boot  in  seconds	(1..600,
+     default  120). QEMU_ACCEL=auto selects usable KVM or TCG; kvm and tcg force
      the accelerator, with unavailable KVM returning 6.
 
-     FIRMWARE=bios   is	  the  default.	 FIRMWARE=uefi	requires  UEFI_CODE  and
-     UEFI_VARS.	 The runner copies both firmware inputs and gives  the	guest  a
-     new  writable VARS file. It copies and hashes the ISO before starting QEMU.
-     Networking is disabled, and no host writable disks or directories	are  at-
+     FIRMWARE=bios  is	the  default.  FIRMWARE=uefi  requires	 UEFI_CODE   and
+     UEFI_VARS.	  The  runner  copies both firmware inputs and gives the guest a
+     new writable VARS file. It copies and hashes the ISO before starting  QEMU.
+     Networking	 is  disabled, and no host writable disks or directories are at-
      tached.
 
-     ROOT_DISK	explicitly  supplies a regular raw disk image for the persistent
-     dual-libc test. The runner copies it to a read-only base, creates	a  qcow2
-     overlay  and attaches only that overlay through virtio-blk. It verifies the
+     ROOT_DISK explicitly supplies a regular raw disk image for	 the  persistent
+     dual-libc	test.  The runner copies it to a read-only base, creates a qcow2
+     overlay and attaches only that overlay through virtio-blk. It verifies  the
      base hash after QEMU exits and retains the overlay and its hash. ROOT_IMAGE
      alone remains an optional report input and does not attach a disk.
 
-     The guest verifies that / is  ext4,  completes  recovery  and  its	 package
-     probes,  records  the  plan  ID under /var/lib/holy-boot-test/reboot, calls
-     static sync and requests reboot. On the second boot it requires  that  wit-
+     The  guest	 verifies  that	 /  is	ext4, completes recovery and its package
+     probes, records the plan  ID  under  /var/lib/holy-boot-test/reboot,  calls
+     static  sync  and requests reboot. On the second boot it requires that wit-
      ness and intact restored libc; it repeats PID 1, shell, device, dynamic/IPC
-     and  package  probes  without  another  libc  repair. The runner keeps each
-     boot's markers separate, rejects repeated or out-of-order boot numbers  and
-     requires  both complete contracts. Each boot has its own QEMU_TIMEOUT dead-
+     and package probes without another	 libc  repair.	The  runner  keeps  each
+     boot's  markers separate, rejects repeated or out-of-order boot numbers and
+     requires both complete contracts. Each boot has its own QEMU_TIMEOUT  dead-
      line. RAM tests still use one boot and QEMU's no-reboot mode.
 
      Guest markers must confirm the expected plan and architecture, dinit as PID
-     1 by /proc/1/exe, a BusyBox shell probe, mdevd/coldplug and a complete  lo-
-     cal  two-package  dependency-set install/check/remove, including refusal to
-     remove the referenced provider first. The guest checks  the  critical  exe-
+     1	by /proc/1/exe, a BusyBox shell probe, mdevd/coldplug and a complete lo-
+     cal two-package dependency-set install/check/remove, including  refusal  to
+     remove  the  referenced  provider first. The guest checks the critical exe-
      cutables' static ELF classification. For static-core it also checks absence
-     of	 the  four  expected  dynamic loaders. For dual-libc it verifies the de-
-     clared initial presence/absence of	 the  runtime  files,  diagnoses  broken
-     providers,	 reads	the  local LZ4 archives and executes missing-only repair
-     inside the guest. It runs allocation, thread and  clock  probes  with  each
-     libc,  checks  both standard loader links and exchanges data through a pipe
-     in both directions between the two ABIs.  KERNEL_VERSION  additionally  re-
-     quires  the  matching release marker. A failure marker overrides pass mark-
-     ers.  The runner sends QMP quit after the probes or a boot	 timeout,  waits
+     of the four expected dynamic loaders. For dual-libc  it  verifies	the  de-
+     clared  initial  presence/absence	of  the	 runtime files, diagnoses broken
+     providers, reads the local LZ4 archives and  executes  missing-only  repair
+     inside  the  guest.  It  runs allocation, thread and clock probes with each
+     libc, checks both standard loader links and exchanges data through	 a  pipe
+     in	 both  directions between the two ABIs.	 KERNEL_VERSION additionally re-
+     quires the matching release marker. A failure marker overrides  pass  mark-
+     ers.   The	 runner sends QMP quit after the probes or a boot timeout, waits
      up to five seconds, then kills a process which did not exit. Process launch
      or exit status alone cannot pass a boot test.
 
-     Each  run	retains	 serial.log,  QEMU output, a text report and report.json
-     (holy-qemu-report-2). Reports include argv,  accelerator,	firmware,  input
-     hashes,  elapsed  time, stage deadlines, exit reason and per-marker status.
+     Each run retains serial.log, QEMU output, a  text	report	and  report.json
+     (holy-qemu-report-2).  Reports  include  argv, accelerator, firmware, input
+     hashes, elapsed time, stage deadlines, exit reason and  per-marker	 status.
      Persistent tests additionally record both boot results, the first-boot com-
-     pletion time, root storage type and whether the read-only base  stayed  in-
-     tact.   Optional  KERNEL_IMAGE,  INITRAMFS	 and ROOT_IMAGE inputs add their
-     hashes.  They identify caller-supplied files,  not	 guest	measurements  of
+     pletion  time,  root storage type and whether the read-only base stayed in-
+     tact.  Optional KERNEL_IMAGE, INITRAMFS and  ROOT_IMAGE  inputs  add  their
+     hashes.   They  identify  caller-supplied	files, not guest measurements of
      running code.
 
    Retained recovery matrix
      make check-recovery-matrix REPORT=NEW_FILE REPORTS="REPORT_PATHS" validates
-     eight  retained  QEMU report.json files: present, glibc, musl and both ini-
-     tial states, each under BIOS and UEFI. Each case must contain two	complete
-     ext4  boots.  The	validator  checks  per-boot serial evidence and reported
-     checks, including PID 1 identity after reboot.  It	 rehashes  the	retained
+     eight retained QEMU report.json files: present, glibc, musl and  both  ini-
+     tial  states, each under BIOS and UEFI. Each case must contain two complete
+     ext4 boots. The validator checks  per-boot	 serial	 evidence  and	reported
+     checks,  including	 PID  1	 identity after reboot. It rehashes the retained
      ISO, raw root, recovery overlay and UEFI code snapshots. BIOS and UEFI runs
-     of	 each initial state must use the same plan, ISO and raw root. Missing or
+     of each initial state must use the same plan, ISO and raw root. Missing  or
      duplicate cases, changed snapshots and incomplete second boots fail the ma-
      trix.
 
-     The command creates a new	holy-recovery-matrix-1	JSON  report  containing
-     each  input  report  and  serial  hash,  image identities, acceleration and
+     The  command  creates  a  new holy-recovery-matrix-1 JSON report containing
+     each input report and  serial  hash,  image  identities,  acceleration  and
      elapsed time.  The output must not exist. Run the guest tests before invok-
-     ing this command; the validator reads retained evidence and does not  start
-     new  VMs.	Local  hashes bind the retained files, not an authenticated pub-
+     ing  this command; the validator reads retained evidence and does not start
+     new VMs. Local hashes bind the retained files, not	 an  authenticated  pub-
      lisher. Preserve each run directory alongside the summary for revalidation.
 
 COVERAGE
-     BOOT_MEDIA=disk selects standalone disk boot in the  QEMU	runner	and  re-
-     quires  ROOT_DISK.	 ISO  must be empty; the runner attaches no CD-ROM. Each
-     run uses its own qcow2 overlay and records boot_media, two	 boot  contracts
-     and  the  unchanged  raw base. gpt-ext4 produces disk.raw, disk.plan, disk-
-     layout.json and limine.conf instead of an ISO. BIOS and UEFI  remain  sepa-
+     BOOT_MEDIA=disk  selects  standalone  disk	 boot in the QEMU runner and re-
+     quires ROOT_DISK. ISO must be empty; the runner attaches  no  CD-ROM.  Each
+     run  uses	its own qcow2 overlay and records boot_media, two boot contracts
+     and the unchanged raw base. gpt-ext4 produces  disk.raw,  disk.plan,  disk-
+     layout.json  and  limine.conf instead of an ISO. BIOS and UEFI remain sepa-
      rate test runs.
 
-     The  bootstrap  glibc  package  currently contains libc.so.6 and its loader
-     with licenses, not the complete SDK, locale archive, NSS modules or  auxil-
-     iary  glibc  libraries. The reference image still needs networking, the in-
-     staller and i686. The ext4 fixture uses an ISO kernel; gpt-ext4  loads  its
-     kernel  and  initramfs  from the disk's ESP. Both test recovery followed by
+     The bootstrap glibc package currently contains  libc.so.6	and  its  loader
+     with  licenses, not the complete SDK, locale archive, NSS modules or auxil-
+     iary glibc libraries. The reference image still needs networking,	the  in-
+     staller  and  i686. The ext4 fixture uses an ISO kernel; gpt-ext4 loads its
+     kernel and initramfs from the disk's ESP. Both test  recovery  followed  by
      reboot on a persistent root overlay. The GPT builder is not the interactive
-     installer. It does not yet mount the ESP in the installed root or integrate
-     kernel updates with ESP contents.	Those gates remain  separate  from  this
-     boot result. Recovery tests missing payloads with retained package records,
-     not  forced  removal  of referenced packages.  The repository documentation
-     bundle currently contains Holy pages; the installed dinit	pages  accompany
-     its  package  but are not yet merged into that bundle. QEMU virtual devices
-     do not establish physical GPU support.
+     installer.	 Kernel	 updates still require integration with ESP contents and
+     the generated initramfs.  Those gates remain separate from	 this  boot  re-
+     sult.  Recovery  tests  missing payloads with retained package records, not
+     forced removal of referenced packages.  The repository documentation bundle
+     currently contains Holy pages; the	 installed  dinit  pages  accompany  its
+     package  but  are	not yet merged into that bundle. QEMU virtual devices do
+     not establish physical GPU support.
 
 SOURCES
      Limine  configuration  and	 ISO   layout:	 https://github.com/limine-boot-
@@ -232,7 +242,7 @@ SEE ALSO
      holy-init(8), holypkg(8)
 
 Holy				 September 2026			   HOLY-IMAGE(7)
-holy-init.8 source=holy version=development sha256=113ac857d0be5d841fa2c1b23c322ff55c0d84f929ced29175f7fe1f85bca361
+holy-init.8 source=holy version=development sha256=d3a6d3e0068c68f2c3a615b25f6cd5479a5ce1cc25827a9ebc764f2156e7d268
 HOLY-INIT(8)		      System Administration		    HOLY-INIT(8)
 
 NAME
@@ -260,11 +270,19 @@ DESCRIPTION
      and  /tmp	there.	 It  then executes the static BusyBox switch_root applet
      with the dinit argv.  The process retains PID 1. Failure does not fall back
      to the RAM root.  Device discovery must be available through built-in  ker-
-     nel  drivers/devtmpfs.   Encrypted roots, UUID discovery, modules and other
-     filesystems are not yet implemented by this helper.
+     nel drivers/devtmpfs.
+
+     holy.esp=/dev/DEVICE  mounts a FAT ESP at /boot within the disk root before
+     switch_root. It requires holy.root and a real block device;  empty	 or  re-
+     peated  ESP  arguments  fail. The boot directory must be a directory, not a
+     symlink.  The mount uses nosuid,nodev,noexec,  root  ownership,  file  mode
+     0644 and directory mode 0755. The kernel must provide vfat and its required
+     NLS  tables.  Failure leaves the boot incomplete rather than using a hidden
+     rootfs copy.  Encrypted roots, UUID discovery, modules and	 other	filesys-
+     tems are not yet implemented by this helper.
 
 BUILD
-     make builds holy-init with the configured C99 compiler. make static  builds
+     make  builds holy-init with the configured C99 compiler. make static builds
      it with the selected musl toolchain. The image builder also compiles it us-
      ing its explicit STATIC_CC input and verifies static ELF classification.
 

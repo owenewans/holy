@@ -84,6 +84,15 @@ compares their bytes. Limine BIOS stages use partition 1; the UEFI loader
 uses EFI/BOOT/BOOTX64.EFI. The kernel mounts /dev/vda3. Host filesystems are
 not mounted and physical disks are not accepted as output.
 .PP
+The GPT profile passes holy.esp=/dev/vda2. holy-init mounts that FAT partition
+at /boot before starting dinit, using nosuid,nodev,noexec and masks matching
+the kernel package's file and directory modes. The kernel must include vfat,
+the default FAT codepage and NLS charset. The boot probe checks the mount,
+kernel/initramfs/config presence and a plan-bound write that survives reboot.
+Installed package checking validates the mounted kernel payload against its
+recorded manifest. This exposes the actual boot files to subsequent operations;
+coordinated kernel/initramfs update transactions remain to be implemented.
+.PP
 The profile installs merged-/usr links, a locked root account and the dinit
 services boot, console, mdevd, coldplug and holy-test. mdevd reports readiness
 through a pipe before synchronous coldplug starts. The fixture checks that
@@ -196,8 +205,8 @@ NSS modules or auxiliary glibc libraries. The reference image still needs
 networking, the installer and i686. The ext4 fixture uses an ISO kernel;
 gpt-ext4 loads its kernel and initramfs from the disk's ESP. Both test
 recovery followed by reboot on a persistent root overlay. The GPT builder
-is not the interactive installer. It does not yet mount the ESP in the
-installed root or integrate kernel updates with ESP contents.
+is not the interactive installer. Kernel updates still require integration
+with ESP contents and the generated initramfs.
 Those gates remain separate from this boot result. Recovery tests missing
 payloads with retained package records, not forced removal of referenced packages.
 The repository documentation bundle currently contains Holy pages; the

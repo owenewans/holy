@@ -23,6 +23,13 @@ the target init is executable and moves /dev, /proc, /sys, /run and /tmp there.
 It then executes the static BusyBox switch_root applet with the dinit argv.
 The process retains PID 1. Failure does not fall back to the RAM root.
 Device discovery must be available through built-in kernel drivers/devtmpfs.
+.PP
+holy.esp=/dev/DEVICE mounts a FAT ESP at /boot within the disk root before
+switch_root. It requires holy.root and a real block device; empty or repeated
+ESP arguments fail. The boot directory must be a directory, not a symlink.
+The mount uses nosuid,nodev,noexec, root ownership, file mode 0644 and
+directory mode 0755. The kernel must provide vfat and its required NLS tables.
+Failure leaves the boot incomplete rather than using a hidden rootfs copy.
 Encrypted roots, UUID discovery, modules and other filesystems are not yet
 implemented by this helper.
 .SH BUILD
