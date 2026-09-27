@@ -561,10 +561,12 @@ static void requirement(FILE *out, const char *id, const char *consumer, const c
     fputc('\n', out);
 }
 
-static int deb_dependencies(FILE *out, const char *consumer, const struct deb_field *field)
+static int deb_relations(FILE *out, const char *consumer, const struct deb_field *field,
+                         int claims)
 {
     char *copy = strdup(field->value), *cursor, *buffer = NULL, *original = NULL;
-    size_t size = 0, index = 0;
+    const char *seen[4096];
+    size_t size = 0, index = 0, seen_count = 0;
     FILE *temporary = NULL;
     int ok = 0;
     if (!copy || !(temporary = open_memstream(&buffer, &size))) goto done;
@@ -621,9 +623,18 @@ static int deb_dependencies(FILE *out, const char *consumer, const struct deb_fi
                 if (!holy_deb_version_compare(version, version, &order)) goto done;
             }
         } else *name_end = 0;
-        snprintf(id, sizeof id, "deb-%zu-%zu", field->line, index);
-        requirement(temporary, id, consumer, "package", segment, "any", "any", relation,
-                    version ? version : "-", original, "deb:Depends");
+        if (claims) {
+            if (strcmp(relation, "any") && strcmp(relation, "eq")) goto done;
+            for (i = 0; i < seen_count; ++i) if (!strcmp(seen[i], segment)) goto done;
+            seen[seen_count++] = segment;
+            fputs("provide package ", temporary); token(temporary, segment);
+            fputs(" any any ", temporary); token(temporary, version ? version : "-");
+            fputs(" deb:Provides\n", temporary);
+        } else {
+            snprintf(id, sizeof id, "deb-%zu-%zu", field->line, index);
+            requirement(temporary, id, consumer, "package", segment, "any", "any", relation,
+                        version ? version : "-", original, "deb:Depends");
+        }
         if (ferror(temporary)) goto done;
         free(original); original = NULL;
     }
@@ -709,7 +720,8 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
             !strcasecmp(field->key, "Maintainer") || !strcasecmp(field->key, "Homepage") ||
             !strcasecmp(field->key, "Section") || !strcasecmp(field->key, "Priority") ||
             !strcasecmp(field->key, "Installed-Size") || !strcasecmp(field->key, "Source")) continue;
-        if (!strcasecmp(field->key, "Depends") && deb_dependencies(files[2], name, field)) continue;
+        if (!strcasecmp(field->key, "Depends") && deb_relations(files[2], name, field, 0)) continue;
+        if (!strcasecmp(field->key, "Provides") && deb_relations(files[3], name, field, 1)) continue;
         snprintf(id, sizeof id, "deb-%zu", field->line);
         requirement(files[2], id, name, "foreign", field->value, "any", "any", "any", "-",
                     field->value, field->key);

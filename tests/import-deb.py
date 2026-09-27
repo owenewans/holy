@@ -118,6 +118,40 @@ with tempfile.TemporaryDirectory() as scratch:
                    "local:" + str(new_library), "local:" + str(helper))
     assert hashlib.sha256(new_library.read_bytes()).hexdigest() in selected
     run("solve", "local:" + str(app), "local:" + str(old_library), "local:" + str(helper), status=4)
+    virtual = convert(foreign("virtual", control=b"Package: virtual-impl\nVersion: 5\nArchitecture: all\nProvides: library (= 1.0), helper\n"),
+                      "virtual-output")[0]
+    claims = run("provides", "local:" + str(virtual))
+    assert '"package" "library"' in claims and '"1.0"' in claims
+    assert hashlib.sha256(virtual.read_bytes()).hexdigest() in run(
+        "solve", "local:" + str(app), "local:" + str(virtual))
+    virtual_hash = hashlib.sha256(virtual.read_bytes()).hexdigest()
+    run("cache", "stage", "local:" + str(virtual), "--root", root)
+    virtual_plan = run("db", "plan-set", virtual_hash, "--root", root).split(" sha256 ")[1].split()[0]
+    run("db", "apply-set", virtual_plan, virtual_hash, "--root", root)
+    installed_app = convert(foreign("installed-app", control=b"Package: installed-app\nVersion: 1\nArchitecture: all\nDepends: library (>= 1.0), helper\n",
+                           data=[("usr/", b"", "dir"), ("usr/share/", b"", "dir"),
+                                 ("usr/share/app-marker", b"app\n", "file")]),
+                            "installed-app-output")[0]
+    app_hash = hashlib.sha256(installed_app.read_bytes()).hexdigest()
+    run("cache", "stage", "local:" + str(installed_app), "--root", root)
+    app_plan = run("db", "plan-set", app_hash, "--root", root).split(" sha256 ")[1].split()[0]
+    run("db", "apply-set", app_plan, app_hash, "--root", root)
+    run("db", "check", "--all", "--root", root)
+    assert virtual_hash in (root / "var/lib/holypkg/installed" / app_hash / "graph").read_text()
+    run("db", "rm", virtual_hash, "--root", root, status=3)
+    run("db", "rm", app_hash, "--root", root)
+    run("db", "rm", virtual_hash, "--root", root)
+    unversioned = convert(foreign("unversioned", control=b"Package: unversioned-impl\nVersion: 1\nArchitecture: all\nProvides: library, helper\n"),
+                          "unversioned-output")[0]
+    run("solve", "local:" + str(app), "local:" + str(unversioned), status=4)
+    bad_claim = convert(foreign("bad-claim", control=b"Package: bad-impl\nVersion: 1\nArchitecture: all\nProvides: library (>= 1.0)\n"),
+                        "bad-claim-output")[0]
+    assert "foreign" in run("requirements", "local:" + str(bad_claim))
+    run("solve", "local:" + str(bad_claim), status=6)
+    duplicate_claim = convert(foreign("duplicate-claim", control=b"Package: duplicate-impl\nVersion: 1\nArchitecture: all\nProvides: library, library\n"),
+                              "duplicate-claim-output")[0]
+    assert "foreign" in run("requirements", "local:" + str(duplicate_claim))
+    run("solve", "local:" + str(duplicate_claim), status=6)
     compact = convert(foreign("compact", control=b"Package: compact\nVersion: 1\nArchitecture: all\nDepends: library(>=1.0)\n"),
                       "compact-output")[0]
     assert '"package" "library"' in run("requirements", "local:" + str(compact))

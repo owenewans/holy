@@ -64,10 +64,10 @@
 - [x] Import local Debian .deb binary archives into native outputs with original
   ar bytes, control fields and scripts retained. Check ar order, payload paths,
   codecs, architecture claims and install/check/remove for a data package.
-  Resolve simple Depends entries with Debian version ordering within the deb
-  family. Alternatives, Pre-Depends and other unsupported relationships stay
-  foreign requirements; conffiles require a decision. APT indexes, signatures
-  and full hook integration remain open.
+  Resolve simple Depends entries and exact/unversioned Provides claims with
+  Debian version ordering within the deb family. Alternatives, Pre-Depends and
+  other unsupported relationships stay foreign requirements; conffiles require
+  a decision. APT indexes, signatures and full hook integration remain open.
 
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.
 - [x] Plan and atomically apply a source identity registry under the database

@@ -159,8 +159,11 @@ Simple comma-separated Depends entries become package requirements. Their
 version constraints use Debian ordering, including epoch, tilde and revision,
 only against providers in the deb version family. Alternatives, architecture
 qualifiers, Pre-Depends and other unsupported relationships remain attributed
-foreign requirements that the current solver refuses. The converter supports
-Architecture all, amd64 and i386; it checks observed ELF machines against that
+foreign requirements that the current solver refuses. Simple Provides names and
+exact version claims become package capabilities; an unversioned virtual claim
+does not satisfy a versioned dependency. Unsupported or duplicate claims remain
+foreign requirements. The converter supports Architecture all, amd64 and i386;
+it checks observed ELF machines against that
 claim and returns status 3 for unknown or mismatched payloads. It does not
 sync APT indexes or verify Debian signatures.
 make check-deb exercises valid and malformed ar members, codecs, dependencies,
