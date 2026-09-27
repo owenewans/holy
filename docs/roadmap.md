@@ -286,6 +286,10 @@
   This matrix uses an ISO kernel and persistent disposable root overlays.
 
 - [x] Run current prototype fixtures under GCC, TCC and Clang ASan/UBSan.
+- [x] Boot the i686 static core with kernel 7.2.7, BusyBox, dinit, mdevd and
+  static holypkg from a BIOS optical ISO under QEMU/TCG. The guest checks PID 1,
+  man bundle, device permissions and a local package transaction. Dynamic libc
+  recovery and installed-disk boot for i686 remain separate gates.
 - [x] Run `make check-root` against disposable target-root install, check,
   remove and recovery fixtures; this gate does not boot a system.
 - [x] Add a BIOS/UEFI `make check-qemu ARCH=... ISO=... BOOT_PLAN=...` runner

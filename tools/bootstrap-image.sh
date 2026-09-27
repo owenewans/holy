@@ -25,7 +25,13 @@ limine_dir=$(realpath "$9")
 shift 9
 case "$version" in ''|*[!a-zA-Z0-9._+-]*) exit 2 ;; esac
 test "$(uname -m)" = x86_64 || exit 6
-for tool in dracut ldconfig limine sha256sum cpio gzip python3 qemu-system-x86_64; do
+arch=${ARCH:-x86_64}
+case "$arch" in
+    x86_64) qemu=qemu-system-x86_64; package_arch=x86_64 ;;
+    i686) qemu=qemu-system-i386; package_arch=x86 ;;
+    *) echo 'ARCH must be i686 or x86_64' >&2; exit 2 ;;
+esac
+for tool in dracut ldconfig limine sha256sum cpio gzip python3 "$qemu"; do
     command -v "$tool" >/dev/null || { echo "$tool required" >&2; exit 6; }
 done
 project=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
@@ -42,6 +48,10 @@ case "$storage:$profile" in
         ;;
     *) echo 'ROOT_STORAGE must be ram, or ext4/gpt-ext4 with dual-libc' >&2; exit 2 ;;
 esac
+if test "$arch" = i686 && { test "$storage" != ram || test "$profile" != static-core; }; then
+    echo 'i686 image currently requires static-core and ram root' >&2
+    exit 6
+fi
 if test "$storage" != gpt-ext4; then command -v xorriso >/dev/null || exit 6; fi
 extra_packages=
 case "$profile:$boot_state" in
@@ -65,7 +75,7 @@ root="$out/root"
 mkdir "$work" "$root" "$out/packages" "$out/inputs" "$out/reports"
 started=$(date +%s)
 record="$out/build.record"
-printf 'format holy-bootstrap-image-1\narch x86_64\nprofile %s\nlibc-boot-state %s\nkernel-version %s\n' "$profile" "$boot_state" "$version" > "$record"
+printf 'format holy-bootstrap-image-1\narch %s\nprofile %s\nlibc-boot-state %s\nkernel-version %s\n' "$arch" "$profile" "$boot_state" "$version" > "$record"
 printf 'root-storage %s\n' "$storage" >> "$record"
 finish() {
     rc=$?
@@ -79,12 +89,13 @@ trap 'exit 1' HUP INT TERM
 exec > "$out/build.log" 2>&1
 "$bin" elf "$static" > "$out/core.elf"
 grep -qx 'runtime nolibc' "$out/core.elf"
-grep -qx 'machine x86_64' "$out/core.elf"
+grep -qx "machine $package_arch" "$out/core.elf"
 "$cc" --version > "$out/compiler.record"
 "$cc" -std=c99 -Wall -Wextra -Werror -pedantic -Os -static -fno-pie -no-pie \
     "$project/src/early-init.c" -o "$work/holy-init"
 "$bin" elf "$work/holy-init" > "$out/init.elf"
 grep -qx 'runtime nolibc' "$out/init.elf"
+grep -qx "machine $package_arch" "$out/init.elf"
 if "$work/holy-init" > "$work/init.out" 2> "$work/init.err"; then exit 1; else test "$?" -eq 2; fi
 
 tree="$work/tree"
@@ -107,6 +118,8 @@ for name in busybox dinit mdevd $extra_packages; do
         glibc) input=$glibc ;; musl) input=$musl ;; probe-*) continue ;;
     esac
     cp "$input" "$out/inputs/$name.holy"
+    "$bin" info "local:$out/inputs/$name.holy" > "$work/input-info"
+    grep -qx "arch $package_arch" "$work/input-info" || exit 6
     parent=$(sha256sum "$out/inputs/$name.holy")
     parent=${parent%% *}
     "$bin" fetch "local:$out/inputs/$name.holy" --extract --output "$tree"
@@ -139,7 +152,7 @@ if test "$profile" = dual-libc; then
         pack "probe-$abi"
     done
 fi
-metadata holypkg bootstrap x86_64
+metadata holypkg bootstrap "$package_arch"
 mkdir -p "$tree/DATA/usr/bin" "$tree/DATA/usr/share/man/man5" \
     "$tree/DATA/usr/share/man/man7" "$tree/DATA/usr/share/man/man8" "$tree/DATA/usr/share/holy"
 cp "$static" "$out/inputs/holypkg"
@@ -147,16 +160,18 @@ cp "$out/inputs/holypkg" "$tree/DATA/usr/bin/holypkg"
 for section in 5 7 8; do cp "$project/man/"*."$section" "$tree/DATA/usr/share/man/man$section/"; done
 sha256sum "$out/inputs/holypkg" >> "$tree/HOLY/origin"
 pack holypkg
-metadata linux "$version" x86_64
+metadata linux "$version" "$package_arch"
 mkdir -p "$tree/DATA/boot"
 cp "$kernel" "$out/inputs/kernel"
 cp "$out/inputs/kernel" "$tree/DATA/boot/vmlinuz"
 chmod 0644 "$tree/DATA/boot/vmlinuz"
 sha256sum "$out/inputs/kernel" > "$tree/HOLY/origin"
 pack linux
-metadata limine bootstrap x86_64
+metadata limine bootstrap "$package_arch"
 mkdir -p "$tree/DATA/usr/share/limine"
-for file in limine-bios.sys limine-bios-cd.bin limine-uefi-cd.bin BOOTX64.EFI; do
+set -- limine-bios.sys limine-bios-cd.bin limine-uefi-cd.bin
+if test "$arch" = x86_64; then set -- "$@" BOOTX64.EFI; fi
+for file do
     cp "$limine_dir/$file" "$tree/DATA/usr/share/limine/$file"
     chmod 0644 "$tree/DATA/usr/share/limine/$file"
     sha256sum "$tree/DATA/usr/share/limine/$file" >> "$tree/HOLY/origin"
@@ -170,7 +185,7 @@ pack boot-fixture
 metadata boot-fixture-root 1 noarch
 printf 'require fixture-1 boot-fixture-root package boot-fixture any any any - boot-fixture metadata\n' > "$tree/HOLY/deps"
 pack boot-fixture-root
-metadata holy-boot bootstrap x86_64
+metadata holy-boot bootstrap "$package_arch"
 mkdir -p "$tree/DATA/usr/bin" "$tree/DATA/usr/lib/holy" "$tree/DATA/etc/dinit.d" \
     "$tree/DATA/etc/holy" "$tree/DATA/usr/share/holy"
 cp "$work/holy-init" "$tree/DATA/usr/bin/holy-init"
@@ -228,6 +243,7 @@ if test "$profile" = dual-libc; then
 fi
 "$bin" db init --root "$root"
 set --
+accepted_arch=
 for name in holy-base busybox dinit mdevd holypkg linux limine holy-boot $extra_packages; do
     package="$out/packages/$name.holy"
     digest=$(sha256sum "$package")
@@ -235,6 +251,14 @@ for name in holy-base busybox dinit mdevd holypkg linux limine holy-boot $extra_
     printf 'package %s %s\n' "$name" "$digest" >> "$record"
     "$bin" cache stage "local:$package" --root "$root"
     set -- "$@" "$digest"
+    if test "$arch" = i686; then
+        "$bin" info "local:$package" > "$work/package-info"
+        if grep -qx 'arch x86' "$work/package-info"; then accepted_arch="$accepted_arch $digest"; fi
+    fi
+done
+for digest in $accepted_arch; do
+    printf 'architecture-placement host x86_64 target x86 artifact %s accepted-unverified\n' "$digest" >> "$record"
+    set -- "$@" --accept-arch "$digest"
 done
 "$bin" db plan-set "$@" --root "$root" > "$out/install.plan"
 cat "$out/install.plan"
@@ -371,7 +395,7 @@ mkdir -p "$work/iso/boot/limine" "$work/iso/EFI/BOOT"
 cp "$root/boot/vmlinuz" "$work/iso/boot/vmlinuz"
 cp "$out/initramfs.img" "$work/iso/boot/initramfs.img"
 cp "$root/usr/share/limine/"*.bin "$root/usr/share/limine/limine-bios.sys" "$work/iso/boot/limine/"
-cp "$root/usr/share/limine/BOOTX64.EFI" "$work/iso/EFI/BOOT/"
+if test "$arch" = x86_64; then cp "$root/usr/share/limine/BOOTX64.EFI" "$work/iso/EFI/BOOT/"; fi
 cat > "$work/iso/boot/limine/limine.conf" <<EOF
 timeout: 0
 serial: yes
@@ -383,7 +407,7 @@ verbose: yes
     cmdline: console=ttyS0,115200 rdinit=/init holy.test=1 panic=1 $root_cmdline
 EOF
 boot_media=iso
-iso_image="$out/holy-x86_64.iso"
+iso_image="$out/holy-$arch.iso"
 if test "$storage" = gpt-ext4; then
     boot_media=disk
     iso_image=
@@ -420,19 +444,29 @@ PY
     root_disk="$out/disk.raw"
     sha256sum "$out/disk.raw" "$out/disk-layout.json" "$out/limine.conf" >> "$record"
 else
-    xorriso -as mkisofs -R -r -J -b boot/limine/limine-bios-cd.bin \
-    -no-emul-boot -boot-load-size 4 -boot-info-table \
-    --efi-boot boot/limine/limine-uefi-cd.bin -efi-boot-part --efi-boot-image \
-    --protective-msdos-label "$work/iso" -o "$iso_image"
-    limine bios-install "$iso_image"
+    if test "$arch" = i686; then
+        xorriso -as mkisofs -R -r -J -b boot/limine/limine-bios-cd.bin \
+            -no-emul-boot -boot-load-size 4 -boot-info-table \
+            "$work/iso" -o "$iso_image"
+    else
+        xorriso -as mkisofs -R -r -J -b boot/limine/limine-bios-cd.bin \
+            -no-emul-boot -boot-load-size 4 -boot-info-table \
+            --efi-boot boot/limine/limine-uefi-cd.bin -efi-boot-part --efi-boot-image \
+            --protective-msdos-label "$work/iso" -o "$iso_image"
+    fi
+    if test "$arch" = x86_64; then
+        limine bios-install "$iso_image"
+    else
+        printf 'bios-el-torito optical-only\n' >> "$record"
+    fi
     sha256sum "$iso_image" >> "$record"
 fi
 sha256sum "$out/initramfs.img" "$root/boot/vmlinuz" >> "$record"
-ARCH=x86_64 BOOT_MEDIA="$boot_media" ISO="$iso_image" BOOT_PLAN="$plan" REPORT_DIR="$out/reports" \
+ARCH="$arch" BOOT_MEDIA="$boot_media" ISO="$iso_image" BOOT_PLAN="$plan" REPORT_DIR="$out/reports" \
     IMAGE_PROFILE="$profile" LIBC_BOOT_STATE="$boot_state" \
     ROOT_DISK="$root_disk" \
     KERNEL_IMAGE="$root/boot/vmlinuz" KERNEL_VERSION="$version" INITRAMFS="$out/initramfs.img" \
     sh "$project/tests/qemu.sh"
 printf 'result boot-tested-%s\n' "$profile" >> "$record"
 if test "$storage" = ram; then printf 'not-tested libc-recovery-reboot\n' >> "$record"; fi
-printf 'not-tested i686 installer network graphics\n' >> "$record"
+printf 'not-tested installer network graphics\n' >> "$record"

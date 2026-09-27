@@ -2,7 +2,13 @@
 .SH NAME
 holy-image \- image build and libc recovery boot tests
 .SH BUILD
-make bootstrap-image builds an x86_64 live ISO and runs its QEMU boot test.
+make bootstrap-image builds a live ISO and runs its QEMU boot test. ARCH defaults
+to x86_64. ARCH=i686 selects a BIOS ISO with IMAGE_PROFILE=static-core and
+ROOT_STORAGE=ram. This i686 ISO boots as BIOS optical media through El Torito;
+it is not a hybrid USB image. The i686 profile requires an i686 kernel and matching static
+BusyBox, dinit, mdevd, holypkg and C compiler inputs. The builder checks
+package and executable architectures before installation. Dynamic libc and
+disk recovery profiles for i686 remain separate acceptance work.
 IMAGE_PROFILE defaults to dual-libc; static-core explicitly selects the earlier
 profile without dynamic libraries. LIBC_BOOT_STATE is present by default.
 For dual-libc, glibc, musl or both remove those runtime payloads and their loader
@@ -40,8 +46,9 @@ must include initramfs/gzip, devtmpfs, proc, sysfs, tmpfs, devpts and serial
 console support. No kernel modules are included by this profile.
 .TP
 LIMINE_DIR
-Directory containing limine-bios.sys, limine-bios-cd.bin,
-limine-uefi-cd.bin and BOOTX64.EFI. Use the matching host limine tool.
+Directory containing limine-bios.sys, limine-bios-cd.bin and
+limine-uefi-cd.bin. x86_64 also requires BOOTX64.EFI. Use the matching host
+limine tool.
 .TP
 OUTPUT
 New output directory. Existing directories are refused.
