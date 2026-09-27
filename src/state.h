@@ -50,9 +50,11 @@ int holy_state_continue_set(const char *root_path);
 int holy_state_repair(const char *digest, const char *approved, const char *root_path);
 /* read-only replacement preview, preserving the installed source and slot. */
 int holy_state_update_plan(const char *old_digest, const char *new_digest,
-                           const char *accepted_privileged, const char *root_path);
+                           const char *accepted_arch, const char *accepted_privileged,
+                           const char *root_path);
 int holy_state_apply_update(const char *plan, const char *old_digest,
-                            const char *new_digest, const char *accepted_privileged,
+                            const char *new_digest, const char *accepted_arch,
+                            const char *accepted_privileged,
                             const char *root_path);
 int holy_state_recover_update(const char *root_path);
 

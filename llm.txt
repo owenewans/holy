@@ -791,7 +791,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=265381a1da5de47f24128bb9851d2c03fedd534de11dbcb23067f73bb2c58a69
+holypkg.8 source=holy version=development sha256=ff9a92a4d6f6d1ce02413f0e0a8dcd237a1e0222fbaa83cf373b04e6f648621d
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -855,10 +855,10 @@ SYNOPSIS
      SHA256 ...] [--accept-privileged SHA256 ...] --root DIRECTORY
      holypkg db recover --finish-set|--continue-set --root DIRECTORY
      holypkg db repair-plan SHA256 --root DIRECTORY
-     holypkg   db   plan-update	  OLD_SHA256   NEW_SHA256   [--accept-privileged
-     NEW_SHA256] --root DIRECTORY
-     holypkg  db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-privi-
-     leged NEW_SHA256] --root DIRECTORY
+     holypkg db plan-update  OLD_SHA256	 NEW_SHA256  [--accept-arch  NEW_SHA256]
+     [--accept-privileged NEW_SHA256] --root DIRECTORY
+     holypkg  db  apply-update	PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-arch
+     NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY
      holypkg db recover --update --root DIRECTORY
      holypkg db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY
      holypkg db recover --repair --root DIRECTORY
@@ -1472,17 +1472,22 @@ DESCRIPTION
      db plan-update OLD_SHA256 NEW_SHA256 --root DIRECTORY previews one explicit
      cached replacement. It keeps the installed source-id, name,  OS,  architec-
      ture  and	libc slot; a different slot or an already active target artifact
-     conflicts.	 If the new artifact contains a setuid	executable,  plan-update
-     requires  --accept-privileged  NEW_SHA256.	 The old installed decision only
-     authorizes checking and replacing the old file; it does not approve the new
-     hash. Apply must repeat the same flag. The plan and version-2 update  jour-
-     nal  bind this decision to the new artifact, and recovery reads it from the
-     journal.  Setgid, sticky and privileged hardlink groups remain unsupported.
-     It requires the old archive, the proposed archive and  archives  for  every
-     other  installed package in the cache. It does not select versions or down-
-     load missing dependencies. The caller explicitly proposes local delivery in
-     the installed source's slot; metadata inside the new archive cannot  assign
-     a source-id or provide signature evidence.
+     conflicts.	 For a non-native  target,  plan-update	 requires  --accept-arch
+     NEW_SHA256	 even  when  the  old  installed  package had approval. The plan
+     records host and target, and the  new  installed  instance	 retains  target
+     metadata  with  an unverified execution status. Apply repeats the flag; re-
+     covery reads it from the journal.	This authorizes placement, not execution
+     by the current kernel.  If the new artifact contains a  setuid  executable,
+     plan-update  requires --accept-privileged NEW_SHA256. The old installed de-
+     cision only authorizes checking and replacing the old file; it does not ap-
+     prove the new hash. Apply must repeat the same flag.  Update  journal  ver-
+     sions  2,	3 and 4 bind privilege, architecture and both decisions, respec-
+     tively, to the new artifact.  Setgid, sticky and privileged hardlink groups
+     remain unsupported.  It requires the old archive, the proposed archive  and
+     archives for every other installed package in the cache. It does not select
+     versions  or  download missing dependencies. The caller explicitly proposes
+     local delivery in the installed source's  slot;  metadata	inside	the  new
+     archive cannot assign a source-id or provide signature evidence.
 
      The  command takes the database's shared lock, refuses pending transactions
      and checks installed metadata, file ownership, payload and	 saved	provider

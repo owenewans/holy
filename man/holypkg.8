@@ -102,9 +102,9 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db repair-plan SHA256 --root DIRECTORY
 .br
-.B holypkg db plan-update OLD_SHA256 NEW_SHA256 [--accept-privileged NEW_SHA256] --root DIRECTORY
+.B holypkg db plan-update OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY
 .br
-.B holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-privileged NEW_SHA256] --root DIRECTORY
+.B holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY
 .br
 .B holypkg db recover --update --root DIRECTORY
 .br
@@ -699,11 +699,16 @@ arbitrary .holy packages.
 db plan-update OLD_SHA256 NEW_SHA256 --root DIRECTORY previews one explicit
 cached replacement. It keeps the installed source-id, name, OS, architecture
 and libc slot; a different slot or an already active target artifact conflicts.
+For a non-native target, plan-update requires --accept-arch NEW_SHA256 even
+when the old installed package had approval. The plan records host and target,
+and the new installed instance retains target metadata with an unverified
+execution status. Apply repeats the flag; recovery reads it from the journal.
+This authorizes placement, not execution by the current kernel.
 If the new artifact contains a setuid executable, plan-update requires
 --accept-privileged NEW_SHA256. The old installed decision only authorizes
 checking and replacing the old file; it does not approve the new hash. Apply
-must repeat the same flag. The plan and version-2 update journal bind this
-decision to the new artifact, and recovery reads it from the journal.
+must repeat the same flag. Update journal versions 2, 3 and 4 bind privilege,
+architecture and both decisions, respectively, to the new artifact.
 Setgid, sticky and privileged hardlink groups remain unsupported.
 It requires the old archive, the proposed archive and archives for every other
 installed package in the cache. It does not select versions or download missing
