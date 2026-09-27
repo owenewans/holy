@@ -99,4 +99,23 @@ for key in url repo; do
 done
 printf '[source native]\ntype holy-http\nurl "https://example.org/path@revision"\n' > "$tmp/url-at"
 "$bin" config check "$tmp/url-at" > "$tmp/out"
+cat > "$tmp/parent-ok" <<'EOF'
+[source arch]
+type pacman
+repo core "https://example.org/core"
+[source aur]
+type aur
+url "https://example.org/aur"
+parent arch
+EOF
+"$bin" config check "$tmp/parent-ok" > "$tmp/out"
+sed 's/parent arch/parent missing/' "$tmp/parent-ok" > "$tmp/parent-missing"
+if "$bin" config check "$tmp/parent-missing" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'parent source is not configured' "$tmp/err"
+cat >> "$tmp/parent-ok" <<'EOF'
+[source arch]
+parent aur
+EOF
+if "$bin" config check "$tmp/parent-ok" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'parent source cycle' "$tmp/err"
 printf 'config fixtures passed\n'

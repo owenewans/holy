@@ -396,6 +396,36 @@ static int validate(struct holy_config *config, char **error)
             return fail(error, e->file, e->line,
                         "[%s] requires consumer, require and provider", e->section);
     }
+    for (i = 0; i < config->count; ++i) {
+        const struct holy_entry *start = &config->entries[i], *parent = start;
+        size_t hops = 0;
+        if (strcmp(start->key, "parent")) continue;
+        while (parent) {
+            const struct holy_entry *next = NULL;
+            size_t n;
+            for (n = 0; n < config->count; ++n)
+                if (!strcmp(config->entries[n].key, "parent") &&
+                    !strncmp(config->entries[n].section, "source ", 7) &&
+                    !strcmp(config->entries[n].section + 7, parent->values[0])) {
+                    next = &config->entries[n];
+                    break;
+                }
+            if (!next) {
+                int found = 0;
+                for (n = 0; n < config->count; ++n)
+                    if (!strncmp(config->entries[n].section, "source ", 7) &&
+                        !strcmp(config->entries[n].section + 7, parent->values[0])) {
+                        found = 1;
+                        break;
+                    }
+                if (!found) return fail(error, parent->file, parent->line,
+                                        "parent source is not configured");
+            }
+            parent = next;
+            if (++hops > config->count)
+                return fail(error, start->file, start->line, "parent source cycle");
+        }
+    }
     return 1;
 }
 
