@@ -17,7 +17,7 @@ package() {
     name=$1 path=$2 dependency=$3
     rm -rf "$tree"
     mkdir -p "$tree/HOLY" "$tree/DATA/usr/share"
-    printf 'format holy-package-1\nname %s\nversion 1\nrelease 1\nos linux\narch noarch\nlibc nolibc\n' "${4:-$name}" > "$tree/HOLY/meta"
+    printf 'format holy-package-1\nname %s\nversion %s\nrelease 1\nos linux\narch noarch\nlibc nolibc\n' "${4:-$name}" "${5:-1}" > "$tree/HOLY/meta"
     for field in deps provides hooks origin transform; do : > "$tree/HOLY/$field"; done
     printf 'source-name forged\n' >> "$tree/HOLY/meta"
     printf 'source-id forged\n' > "$tree/HOLY/origin"
@@ -191,4 +191,56 @@ gcc -shared -fPIC -o "$tmp/fault.so" "$tmp/fault.c" -ldl
     grep -qx "source-id $one" "$db/installed/$app/state"
     expect 0 "$bin" db check --all --root "$root"
 fi
-printf 'installed source fixtures passed\n' 
+root="$tmp/slots"
+db="$root/var/lib/holypkg"
+mkdir -p "$root/usr/share"
+expect 0 "$bin" db init --root "$root"
+cp "$tmp/active-config" "$tmp/config"
+register
+package empty empty ''
+rm "$tree/DATA/usr/share/empty"
+"$bin" manifest generate "$tree" --output "$tmp/files" > "$tmp/out"
+mv "$tmp/files" "$tree/HOLY/files"
+"$bin" pack "$tree" --output "$tmp/empty2.holy" > "$tmp/out"
+"$bin" cache stage "local:$tmp/empty2.holy" --root "$root" > "$tmp/out"
+empty=$(hash empty2)
+expect 0 "$bin" db plan-set "$empty" --source "$empty=$one" --root "$root"
+plan=$(plan_hash)
+expect 0 "$bin" db apply-set "$plan" "$empty" --source "$empty=$one" --root "$root"
+expect 0 "$bin" db reserve "$empty" --root "$root"
+expect 4 "$bin" db plan --root "$root"
+expect 0 "$bin" db cancel --root "$root"
+expect 0 "$bin" db rm "$empty" --root "$root"
+package alpha alpha '' shared 1
+package beta beta '' shared 2
+package gamma gamma '' shared 3
+package delta delta '' shared 4
+package collision alpha '' other 1
+alpha=$(hash alpha) beta=$(hash beta) gamma=$(hash gamma) delta=$(hash delta) collision=$(hash collision)
+expect 0 "$bin" db plan-set "$alpha" --source "$alpha=$one" --root "$root"
+plan=$(plan_hash)
+expect 0 "$bin" db apply-set "$plan" "$alpha" --source "$alpha=$one" --root "$root"
+expect 4 "$bin" db plan-set "$beta" --source "$beta=$one" --root "$root"
+expect 0 "$bin" db plan-set "$beta" --source "$beta=$two" --root "$root"
+plan=$(plan_hash)
+expect 0 "$bin" db apply-set "$plan" "$beta" --source "$beta=$two" --root "$root"
+expect 0 "$bin" db plan-set "$gamma" --root "$root"
+plan=$(plan_hash)
+expect 0 "$bin" db apply-set "$plan" "$gamma" --root "$root"
+expect 4 "$bin" db plan-set "$delta" --root "$root"
+expect 4 "$bin" db plan-set "$collision" --source "$collision=$two" --root "$root"
+sed 's/source first/source renamed/' "$tmp/config" > "$tmp/changed"
+mv "$tmp/changed" "$tmp/config"
+register
+expect 4 "$bin" db plan-set "$delta" --source "$delta=$one" --root "$root"
+expect 0 "$bin" db check --all --root "$root"
+expect 0 "$bin" db rm "$alpha" --root "$root"
+test ! -e "$root/usr/share/alpha"
+grep -qx beta "$root/usr/share/beta"
+grep -qx gamma "$root/usr/share/gamma"
+expect 0 "$bin" db check --all --root "$root"
+expect 0 "$bin" db plan-set "$delta" --source "$delta=$one" --root "$root"
+plan=$(plan_hash)
+expect 0 "$bin" db apply-set "$plan" "$delta" --source "$delta=$one" --root "$root"
+expect 0 "$bin" db check --all --root "$root"
+printf 'installed source fixtures passed\n'

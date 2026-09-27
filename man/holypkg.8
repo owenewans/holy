@@ -140,8 +140,9 @@ manifest. It refuses symlinked parent directories and reads no configs,
 origin URLs, passwords or files outside the installed man list.
 .PP
 Each page records its name, section, path, package name/version, installed
-source-id and artifact and source-file hashes. The current local installation
-subset has source-id "-". Same-name pages retain separate attributed records.
+source-id and artifact and source-file hashes. Local delivery has source-id "-"
+unless explicitly associated with a registered source.
+Same-name pages retain separate attributed records.
 Sources remain roff text; this command does not run a formatter or interpret
 roff directives. It decodes gzip, bzip2, xz and zstd with built-in libarchive
 filters when compiled in, and never invokes a decompression helper.
@@ -343,7 +344,7 @@ directories and the same payload subset as db apply. It reports selected
 artifacts, reasons and requirement edges without changing installed state.
 Unused candidates are excluded from the operation. The plan digest binds
 target-root device/inode, generation, selected graph, explicit provider choice
-and every selected manifest. Inter-package path/name conflicts are rejected.
+and every selected manifest. Inter-package path and slot conflicts are rejected.
 .PP
 The db apply-set command accepts the reviewed plan digest followed by the same
 root and candidates. It holds one writer lock, checks the plan again and writes
@@ -424,8 +425,13 @@ types and targets, and the canonical resolver record. That record identifies
 artifact candidates, not physical loader bindings. Apply stores the approved
 record as installed graph with a SHA-256 in instance state.
 Symlinks must have mode 0777. The narrow local
-planner rejects a second installed package with the same name, even when its
-payload paths differ; general source-ID and ABI slot management is pending.
+planner rejects a second active version of the same slot, even when its payload
+paths differ. A slot consists of source-id, name, os, arch and libc; unassociated
+local delivery uses source-id "-". Source aliases and package versions do not
+change the slot. Distinct slots may coexist when their file ownership is compatible.
+The installed directory remains keyed by artifact hash, so registering the same
+artifact as multiple installed instances is still unsupported. Slot replacement
+requires update transactions, which are not yet implemented.
 This command does not persist a plan,
 reserve ownership, authorize apply or recheck the target root at mutation
 time. Concurrent changes can invalidate the collision check. Apply revalidates
@@ -1016,7 +1022,7 @@ List prints identities and status without endpoint definitions.
 .PP
 An ID identifies a configured origin; it is not signature evidence. The current
 registry retains inactive origins and supports explicit local-artifact associations
-in set installation. Source-aware package slots, configured catalog synchronization
+in set installation. Slot replacement, configured catalog synchronization
 and source-aware update plans remain unimplemented. These
 commands do not yet implement JSON output. See holy.conf(5) for identity rules
 and endpoint restrictions.

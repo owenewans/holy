@@ -306,7 +306,7 @@ duplicate=${duplicate%% *}
 "$bin" cache stage "local:$tmp/duplicate.holy" --root "$tmp/system" > "$tmp/out"
 "$bin" db reserve "$duplicate" --root "$tmp/system" > "$tmp/out"
 if "$bin" db plan --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
-grep -qx 'holypkg: installed package name already active: data' "$tmp/err"
+grep -qx 'holypkg: installed package slot already active: data' "$tmp/err"
 test ! -s "$tmp/out"
 "$bin" db cancel --root "$tmp/system" > "$tmp/out"
 mv "$tmp/saved-files" "$tmp/payload/HOLY/files"

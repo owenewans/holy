@@ -311,7 +311,7 @@ SEE ALSO
      holy-image(7), holypkg(8)
 
 Holy				 September 2026			    HOLY-INIT(8)
-holy-package.5 source=holy version=development sha256=4c65f6622b2781b4fe6a1ece1065dd899c0f97b9016004455d9da3702da63cb6
+holy-package.5 source=holy version=development sha256=0e1f759e3e20306fa913ce6bbdab8642fded93b2bd801136da513323fa829508
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -406,9 +406,12 @@ INSTALLED GRAPH
      The  set installation interface supports exact package dependencies and na-
      tive dynamic packages  with  literal  absolute  interpreter  and  DT_NEEDED
      provider  paths.	It  records  explicit/dependency reasons. General loader
-     search, automatic ELF rewriting and source-ID slots  remain  unimplemented.
-     Missing-only cache repair preserves the installed graph and refuses changed
-     or partial files.
+     search, automatic ELF rewriting remains unimplemented. Slot conflicts  com-
+     pare  source-id,  name,  os, arch and libc; distinct artifacts in different
+     slots may coexist with compatible file ownership. Replacing a slot and reg-
+     istering the same artifact in multiple slots remain  unsupported.	Missing-
+     only cache repair preserves the installed graph and refuses changed or par-
+     tial files.
 
 SEE ALSO
      holypkg(8), holy.conf(5)
@@ -489,7 +492,7 @@ SOURCE IDENTITIES
      during package selection remain unimplemented.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=e9f0bd86827defdaea8875c3baf36c5912773963f571a12206b27e9376a0257c
+holypkg.8 source=holy version=development sha256=ab0e96d57a46ee18dc12d22d334e92d8762bc37afb20c97b11e4d08b1e0b4759
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -576,193 +579,193 @@ DESCRIPTION
      configs, origin URLs, passwords or files outside the installed man list.
 
      Each page records its name, section, path, package name/version,  installed
-     source-id	and artifact and source-file hashes. The current local installa-
-     tion subset has source-id "-". Same-name pages retain  separate  attributed
-     records.	Sources	 remain roff text; this command does not run a formatter
-     or interpret roff directives. It decodes gzip,  bzip2,  xz	 and  zstd  with
-     built-in  libarchive  filters  when compiled in, and never invokes a decom-
-     pression helper.  The compressed  source  digest  identifies  the	original
-     file. Symlink aliases are checked without following them and listed as ref-
-     erences rather than expanded.
+     source-id and artifact and source-file hashes. Local delivery has source-id
+     "-" unless explicitly associated with a registered source.	 Same-name pages
+     retain separate attributed records.  Sources remain roff text; this command
+     does  not	run  a	formatter or interpret roff directives. It decodes gzip,
+     bzip2, xz and zstd with built-in libarchive filters when compiled	in,  and
+     never invokes a decompression helper.  The compressed source digest identi-
+     fies  the original file. Symlink aliases are checked without following them
+     and listed as references rather than expanded.
 
-     missing-man  identifies packages with no included regular page. omitted-man
-     lists unsupported page names/codecs. The final summary records  generation,
+     missing-man identifies packages with no included regular page.  omitted-man
+     lists  unsupported page names/codecs. The final summary records generation,
      package/page/alias counts and missing/omitted coverage. A successful bundle
-     can  contain those explicit omissions; inclusion does not assess a manual's
-     semantic completeness. Sources and manifests are  limited	to  16	MiB  per
-     file;  decoded  pages  are	 limited to 64 MiB. Empty or NUL-containing page
+     can contain those explicit omissions; inclusion does not assess a	manual's
+     semantic  completeness.  Sources  and  manifests  are limited to 16 MiB per
+     file; decoded pages are limited to 64 MiB.	 Empty	or  NUL-containing  page
      bodies fail.
 
-     The command builds a temporary file beside FILE and publishes  without  re-
-     placing  an existing output. Invalid or changed man files return 4; pending
-     transactions return 5; output and database I/O failures return  1.	 Failure
+     The  command  builds a temporary file beside FILE and publishes without re-
+     placing an existing output. Invalid or changed man files return 4;	 pending
+     transactions  return  5; output and database I/O failures return 1. Failure
      leaves existing output untouched. It requires neither root nor network. For
-     image  roots  whose  manifests use UID 0, run inside the builder's matching
-     user namespace.  HOLY_DOCS_CHROOT=1  sh  tests/installed-docs.sh  ./holypkg
-     additionally  exercises  the static binary and gzip decoding in a libc-free
+     image roots whose manifests use UID 0, run inside	the  builder's	matching
+     user  namespace.	HOLY_DOCS_CHROOT=1  sh tests/installed-docs.sh ./holypkg
+     additionally exercises the static binary and gzip decoding in  a  libc-free
      chroot using host doas.
 
    Bootstrap shell package
      The repository target make bootstrap-busybox INPUTS=DIRECTORY OUTPUT=DIREC-
      TORY builds a small x86_64 BusyBox package with static musl linkage. INPUTS
-     must contain musl-1.2.5.tar.gz and busybox-1.37.0.tar.bz2	from  their  up-
-     stream  release  URLs.   The build checks pinned SHA-256 digests before un-
-     packing, uses GCC and upstream make builds, and installs  the  build  tool-
-     chain  only  in a temporary directory.  OUTPUT must not exist. Its absolute
+     must  contain  musl-1.2.5.tar.gz  and busybox-1.37.0.tar.bz2 from their up-
+     stream release URLs.  The build checks pinned SHA-256  digests  before  un-
+     packing,  uses  GCC  and upstream make builds, and installs the build tool-
+     chain only in a temporary directory.  OUTPUT must not exist.  Its	absolute
      path must use ASCII letters, digits, underscore, dot, slash or hyphen. JOBS
      controls build parallelism, default 2.  The optional GCC flag -fno-link-li-
-     batomic disables the host compiler's automatic libatomic linkage when  that
-     flag  is  available;  the musl link otherwise uses only the selected static
+     batomic  disables the host compiler's automatic libatomic linkage when that
+     flag is available; the musl link otherwise uses only  the	selected  static
      libraries.
 
-     Outputs include busybox.holy, build.log, build.record,  busybox.config,  an
-     applet  list,  ELF	 inspection and shell probe records. Source URLs, source
-     hashes, compiler version, config  hash,  artifact	hash,  exit  status  and
+     Outputs  include  busybox.holy, build.log, build.record, busybox.config, an
+     applet list, ELF inspection and shell probe records.  Source  URLs,  source
+     hashes,  compiler	version,  config  hash,	 artifact  hash, exit status and
      elapsed seconds are recorded. Upstream BusyBox and musl copyright files ac-
      company the payload.  The package contains /usr/bin/busybox; invoke applets
      as busybox APPLET.	 The configuration is profiles/busybox-bootstrap.config.
-     It	 includes  ash,	 basic file utilities and mount tools; it has no network
+     It includes ash, basic file utilities and mount tools; it	has  no	 network
      recovery profile.	The manifest records the builder's numeric UID/GID. This
-     is a local bootstrap experiment, not an official base image  or  a	 general
+     is	 a  local  bootstrap experiment, not an official base image or a general
      recipe engine.
 
      make check-bootstrap-busybox BUSYBOX_PACKAGE=FILE installs the package in a
-     disposable	 root  with prepared directories, runs its shell there with doas
+     disposable root with prepared directories, runs its shell there  with  doas
      and chroot --userspec, checks files and removes the package. Noninteractive
-     doas must be available. The chroot has no dynamic	libc  directories.  This
-     tests  the	 static shell; host holypkg still runs outside the chroot. Boot,
+     doas  must	 be  available. The chroot has no dynamic libc directories. This
+     tests the static shell; host holypkg still runs outside the  chroot.  Boot,
      static holypkg and full libc recovery require separate acceptance tests.
 
    Static core build
-     make bootstrap-mdevd INPUTS=DIRECTORY  OUTPUT=DIRECTORY  builds  an  x86_64
-     musl-static  mdevd	 0.1.8.2  package with skalibs 2.15.1.0. INPUTS contains
-     mdevd-0.1.8.2.tar.gz and skalibs-2.15.1.0.tar.gz from the	upstream  GitHub
-     tag  archives,  plus  x86_64-linux-musl-cross.tgz	from musl.cc. The script
-     checks pinned hashes  of  private	copies,	 builds	 with  upstream	 config-
-     ure/make,	and records compiler version, both configurations, ELF facts and
-     artifact hash.  OUTPUT must be new and use ASCII  letters,	 digits,  under-
+     make  bootstrap-mdevd  INPUTS=DIRECTORY  OUTPUT=DIRECTORY	builds an x86_64
+     musl-static mdevd 0.1.8.2 package with skalibs  2.15.1.0.	INPUTS	contains
+     mdevd-0.1.8.2.tar.gz  and	skalibs-2.15.1.0.tar.gz from the upstream GitHub
+     tag archives, plus x86_64-linux-musl-cross.tgz  from  musl.cc.  The  script
+     checks  pinned  hashes  of	 private  copies,  builds  with upstream config-
+     ure/make, and records compiler version, both configurations, ELF facts  and
+     artifact  hash.   OUTPUT  must be new and use ASCII letters, digits, under-
      score, dot, slash or hyphen. JOBS defaults to 2. Upstream licenses and HTML
      documentation accompany the package; docs.record reports missing man pages.
      No service or mdev.conf is enabled by this bootstrap build. Execline direc-
      tives and external command helpers require additional packages and configu-
      ration.
 
-     make  check-bootstrap-mdevd MDEVD_PACKAGE=FILE installs the artifact into a
-     disposable root through the reviewed database plan. In a libc-free	 chroot,
-     mdevd  parses a valid configuration with symbolic root user/group names and
-     rejects an invalid regular expression with status 2.  Host	 doas,	unshare,
-     chroot  and  timeout  provide  a private network namespace and a ten-second
-     limit. The command runs with the caller's UID/GID; host /dev and  /sys  are
-     absent.  The  fixture  then checks and removes the installed package.  This
-     covers installation, static configuration parsing and removal. Uevent  han-
-     dling,  coldplug, dinit integration and client libudev compatibility remain
+     make check-bootstrap-mdevd MDEVD_PACKAGE=FILE installs the artifact into  a
+     disposable	 root through the reviewed database plan. In a libc-free chroot,
+     mdevd parses a valid configuration with symbolic root user/group names  and
+     rejects  an  invalid  regular expression with status 2. Host doas, unshare,
+     chroot and timeout provide a private network  namespace  and  a  ten-second
+     limit.  The  command runs with the caller's UID/GID; host /dev and /sys are
+     absent. The fixture then checks and removes the  installed	 package.   This
+     covers  installation, static configuration parsing and removal. Uevent han-
+     dling, coldplug, dinit integration and client libudev compatibility  remain
      separate acceptance cases.
 
-     make bootstrap-dinit INPUTS=DIRECTORY OUTPUT=DIRECTORY builds dinit  0.22.1
-     as	 an x86_64 musl-static native package, including its C++ runtime. Inputs
-     are dinit-0.22.1.tar.gz  from  the	 upstream  GitHub  tag	and  the  pinned
-     x86_64-linux-musl-cross.tgz  toolchain  from musl.cc. The script copies and
-     hashes both archives before use; an updated archive at the same URL is  re-
-     jected.   It  runs upstream make check, includes upstream man pages and li-
-     cense, and records compiler version, configuration, ELF facts  and	 package
-     hash.  Capabilities  support  is  disabled	 in this bootstrap profile. This
-     package build does not establish PID 1 boot acceptance; that  requires  the
+     make  bootstrap-dinit INPUTS=DIRECTORY OUTPUT=DIRECTORY builds dinit 0.22.1
+     as an x86_64 musl-static native package, including its C++ runtime.  Inputs
+     are  dinit-0.22.1.tar.gz  from  the  upstream  GitHub  tag	 and  the pinned
+     x86_64-linux-musl-cross.tgz toolchain from musl.cc. The script  copies  and
+     hashes  both archives before use; an updated archive at the same URL is re-
+     jected.  It runs upstream make check, includes upstream man pages	and  li-
+     cense,  and  records compiler version, configuration, ELF facts and package
+     hash. Capabilities support is disabled  in	 this  bootstrap  profile.  This
+     package  build  does not establish PID 1 boot acceptance; that requires the
      image test. OUTPUT must be new.
 
-     make  check-bootstrap-dinit  DINIT_PACKAGE=FILE BUSYBOX_PACKAGE=FILE stages
+     make check-bootstrap-dinit DINIT_PACKAGE=FILE  BUSYBOX_PACKAGE=FILE  stages
      both packages and installs them through approved database plans into a dis-
      posable chroot without dynamic libc directories. It checks command and man-
-     page links, static ELF classification, starts a scripted  service,	 queries
-     its  STARTED state through the control socket, requests shutdown and checks
-     the stop-command effect.	The  service  manager  runs  with  the	caller's
-     UID/GID  in  user	mode. Host doas, chroot, mknod and timeout are required;
-     the fixture supplies only /dev/null and enforces a	 20-second  timeout.  It
-     prints  the  tested  package hashes.  After service shutdown it checks both
-     installed manifests and removes both packages through  the	 database.  This
-     covers  package  installation,  service control and the static C++ runtime.
+     page  links,  static ELF classification, starts a scripted service, queries
+     its STARTED state through the control socket, requests shutdown and  checks
+     the  stop-command	effect.	  The  service	manager	 runs  with the caller's
+     UID/GID in user mode. Host doas, chroot, mknod and	 timeout  are  required;
+     the  fixture  supplies  only /dev/null and enforces a 20-second timeout. It
+     prints the tested package hashes.	After service shutdown	it  checks  both
+     installed	manifests  and	removes both packages through the database. This
+     covers package installation, service control and the  static  C++	runtime.
      PID 1 boot remains a separate test.
 
      make static-deps INPUTS=DIRECTORY OUTPUT=DIRECTORY KERNEL_HEADERS=DIRECTORY
-     builds x86_64 musl dependencies from the pinned archives listed  with  URLs
-     and  SHA-256 digests in profiles/static-sources. It copies and verifies in-
-     puts before unpacking. The caller supplies	 Linux	userspace  headers  with
+     builds  x86_64  musl dependencies from the pinned archives listed with URLs
+     and SHA-256 digests in profiles/static-sources. It copies and verifies  in-
+     puts  before  unpacking.  The  caller supplies Linux userspace headers with
      linux, asm and asm-generic subdirectories. Their installed copies receive a
-     hash  inventory.  GCC,  make,  CMake,  autotools, libtool, Perl and archive
+     hash inventory. GCC, make, CMake,	autotools,  libtool,  Perl  and	 archive
      tools are host build requirements. JOBS controls parallelism, default 2.
 
-     The output is a new private prefix containing static libarchive/LZ4,  zlib,
+     The  output is a new private prefix containing static libarchive/LZ4, zlib,
      libelf, libsolv, curl and OpenSSL, plus build compatibility libraries.  Its
-     musl  toolchain  includes	a  private dynamic loader for upstream configure
-     probes; the final holypkg link uses -static.  No  host  libc  is  replaced.
-     Source  manifests, build logs, library hashes, exit status and elapsed sec-
-     onds remain in the prefix. Archive support in this bootstrap  configuration
-     is	 limited to the enabled codecs, including native LZ4; full foreign codec
+     musl toolchain includes a private dynamic	loader	for  upstream  configure
+     probes;  the  final  holypkg  link	 uses -static. No host libc is replaced.
+     Source manifests, build logs, library hashes, exit status and elapsed  sec-
+     onds  remain in the prefix. Archive support in this bootstrap configuration
+     is limited to the enabled codecs, including native LZ4; full foreign  codec
      coverage is a separate build profile.
 
-     make static STATIC_DEPS=DIRECTORY checks the completed  dependency	 prefix,
-     cleans  existing  object  files  and builds holypkg with its musl compiler.
+     make  static  STATIC_DEPS=DIRECTORY checks the completed dependency prefix,
+     cleans existing object files and builds holypkg  with  its	 musl  compiler.
      make check-static-core STATIC_HOLYPKG=FILE BUSYBOX_PACKAGE=FILE copies that
-     binary into a disposable root without dynamic libc directories. Inside  the
+     binary  into a disposable root without dynamic libc directories. Inside the
      chroot, holypkg verifies and caches the supplied BusyBox package, installs,
      checks and removes it twice using the cached artifact. The original package
-     is	 removed  after	 caching. A BusyBox shell probe runs after each install.
-     doas creates the chroot and drops to the caller's	numeric	 UID/GID.   Both
-     artifact  hashes  are  printed  on	 success. This verifies the local static
-     package path; removal and restoration of real dynamic libc	 packages,  net-
+     is removed after caching. A BusyBox shell probe runs  after  each	install.
+     doas  creates  the	 chroot and drops to the caller's numeric UID/GID.  Both
+     artifact hashes are printed on success.  This  verifies  the  local  static
+     package  path;  removal and restoration of real dynamic libc packages, net-
      work recovery and dinit boot still require their own tests.
 
-     Passing  DINIT_PACKAGE=FILE  to check-static-core also installs, checks and
-     removes the complete dinit package, including its	symlinks,  with	 holypkg
-     running  inside  that libc-free chroot. The fixture removes the input after
+     Passing DINIT_PACKAGE=FILE to check-static-core also installs,  checks  and
+     removes  the  complete  dinit package, including its symlinks, with holypkg
+     running inside that libc-free chroot. The fixture removes the  input  after
      caching and reports the tested artifact hash. Service control is covered by
      check-bootstrap-dinit.
 
-     make  check-static-network	 STATIC_HOLYPKG=FILE  BUSYBOX_PACKAGE=FILE   RE-
-     PORT=FILE	tests that static client in a libc-free chroot with private net-
-     work namespace, local DNS and HTTPS fixtures, and a generated test	 CA.  It
-     verifies  real  DNS queries, certificate rejection, digest rejection, down-
-     loading and native archive verification. The client drops to  the	caller's
-     UID/GID.  The  fixture creates no external route and supplies no proxy cre-
-     dentials. Python, OpenSSL, ip, unshare, chroot and noninteractive doas  are
-     host  test	 tools, not guest recovery helpers.  Host ip configures the fix-
-     ture's loopback interface; static interface setup and physical network  re-
+     make   check-static-network  STATIC_HOLYPKG=FILE  BUSYBOX_PACKAGE=FILE  RE-
+     PORT=FILE tests that static client in a libc-free chroot with private  net-
+     work  namespace,  local DNS and HTTPS fixtures, and a generated test CA. It
+     verifies real DNS queries, certificate rejection, digest  rejection,  down-
+     loading  and  native archive verification. The client drops to the caller's
+     UID/GID. The fixture creates no external route and supplies no  proxy  cre-
+     dentials.	Python, OpenSSL, ip, unshare, chroot and noninteractive doas are
+     host test tools, not guest recovery helpers.  Host ip configures  the  fix-
+     ture's  loopback interface; static interface setup and physical network re-
      covery remain separate tests.
 
-     The  holy-static-network-test-1 JSON report records architecture, host ker-
-     nel, input and fixture hashes, CA hash, per-command  argv/status/time/logs,
-     observed  DNS  query  types, completed coverage and unexecuted cases. A dy-
-     namic binary fails the libc-free probe. REPORT defaults to	 out/static-net-
-     work.json.	 No VM image is involved, so its report field is null. Temporary
+     The holy-static-network-test-1 JSON report records architecture, host  ker-
+     nel,  input and fixture hashes, CA hash, per-command argv/status/time/logs,
+     observed DNS query types, completed coverage and unexecuted  cases.  A  dy-
+     namic  binary fails the libc-free probe. REPORT defaults to out/static-net-
+     work.json. No VM image is involved, so its report field is null.  Temporary
      keys and rootfs are removed after the test.
 
    Package operations
-     The config check command  checks  source  and  rule  configuration	 without
-     changing  the  system. General package installation, foreign import, source
-     sync and multi-source resolution are not available yet. This executable  is
+     The  config  check	 command  checks  source  and rule configuration without
+     changing the system. General package installation, foreign	 import,  source
+     sync  and multi-source resolution are not available yet. This executable is
      independent of the separate owenewans/holypkg project.
 
-     Pinned  HTTPS  fetch  downloads  one  native  .holy  into an existing, non-
-     writable- by-others output directory.  It	requires  an  expected	SHA-256,
+     Pinned HTTPS fetch downloads  one	native	.holy  into  an	 existing,  non-
+     writable-	by-others  output  directory.  It  requires an expected SHA-256,
      HTTPS including redirects, certificate validation and an URL without embed-
-     ded  user/password.   The downloader checks each redirect target before re-
-     questing it and refuses credentials in redirect URLs. --ca-file  selects  a
+     ded user/password.	 The downloader checks each redirect target  before  re-
+     questing  it  and refuses credentials in redirect URLs. --ca-file selects a
      trusted CA file for a private test or source. The command limits the entire
-     redirect  chain  to 1 GiB and five minutes, verifies the completed archive,
-     then publishes SHA256.holy without replacing an  existing	object.	 If  the
-     name  exists,  it compares the stored bytes with the expected digest. HTTP,
+     redirect chain to 1 GiB and five minutes, verifies the  completed	archive,
+     then  publishes  SHA256.holy  without  replacing an existing object. If the
+     name exists, it compares the stored bytes with the expected  digest.  HTTP,
      unknown certificates, wrong digests and malformed archives cannot publish a
-     new object. This fetch does not assign source-id, verify a repository  sig-
-     nature,  install  files  or run hooks. General foreign binary fetch remains
+     new  object. This fetch does not assign source-id, verify a repository sig-
+     nature, install files or run hooks. General foreign  binary  fetch	 remains
      separate.
 
      Pack reads a prepared tree containing only HOLY/ and DATA/. HOLY/ must con-
-     tain exactly meta, files, deps, provides, hooks, origin  and  transform  as
+     tain  exactly  meta,  files, deps, provides, hooks, origin and transform as
      ordinary files. DATA/ may contain directories, ordinary files and symlinks;
-     the  current  writer  rejects hardlinks and extended attributes. It records
-     file modes and numeric ownership, fixes archive timestamps to zero and  or-
-     ders  directory entries by name. It writes a POSIX PAX tar compressed as an
-     LZ4 frame to a temporary file alongside the destination, verifies the  com-
-     pleted   artifact,	  checks  known	 ELF  ABI  facts  and  supported  depen-
+     the current writer rejects hardlinks and extended	attributes.  It	 records
+     file  modes and numeric ownership, fixes archive timestamps to zero and or-
+     ders directory entries by name. It writes a POSIX PAX tar compressed as  an
+     LZ4  frame to a temporary file alongside the destination, verifies the com-
+     pleted  artifact,	checks	known  ELF  ABI	 facts	and   supported	  depen-
      dency/provider records, and publishes it only when the destination does not
      exist. Pack neither generates HOLY/files nor infers ABI facts. A mismatched
      manifest fails without publishing a package; recipes and foreign conversion
@@ -770,125 +773,130 @@ DESCRIPTION
 
      Manifest generate reads DATA/ below DIRECTORY and writes HOLY/files records
      to a new output path outside the input tree. It emits directories and ordi-
-     nary files and symlinks in sorted order,  numeric	UID/GID,  modes,  sizes,
-     link  targets and SHA-256 digests for ordinary files.  Symbolic owner/group
-     names are placeholders; the numeric values remain the source tree's  owner-
-     ship.  The	 command refuses hardlinks and xattrs, escapes paths with white-
+     nary  files  and  symlinks	 in sorted order, numeric UID/GID, modes, sizes,
+     link targets and SHA-256 digests for ordinary files.  Symbolic  owner/group
+     names  are placeholders; the numeric values remain the source tree's owner-
+     ship. The command refuses hardlinks and xattrs, escapes paths  with  white-
      space or non-ASCII bytes, and does not replace an existing output. Copy the
-     generated file to HOLY/files and run pack; neither command	 infers	 package
-     arch/libc	or dependencies from arbitrary data files.  Archive pack and in-
+     generated	file  to HOLY/files and run pack; neither command infers package
+     arch/libc or dependencies from arbitrary data files.  Archive pack and  in-
      spection use the active LC_CTYPE locale for libarchive pathname conversion.
      Use an available UTF-8 locale for UTF-8 filenames.
 
-     Pack and manifest generation read symlink targets without	following  them.
+     Pack  and	manifest generation read symlink targets without following them.
      They reject lexical traversal above the target root; absolute targets refer
-     to	 that  root.  Dangling links are preserved. Symlink xattr inspection re-
+     to that root. Dangling links are preserved. Symlink  xattr	 inspection  re-
      quires /proc/self/fd on the build host. Metadata files must remain ordinary
-     files.  These commands do not resolve chains of symlinks or  prove	 runtime
-     targets  exist.   The  separate fetch --extract operation still refuses ab-
+     files.   These  commands do not resolve chains of symlinks or prove runtime
+     targets exist.  The separate fetch --extract operation  still  refuses  ab-
      solute symlinks.
 
-     The db plan-set command resolves one explicit root against	 already  cached
-     candidate	hashes	and cached artifacts from the installed catalog. It sup-
-     ports exact package dependencies between Linux data, native static and  re-
+     The  db  plan-set command resolves one explicit root against already cached
+     candidate hashes and cached artifacts from the installed catalog.	It  sup-
+     ports  exact package dependencies between Linux data, native static and re-
      stricted dynamic packages, empty hooks/transforms, pre-existing safe direc-
-     tories  and  the same payload subset as db apply. It reports selected arti-
+     tories and the same payload subset as db apply. It reports	 selected  arti-
      facts, reasons and requirement edges without changing installed state.  Un-
      used candidates are excluded from the operation. The plan digest binds tar-
      get-root device/inode, generation, selected graph, explicit provider choice
-     and every selected manifest.  Inter-package  path/name  conflicts	are  re-
+     and  every selected manifest. Inter-package path and slot conflicts are re-
      jected.
 
-     The  db  apply-set command accepts the reviewed plan digest followed by the
-     same root and candidates. It holds one writer lock, checks the  plan  again
-     and  writes transactions/set-journal before the first payload. All selected
-     packages share one generation increment. Installed state  records	the  ex-
-     plicit  root  and	dependency  reasons;  each instance retains the selected
-     graph. Package hooks, upgrades and grouped removal are not	 implemented  by
+     The db apply-set command accepts the reviewed plan digest followed	 by  the
+     same  root	 and candidates. It holds one writer lock, checks the plan again
+     and writes transactions/set-journal before the first payload. All	selected
+     packages  share  one  generation increment. Installed state records the ex-
+     plicit root and dependency reasons;  each	instance  retains  the	selected
+     graph.  Package  hooks, upgrades and grouped removal are not implemented by
      this interface.
 
      Repeated --source ARTIFACT=SOURCE_ID explicitly associates selected new ar-
      tifacts with active registered sources. It is a user-confirmed origin asso-
-     ciation  for  local delivery, not proof of retrieval or signature verifica-
-     tion. Payload source-name/origin metadata cannot  grant  this  association.
+     ciation for local delivery, not proof of retrieval or  signature  verifica-
+     tion.  Payload  source-name/origin	 metadata cannot grant this association.
      Unmapped new artifacts retain local delivery without a source ID. Duplicate
-     artifact  mappings	 are  invalid;	a mapping for an unselected artifact re-
+     artifact mappings are invalid; a mapping for  an  unselected  artifact  re-
      quires a decision. Missing or inactive registered sources return 6.
 
-     The plan displays each association and binds the registry digest and  saved
-     alias  record.  Apply  requires the same mappings and registry; changing an
-     alias after review invalidates the plan. The version-2  set  journal  saves
-     associations  for recovery. Registry mutation is blocked while that journal
-     remains incomplete.  Recovery verifies the source record of each  completed
+     The  plan displays each association and binds the registry digest and saved
+     alias record. Apply requires the same mappings and	 registry;  changing  an
+     alias  after  review  invalidates the plan. The version-2 set journal saves
+     associations for recovery. Registry mutation is blocked while that	 journal
+     remains  incomplete.  Recovery verifies the source record of each completed
      instance before continuing.  An already installed provider keeps its origi-
-     nal  source  and  alias; specifying a new association for a reused instance
+     nal source and alias; specifying a new association for  a	reused	instance
      returns 3. Source migration requires a separate operation, which is not im-
      plemented yet.
 
-     An already installed dependency is reused only after its  metadata	 matches
-     the  cached archive, its payload and ownership pass checks, and its own se-
-     lected dependency edges remain unchanged. Its state, reason and  graph  re-
-     main  intact;  the new consumer records its edge to that provider. The plan
-     hashes the reused instance state as well as the selected  manifests.  Apply
-     and  recovery verify it again and never reinstall it. The preview labels it
-     installed. Re-requesting an already installed explicit root  returns  deci-
-     sion-required;  this  interface  does not yet promote dependency reasons or
+     An	 already  installed dependency is reused only after its metadata matches
+     the cached archive, its payload and ownership pass checks, and its own  se-
+     lected  dependency	 edges remain unchanged. Its state, reason and graph re-
+     main intact; the new consumer records its edge to that provider.  The  plan
+     hashes  the  reused instance state as well as the selected manifests. Apply
+     and recovery verify it again and never reinstall it. The preview labels  it
+     installed.	 Re-requesting	an already installed explicit root returns deci-
+     sion-required; this interface does not yet promote	 dependency  reasons  or
      perform reinstalls.
 
      Candidate discovery reads installed names and manifests for the package and
-     literal ELF-path requirements of  the  supplied  candidates,  then	 follows
-     their  dependencies.  It  does  not scan every installed archive. Installed
-     candidates currently require their cached archives	 for  ELF  scanning.   A
-     missing  archive  returns	unavailable instead of guessing ABI facts. Reuse
+     literal  ELF-path	requirements  of  the  supplied candidates, then follows
+     their dependencies. It does not scan  every  installed  archive.  Installed
+     candidates	 currently  require  their  cached archives for ELF scanning.  A
+     missing archive returns unavailable instead of guessing  ABI  facts.  Reuse
      requires the version-2 or version-3 installed graph format. Multiple viable
-     providers still require  --choose;	 automatic  installed/source  preference
+     providers	still  require	--choose;  automatic installed/source preference
      ranking remains open.
 
-     Dynamic  sets  require  literal  absolute	PT_INTERP  and	DT_NEEDED paths.
-     Providers must contain those exact regular payload paths  and  satisfy  the
-     recorded  architecture, runtime, symbol and version requirements. The plan-
-     ner rejects relative or tokenized dependency paths. Ordinary SONAME  search
-     returns  decision-required	 because RPATH/RUNPATH and loader search are not
-     modeled.  Parent directories must already exist without symlink  traversal.
-     This  interface  does not automatically rewrite ELF files or resolve loader
+     Dynamic sets  require  literal  absolute  PT_INTERP  and  DT_NEEDED  paths.
+     Providers	must  contain  those exact regular payload paths and satisfy the
+     recorded architecture, runtime, symbol and version requirements. The  plan-
+     ner  rejects relative or tokenized dependency paths. Ordinary SONAME search
+     returns decision-required because RPATH/RUNPATH and loader search	are  not
+     modeled.	Parent directories must already exist without symlink traversal.
+     This interface does not automatically rewrite ELF files or	 resolve  loader
      aliases.
 
-     An interrupted set leaves generation unchanged unless final commit	 already
+     An	 interrupted set leaves generation unchanged unless final commit already
      published it. db status returns 5 for a recognized set journal.  db recover
-     --finish-set  verifies  cached artifacts, the original plan hash, installed
-     metadata/graphs and actual payloads before completing  generation	publica-
-     tion  and	removing the journal. --continue-set additionally installs pack-
+     --finish-set verifies cached artifacts, the original plan	hash,  installed
+     metadata/graphs  and  actual payloads before completing generation publica-
+     tion and removing the journal. --continue-set additionally	 installs  pack-
      ages that have no instance or payload yet, after checking the whole remain-
-     ing set. Neither mode overwrites a partial	 file  or  repeats  a  partially
-     written  instance.	 Those	cases require inspection. Recovery rejects mixed
-     journals, changed artifacts, ownership conflicts  and  drift  in  completed
+     ing  set.	Neither	 mode  overwrites  a partial file or repeats a partially
+     written instance. Those cases require inspection.	Recovery  rejects  mixed
+     journals,	changed	 artifacts,  ownership	conflicts and drift in completed
      package files.  The cache must retain the selected artifacts.
 
      The current db rm rejects removal of a provider still referenced by another
      installed consumer with status 3. A saved graph belonging to a removed con-
-     sumer  does  not keep its former dependencies alive. Grouped removal and an
+     sumer does not keep its former dependencies alive. Grouped removal	 and  an
      explicitly accepted broken-dependency override remain pending.
 
-     The db plan command reads the prepared reservation at the current	database
-     generation.  It  verifies a private snapshot of the cached artifact, checks
-     root-path collisions and refuses unresolved requirements, interpreters  and
+     The  db plan command reads the prepared reservation at the current database
+     generation. It verifies a private snapshot of the cached  artifact,  checks
+     root-path	collisions and refuses unresolved requirements, interpreters and
      ELF dependencies. The supported planning subset is linux/nolibc with noarch
-     data  or  the  native  host  architecture	(x86_64 on x86_64, x86 on i686).
-     Hooks and transform must be empty. Payloads may contain  ordinary	directo-
-     ries  and regular files and relative symlinks owned by the current UID/GID.
-     Hardlinks, privileged modes and writes inside holypkg state or cache  trees
-     are  excluded.  Output includes target-root device/inode, generation, arti-
-     fact SHA-256, path count and a SHA-256 over those	identities  and	 ordered
-     manifest  entries,	 including  symlink types and targets, and the canonical
-     resolver record. That record identifies artifact candidates,  not	physical
+     data or the native host architecture  (x86_64  on	x86_64,	 x86  on  i686).
+     Hooks  and	 transform must be empty. Payloads may contain ordinary directo-
+     ries and regular files and relative symlinks owned by the current	UID/GID.
+     Hardlinks,	 privileged modes and writes inside holypkg state or cache trees
+     are excluded. Output includes target-root device/inode,  generation,  arti-
+     fact  SHA-256,  path  count and a SHA-256 over those identities and ordered
+     manifest entries, including symlink types and targets,  and  the  canonical
+     resolver  record.	That record identifies artifact candidates, not physical
      loader bindings. Apply stores the approved record as installed graph with a
-     SHA-256  in instance state.  Symlinks must have mode 0777. The narrow local
-     planner rejects a second installed package with the same  name,  even  when
-     its  payload  paths  differ;  general  source-ID and ABI slot management is
-     pending.  This command does not persist a plan, reserve  ownership,  autho-
-     rize  apply or recheck the target root at mutation time. Concurrent changes
-     can invalidate the collision check. Apply revalidates inputs and paths  un-
-     der its writer lock.
+     SHA-256 in instance state.	 Symlinks must have mode 0777. The narrow  local
+     planner  rejects  a  second  active version of the same slot, even when its
+     payload paths differ. A slot consists of  source-id,  name,  os,  arch  and
+     libc;  unassociated  local	 delivery uses source-id "-". Source aliases and
+     package versions do not change the slot. Distinct slots  may  coexist  when
+     their  file ownership is compatible.  The installed directory remains keyed
+     by artifact hash, so registering the same artifact	 as  multiple  installed
+     instances	is  still unsupported. Slot replacement requires update transac-
+     tions, which are not yet implemented.  This  command  does	 not  persist  a
+     plan,  reserve ownership, authorize apply or recheck the target root at mu-
+     tation time. Concurrent changes can invalidate the collision  check.  Apply
+     revalidates inputs and paths under its writer lock.
 
      The  db  approve  command	recomputes  the plan under an exclusive database
      lock.  If its SHA-256 matches PLAN_SHA256, the command  replaces  the  pre-
@@ -1489,45 +1497,45 @@ SOURCE REGISTRATION
 
      An ID identifies a configured origin; it is  not  signature  evidence.  The
      current registry retains inactive origins and supports explicit local-arti-
-     fact  associations in set installation. Source-aware package slots, config-
-     ured catalog synchronization and source-aware update plans remain	unimple-
-     mented.  These  commands do not yet implement JSON output. See holy.conf(5)
-     for identity rules and endpoint restrictions.
+     fact associations in set installation. Slot replacement, configured catalog
+     synchronization  and  source-aware update plans remain unimplemented. These
+     commands do not yet implement JSON output. See  holy.conf(5)  for	identity
+     rules and endpoint restrictions.
 
 ORPHAN PACKAGES
-     orphan reads a consistent installed-state	snapshot  under	 the  database's
-     shared  lock.  The default root is /. It follows saved consumer-to-provider
-     edges from every instance marked explicit and reports dependency  instances
-     outside  that reachable graph. A dependency cycle with no explicit consumer
+     orphan  reads  a  consistent  installed-state snapshot under the database's
+     shared lock. The default root is /. It follows  saved  consumer-to-provider
+     edges  from every instance marked explicit and reports dependency instances
+     outside that reachable graph. A dependency cycle with no explicit	consumer
      is also orphaned.	Only each current instance's own edges participate; ref-
-     erences copied from an older transaction's	 other	consumers  do  not  keep
+     erences  copied  from  an	older  transaction's other consumers do not keep
      packages alive.
 
-     The  command  does	 not  remove files, run package code, fetch artifacts or
-     need the package cache. Each candidate includes its artifact hash,	 package
+     The command does not remove files, run package  code,  fetch  artifacts  or
+     need  the package cache. Each candidate includes its artifact hash, package
      name and the reason unreachable-from-explicit. Names in text output use the
-     metadata  lexer's	byte  escapes.	JSON names preserve valid UTF-8. This is
+     metadata lexer's byte escapes. JSON names preserve	 valid	UTF-8.	This  is
      graph analysis, not a payload or application-health check; use db check for
      file integrity.
 
-     With --json, holy-orphan-1 candidate events contain artifact, name,  reason
-     and  generation.  A final summary contains generation, installed, explicit,
+     With  --json, holy-orphan-1 candidate events contain artifact, name, reason
+     and generation. A final summary contains generation,  installed,  explicit,
      reachable and orphans counts. Candidates are ordered by artifact hash. Out-
-     put is delayed until the complete graph has been  read  and  linked,  so  a
-     missing  provider	never produces a partial orphan list. Errors produce one
-     error event with code and status: invalid-state (1), missing-provider  (4),
-     incomplete-transaction  (5),  or  unknown-installed-graph	(6).  Legacy in-
+     put  is  delayed  until  the  complete graph has been read and linked, so a
+     missing provider never produces a partial orphan list. Errors  produce  one
+     error  event with code and status: invalid-state (1), missing-provider (4),
+     incomplete-transaction (5),  or  unknown-installed-graph  (6).  Legacy  in-
      stalled entries without saved graphs require migration before this analysis
      can prove reachability.
 
 EXIT STATUS
-     0 indicates success under the implemented checks; 1 indicates a failed  lo-
-     cal  fetch,  extraction or check; 2 indicates invalid arguments, configura-
-     tion or package inspection. Diagnostics go to standard error except  --json
+     0	indicates success under the implemented checks; 1 indicates a failed lo-
+     cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
+     tion  or package inspection. Diagnostics go to standard error except --json
      check events, which go to standard output.
 
-     Preview  returns  3  when valid requirements need provider decisions, 4 for
-     path conflicts and 6 when hooks or privileged modes  need	unsupported  re-
+     Preview returns 3 when valid requirements need provider  decisions,  4  for
+     path  conflicts  and  6 when hooks or privileged modes need unsupported re-
      view. It returns 1 on target-root I/O failure.
 
 SEE ALSO

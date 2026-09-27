@@ -7,13 +7,13 @@
 - [x] Plan and atomically apply a source identity registry under the database
   writer lock. Preserve IDs across alias changes and retain inactive origin
   history; reject stale, wrong-root and history-dropping plans. Apply consumes
-  the reviewed plan without rereading user includes. Installed source-ID slots,
+  the reviewed plan without rereading user includes. Slot replacement,
   source-aware updates, configured sync and trust enforcement remain open.
 - [x] Bind explicitly associated local artifacts to active registered source IDs
   in set plans and installed state. Retain the alias at installation, preserve
   origin through source deactivation and provider reuse, and validate associations
   during interrupted-set recovery. Signature evidence, automatic retrieval-origin
-  binding, source-aware slots and updates remain open.
+  binding, slot replacement and updates remain open.
 - [x] Verify local LZ4-frame `.holy` archives, file manifests, hashes and basic ELF facts.
 - [x] Read dynamic symbols, binding/visibility and per-symbol GNU versions through
   libelf, including ELF32/ELF64 without section headers when the hash tables give
@@ -51,8 +51,10 @@
   Emit machine-readable pass/fail summaries and per-path findings for this restricted check.
 - [x] Reject existing directory mode/owner drift before data-only install;
   report installed directory drift in check without removing shared directories.
-- [x] Reject a second local data package with an already installed name during
-  plan construction. This is a temporary restriction, not source-ID slot support.
+- [x] Compare installed slots by source-id, name, os, arch and libc. Permit distinct
+  slots with compatible ownership and reject a second active version of one slot.
+  Same-name glibc/musl executables run in the dual-libc chroot fixture. Slot
+  replacement and multiple installed instances of the same artifact remain open.
 - [x] Install a resolved cached static/data set with one writer lock, plan hash
   and generation change; persist reasons/edges, reject referenced-provider removal,
   and recover completed sets or resume untouched remaining packages after failure.
@@ -65,7 +67,7 @@
   Preserve changed/partial files, reject stale plans and resume recorded repair
   after injected write failure. General reinstall and config merge remain open.
 - [x] Discover installed providers through package names and literal ELF paths;
-  scan cached archives of the resulting candidate closure. Reuse intact version-2
+  scan cached archives of the resulting candidate closure. Reuse intact version-2/3
   instances without changing their state, reason, graph or payload. Bind reused
   state into plans and validate it during interrupted-set recovery. Named loader
   search, automatic preference ranking and cache-independent discovery remain open.

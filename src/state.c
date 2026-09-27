@@ -881,14 +881,16 @@ static int same_root(const char *root_path, const struct stat *before)
     return ok;
 }
 
-static int installed_name(int item, const char *name)
+static int installed_fields(int item, const char *const *keys,
+                             const char *const *values, size_t fields)
 {
     struct stat st;
     char *line = NULL;
     size_t capacity = 0, number = 0;
     ssize_t length;
     int fd = openat(item, "meta", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
-    int found = 0, result = -1;
+    unsigned seen = 0;
+    int matches = 1, result = -1;
     FILE *input;
     if (fd < 0) return -1;
     if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
@@ -905,21 +907,52 @@ static int installed_name(int item, const char *name)
             goto done;
         }
         if (count && count != 2) { holy_tokens_free(v, count); goto done; }
-        if (count && !strcmp(v[0], "name")) {
-            if (found) { holy_tokens_free(v, count); goto done; }
-            found = !strcmp(v[1], name) ? 2 : 1;
+        if (count) {
+            size_t i;
+            for (i = 0; i < fields; ++i) if (!strcmp(v[0], keys[i])) {
+                if (seen & (1u << i)) { holy_tokens_free(v, count); goto done; }
+                seen |= 1u << i;
+                if (strcmp(v[1], values[i])) matches = 0;
+            }
         }
         holy_tokens_free(v, count);
     }
-    if (!ferror(input) && found && ftello(input) == st.st_size) result = found == 2;
+    if (!ferror(input) && seen == (1u << fields) - 1u && ftello(input) == st.st_size) result = matches;
 done:
     free(line);
     fclose(input);
     return result;
 }
 
-static int name_available(int dir, const char *name)
+static int installed_name(int item, const char *name)
 {
+    const char *keys[] = {"name"}, *values[] = {name};
+    return installed_fields(item, keys, values, 1);
+}
+
+static int installed_source_id(int item, char source[65])
+{
+    struct stat st;
+    char digest[65];
+    if (!fstatat(item, "source", &st, AT_SYMLINK_NOFOLLOW))
+        return holy_source_instance(item, source, digest);
+    if (errno != ENOENT) return 0;
+    strcpy(source, "-");
+    return 1;
+}
+
+static int same_slot(const struct holy_package_identity *a, const char *a_source,
+                     const struct holy_package_identity *b, const char *b_source)
+{
+    return !strcmp(a_source, b_source) && !strcmp(a->name, b->name) &&
+           !strcmp(a->os, b->os) && !strcmp(a->arch, b->arch) && !strcmp(a->libc, b->libc);
+}
+
+static int slot_available(int dir, const struct holy_package_identity *identity,
+                          const char *source_id)
+{
+    const char *keys[] = {"name", "os", "arch", "libc"};
+    const char *values[] = {identity->name, identity->os, identity->arch, identity->libc};
     int installed = child_dir(dir, "installed", 0), available = -1;
     DIR *list;
     struct dirent *entry;
@@ -929,10 +962,16 @@ static int name_available(int dir, const char *name)
     errno = 0;
     while ((entry = readdir(list))) {
         int item, match;
+        char source[65];
         if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        if (!strcmp(entry->d_name, identity->digest)) { available = 0; goto done; }
         item = child_dir(installed, entry->d_name, 0);
         if (item < 0) goto done;
-        match = installed_name(item, name);
+        match = installed_fields(item, keys, values, 4);
+        if (match > 0) {
+            if (!installed_source_id(item, source)) match = -1;
+            else match = !strcmp(source_id, source);
+        }
         close(item);
         if (match < 0) goto done;
         if (match) { available = 0; goto done; }
@@ -1003,10 +1042,10 @@ static int inspect_plan(const char *root_path, int root, int dir,
         if (plan.claim_error) result = plan.claim_error;
         goto done;
     }
-    result = name_available(dir, identity.name);
+    result = slot_available(dir, &identity, "-");
     if (result < 0) { result = 1; goto done; }
     if (!result) {
-        fprintf(stderr, "holypkg: installed package name already active: %s\n", identity.name);
+        fprintf(stderr, "holypkg: installed package slot already active: %s\n", identity.name);
         result = 4;
         goto done;
     }
@@ -1974,6 +2013,7 @@ done:
 
 struct set_item {
     char *snapshot, *source_record;
+    char source_id[65];
     struct holy_package_identity identity;
     int reused;
 };
@@ -2137,6 +2177,7 @@ static int reuse_instance(int dir, int root, struct set_item *candidate,
     if (fd < 0 || (got = read(fd, state, sizeof state - 1)) <= 0) goto done;
     state[got] = 0;
     if (!hash_text(hash, "reuse-installed") || !hash_text(hash, state)) goto done;
+    if (!installed_source_id(item, candidate->source_id)) goto done;
     candidate->reused = 1;
     result = 1;
 done:
@@ -2341,6 +2382,7 @@ static int build_set(const char *root_path, int root, int dir,
              !((!strcmp(item->identity.arch, "x86_64") && !strcmp(host.machine, "x86_64")) ||
                (!strcmp(item->identity.arch, "x86") && !strcmp(host.machine, "i686")))) ||
             !empty_transform(item->snapshot) || !instance_preflight(item->snapshot)) goto done;
+        strcpy(item->source_id, "-");
         result = explicit_elf_paths(item->snapshot);
         if (result) goto done;
         result = reuse_instance(dir, root, item, generation, completed, set->graph, plan.hash);
@@ -2350,6 +2392,7 @@ static int build_set(const char *root_path, int root, int dir,
             if (item->reused) { result = 3; goto done; }
             result = holy_source_record(dir, bindings[j] + 65, &item->source_record, registry);
             if (result) goto done;
+            memcpy(item->source_id, bindings[j] + 65, 65);
             if (!hash_text(plan.hash, "source-binding") || !hash_text(plan.hash, registry) ||
                 !hash_text(plan.hash, item->source_record)) { result = 1; goto done; }
             break;
@@ -2360,11 +2403,12 @@ static int build_set(const char *root_path, int root, int dir,
         result = holy_preview_resolved(item->snapshot, root_path, completed || item->reused);
         if (result) goto done;
         for (j = 0; j < i; ++j)
-            if (!strcmp(set->items[j].identity.name, item->identity.name)) {
+            if (same_slot(&set->items[j].identity, set->items[j].source_id,
+                          &item->identity, item->source_id)) {
                 result = 4; goto done;
             }
         if (!completed && !item->reused) {
-            result = name_available(dir, item->identity.name);
+            result = slot_available(dir, &item->identity, item->source_id);
             if (result != 1) { result = result < 0 ? 1 : 4; goto done; }
             if (!holy_install_preflight(item->snapshot, root)) { result = 4; goto done; }
         }
@@ -2750,7 +2794,7 @@ static int recover_set(const char *root_path, int resume)
         if (fstatat(installed, candidate->identity.digest, &st, AT_SYMLINK_NOFOLLOW)) {
             struct plan_hash claims = {0};
             if (errno != ENOENT || !resume || generation != journal.generation ||
-                name_available(dir, candidate->identity.name) != 1 ||
+                slot_available(dir, &candidate->identity, candidate->source_id) != 1 ||
                 !holy_install_preflight(candidate->snapshot, root)) goto done;
             claims.dir = dir;
             claims.hash = EVP_MD_CTX_new();

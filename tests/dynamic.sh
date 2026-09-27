@@ -108,7 +108,7 @@ if test -n "${MUSL_CC:-}" || test -n "${MUSL_LIBC:-}" || test -n "${MUSL_PACKAGE
         ln -s holy/x86_64-linux-musl/ld-musl-x86_64.so.1 "$tree/DATA/usr/lib/ld-musl-x86_64.so.1"
         pack musl-runtime
     fi
-    new musl-probe musl
+    new probe musl
     mkdir -p "$tree/DATA/usr/bin"
     cat > "$tmp/musl.c" <<'C'
 #include <pthread.h>

@@ -87,7 +87,10 @@ the source to remain active.
 The set installation interface supports exact package dependencies and native
 dynamic packages with literal absolute interpreter and DT_NEEDED provider paths.
 It records explicit/dependency reasons. General loader search, automatic ELF
-rewriting and source-ID slots remain unimplemented. Missing-only cache repair
+rewriting remains unimplemented. Slot conflicts compare source-id, name, os,
+arch and libc; distinct artifacts in different slots may coexist with compatible
+file ownership. Replacing a slot and registering the same artifact in multiple
+slots remain unsupported. Missing-only cache repair
 preserves the installed graph and refuses changed or partial files.
 .SH SEE ALSO
 .BR holypkg (8),
