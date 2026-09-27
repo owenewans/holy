@@ -446,6 +446,17 @@ if "$bin" db recover --abort-empty --root "$tmp/failure" > "$tmp/out" 2> "$tmp/e
 test -f "$tmp/failure/usr/bin/data"
 test -f "$tmp/failure/var/lib/holypkg/transactions/journal"
 chmod 0755 "$tmp/failure/usr/bin"
+cp "$tmp/failure/var/lib/holypkg/installed/$digest/files" "$tmp/recovery-files"
+printf 'file usr/bin/later 644 root root %s %s 8 %s none - -\n' \
+    "$uid" "$gid" "$hash" >> "$tmp/failure/var/lib/holypkg/installed/$digest/files"
+printf 'changed\n' > "$tmp/failure/usr/bin/later"
+if "$bin" db recover --continue --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
+test -f "$tmp/failure/usr/bin/data"
+cmp "$tmp/failure/usr/bin/data" "$tmp/payload/DATA/usr/bin/data2"
+grep -qx changed "$tmp/failure/usr/bin/later"
+test -f "$tmp/failure/var/lib/holypkg/transactions/journal"
+mv "$tmp/recovery-files" "$tmp/failure/var/lib/holypkg/installed/$digest/files"
+rm "$tmp/failure/usr/bin/later"
 printf 'changed\n' > "$tmp/failure/usr/bin/data"
 if "$bin" db recover --continue --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
 test -f "$tmp/failure/var/lib/holypkg/transactions/journal"

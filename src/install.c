@@ -290,13 +290,13 @@ static int walk_manifest(int files_fd, int root, int mode,
         checked = check_file(root, v, &observed);
         if (checked < 0) result = -1;
         else if (checked == 2) {
-            if (mode != 2 && result == 1) result = 0;
-            if (mode != 2) report_changed(v[1], "missing-file");
+            if (mode != 2 && mode != 3 && result == 1) result = 0;
+            if (mode != 2 && mode != 3) report_changed(v[1], "missing-file");
         }
         else if (!checked) {
             report_changed(v[1], "changed-file");
             if (result == 1) result = 0;
-        } else if (mode && !strcmp(v[0], "file") &&
+        } else if ((mode == 1 || mode == 2) && !strcmp(v[0], "file") &&
                    !remove_file(root, v[1], &observed)) {
             result = 0;
         }
@@ -330,7 +330,7 @@ int holy_install_remove_manifest(int files_fd, int root)
 
 int holy_install_finish_remove_manifest(int files_fd, int root)
 {
-    if (walk_manifest(files_fd, root, 2, NULL, NULL) != 1) return 0;
+    if (walk_manifest(files_fd, root, 3, NULL, NULL) != 1) return 0;
     return walk_manifest(files_fd, root, 2, NULL, NULL) == 1;
 }
 
