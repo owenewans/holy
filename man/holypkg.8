@@ -2,6 +2,8 @@
 .SH NAME
 holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
+.B holypkg docs --root DIRECTORY --output FILE
+.br
 .B holypkg config check FILE
 .br
 .B holypkg info local:FILE
@@ -120,6 +122,38 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 .SH DESCRIPTION
+.SS Installed documentation
+holypkg docs --root DIRECTORY --output FILE creates a new holy-docs-1 bundle
+from the selected root's installed manifests. It holds the database shared
+lock, rejects pending transactions and visits artifacts in digest order.
+It includes regular man sources beneath usr/share/man, including localized
+subdirectories, after comparing each opened file's SHA-256 to its installed
+manifest. It refuses symlinked parent directories and reads no configs,
+origin URLs, passwords or files outside the installed man list.
+.PP
+Each page records its name, section, path, package name/version, installed
+source-id and artifact and source-file hashes. The current local installation
+subset has source-id "-". Same-name pages retain separate attributed records.
+Sources remain roff text; this command does not run a formatter or interpret
+roff directives. It decodes gzip, bzip2, xz and zstd with built-in libarchive
+filters when compiled in, and never invokes a decompression helper.
+The compressed source digest identifies the original file. Symlink aliases
+are checked without following them and listed as references rather than expanded.
+.PP
+missing-man identifies packages with no included regular page. omitted-man
+lists unsupported page names/codecs. The final summary records generation,
+package/page/alias counts and missing/omitted coverage. A successful bundle
+can contain those explicit omissions; inclusion does not assess a manual's
+semantic completeness. Sources and manifests are limited to 16 MiB per file;
+decoded pages are limited to 64 MiB. Empty or NUL-containing page bodies fail.
+.PP
+The command builds a temporary file beside FILE and publishes without replacing
+an existing output. Invalid or changed man files return 4; pending transactions
+return 5; output and database I/O failures return 1. Failure leaves existing
+output untouched. It requires neither root nor network. For image roots whose
+manifests use UID 0, run inside the builder's matching user namespace.
+HOLY_DOCS_CHROOT=1 sh tests/installed-docs.sh ./holypkg additionally exercises
+the static binary and gzip decoding in a libc-free chroot using host doas.
 .SS Bootstrap shell package
 The repository target make bootstrap-busybox INPUTS=DIRECTORY OUTPUT=DIRECTORY
 builds a small x86_64 BusyBox package with static musl linkage. INPUTS must contain

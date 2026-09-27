@@ -45,4 +45,9 @@ int holy_state_continue_set(const char *root_path);
 /* missing-only repair; NULL digest resumes a recorded repair. */
 int holy_state_repair(const char *digest, const char *approved, const char *root_path);
 
+/* borrows root/instance fds under a shared lock, in artifact order; 0 succeeds. */
+typedef int (*holy_instance_visit)(void *, int, int, const char *);
+int holy_state_visit(const char *root_path, holy_instance_visit visit, void *context,
+                     unsigned long long *generation);
+
 #endif

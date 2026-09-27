@@ -87,7 +87,7 @@ static:
 	$(MAKE) clean
 	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lssl -lcrypto -llz4 -lz -leu -Wl,--end-group -lpthread -ldl" all
 
-HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o
+HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o
 
 holypkg: $(HOLY_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(SOLV_LIBS)
@@ -107,6 +107,7 @@ check: holypkg tests/resolution check-init check-solver check-install-payload ch
 	sh tests/config.sh ./holypkg
 	sh tests/package.sh ./holypkg
 	sh tests/docs.sh
+	sh tests/installed-docs.sh ./holypkg
 	CC="$(CC)" sh tests/elf.sh ./holypkg
 	sh tests/repo.sh ./holypkg
 	sh tests/state.sh ./holypkg
@@ -167,4 +168,4 @@ tests/resolution: tests/resolution.c $(filter-out src/main.o,$(HOLY_OBJECTS)) ho
 clean:
 	rm -f holy-init
 	rm -f .build-config .build-config.tmp
-	rm -f holypkg tests/resolution tests/solver tests/install-helper src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o
+	rm -f holypkg tests/resolution tests/solver tests/install-helper $(HOLY_OBJECTS)

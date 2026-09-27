@@ -75,6 +75,12 @@
 
 ## Base system and images
 
+- [x] Generate an attributed installed-man source bundle with `holypkg docs`:
+  verify source hashes, decode supported compressed pages, preserve aliases
+  and same-name providers, report missing/omitted pages, and refuse changed
+  inputs or pending transactions. Static gzip decoding passes a libc-free
+  chroot fixture. Image-builder integration and rendered upstream text remain open.
+
 - [x] Build pinned x86_64 musl-static BusyBox as a native package and test its
   installed shell in a chroot without dynamic libc directories. Build logs,
   source/config/artifact hashes and upstream license files are retained.

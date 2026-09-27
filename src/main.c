@@ -14,6 +14,7 @@
 #include "provides.h"
 #include "resolve.h"
 #include "pack.h"
+#include "docs.h"
 
 #include <stdio.h>
 #include <locale.h>
@@ -28,6 +29,13 @@ int main(int argc, char **argv)
     int ok;
 
     setlocale(LC_CTYPE, "");
+
+    if (argc > 1 && !strcmp(argv[1], "docs")) {
+        if (argc == 6 && !strcmp(argv[2], "--root") && !strcmp(argv[4], "--output"))
+            return holy_docs(argv[3], argv[5]);
+        fputs("usage: holypkg docs --root DIRECTORY --output FILE\n", stderr);
+        return 2;
+    }
 
     if (argc == 3 && !strcmp(argv[1], "elf")) {
         struct holy_elf_info info;

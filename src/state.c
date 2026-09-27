@@ -505,6 +505,62 @@ done:
     return result;
 }
 
+static int compare_instance_names(const void *a, const void *b)
+{
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+int holy_state_visit(const char *root_path, holy_instance_visit visit, void *context,
+                     unsigned long long *generation)
+{
+    int root = -1, dir = -1, installed = -1, result = 1, pending;
+    char **names = NULL, digest[65], approved[65];
+    size_t count = 0, i;
+    DIR *list = NULL;
+    struct dirent *entry;
+    root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0 || (dir = state_dir_at(root, 0)) < 0 || flock(dir, LOCK_SH) ||
+        !state_layout(dir, 0) || !read_generation(dir, generation)) goto done;
+    pending = transaction_pending(dir, *generation);
+    if (pending < 0) goto done;
+    if (pending) { result = 5; goto done; }
+    pending = pending_child(dir, *generation, digest, approved);
+    if (pending < 0) goto done;
+    if (pending) { result = 5; goto done; }
+    if (!installed_valid(dir) || (installed = child_dir(dir, "installed", 0)) < 0 ||
+        !(list = directory_stream(installed))) goto done;
+    errno = 0;
+    while ((entry = readdir(list))) {
+        char **grown;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        if (count >= SIZE_MAX / sizeof *names ||
+            !(grown = realloc(names, (count + 1) * sizeof *names))) goto done;
+        names = grown;
+        names[count] = strdup(entry->d_name);
+        if (!names[count]) goto done;
+        ++count;
+        errno = 0;
+    }
+    if (errno) goto done;
+    if (count) qsort(names, count, sizeof *names, compare_instance_names);
+    for (i = 0; i < count; ++i) {
+        int item = child_dir(installed, names[i], 0), rc;
+        if (item < 0) goto done;
+        rc = visit(context, root, item, names[i]);
+        close(item);
+        if (rc) { result = rc; goto done; }
+    }
+    result = 0;
+done:
+    for (i = 0; i < count; ++i) free(names[i]);
+    free(names);
+    if (list) closedir(list);
+    if (installed >= 0) close(installed);
+    if (dir >= 0) close(dir);
+    if (root >= 0) close(root);
+    return result;
+}
+
 int holy_state_reserve(const char *digest, const char *root_path)
 {
     unsigned long long generation;
