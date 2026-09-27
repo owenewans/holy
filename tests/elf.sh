@@ -64,7 +64,35 @@ ld -m elf_i386 -o "$tmp/i386" "$tmp/i386.o"
 grep -qx 'class ELF32' "$tmp/out"
 grep -qx 'e_machine 3' "$tmp/out"
 grep -qx 'machine x86' "$tmp/out"
-grep -qx 'runtime unknown' "$tmp/out"
+grep -qx 'runtime nolibc' "$tmp/out"
+mkdir -p "$tmp/tree/HOLY" "$tmp/tree/DATA/usr/bin"
+cp "$tmp/i386" "$tmp/tree/DATA/usr/bin/static32"
+cat > "$tmp/tree/HOLY/meta" <<'EOF'
+format holy-package-1
+name static32
+version 1
+release 1
+os linux
+arch x86
+libc nolibc
+EOF
+for field in deps provides hooks origin transform; do : > "$tmp/tree/HOLY/$field"; done
+"$bin" manifest generate "$tmp/tree" --output "$tmp/static-files" > "$tmp/out"
+cp "$tmp/static-files" "$tmp/tree/HOLY/files"
+"$bin" pack "$tmp/tree" --output "$tmp/static32.holy" > "$tmp/out"
+"$bin" scan "local:$tmp/static32.holy" > "$tmp/out"
+grep -q '^elf usr/bin/static32 class=ELF32 machine=x86 e_machine=3 runtime=nolibc' "$tmp/out"
+rm "$tmp/tree/DATA/usr/bin/static32"
+sed -e 's/^arch x86$/arch x86_64/' -e 's/^libc nolibc$/libc glibc/' \
+    "$tmp/tree/HOLY/meta" > "$tmp/meta64"
+mv "$tmp/meta64" "$tmp/tree/HOLY/meta"
+gcc -nostdlib -shared -fPIC -o "$tmp/no-libc.so" "$tmp/versioned.c"
+cp "$tmp/no-libc.so" "$tmp/tree/DATA/usr/bin/plugin"
+"$bin" manifest generate "$tmp/tree" --output "$tmp/plugin-files" > "$tmp/out"
+cp "$tmp/plugin-files" "$tmp/tree/HOLY/files"
+if "$bin" pack "$tmp/tree" --output "$tmp/unknown.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'ELF runtime unknown' "$tmp/err"
+test ! -e "$tmp/unknown.holy"
 printf '.global _start\n_start:\n mov $60, %%eax\n xor %%edi, %%edi\n syscall\n' > "$tmp/x32.s"
 as --x32 -o "$tmp/x32.o" "$tmp/x32.s"
 ld -m elf32_x86_64 -o "$tmp/x32" "$tmp/x32.o"
@@ -72,7 +100,7 @@ ld -m elf32_x86_64 -o "$tmp/x32" "$tmp/x32.o"
 grep -qx 'class ELF32' "$tmp/out"
 grep -qx 'e_machine 62' "$tmp/out"
 grep -qx 'machine x32' "$tmp/out"
-grep -qx 'runtime unknown' "$tmp/out"
+grep -qx 'runtime nolibc' "$tmp/out"
 printf 'not ELF\n' > "$tmp/text"
 if "$bin" elf "$tmp/text" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q 'not an ELF input' "$tmp/err"

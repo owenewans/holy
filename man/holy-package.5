@@ -16,6 +16,11 @@ The separate holypkg scan command examines regular ELF payload files and
 rejects known arch/libc tag mismatches. The basic info and verify commands
 do not perform this ABI check.
 .PP
+The scanner accepts ET_EXEC without PT_INTERP and PT_DYNAMIC as nolibc,
+and ET_DYN requiring libc.so.6 as glibc evidence. It rejects ELF files
+whose runtime remains unknown. A plugin without such evidence needs
+classification and review before a package can pass scan.
+.PP
 The archive contains one regular file at each of HOLY/meta, HOLY/files,
 HOLY/deps, HOLY/provides, HOLY/hooks, HOLY/origin and HOLY/transform. The
 inspector checks their presence and type. Empty metadata placeholders can pass

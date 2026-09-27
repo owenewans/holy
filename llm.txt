@@ -49,7 +49,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=e3d63f1d13241813074c182a27eaaad6da2edb1df70a79eaad2efca4478ec341
+holypkg.8 source=holy version=development sha256=5d6e9a4ad36fff9c334003a9bd8496ce6940d1db19a8bd9aa2b3f9da2c56a199
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -418,22 +418,26 @@ DESCRIPTION
      these  records  do	 not prove that a specific symbol satisfies a consumer's
      versioned reference.  GNU	x86  ISA-needed	 properties  in	 PT_NOTE  report
      x86-64-baseline/v2/v3/v4  when  present;  absent or unrecognized properties
-     report unknown. No PT_INTERP yields unknown runtime. It  does  not	 inspect
-     exported  symbol versions or plugin loading; its output is not a dependency
-     resolution or package ABI verdict.
+     report unknown. ET_EXEC without PT_INTERP, PT_DYNAMIC or DT_NEEDED	 reports
+     nolibc.  Other  files  without  a recognized interpreter report unknown. It
+     does not inspect exported symbol versions or plugin loading; its output  is
+     not a dependency resolution or package ABI verdict.
 
      The local scan command stages a regular .holy input in a private file, ver-
-     ifies that copy, then copies ELF payload files to unnamed temporary  files.
-     It	 reports each file's class, machine, runtime hint and ISA using the same
-     reader. It does not execute payloads. It rejects a	 machine  mismatch  with
-     the  package arch, including ELF in noarch, and a recognized glibc/musl in-
-     terpreter that disagrees with the libc tag. A missing or  unrecognized  in-
-     terpreter	remains	 unknown;  an exact DT_NEEDED libc.so.6 on a plugin also
-     rejects a non-glibc package tag.  scan does not infer nolibc, prove  plugin
-     requirements  or resolve dependencies.  For each ELF it also prints SONAME,
-     DT_NEEDED, GNU version needs with weak or required status, and version def-
-     initions, when present.  These  file-scoped  facts	 do  not  prove	 that  a
-     provider exists or that a versioned symbol resolves.
+     ifies  that copy, then copies ELF payload files to unnamed temporary files.
+     It reports each file's class, machine, runtime hint and ISA using the  same
+     reader.  It  does	not execute payloads. It rejects a machine mismatch with
+     the package arch, including ELF in noarch, and a recognized glibc/musl  in-
+     terpreter	that  disagrees	 with the libc tag. For ET_DYN without an inter-
+     preter, an exact DT_NEEDED libc.so.6 is evidence for glibc	 and  rejects  a
+     non-glibc	package tag.  An unclassified ELF causes scan to fail instead of
+     accepting an arbitrary package libc tag. ET_DYN without an	 interpreter  is
+     not classified as nolibc.	Static ET_EXEC is classified only without PT_DY-
+     NAMIC  or	DT_NEEDED.  These checks do not prove plugin requirements or re-
+     solve dependencies.  For each ELF it also	prints	SONAME,	 DT_NEEDED,  GNU
+     version  needs  with weak or required status, and version definitions, when
+     present. These file-scoped facts do not prove that	 a  provider  exists  or
+     that a versioned symbol resolves.
 
      The  preview  command  stages and verifies a native archive, checks ELF ABI
      facts, preflights extraction and inspects each DATA path in a supplied root
@@ -620,7 +624,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-package.5 source=holy version=development sha256=e56f24a19395cedb1ee97f23c11aefe5f77c0f9ead1fbda29ec4a706c4052bc7
+holy-package.5 source=holy version=development sha256=a82c82ca5f102b62013a60462780db402ed72ba5d6bba831fc0a0f6f72d24bf7
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -640,6 +644,11 @@ DESCRIPTION
      The  separate  holypkg  scan command examines regular ELF payload files and
      rejects known arch/libc tag mismatches. The basic info and verify	commands
      do not perform this ABI check.
+
+     The scanner accepts ET_EXEC without PT_INTERP and PT_DYNAMIC as nolibc, and
+     ET_DYN  requiring	libc.so.6  as glibc evidence. It rejects ELF files whose
+     runtime remains unknown. A plugin without such evidence  needs  classifica-
+     tion and review before a package can pass scan.
 
      The  archive  contains  one  regular file at each of HOLY/meta, HOLY/files,
      HOLY/deps, HOLY/provides, HOLY/hooks, HOLY/origin and  HOLY/transform.  The

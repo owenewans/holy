@@ -284,7 +284,7 @@ tar -cf "$tmp/elf.tar" -C "$tmp/elf-payload" HOLY DATA
 lz4 -q "$tmp/elf.tar" "$tmp/elf.holy"
 TMPDIR="$tmp" "$bin" scan "local:$tmp/elf.holy" > "$tmp/out"
 grep -q '^elf usr/bin/probe class=ELF64 machine=x86_64 e_machine=62 runtime=glibc ' "$tmp/out"
-grep -q '^elf usr/bin/plugin.so class=ELF64 machine=x86_64 e_machine=62 runtime=unknown ' "$tmp/out"
+grep -q '^elf usr/bin/plugin.so class=ELF64 machine=x86_64 e_machine=62 runtime=glibc ' "$tmp/out"
 grep -qx 'soname usr/bin/plugin.so plugin.so.1' "$tmp/out"
 grep -qx 'needed usr/bin/probe libc.so.6' "$tmp/out"
 grep -qx 'needed usr/bin/plugin.so libc.so.6' "$tmp/out"
@@ -351,7 +351,7 @@ for mismatch in arch libc noarch; do
     if test "$mismatch" = libc; then
         grep -q 'libc differs\|arch/libc mismatch' "$tmp/err"
     else
-        grep -q 'ELF arch/libc mismatch' "$tmp/err"
+        grep -q 'ELF arch/libc mismatch\|libc differs' "$tmp/err"
     fi
 done
 cp "$tmp/elf-meta" "$tmp/elf-payload/HOLY/meta"

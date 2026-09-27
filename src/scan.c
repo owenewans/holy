@@ -7,6 +7,7 @@
 
 #include <archive.h>
 #include <archive_entry.h>
+#include <gelf.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,6 +49,7 @@ int holy_scan_local_facts(const char *path, int emit, size_t *needed)
         la_ssize_t got;
         FILE *temp;
         struct holy_elf_info info;
+        const char *runtime;
         int result;
         if (!name || strncmp(name, "DATA/", 5) || !name[5] ||
             archive_entry_filetype(entry) != AE_IFREG ||
@@ -83,13 +85,6 @@ int holy_scan_local_facts(const char *path, int emit, size_t *needed)
             fprintf(stderr, "holypkg: malformed ELF in payload: %s\n", name);
             goto done;
         }
-        if (strcmp(arch, holy_elf_machine(&info)) ||
-            (strcmp(holy_elf_runtime(&info), "unknown") &&
-             strcmp(libc, holy_elf_runtime(&info)))) {
-            fprintf(stderr, "holypkg: ELF arch/libc mismatch in payload: %s\n", name);
-            holy_elf_free(&info);
-            goto done;
-        }
         {
             size_t i;
             for (i = 0; i < info.needed_count; ++i)
@@ -101,13 +96,30 @@ int holy_scan_local_facts(const char *path, int emit, size_t *needed)
                     goto done;
                 }
         }
+        runtime = holy_elf_runtime(&info);
+        if (!strcmp(runtime, "unknown") && info.type == ET_DYN) {
+            size_t i;
+            for (i = 0; i < info.needed_count; ++i)
+                if (!strcmp(info.needed[i], "libc.so.6")) runtime = "glibc";
+        }
+        if (!strcmp(runtime, "unknown")) {
+            fprintf(stderr, "holypkg: ELF runtime unknown; package tag cannot prove ABI: %s\n",
+                    name);
+            holy_elf_free(&info);
+            goto done;
+        }
+        if (strcmp(arch, holy_elf_machine(&info)) || strcmp(libc, runtime)) {
+            fprintf(stderr, "holypkg: ELF arch/libc mismatch in payload: %s\n", name);
+            holy_elf_free(&info);
+            goto done;
+        }
         if (emit) {
             size_t i;
             fputs("elf ", stdout);
             print_token(name + 5);
             printf(" class=ELF%d machine=%s e_machine=%u runtime=%s isa=%s\n",
                    info.elf_class == 1 ? 32 : 64, holy_elf_machine(&info),
-                   (unsigned int)info.machine, holy_elf_runtime(&info),
+                    (unsigned int)info.machine, runtime,
                    holy_elf_isa(&info));
             if (info.soname) {
                 fputs("soname ", stdout);

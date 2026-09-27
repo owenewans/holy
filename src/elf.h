@@ -14,6 +14,7 @@ struct holy_elf_info {
     int elf_class;
     uint16_t machine;
     uint16_t type;
+    int has_dynamic;
     char *interpreter;
     char **needed;
     size_t needed_count;

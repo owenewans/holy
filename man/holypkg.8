@@ -409,8 +409,9 @@ DT_VERNEED records list provider SONAME, version and weak flag. GNU DT_VERDEF
 records list version-definition names; these records do not prove that a
 specific symbol satisfies a consumer's versioned reference. GNU x86
 ISA-needed properties in PT_NOTE report x86-64-baseline/v2/v3/v4 when present;
-absent or unrecognized properties report unknown. No PT_INTERP yields unknown
-runtime. It does not inspect exported symbol versions or plugin loading;
+absent or unrecognized properties report unknown. ET_EXEC without PT_INTERP,
+PT_DYNAMIC or DT_NEEDED reports nolibc. Other files without a recognized
+interpreter report unknown. It does not inspect exported symbol versions or plugin loading;
 its output is not a dependency resolution or package ABI verdict.
 .PP
 The local scan command stages a regular .holy input in a private file, verifies
@@ -418,9 +419,12 @@ that copy, then copies ELF payload files to unnamed temporary files. It reports
 each file's class, machine, runtime hint and ISA using the same reader. It does
 not execute payloads. It rejects a machine mismatch with the package arch,
 including ELF in noarch, and a recognized glibc/musl interpreter that disagrees
-with the libc tag. A missing or unrecognized interpreter remains unknown;
-an exact DT_NEEDED libc.so.6 on a plugin also rejects a non-glibc package tag.
-scan does not infer nolibc, prove plugin requirements or resolve dependencies.
+with the libc tag. For ET_DYN without an interpreter, an exact DT_NEEDED
+libc.so.6 is evidence for glibc and rejects a non-glibc package tag.
+An unclassified ELF causes scan to fail instead of accepting an arbitrary
+package libc tag. ET_DYN without an interpreter is not classified as nolibc.
+Static ET_EXEC is classified only without PT_DYNAMIC or DT_NEEDED. These
+checks do not prove plugin requirements or resolve dependencies.
 For each ELF it also prints SONAME, DT_NEEDED, GNU version needs with weak or
 required status, and version definitions, when present. These file-scoped
 facts do not prove that a provider exists or that a versioned symbol resolves.

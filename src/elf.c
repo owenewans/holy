@@ -403,6 +403,7 @@ int holy_elf_read_fd(int fd, struct holy_elf_info *info)
         if (phdr.p_type == PT_DYNAMIC) {
             if (seen_dynamic++) goto done;
             dynamic = phdr;
+            info->has_dynamic = 1;
         }
         if (phdr.p_type == PT_NOTE &&
             !read_notes(elf, &phdr, (uint64_t)st.st_size,
@@ -496,7 +497,11 @@ const char *holy_elf_machine(const struct holy_elf_info *info)
 const char *holy_elf_runtime(const struct holy_elf_info *info)
 {
     const char *base;
-    if (!info->interpreter) return "unknown";
+    if (!info->interpreter) {
+        if (info->type == ET_EXEC && !info->has_dynamic && !info->needed_count)
+            return "nolibc";
+        return "unknown";
+    }
     base = strrchr(info->interpreter, '/');
     base = base ? base + 1 : info->interpreter;
     if (!strcmp(base, "ld-linux-x86-64.so.2") || !strcmp(base, "ld-linux.so.2"))
