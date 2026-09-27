@@ -19,6 +19,7 @@ struct holy_config {
 
 /* the caller owns entries on both success and failure. error is allocated. */
 int holy_config_load(const char *path, struct holy_config *out, char **error);
+int holy_config_load_plan(const char *path, struct holy_config *out, char **error);
 void holy_config_free(struct holy_config *config);
 
 /* the caller owns token strings and the vector on success. */

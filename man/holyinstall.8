@@ -1,14 +1,20 @@
 .TH HOLYINSTALL 8
 .SH NAME
-holyinstall \- prepare and apply a package installation to an existing Holy root
+holyinstall \- prepare a disk image and install packages to an existing Holy root
 .SH SYNOPSIS
 .B holyinstall --menu --config FILE --plan NEW_FILE [--holypkg FILE]
 .br
 .B holyinstall --config FILE --plan NEW_FILE [--holypkg FILE]
 .br
 .B holyinstall --apply PLAN [--holypkg FILE]
+.br
+.B holyinstall disk plan --config FILE --output NEW_PLAN
+.br
+.B holyinstall disk apply --plan PLAN --confirm IMAGE
 .SH DESCRIPTION
-holyinstall currently supports the package transaction of a pre-mounted root.
+holyinstall supports a disk-image preparation stage and a separate package
+transaction for a pre-mounted root. Disk preparation does not mount the image
+or connect it to the package transaction.
 The target must already contain an initialized holypkg database and cached
 .holy artifacts. The first artifact is the explicit package; later artifacts
 are dependency candidates. It invokes holypkg with argv, without a shell.
@@ -55,15 +61,41 @@ SHA256 values must be lowercase. The root path cannot be /. Config comments
 do not change the effective-config hash. Changes to parsed values or artifact
 order require a new plan. The plan must be reviewed before apply; the config
 is no longer consulted at that step.
+.SH DISK IMAGE
+The disk command accepts a regular file of at least 1 GiB. The supported
+layout is GPT with a 1 MiB BIOS boot partition, a 256 MiB FAT32 ESP and an
+ext4 root partition. It uses sfdisk, mkfs.fat and mke2fs, and requires
+losetup to confirm that the image is not attached to a loop device. It never
+accepts a block device. A minimal config is:
 .PP
-This interface does not partition, format or mount disks; configure accounts,
-network or services; install Limine; or generate an initramfs. It does not
-claim the resulting root is bootable. The full disk, boot and account menus
-and the live-ISO-to-installed-disk QEMU test remain pending.
+.RS
+.nf
+[disk]
+image "/tmp/holy.img"
+layout gpt-ext4
+.fi
+.RE
+.PP
+Create the image before planning, for example with truncate. Planning prints
+the exact image path, device/inode identity, size and partition geometry. It
+hashes the first and last MiB and writes a new mode-0600 plan. Apply requires
+--confirm to equal the canonical image path in that plan. It checks the
+identity and both hashes again, then records prepared, partitioning and
+formatting stages in PLAN.journal. An existing journal blocks another apply.
+After an interrupted stage, inspect the image and journal before starting a
+new plan. The command does not silently repeat a format operation.
+.PP
+Disk preparation destroys existing image contents. It does not mount the
+partitions, install Limine or generate an initramfs, and does not prove the
+image can boot. The text menu currently edits only [install] configs. Disk,
+boot and account menus and the live-ISO-to-installed-disk QEMU test remain
+pending.
 .SH EXIT STATUS
 0 means the requested step completed. 1 means an operational error. 2 means
-invalid arguments, config or plan. holypkg statuses 3 through 6 propagate
-from the package transaction.
+invalid arguments, config or plan. Disk apply returns 3 for a changed image
+or missing confirmation, 5 for an existing journal or failed mutation, and
+6 for a missing image, tool or available capability. holypkg statuses 3
+through 6 propagate from the package transaction.
 .SH SEE ALSO
 .BR holypkg (8),
 .BR holy.conf (5),

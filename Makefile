@@ -26,7 +26,7 @@ SOLV_LIBS ?= $(shell pkg-config --libs libsolv 2>/dev/null) -lz
 .PHONY: all check check-fixtures check-root check-qemu check-qemu-gate check-https check-solver check-install-payload check-install bootstrap-busybox check-bootstrap-busybox check-static-core man
 all: holypkg holy-init holyinstall
 
-holyinstall: src/installer.o src/config.o
+holyinstall: src/installer.o src/disk.o src/config.o
 	$(CC) $(LDFLAGS) -o $@ $^ -lcrypto
 
 holy-init: src/early-init.c .build-config
@@ -167,6 +167,7 @@ check-root: check-install-payload
 
 check-install: holyinstall holypkg
 	sh tests/installer.sh ./holyinstall ./holypkg
+	python3 tests/installer-disk.py ./holyinstall
 
 check-qemu:
 	ARCH="$(ARCH)" ISO="$(or $(ISO),out/holy-$(ARCH).iso)" BOOT_PLAN="$(BOOT_PLAN)" QEMU_TIMEOUT="$(or $(QEMU_TIMEOUT),120)" sh tests/qemu.sh
@@ -215,6 +216,6 @@ tests/resolution: tests/resolution.c $(filter-out src/main.o,$(HOLY_OBJECTS)) ho
 
 clean:
 	rm -f holy-init
-	rm -f holyinstall
+	rm -f holyinstall src/disk.o
 	rm -f .build-config .build-config.tmp
 	rm -f holypkg tests/resolution tests/solver tests/install-helper tests/pacman-helper $(HOLY_OBJECTS)

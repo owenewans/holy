@@ -3,12 +3,14 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 struct frame {
     dev_t dev;
@@ -183,6 +185,7 @@ static int valid_section(const char *s)
 {
     return !strcmp(s, "general") || !strcmp(s, "resolver") ||
            !strcmp(s, "install") || !strcmp(s, "install-plan") ||
+           !strcmp(s, "disk") || !strcmp(s, "disk-plan") ||
            (!strncmp(s, "source ", 7) && s[7] && strcmp(s + 7, "local")) ||
            (!strncmp(s, "rule ", 5) && s[5]);
 }
@@ -197,7 +200,14 @@ static int list_key(const char *section, const char *key)
 
 static int key_arity(const char *section, const char *key)
 {
-    if (!strcmp(section, "install")) {
+    if (!strcmp(section, "disk-plan")) {
+        if (!strcmp(key, "format") || !strcmp(key, "image") ||
+            !strcmp(key, "device") || !strcmp(key, "inode") ||
+            !strcmp(key, "size") || !strcmp(key, "head-sha256") ||
+            !strcmp(key, "tail-sha256") || !strcmp(key, "root-sectors")) return 1;
+    } else if (!strcmp(section, "disk")) {
+        if (!strcmp(key, "image") || !strcmp(key, "layout")) return 1;
+    } else if (!strcmp(section, "install")) {
         if (!strcmp(key, "root") || !strcmp(key, "artifact")) return 1;
     } else if (!strcmp(section, "install-plan")) {
         if (!strcmp(key, "format") || !strcmp(key, "root") ||
@@ -222,6 +232,8 @@ static int key_arity(const char *section, const char *key)
 
 static int known_value(const char *section, const char *key, const char *v)
 {
+    if (!strcmp(section, "disk") && !strcmp(key, "layout"))
+        return !strcmp(v, "gpt-ext4");
     if (!strcmp(key, "scripts") && !strcmp(section, "general"))
         return !strcmp(v, "ask") || !strcmp(v, "run") || !strcmp(v, "skip");
     if (!strcmp(key, "trust"))
@@ -244,7 +256,7 @@ static int url_has_userinfo(const char *url)
 }
 
 static int parse(const char *path, struct holy_config *config,
-                 struct frame *parent, char **error)
+                 struct frame *parent, char **error, int fixed_plan)
 {
     FILE *fp;
     struct stat st;
@@ -256,7 +268,17 @@ static int parse(const char *path, struct holy_config *config,
     size_t depth = 0;
     for (node = parent; node; node = node->parent) ++depth;
     if (depth >= 64) return fail(error, path, 0, "include depth exceeds 64");
-    fp = fopen(path, "r");
+    if (fixed_plan) {
+        int fd = open(path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
+        struct stat plan_stat;
+        if (fd >= 0 && (fstat(fd, &plan_stat) || !S_ISREG(plan_stat.st_mode) ||
+                        plan_stat.st_size > 1048576)) {
+            close(fd);
+            return fail(error, path, 0, "plan must be a regular file of at most 1 MiB");
+        }
+        fp = fd < 0 ? NULL : fdopen(fd, "r");
+        if (!fp && fd >= 0) close(fd);
+    } else fp = fopen(path, "r");
     if (!fp) return fail(error, path, 0, "open: %s", strerror(errno));
     if (fstat(fileno(fp), &st)) {
         ok = fail(error, path, 0, "stat: %s", strerror(errno));
@@ -281,11 +303,13 @@ static int parse(const char *path, struct holy_config *config,
         }
         if (!holy_lex(line, (size_t)length, &v, &count, path, lineno, error)) { ok = 0; break; }
         if (!count) { holy_tokens_free(v, count); continue; }
-        if (!strcmp(v[0], "include")) {
+        if (!strcmp(v[0], "include") && fixed_plan) {
+            ok = fail(error, path, lineno, "include is forbidden in a plan");
+        } else if (!strcmp(v[0], "include")) {
             char *child;
             if (count != 2) ok = fail(error, path, lineno, "include expects one path");
             else if (!(child = relative(path, v[1]))) ok = fail(error, path, lineno, "out of memory");
-            else { ok = parse(child, config, &current, error); free(child); }
+            else { ok = parse(child, config, &current, error, 0); free(child); }
         } else if (v[0][0] == '[') {
             size_t n = strlen(v[0]);
             size_t total = n;
@@ -442,7 +466,13 @@ static int validate(struct holy_config *config, char **error)
 int holy_config_load(const char *path, struct holy_config *out, char **error)
 {
     *error = NULL;
-    return parse(path, out, NULL, error) && validate(out, error);
+    return parse(path, out, NULL, error, 0) && validate(out, error);
+}
+
+int holy_config_load_plan(const char *path, struct holy_config *out, char **error)
+{
+    *error = NULL;
+    return parse(path, out, NULL, error, 1) && validate(out, error);
 }
 
 void holy_config_free(struct holy_config *config)

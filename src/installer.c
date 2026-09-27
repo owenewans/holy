@@ -1,5 +1,6 @@
 #define _XOPEN_SOURCE 700
 #include "config.h"
+#include "disk.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -645,6 +646,8 @@ int main(int argc, char **argv)
     struct install_input input = {0};
     char hash[65], *output = NULL;
     int i, apply = 0, menu = 0, rc;
+    if (argc > 1 && !strcmp(argv[1], "disk"))
+        return holy_disk_main(argc - 2, argv + 2);
     for (i = 1; i < argc; ++i) {
         if (!strcmp(argv[i], "--config") && ++i < argc && !config_path)
             config_path = argv[i];
