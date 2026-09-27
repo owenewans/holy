@@ -66,7 +66,7 @@ check-bootstrap-dinit: holypkg
 	sh tests/bootstrap-dinit.sh ./holypkg "$(or $(DINIT_PACKAGE),out/dinit-bootstrap/dinit.holy)" "$(or $(BUSYBOX_PACKAGE),out/busybox-bootstrap/busybox.holy)"
 
 bootstrap-busybox: holypkg
-	sh tools/bootstrap-busybox.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/busybox-bootstrap)"
+	ARCH="$(or $(ARCH),x86_64)" sh tools/bootstrap-busybox.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/busybox-bootstrap)"
 
 check-bootstrap-busybox: holypkg
 	sh tests/bootstrap-busybox.sh ./holypkg "$(or $(BUSYBOX_PACKAGE),out/busybox-bootstrap/busybox.holy)"

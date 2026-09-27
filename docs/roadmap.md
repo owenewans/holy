@@ -196,7 +196,7 @@
   regenerate it before libc recovery and after reboot. Altered bundle/source
   disk fixtures fail the documentation boot stage. Text remains roff source.
 
-- [x] Build pinned x86_64 musl-static BusyBox as a native package and test its
+- [x] Build pinned i686 and x86_64 musl-static BusyBox as native packages and test their
   installed shell in a chroot without dynamic libc directories. Build logs,
   source/config/artifact hashes and upstream license files are retained.
   This bootstrap profile does not supply static holypkg or network recovery.

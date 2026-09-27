@@ -8,10 +8,14 @@ fi
 bin=$(realpath "$1")
 inputs=$(realpath "$2")
 profile=$(realpath "$(dirname "$0")/../profiles/busybox-bootstrap.config")
-case $(uname -m) in
-    x86_64) arch=x86_64 ;;
-    *) printf 'bootstrap BusyBox currently requires x86_64\n' >&2; exit 6 ;;
+test "$(id -u)" != 0 || exit 6
+case $(uname -m) in x86_64|i?86) ;; *) exit 6 ;; esac
+case "${ARCH:-x86_64}" in
+    x86_64) arch=x86_64; target=x86_64-linux-musl; flags=-m64; emulation=elf_x86_64 ;;
+    i686|x86) arch=x86; target=i686-linux-musl; flags='-m32 -march=i686 -mtune=generic'; emulation=elf_i386 ;;
+    *) printf 'unsupported BusyBox target: %s\n' "$ARCH" >&2; exit 6 ;;
 esac
+unset ARCH MAKEFLAGS MAKEOVERRIDES MFLAGS
 for tool in gcc make tar sha256sum awk realpath; do
     command -v "$tool" >/dev/null || { printf 'missing tool: %s\n' "$tool" >&2; exit 6; }
 done
@@ -40,16 +44,17 @@ exec > "$out/build.log" 2>&1
 unset CFLAGS CPPFLAGS LDFLAGS LDLIBS
 printf 'musl-url https://musl.libc.org/releases/musl-1.2.5.tar.gz\nmusl-sha256 %s\nbusybox-url https://busybox.net/downloads/busybox-1.37.0.tar.bz2\nbusybox-sha256 %s\narch %s\n' \
     "$musl" "$busybox" "$arch" > "$out/build.record"
+printf 'target %s\ncflags "%s"\nlinker-emulation %s\n' "$target" "$flags" "$emulation" >> "$out/build.record"
 gcc --version >> "$out/build.record"
 tar -xzf "$inputs/musl-1.2.5.tar.gz" -C "$work"
 tar -xjf "$inputs/busybox-1.37.0.tar.bz2" -C "$work"
 (
     cd "$work/musl-1.2.5"
-    CC=gcc ./configure --prefix="$work/musl-prefix" --disable-shared
+    CC=gcc CFLAGS="$flags" LDFLAGS="$flags" AR=ar RANLIB=ranlib ./configure --target="$target" --prefix="$work/musl-prefix" --disable-shared
     make -j"${JOBS:-2}"
     make install
 )
-cc="$work/musl-prefix/bin/musl-gcc"
+cc="$work/musl-prefix/bin/musl-gcc $flags -Wl,-m,$emulation"
 if gcc -fno-link-libatomic -x c -c /dev/null -o "$work/flag.o" 2>/dev/null; then
     cc="$cc -fno-link-libatomic"
 fi
@@ -98,6 +103,7 @@ config_hash=$(sha256sum "$out/busybox.config")
 config_hash=${config_hash%% *}
 printf 'source-url https://busybox.net/downloads/busybox-1.37.0.tar.bz2\nsource-sha256 %s\nlibc-source-sha256 %s\nbuild-config-sha256 %s\n' \
     "$busybox" "$musl" "$config_hash" > "$tree/HOLY/origin"
+printf 'target %s\ncflags "%s"\n' "$target" "$flags" >> "$tree/HOLY/origin"
 "$bin" manifest generate "$tree" --output "$work/files"
 cp "$work/files" "$tree/HOLY/files"
 "$bin" pack "$tree" --output "$out/busybox.holy"

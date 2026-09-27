@@ -274,8 +274,9 @@ manifests use UID 0, run inside the builder's matching user namespace.
 HOLY_DOCS_CHROOT=1 sh tests/installed-docs.sh ./holypkg additionally exercises
 the static binary and gzip decoding in a libc-free chroot using host doas.
 .SS Bootstrap shell package
-The repository target make bootstrap-busybox INPUTS=DIRECTORY OUTPUT=DIRECTORY
-builds a small x86_64 BusyBox package with static musl linkage. INPUTS must contain
+The repository target make bootstrap-busybox ARCH=i686|x86_64 INPUTS=DIRECTORY OUTPUT=DIRECTORY
+builds a small BusyBox package with static musl linkage. The default is x86_64;
+i686 requires multilib GCC and records package architecture x86. INPUTS must contain
 musl-1.2.5.tar.gz and busybox-1.37.0.tar.bz2 from their upstream release URLs.
 The build checks pinned SHA-256 digests before unpacking, uses GCC and upstream
 make builds, and installs the build toolchain only in a temporary directory.
@@ -292,6 +293,7 @@ are recorded. Upstream BusyBox and musl copyright files accompany the payload.
 The package contains /usr/bin/busybox; invoke applets as busybox APPLET.
 The configuration is profiles/busybox-bootstrap.config. It includes ash,
 basic file utilities and mount tools; it has no network recovery profile.
+LFS is enabled for musl's 64-bit file offsets on i686 as well as x86_64.
 The manifest records the builder's numeric UID/GID. This is a local bootstrap
 experiment, not an official base image or a general recipe engine.
 .PP
@@ -299,6 +301,8 @@ make check-bootstrap-busybox BUSYBOX_PACKAGE=FILE installs the package in a
 disposable root with prepared directories, runs its shell there with doas
 and chroot --userspec, checks files and removes the package. Noninteractive
 doas must be available. The chroot has no dynamic libc directories. This
+fixture approves non-native placement by exact artifact hash. For x86 packages
+it also requires qemu-i386 and runs the shell with its pentium2 CPU model. This
 tests the static shell; host holypkg still runs outside the chroot. Boot,
 static holypkg and full libc recovery require separate acceptance tests.
 .SS Static core build

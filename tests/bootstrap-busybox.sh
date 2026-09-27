@@ -15,14 +15,25 @@ mkdir -p "$tmp/root/usr/bin" "$tmp/root/usr/share/licenses/busybox" "$tmp/root/u
 "$bin" cache stage "local:$package" --root "$tmp/root" > "$tmp/out"
 digest=$(sha256sum "$package")
 digest=${digest%% *}
-"$bin" db reserve "$digest" --root "$tmp/root" > "$tmp/out"
-"$bin" db plan --root "$tmp/root" > "$tmp/out"
+"$bin" info "local:$package" > "$tmp/info"
+arch=$(sed -n 's/^arch //p' "$tmp/info")
+set --
+case "$arch:$(uname -m)" in
+    x86_64:x86_64|x86:i686) ;;
+    *) set -- --accept-arch "$digest" ;;
+esac
+"$bin" db plan-set "$digest" "$@" --root "$tmp/root" > "$tmp/out"
 plan=$(sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
 test "${#plan}" -eq 64
-"$bin" db approve "$plan" --root "$tmp/root" > "$tmp/out"
-"$bin" db apply --root "$tmp/root" > "$tmp/out"
+"$bin" db apply-set "$plan" "$digest" "$@" --root "$tmp/root" > "$tmp/out"
 "$bin" elf "$tmp/root/usr/bin/busybox" > "$tmp/out"
 grep -qx 'runtime nolibc' "$tmp/out"
+grep -qx "machine $arch" "$tmp/out"
+if [ "$arch" = x86 ]; then
+    command -v qemu-i386 >/dev/null || exit 6
+    qemu-i386 -cpu pentium2 "$tmp/root/usr/bin/busybox" ash -c 'printf "i686 shell\n"' > "$tmp/emulator"
+    grep -qx 'i686 shell' "$tmp/emulator"
+fi
 doas -n chroot --userspec="$(id -u):$(id -g)" "$tmp/root" /usr/bin/busybox ash -c '
     test ! -e /lib && test ! -e /lib64 && test ! -e /usr/lib || exit 1
     /usr/bin/busybox test -s /usr/share/licenses/busybox/LICENSE || exit 1
