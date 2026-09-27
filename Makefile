@@ -29,16 +29,19 @@ all: holypkg holy-init
 holy-init: src/early-init.c .build-config
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o $@ $<
 
-.PHONY: bootstrap-musl check-musl-abi
+.PHONY: bootstrap-musl check-musl-abi check-libc-abi
 bootstrap-musl: holypkg
 	ARCH="$(or $(ARCH),x86_64)" sh tools/bootstrap-musl.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/musl-bootstrap)"
 
 check-musl-abi:
-	python3 tests/musl-abi.py "$(STATIC_HOLYPKG)" "$(MUSL32_PACKAGE)" "$(MUSL32_CC)" "$(MUSL_PACKAGE)" "$(MUSL_CC)"
+	python3 tests/libc-abi.py "$(STATIC_HOLYPKG)" "$(MUSL32_PACKAGE)" "$(MUSL32_CC)" "$(MUSL_PACKAGE)" "$(MUSL_CC)"
+
+check-libc-abi:
+	python3 tests/libc-abi.py "$(STATIC_HOLYPKG)" "$(MUSL32_PACKAGE)" "$(MUSL32_CC)" "$(MUSL_PACKAGE)" "$(MUSL_CC)" "$(GLIBC32_PACKAGE)" "$(GLIBC_PACKAGE)"
 
 .PHONY: bootstrap-glibc check-bootstrap-glibc
 bootstrap-glibc: holypkg
-	sh tools/bootstrap-glibc.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/glibc-bootstrap)"
+	ARCH="$(or $(ARCH),x86_64)" sh tools/bootstrap-glibc.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/glibc-bootstrap)"
 
 check-bootstrap-glibc:
 	@test "$$(id -u)" != 0 && test -f "$(or $(OUTPUT),out/glibc-bootstrap)/glibc.holy" || { echo 'ordinary user and completed glibc build required' >&2; exit 6; }

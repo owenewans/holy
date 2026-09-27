@@ -820,8 +820,11 @@ then executes cached repair inside the libc-free chroot. doas is required;
 guest commands run with the caller's UID/GID. This tests local recovery on
 x86_64, not boot, i686, network recovery or general foreign package conversion.
 .PP
-make bootstrap-glibc INPUTS=DIRECTORY OUTPUT=DIRECTORY builds the pinned
+make bootstrap-glibc ARCH=i686|x86_64 INPUTS=DIRECTORY OUTPUT=DIRECTORY builds the pinned
 glibc-2.42.tar.xz source as an ordinary user in a separate build directory.
+The default is x86_64; i686 requires an x86_64 builder with multilib GCC/G++.
+The i686 package uses arch x86 and /usr/lib/holy/i686-linux-gnu, with a relative
+public ld-linux.so.2 link and separate license/documentation paths.
 Host GCC, G++, binutils, kernel headers, make, gawk, bison, Python and patchelf
 are required. --without-gd avoids linking the optional memusagestat tool
 against the host's libgd closure. The output glibc.holy contains libc.so.6,
@@ -833,6 +836,15 @@ not implied by a successful build. make check-bootstrap-glibc OUTPUT=DIRECTORY
 runs that retained build's upstream test suite as an ordinary user and returns
 its actual status. GLIBC_PACKAGE can supply this artifact to
 check-libc-recovery; without it that fixture snapshots the host glibc pair.
+.PP
+make check-libc-abi takes the same inputs as check-musl-abi plus
+GLIBC32_PACKAGE=FILE and GLIBC_PACKAGE=FILE. It installs four runtime packages
+and four architecture/libc slots of one probe package. It runs pthread, clock
+and pipe probes for every ordered pair, removes each runtime, each libc family
+and all four runtimes, then checks and repairs through the static client inside
+the target root. JSON records runtime, application, client and probe source
+hashes. Glibc probes use host multilib headers and CRT objects; this does not
+validate a packaged SDK, upstream glibc tests, NSS/locales or i686 boot.
 .PP
 Database owner reads installed manifests and lists the artifact digest
 and kind for an exact relative or root-absolute path. Multiple packages may

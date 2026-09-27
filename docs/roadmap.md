@@ -217,9 +217,13 @@
   shared disposable x86_64 root. A static i686 client installs both architecture
   slots with artifact-scoped decisions and restores either or both removed
   runtimes from its cache. This does not close the i686 boot or glibc32 gates.
-- [x] Build pinned glibc 2.42 loader/libc payloads from source as a native
+- [x] Build pinned i686 and x86_64 glibc 2.42 loader/libc payloads from source as a native
   bootstrap package with licenses and recorded private-path patches. Complete
   SDK, auxiliary libraries, locale/NSS packaging and upstream-suite acceptance remain open.
+- [x] Install and run glibc32, glibc64, musl32 and musl64 together on an x86_64
+  kernel, including pthread/clock and pipes between ABI variants. Restore all
+  four runtime packages through the static i686 client and cached artifacts.
+  Glibc compilation uses the host multilib SDK; i686 boot remains untested.
 - [x] Run static holypkg inside an x86_64 root after deleting both glibc and musl
   runtime payloads; restore from cached LZ4 .holy files and run both dynamic probes.
   Repeat each libc separately, including loader symlink restoration. This gate
