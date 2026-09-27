@@ -91,6 +91,7 @@ check: holypkg check-init check-solver check-install-payload check-https
 	sh tests/repo.sh ./holypkg
 	sh tests/state.sh ./holypkg
 	sh tests/resolve.sh ./holypkg
+	sh tests/elf-resolve.sh ./holypkg
 	sh tests/static.sh ./holypkg
 
 check-fixtures: check

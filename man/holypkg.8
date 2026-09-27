@@ -452,28 +452,60 @@ fields. The JSON encoder maps non-ASCII bytes to \eu00HH escapes; consumers
 reconstruct original bytes rather than treating them as normalized text.
 .PP
 The solve command verifies and scans each explicitly supplied local archive,
-with the first archive as the requested root. Its supported subset accepts only
-linux/noarch/nolibc packages, empty HOLY/hooks and HOLY/transform, and
+with the first archive as the requested root. Its supported subset accepts
+Linux packages with validated payload ABI facts, empty HOLY/hooks and HOLY/transform, and
 HOLY/deps package requirements with arch=any, libc=any and relation=any.
 Each consumer must equal its package name. Only the package's own metadata
-name supplies a capability; declared aliases in HOLY/provides are parsed but
-do not satisfy requirements here. Every other dependency form, version
-constraint or package ABI fails closed with status 6. There are no source
-IDs, installed packages, architecture overrides, file providers or runtime
-guarantees in this command.
+name supplies a package capability; declared aliases in HOLY/provides are parsed
+but do not satisfy requirements here. Unsupported metadata dependency forms and
+version constraints return 6. There are no source IDs, installed packages or
+architecture overrides in this command.
+.PP
+ELF payloads add file-scoped interpreter, DT_NEEDED and strong undefined symbol
+requirements, even when HOLY/deps omits them. A SONAME candidate must match
+the exact name, ELF class, e_machine and inferred runtime. It must be ET_DYN
+without DF_1_PIE, so an executable with a forged SONAME is not a shared-library
+candidate. It must define the
+required version nodes and export each strong versioned reference assigned to
+that SONAME, with matching version and compatible symbol type. Weak undefined
+symbols do not add mandatory symbol requirements. Weak definitions can provide
+strong references. Hidden/internal symbols cannot provide external references;
+explicit versions may use compatibility exports, while unversioned references
+require default exports.
+.PP
+The current unversioned-symbol scope covers the consumer, its direct DT_NEEDED
+objects and interpreter. A choice for a SONAME must agree with the package used
+for its unversioned symbols. Inherited executable/global scopes and indirect
+lookup scopes are not modeled; an unresolved symbol reports unknown-symbol-scope
+with code 3. An interpreter candidate currently needs a directly recorded ELF
+at its literal path with an executable permission bit. Unresolved interpreter paths report
+unknown-interpreter-context with code 3, since symlink and merged-/usr package
+views are not modeled by this archive-only solver. DT_NEEDED containing a slash
+requires a launch context and returns 6. Nested requirements of selected
+library packages participate in the same libsolv graph.
+.PP
+ELF requirement IDs hash package name, arch/libc, consumer path, requirement kind
+and target. They remain stable when candidate order changes. Capabilities also
+include the consumer artifact digest so different versions cannot silently
+share their provider constraints. ELF-edge events include id, consumer artifact,
+path, kind, target and candidate/selected provider artifact digests. On a decision
+or conflict, root ELF-edge events precede the error to support explicit choices.
 .PP
 The command prints selected artifact SHA-256 digests only after a unique
 package set is found. It returns 3 for multiple package sets, 4 for an
 unsatisfied requirement, and 6 for unsupported or invalid input. No plan,
 install or mutation follows. Equal package names from two different artifacts
 remain separate candidates; the caller must choose when both could satisfy a
-requirement. The solver checks package-set uniqueness, not ambiguous provider
-edges inside an identical set. Script interpreter and plugin requirements are
+requirement. Multiple selected providers for an edge also require a decision.
+Script interpreter and plugin requirements are
 not inferred from payload in this subset, so selection is not an
-installability verdict.
+installability verdict. Library placement, duplicate SONAME files inside one
+artifact, loader search order, RPATH/RUNPATH, ISA availability and symbol
+interposition require later context checks; an artifact match does not prove
+that the runtime loader will select its matching file.
 For a direct root requirement, --choose pins a named requirement ID to the
 exact candidate artifact digest supplied on the command line. The candidate
-must provide the required package name; otherwise the command returns
+must provide the package capability or satisfy the observed ELF edge; otherwise the command returns
 decision-required. The choice applies to this solve only and does not assign a
 source ID or rewrite ABI facts. Unsupported syntax returns 2. Transitive
 requirements and multiple choices cannot yet be pinned by this option.
@@ -578,7 +610,7 @@ without executing it or invoking ldd. It prints ELF class, numeric e_machine
 and e_type, a recognized
 machine (x86, x86_64 or x32), the PT_INTERP path, and a libc runtime hint
 only for recognized glibc or musl interpreters. It reads PT_DYNAMIC to list
-DT_NEEDED, SONAME, RPATH and RUNPATH even without section headers. GNU
+DT_NEEDED, SONAME, RPATH, RUNPATH and DT_FLAGS_1 even without section headers. GNU
 DT_VERNEED records list provider SONAME, version and weak flag. GNU DT_VERDEF
 records list version-definition names. DT_SYMTAB and DT_VERSYM records expose
 each dynamic symbol's binding, type, visibility, section index, version index,
@@ -603,6 +635,8 @@ not execute payloads. It rejects a machine mismatch with the package arch,
 including ELF in noarch, and a recognized glibc/musl interpreter that disagrees
 with the libc tag. For ET_DYN without an interpreter, an exact DT_NEEDED
 libc.so.6 is evidence for glibc and rejects a non-glibc package tag.
+The matching x86/x86_64 ld-linux SONAME together with a GLIBC_PRIVATE version
+definition supplies glibc loader evidence; its bytes are not executed to classify it.
 An unclassified ELF causes scan to fail instead of accepting an arbitrary
 package libc tag. ET_DYN without an interpreter is not classified as nolibc.
 Static ET_EXEC is classified only without PT_DYNAMIC or DT_NEEDED. These

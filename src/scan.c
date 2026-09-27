@@ -23,7 +23,8 @@ static void print_token(const char *path)
     }
 }
 
-int holy_scan_local_facts(const char *path, int emit, size_t *needed)
+static int scan(const char *path, int emit, size_t *needed,
+                struct holy_scan_result *collected)
 {
     struct archive *a = NULL;
     struct archive_entry *entry;
@@ -101,6 +102,14 @@ int holy_scan_local_facts(const char *path, int emit, size_t *needed)
             size_t i;
             for (i = 0; i < info.needed_count; ++i)
                 if (!strcmp(info.needed[i], "libc.so.6")) runtime = "glibc";
+            if (info.soname &&
+                ((!strcmp(info.soname, "ld-linux-x86-64.so.2") &&
+                  !strcmp(holy_elf_machine(&info), "x86_64")) ||
+                 (!strcmp(info.soname, "ld-linux.so.2") &&
+                  !strcmp(holy_elf_machine(&info), "x86"))))
+                for (i = 0; i < info.defined_version_count; ++i)
+                    if (!strcmp(info.defined_versions[i].name, "GLIBC_PRIVATE"))
+                        runtime = "glibc";
         }
         if (!strcmp(runtime, "unknown")) {
             fprintf(stderr, "holypkg: ELF runtime unknown; package tag cannot prove ABI: %s\n",
@@ -172,6 +181,21 @@ int holy_scan_local_facts(const char *path, int emit, size_t *needed)
             goto done;
         }
         edges += info.needed_count;
+        if (collected) {
+            struct holy_scanned_file *next;
+            char *copy = strdup(name + 5);
+            if (!copy || collected->count >= 65536) {
+                free(copy); holy_elf_free(&info); goto done;
+            }
+            next = realloc(collected->files, (collected->count + 1) * sizeof *next);
+            if (!next) { free(copy); holy_elf_free(&info); goto done; }
+            collected->files = next;
+            next[collected->count].path = copy;
+            next[collected->count].runtime = runtime;
+            next[collected->count].mode = (unsigned int)archive_entry_perm(entry);
+            next[collected->count++].elf = info;
+            memset(&info, 0, sizeof info);
+        }
         holy_elf_free(&info);
         ++scanned;
     }
@@ -192,6 +216,28 @@ done:
 int holy_scan_local_with_output(const char *path, int emit)
 {
     return holy_scan_local_facts(path, emit, NULL);
+}
+
+int holy_scan_local_facts(const char *path, int emit, size_t *needed)
+{
+    return scan(path, emit, needed, NULL);
+}
+
+int holy_scan_collect(const char *path, struct holy_scan_result *result)
+{
+    memset(result, 0, sizeof *result);
+    return scan(path, 0, NULL, result);
+}
+
+void holy_scan_free(struct holy_scan_result *result)
+{
+    size_t i;
+    for (i = 0; i < result->count; ++i) {
+        free(result->files[i].path);
+        holy_elf_free(&result->files[i].elf);
+    }
+    free(result->files);
+    memset(result, 0, sizeof *result);
 }
 
 int holy_scan_local(const char *path)

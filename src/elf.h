@@ -30,6 +30,7 @@ struct holy_elf_info {
     uint16_t machine;
     uint16_t type;
     int has_dynamic;
+    uint64_t flags1;
     char *interpreter;
     char **needed;
     size_t needed_count;

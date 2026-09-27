@@ -432,6 +432,7 @@ static int dynamic_table(Elf *elf, int fd, uint64_t file_size,
     int has_verneed = 0, has_verneednum = 0;
     int has_verdef = 0, has_verdefnum = 0;
     int has_symtab = 0, has_syment = 0, has_hash = 0, has_gnu_hash = 0, has_versym = 0;
+    int has_flags1 = 0;
     int ended = 0, ok = 0;
     char *strings = NULL;
     if (!dynamic->p_filesz || dynamic->p_filesz > 16 * 1024 * 1024 ||
@@ -448,7 +449,10 @@ static int dynamic_table(Elf *elf, int fd, uint64_t file_size,
         uint64_t *next;
         if (!gelf_getdyn(data, (int)i, &item)) goto done;
         if (item.d_tag == DT_NULL) { ended = 1; break; }
-        if (item.d_tag == DT_SYMTAB) {
+        if (item.d_tag == DT_FLAGS_1) {
+            if (has_flags1++) goto done;
+            info->flags1 = item.d_un.d_val;
+        } else if (item.d_tag == DT_SYMTAB) {
             if (has_symtab++) goto done;
             symtab = item.d_un.d_ptr;
         } else if (item.d_tag == DT_SYMENT) {

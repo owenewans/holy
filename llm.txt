@@ -277,7 +277,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=7d3464c8851919abbd98de20c3a19923a90089da26e66cf56803b1450cac0fb9
+holypkg.8 source=holy version=development sha256=6aa4b5956fd6c3bf4c0983112aa2ebf995b0e00d35cab54ab554238472bbf9af
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -700,149 +700,185 @@ DESCRIPTION
 
      The  solve	 command  verifies  and	 scans	each  explicitly  supplied local
      archive, with the first archive as the requested root. Its supported subset
-     accepts only linux/noarch/nolibc packages, empty HOLY/hooks and HOLY/trans-
-     form, and HOLY/deps package requirements with arch=any, libc=any and  rela-
-     tion=any.	 Each  consumer	 must equal its package name. Only the package's
-     own metadata name supplies a capability; declared aliases in  HOLY/provides
-     are  parsed  but  do  not satisfy requirements here. Every other dependency
-     form, version constraint or package ABI fails closed with status  6.  There
-     are  no  source  IDs,  installed  packages,  architecture	overrides,  file
-     providers or runtime guarantees in this command.
+     accepts Linux packages with validated payload ABI facts,  empty  HOLY/hooks
+     and  HOLY/transform,  and	HOLY/deps  package  requirements  with arch=any,
+     libc=any and relation=any.	 Each consumer must equal its package name. Only
+     the package's own metadata name supplies  a  package  capability;	declared
+     aliases  in  HOLY/provides are parsed but do not satisfy requirements here.
+     Unsupported metadata dependency forms and	version	 constraints  return  6.
+     There  are	 no  source IDs, installed packages or architecture overrides in
+     this command.
+
+     ELF payloads add file-scoped interpreter, DT_NEEDED  and  strong  undefined
+     symbol  requirements,  even  when	HOLY/deps omits them. A SONAME candidate
+     must match the exact name, ELF class, e_machine and  inferred  runtime.  It
+     must  be  ET_DYN without DF_1_PIE, so an executable with a forged SONAME is
+     not a shared-library candidate. It must define the required  version  nodes
+     and  export  each	strong versioned reference assigned to that SONAME, with
+     matching version and compatible symbol type. Weak undefined symbols do  not
+     add mandatory symbol requirements. Weak definitions can provide strong ref-
+     erences.  Hidden/internal	symbols	 cannot provide external references; ex-
+     plicit versions may use compatibility exports, while unversioned references
+     require default exports.
+
+     The current  unversioned-symbol  scope  covers  the  consumer,  its  direct
+     DT_NEEDED	objects	 and  interpreter. A choice for a SONAME must agree with
+     the package used for its unversioned symbols.  Inherited  executable/global
+     scopes and indirect lookup scopes are not modeled; an unresolved symbol re-
+     ports  unknown-symbol-scope with code 3. An interpreter candidate currently
+     needs a directly recorded ELF at its literal path with an	executable  per-
+     mission  bit.  Unresolved interpreter paths report unknown-interpreter-con-
+     text with code 3, since symlink and merged-/usr package views are not  mod-
+     eled  by  this archive-only solver. DT_NEEDED containing a slash requires a
+     launch context and returns 6. Nested requirements of selected library pack-
+     ages participate in the same libsolv graph.
+
+     ELF requirement IDs hash package name, arch/libc, consumer	 path,	require-
+     ment  kind and target. They remain stable when candidate order changes. Ca-
+     pabilities also include the consumer artifact digest so different	versions
+     cannot  silently  share their provider constraints. ELF-edge events include
+     id, consumer artifact, path, kind, target and  candidate/selected	provider
+     artifact  digests.	 On a decision or conflict, root ELF-edge events precede
+     the error to support explicit choices.
 
      The command prints selected artifact SHA-256 digests only	after  a  unique
      package  set is found. It returns 3 for multiple package sets, 4 for an un-
      satisfied requirement, and 6 for unsupported or invalid input. No plan, in-
      stall or mutation follows. Equal package names from two different artifacts
      remain separate candidates; the caller must choose when both could	 satisfy
-     a	requirement.  The  solver  checks  package-set uniqueness, not ambiguous
-     provider edges inside an identical set. Script interpreter and  plugin  re-
-     quirements	 are  not  inferred from payload in this subset, so selection is
-     not an installability verdict.  For a  direct  root  requirement,	--choose
-     pins a named requirement ID to the exact candidate artifact digest supplied
-     on	 the command line. The candidate must provide the required package name;
-     otherwise the command returns decision-required. The choice applies to this
-     solve only and does not assign a source ID or  rewrite  ABI  facts.  Unsup-
-     ported  syntax returns 2. Transitive requirements and multiple choices can-
-     not yet be pinned by this option.	With --json, stdout contains holy-local-
-     solve-1 selected events carrying artifact digests and a count summary after
-     a unique solution. Errors emit one structured error event	without	 partial
-     selected  events; malformed arguments use invalid-query. Diagnostics remain
-     on stderr.	 For a missing provider on a path of uniquely determined  candi-
-     dates, the error event also carries the validated requirement-id and stderr
-     names it. If a transitive edge has multiple candidate providers, this diag-
-     nosis stops at that edge rather than blaming an unselected candidate.
+     a requirement. Multiple selected providers for an edge also require a deci-
+     sion.   Script  interpreter  and  plugin requirements are not inferred from
+     payload in this subset, so selection is not an installability verdict.  Li-
+     brary  placement, duplicate SONAME files inside one artifact, loader search
+     order, RPATH/RUNPATH, ISA availability  and  symbol  interposition	 require
+     later  context  checks;  an  artifact match does not prove that the runtime
+     loader will select its matching  file.   For  a  direct  root  requirement,
+     --choose pins a named requirement ID to the exact candidate artifact digest
+     supplied  on the command line. The candidate must provide the package capa-
+     bility or satisfy the observed ELF edge; otherwise the command returns  de-
+     cision-required.  The choice applies to this solve only and does not assign
+     a source ID or rewrite ABI facts. Unsupported syntax returns 2.  Transitive
+     requirements  and	multiple  choices  cannot  yet be pinned by this option.
+     With --json, stdout contains holy-local-solve-1  selected	events	carrying
+     artifact  digests	and a count summary after a unique solution. Errors emit
+     one structured error event without partial selected events; malformed argu-
+     ments use invalid-query. Diagnostics  remain  on  stderr.	 For  a	 missing
+     provider  on a path of uniquely determined candidates, the error event also
+     carries the validated requirement-id and stderr names it. If  a  transitive
+     edge  has	multiple  candidate providers, this diagnosis stops at that edge
+     rather than blaming an unselected candidate.
 
-     Repository	 solve	accepts	 a package name in a sealed local repository. It
+     Repository solve accepts a package name in a sealed  local	 repository.  It
      validates the entire catalog and every artifact, freezes those artifacts in
      temporary snapshots, then invokes the same restricted read-only solver with
      the unique exact-name root first. Two versions of the requested name return
-     decision-required. A missing name returns unavailable-artifact. An	 invalid
+     decision-required.	 A missing name returns unavailable-artifact. An invalid
      generation returns invalid-catalog without partial results. --json uses the
-     same  holy-local-solve-1  events  as  solve. This command reads all archive
-     payloads per query; it does not import remote sources, install packages  or
-     interpret	 typed	HOLY/provides  aliases	as  dependency	providers.   The
-     --choose form applies the same one-operation, direct-root	requirement  se-
-     lection  after validating the sealed index and matching the selected digest
+     same holy-local-solve-1 events as solve. This  command  reads  all	 archive
+     payloads  per query; it does not import remote sources, install packages or
+     interpret	typed  HOLY/provides  aliases  as  dependency  providers.    The
+     --choose  form  applies the same one-operation, direct-root requirement se-
+     lection after validating the sealed index and matching the selected  digest
      to an artifact in that generation. It does not write a saved rule.	 On suc-
-     cess, the text output ends with the sealed index  SHA-256	generation;  the
-     --json  summary includes the same digest. A later index generation requires
+     cess,  the	 text  output ends with the sealed index SHA-256 generation; the
+     --json summary includes the same digest. A later index generation	requires
      a new query before treating the result as current. The digest binds the lo-
      cal index bytes, not an authenticated publisher or a future installed plan.
 
-     The provides command stages and  verifies	a  native  archive,  then  reads
+     The  provides  command  stages  and  verifies  a native archive, then reads
      HOLY/provides as typed claims. Each supported line has seven tokens:
      provide KIND NAME ARCH LIBC VERSION EVIDENCE
-     KIND  accepts package, file, command, soname, symbol-version or build. ARCH
-     accepts any, x86, x86_64 or noarch; LIBC accepts any, glibc,  musl	 or  no-
-     libc.   VERSION  is  text or - for an unversioned claim. File names must be
-     absolute; SONAME must have no slash. Duplicate  KIND/NAME/ARCH/LIBC/VERSION
-     claims  fail.   The parser does not prove a claimed file, command or SONAME
-     exists, resolve a requirement or compare foreign version  schemes.	 Reposi-
-     tory  and	cache writers reject unrecognized capability records rather than
-     publishing them as parsed.	 With --json,  stdout  contains	 holy-provides-1
+     KIND accepts package, file, command, soname, symbol-version or build.  ARCH
+     accepts  any,  x86,  x86_64 or noarch; LIBC accepts any, glibc, musl or no-
+     libc.  VERSION is text or - for an unversioned claim. File	 names	must  be
+     absolute;	SONAME must have no slash. Duplicate KIND/NAME/ARCH/LIBC/VERSION
+     claims fail.  The parser does not prove a claimed file, command  or  SONAME
+     exists,  resolve  a requirement or compare foreign version schemes. Reposi-
+     tory and cache writers reject unrecognized capability records  rather  than
+     publishing	 them  as  parsed.  With --json, stdout contains holy-provides-1
      capability events with kind, name, arch, libc, version and evidence, then a
      count summary. A malformed archive or capability emits one structured error
      event. Byte escapes in JSON map non-ASCII bytes to \u00HH; callers must re-
      construct the original bytes.
 
      The local fetch command copies any regular input file to an existing direc-
-     tory  as  SHA256.holy.  It	 copies bytes without interpreting metadata, ex-
+     tory as SHA256.holy. It copies bytes  without  interpreting  metadata,  ex-
      tracting files or running hooks. It creates a mode 0600 temporary file rel-
-     ative to the opened output directory and synchronizes it before a	no-over-
-     write  hardlink creates the object. Repeating the command checks the exist-
-     ing object's digest. A mismatched object is left untouched. Fetch does  not
-     establish	archive validity, provenance or a trusted root-owned cache.  Re-
+     ative  to the opened output directory and synchronizes it before a no-over-
+     write hardlink creates the object. Repeating the command checks the  exist-
+     ing  object's digest. A mismatched object is left untouched. Fetch does not
+     establish archive validity, provenance or a trusted root-owned cache.   Re-
      mote source fetching is not implemented.
 
-     With --extract, DIRECTORY must not exist. The command  copies  the	 regular
-     input  into  a  private  temporary file, verifies that copy and checks that
-     every entry is a  directory,  regular  file,  relative  symlink  or  direct
-     hardlink.	Before	creating DIRECTORY, it rejects duplicate paths and paths
-     nested under any non-directory archive entry.  It	then  creates  DIRECTORY
-     and  writes  HOLY	and  DATA  there with directory-relative operations that
-     refuse symlink  traversal	and  file  replacement.	 It  does  not	preserve
-     UID/GID,  setuid  bits, capabilities or xattrs. It refuses absolute symlink
-     targets and special nodes; hardlink targets must resolve to  regular  files
-     within  the  output tree. Hooks never run. If an I/O error occurs after DI-
+     With  --extract,  DIRECTORY  must not exist. The command copies the regular
+     input into a private temporary file, verifies that	 copy  and  checks  that
+     every  entry  is  a  directory,  regular  file,  relative symlink or direct
+     hardlink. Before creating DIRECTORY, it rejects duplicate paths  and  paths
+     nested  under  any	 non-directory archive entry.  It then creates DIRECTORY
+     and writes HOLY and DATA  there  with  directory-relative	operations  that
+     refuse  symlink  traversal	 and  file  replacement.  It  does  not preserve
+     UID/GID, setuid bits, capabilities or xattrs. It refuses  absolute	 symlink
+     targets  and  special nodes; hardlink targets must resolve to regular files
+     within the output tree. Hooks never run. If an I/O error occurs  after  DI-
      RECTORY is created, partial output remains for inspection.	 This command is
      not a system installation or a root transaction.
 
-     The local check command copies the regular input  to  a  private  temporary
-     file,  verifies  that  copy and checks known ELF arch/libc mismatches, then
-     compares its DATA members with a supplied filesystem root. It  follows  di-
-     rectory  components  through  directory  descriptors without following sym-
-     links. It compares types, mode, numeric UID/GID,  file  size  and	SHA-256,
-     symlink  targets and hardlink inode identity. It reports each changed path.
+     The  local	 check	command	 copies the regular input to a private temporary
+     file, verifies that copy and checks known ELF  arch/libc  mismatches,  then
+     compares  its  DATA members with a supplied filesystem root. It follows di-
+     rectory components through directory  descriptors	without	 following  sym-
+     links.  It	 compares  types,  mode, numeric UID/GID, file size and SHA-256,
+     symlink targets and hardlink inode identity. It reports each changed  path.
      Check does not run package code, download files or modify the root. It does
-     not consult an installed database, model ELF loader search,  check	 unknown
-     runtime  dependencies or prove a stable snapshot if the root changes during
+     not  consult  an installed database, model ELF loader search, check unknown
+     runtime dependencies or prove a stable snapshot if the root changes  during
      checking.
 
-     For matching regular ELF payloads, check reads PT_INTERP and tests	 whether
-     an	 executable  ELF file with matching class and machine exists at that ab-
-     solute path inside the target root. Missing targets  report  missing-inter-
-     preter;  the  wrong  class or machine reports incompatible-interpreter. The
+     For  matching regular ELF payloads, check reads PT_INTERP and tests whether
+     an executable ELF file with matching class and machine exists at  that  ab-
+     solute  path  inside the target root. Missing targets report missing-inter-
+     preter; the wrong class or machine	 reports  incompatible-interpreter.  The
      lookup follows ordinary symlinks using openat2 with RESOLVE_IN_ROOT and RE-
-     SOLVE_NO_MAGICLINKS.  Absolute symlink targets and	 parent	 traversal  stay
-     within  the opened target root; merged-/usr and final loader links are sup-
-     ported. A dangling link reports missing-interpreter. A  loop,  magic  link,
-     invalid  ELF  or  inaccessible  path reports unknown-interpreter. A missing
+     SOLVE_NO_MAGICLINKS.   Absolute  symlink  targets and parent traversal stay
+     within the opened target root; merged-/usr and final loader links are  sup-
+     ported.  A	 dangling  link reports missing-interpreter. A loop, magic link,
+     invalid ELF or inaccessible path  reports	unknown-interpreter.  A	 missing
      openat2  syscall  reports	unavailable-path-resolution  with  requires=ope-
-     nat2:RESOLVE_IN_ROOT,  unknown  status and exit code 6.  Presence and class
-     alone do not prove dynamic	 linking,  compatible  libc  or	 nested	 library
-     availability.   If	 all findings are unknown, the summary status is unknown
-     rather than fail; the check still returns nonzero because it cannot  report
+     nat2:RESOLVE_IN_ROOT, unknown status and exit code 6.  Presence  and  class
+     alone  do	not  prove  dynamic  linking,  compatible libc or nested library
+     availability.  If all findings are unknown, the summary status  is	 unknown
+     rather  than fail; the check still returns nonzero because it cannot report
      pass.
 
      With --json, check prints one JSON object per finding and a final pass/fail
      summary on stdout. The schema is holy-check-1; changed-payload and missing-
-     payload  are  stable  finding  codes. Input or operational failures use in-
-     valid-package or check-error and status unknown. Paths  use  byte	escapes.
+     payload are stable finding codes. Input or	 operational  failures	use  in-
+     valid-package  or	check-error  and status unknown. Paths use byte escapes.
      Only check, requirements, provides repo providers, solve, preview and data-
      base preflight support --json in this prototype.
 
-     The  developer-facing  elf	 command reads a regular ELF through libelf/GElf
-     without executing it or invoking ldd. It prints ELF  class,  numeric  e_ma-
-     chine  and e_type, a recognized machine (x86, x86_64 or x32), the PT_INTERP
-     path, and a libc runtime hint only for  recognized	 glibc	or  musl  inter-
-     preters.  It  reads PT_DYNAMIC to list DT_NEEDED, SONAME, RPATH and RUNPATH
-     even without section headers. GNU DT_VERNEED records list provider	 SONAME,
-     version and weak flag. GNU DT_VERDEF records list version-definition names.
-     DT_SYMTAB and DT_VERSYM records expose each dynamic symbol's binding, type,
-     visibility, section index, version index, hidden-version flag, version name
-     and  version-provider  SONAME when recorded.  Undefined weak symbols retain
-     binding=2 and section=0. IFUNC symbols retain type=10; the reader does  not
-     execute  their resolvers.	Symbol counts come from SysV or GNU hash tables.
-     For an empty GNU hash with no SysV hash,  the  reader  needs  the	matching
-     SHT_DYNSYM	 section;  removing  that section makes the symbol extent unsup-
-     ported. Other supported hash tables work without section headers. Malformed
-     symbol names, version indices, entry sizes or address ranges reject the in-
-     put.  GNU	x86  ISA-needed	 properties  in	 PT_NOTE   report   x86-64-base-
-     line/v2/v3/v4  when  present;  absent or unrecognized properties report un-
-     known. ET_EXEC without PT_INTERP, PT_DYNAMIC or DT_NEEDED	reports	 nolibc.
-     Other  files  without  a recognized interpreter report unknown. It does not
-     model symbol lookup order or plugin loading; its output is not a dependency
-     resolution or package ABI verdict.
+     The developer-facing elf command reads a regular  ELF  through  libelf/GElf
+     without  executing	 it  or invoking ldd. It prints ELF class, numeric e_ma-
+     chine and e_type, a recognized machine (x86, x86_64 or x32), the  PT_INTERP
+     path,  and	 a  libc  runtime  hint only for recognized glibc or musl inter-
+     preters. It reads PT_DYNAMIC to list DT_NEEDED, SONAME, RPATH, RUNPATH  and
+     DT_FLAGS_1	 even  without	section	 headers.  GNU	DT_VERNEED  records list
+     provider SONAME, version and weak flag. GNU DT_VERDEF records list version-
+     definition names. DT_SYMTAB and DT_VERSYM records expose each dynamic  sym-
+     bol's  binding, type, visibility, section index, version index, hidden-ver-
+     sion flag, version name and version-provider SONAME when  recorded.   Unde-
+     fined  weak  symbols  retain  binding=2 and section=0. IFUNC symbols retain
+     type=10; the reader does not execute their resolvers.  Symbol  counts  come
+     from  SysV or GNU hash tables. For an empty GNU hash with no SysV hash, the
+     reader needs the matching SHT_DYNSYM section; removing that  section  makes
+     the  symbol  extent  unsupported.	Other supported hash tables work without
+     section headers. Malformed symbol names, version indices,	entry  sizes  or
+     address  ranges  reject the input. GNU x86 ISA-needed properties in PT_NOTE
+     report x86-64-baseline/v2/v3/v4 when present; absent or unrecognized  prop-
+     erties  report  unknown. ET_EXEC without PT_INTERP, PT_DYNAMIC or DT_NEEDED
+     reports nolibc. Other files without a  recognized	interpreter  report  un-
+     known.  It does not model symbol lookup order or plugin loading; its output
+     is not a dependency resolution or package ABI verdict.
 
      The local scan command stages a regular .holy input in a private file, ver-
      ifies that copy, then copies ELF payload files to unnamed temporary  files.
@@ -851,15 +887,17 @@ DESCRIPTION
      the  package arch, including ELF in noarch, and a recognized glibc/musl in-
      terpreter that disagrees with the libc tag. For ET_DYN  without  an  inter-
      preter,  an  exact	 DT_NEEDED libc.so.6 is evidence for glibc and rejects a
-     non-glibc package tag.  An unclassified ELF causes scan to fail instead  of
-     accepting	an  arbitrary package libc tag. ET_DYN without an interpreter is
-     not classified as nolibc.	Static ET_EXEC is classified only without PT_DY-
-     NAMIC or DT_NEEDED. These checks do not prove plugin  requirements	 or  re-
-     solve  dependencies.   For	 each  ELF it also prints SONAME, DT_NEEDED, GNU
-     version needs with weak or required status, version definitions and dynamic
-     symbols with the fields described above, when  present.  These  file-scoped
-     facts  do	not  prove that a provider exists or that a versioned symbol re-
-     solves.
+     non-glibc package tag.  The matching x86/x86_64  ld-linux	SONAME	together
+     with a GLIBC_PRIVATE version definition supplies glibc loader evidence; its
+     bytes  are not executed to classify it.  An unclassified ELF causes scan to
+     fail instead of accepting an arbitrary package libc tag. ET_DYN without  an
+     interpreter is not classified as nolibc.  Static ET_EXEC is classified only
+     without  PT_DYNAMIC or DT_NEEDED. These checks do not prove plugin require-
+     ments or resolve  dependencies.   For  each  ELF  it  also	 prints	 SONAME,
+     DT_NEEDED,	 GNU version needs with weak or required status, version defini-
+     tions and dynamic symbols with the fields described  above,  when	present.
+     These  file-scoped facts do not prove that a provider exists or that a ver-
+     sioned symbol resolves.
 
      The preview command stages and verifies a native archive,	checks	ELF  ABI
      facts, preflights extraction and inspects each DATA path in a supplied root

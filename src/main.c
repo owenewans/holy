@@ -50,6 +50,7 @@ int main(int argc, char **argv)
                        info.versions[i].name, info.versions[i].weak ? " weak" : "");
             for (i = 0; i < info.defined_version_count; ++i)
                 printf("version-def %s\n", info.defined_versions[i].name);
+            if (info.has_dynamic) printf("flags1 0x%llx\n", (unsigned long long)info.flags1);
             for (i = 0; i < info.symbol_count; ++i) {
                 const struct holy_elf_symbol *s = &info.symbols[i];
                 if (!s->name[0]) continue;

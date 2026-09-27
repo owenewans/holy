@@ -10,10 +10,19 @@
 
 #include <archive.h>
 #include <archive_entry.h>
+#include <elf.h>
+#include <openssl/evp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+struct elf_edge {
+    size_t requirement;
+    const char *path, *kind, *target;
+    const struct holy_scanned_file *file;
+    const struct holy_elf_symbol *symbol;
+};
 
 struct local_item {
     struct holy_package_identity identity;
@@ -21,6 +30,9 @@ struct local_item {
     char **requirement_ids;
     size_t requirement_count;
     char *capability;
+    struct holy_scan_result scan;
+    struct elf_edge *edges;
+    size_t edge_count;
 };
 
 static char *package_capability(const char *name)
@@ -36,22 +48,17 @@ static char *package_capability(const char *name)
     return capability;
 }
 
-static int exact_requirement(void *opaque, const char *id,
-    const char *consumer, const char *kind, const char *name,
-    const char *arch, const char *libc, const char *relation,
-    const char *version, const char *original, const char *evidence)
+static int add_requirement(struct local_item *item, const char *id, const char *cap)
 {
-    struct local_item *item = opaque;
     struct holy_solver_requirement *next;
     char **ids;
     char *capability;
     char *identifier;
-    (void)original; (void)evidence;
-    if (strcmp(consumer, item->identity.name) || strcmp(kind, "package") ||
-        strcmp(arch, "any") || strcmp(libc, "any") ||
-        strcmp(relation, "any") || strcmp(version, "-") ||
-        item->requirement_count >= 65536) return 0;
-    capability = package_capability(name);
+    size_t i;
+    if (item->requirement_count >= 65536) return 0;
+    for (i = 0; i < item->requirement_count; ++i)
+        if (!strcmp(item->requirement_ids[i], id)) return 0;
+    capability = strdup(cap);
     if (!capability) return 0;
     identifier = strdup(id);
     if (!identifier) { free(capability); return 0; }
@@ -68,6 +75,258 @@ static int exact_requirement(void *opaque, const char *id,
     item->requirement_ids[item->requirement_count] = identifier;
     ++item->requirement_count;
     return 1;
+}
+
+static int exact_requirement(void *opaque, const char *id,
+    const char *consumer, const char *kind, const char *name,
+    const char *arch, const char *libc, const char *relation,
+    const char *version, const char *original, const char *evidence)
+{
+    struct local_item *item = opaque;
+    char *capability;
+    int ok;
+    (void)original; (void)evidence;
+    if (strcmp(consumer, item->identity.name) || strcmp(kind, "package") ||
+        strcmp(arch, "any") || strcmp(libc, "any") ||
+        strcmp(relation, "any") || strcmp(version, "-")) return 0;
+    capability = package_capability(name);
+    if (!capability) return 0;
+    ok = add_requirement(item, id, capability);
+    free(capability);
+    return ok;
+}
+
+static int add_provide(struct holy_solver_item *item, const char *capability)
+{
+    const char **next;
+    char *copy;
+    size_t i;
+    for (i = 0; i < item->provides_count; ++i)
+        if (!strcmp(item->provides[i], capability)) return 1;
+    if (item->provides_count >= 65536) return 0;
+    copy = strdup(capability);
+    if (!copy) return 0;
+    next = realloc((void *)item->provides, (item->provides_count + 1) * sizeof *next);
+    if (!next) { free(copy); return 0; }
+    item->provides = next;
+    next[item->provides_count++] = copy;
+    return 1;
+}
+
+static int provides(const struct holy_solver_item *item, const char *capability)
+{
+    size_t i;
+    for (i = 0; i < item->provides_count; ++i)
+        if (!strcmp(item->provides[i], capability)) return 1;
+    return 0;
+}
+
+static int compatible(const struct holy_scanned_file *a, const struct holy_scanned_file *b)
+{
+    return a->elf.elf_class == b->elf.elf_class && a->elf.machine == b->elf.machine &&
+           !strcmp(a->runtime, b->runtime);
+}
+
+static int exports_symbol(const struct holy_elf_info *elf, const struct holy_elf_symbol *wanted)
+{
+    size_t i;
+    for (i = 0; i < elf->symbol_count; ++i) {
+        const struct holy_elf_symbol *s = &elf->symbols[i];
+        if (!s->section || (s->binding != STB_GLOBAL && s->binding != STB_WEAK && s->binding != 10) ||
+            (s->visibility != STV_DEFAULT && s->visibility != STV_PROTECTED) ||
+            strcmp(s->name, wanted->name)) continue;
+        if ((wanted->type == STT_TLS) != (s->type == STT_TLS)) continue;
+        if (wanted->type == STT_FUNC && s->type != STT_FUNC && s->type != 10) continue;
+        if (wanted->type == STT_OBJECT && s->type != STT_OBJECT) continue;
+        if (wanted->version) {
+            if (!s->version || strcmp(s->version, wanted->version)) continue;
+        } else if (s->version_hidden) continue;
+        return 1;
+    }
+    return 0;
+}
+
+static int needed_matches(const struct holy_scanned_file *consumer,
+                           const struct holy_scanned_file *provider, const char *needed)
+{
+    size_t i, j;
+    if (!compatible(consumer, provider) || provider->elf.type != ET_DYN ||
+        (provider->elf.flags1 & DF_1_PIE) || !provider->elf.soname ||
+        strcmp(provider->elf.soname, needed)) return 0;
+    for (i = 0; i < consumer->elf.version_count; ++i) {
+        const struct holy_elf_version *v = &consumer->elf.versions[i];
+        if (v->weak || strcmp(v->provider, needed)) continue;
+        for (j = 0; j < provider->elf.defined_version_count; ++j)
+            if (!strcmp(v->name, provider->elf.defined_versions[j].name)) break;
+        if (j == provider->elf.defined_version_count) return 0;
+    }
+    for (i = 0; i < consumer->elf.symbol_count; ++i) {
+        const struct holy_elf_symbol *s = &consumer->elf.symbols[i];
+        if (s->section || s->binding == STB_WEAK || !s->provider || strcmp(s->provider, needed)) continue;
+        if (!exports_symbol(&provider->elf, s)) return 0;
+    }
+    return 1;
+}
+
+static int direct_provider(const struct holy_scanned_file *consumer,
+                            const struct holy_scanned_file *provider)
+{
+    size_t i;
+    if (consumer == provider) return 1;
+    if (consumer->elf.interpreter && consumer->elf.interpreter[0] == '/' &&
+        !strcmp(consumer->elf.interpreter + 1, provider->path)) return 1;
+    if (provider->elf.soname)
+        for (i = 0; i < consumer->elf.needed_count; ++i)
+            if (!strcmp(consumer->elf.needed[i], provider->elf.soname)) return 1;
+    return 0;
+}
+
+static int elf_requirement(struct local_item *local, struct holy_solver_item *items,
+                            size_t count, size_t consumer_index,
+                            const struct holy_scanned_file *file, const char *kind,
+                            const char *target, const struct holy_elf_symbol *symbol)
+{
+    struct local_item *consumer = &local[consumer_index];
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    const char *parts[] = {consumer->identity.name, consumer->identity.arch,
+                          consumer->identity.libc, file->path, kind, target};
+    unsigned char hash[32];
+    unsigned int length;
+    char id[69] = "elf-", capability[140];
+    struct elf_edge *edges;
+    size_t i, j;
+    int ok = 0;
+    if (!ctx || EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1) goto done;
+    for (i = 0; i < sizeof parts / sizeof *parts; ++i)
+        if (EVP_DigestUpdate(ctx, parts[i], strlen(parts[i]) + 1) != 1) goto done;
+    if (EVP_DigestFinal_ex(ctx, hash, &length) != 1 || length != sizeof hash) goto done;
+    for (i = 0; i < sizeof hash; ++i) snprintf(id + 4 + i * 2, 3, "%02x", hash[i]);
+    snprintf(capability, sizeof capability, "elf:%s:%s", consumer->identity.digest, id);
+    edges = realloc(consumer->edges, (consumer->edge_count + 1) * sizeof *edges);
+    if (!edges) goto done;
+    consumer->edges = edges;
+    edges[consumer->edge_count].requirement = consumer->requirement_count;
+    edges[consumer->edge_count].path = file->path;
+    edges[consumer->edge_count].kind = kind;
+    edges[consumer->edge_count].target = target;
+    edges[consumer->edge_count].file = file;
+    edges[consumer->edge_count].symbol = symbol;
+    if (!add_requirement(consumer, id, capability)) goto done;
+    ++consumer->edge_count;
+    for (i = 0; i < count; ++i) {
+        for (j = 0; j < local[i].scan.count; ++j) {
+            const struct holy_scanned_file *candidate = &local[i].scan.files[j];
+            int matches;
+            if (!strcmp(kind, "soname")) matches = needed_matches(file, candidate, target);
+            else if (!strcmp(kind, "interpreter"))
+                matches = target[0] == '/' && !strcmp(target + 1, candidate->path) &&
+                          (candidate->mode & 0111) && compatible(file, candidate);
+            else matches = compatible(file, candidate) && direct_provider(file, candidate) &&
+                           exports_symbol(&candidate->elf, symbol);
+            if (matches && !add_provide(&items[i], capability)) goto done;
+        }
+    }
+    ok = 1;
+done:
+    EVP_MD_CTX_free(ctx);
+    return ok;
+}
+
+static int elf_requirements(struct local_item *local, struct holy_solver_item *items, size_t count)
+{
+    size_t i, j, k;
+    for (i = 0; i < count; ++i) for (j = 0; j < local[i].scan.count; ++j) {
+        const struct holy_scanned_file *f = &local[i].scan.files[j];
+        if (f->elf.interpreter && !elf_requirement(local, items, count, i, f, "interpreter", f->elf.interpreter, NULL)) return 0;
+        for (k = 0; k < f->elf.needed_count; ++k) {
+            if (strchr(f->elf.needed[k], '/')) {
+                fputs("holypkg: DT_NEEDED paths require a launch context\n", stderr);
+                return 0;
+            }
+            if (!elf_requirement(local, items, count, i, f, "soname", f->elf.needed[k], NULL)) return 0;
+        }
+        for (k = 0; k < f->elf.symbol_count; ++k) {
+            const struct holy_elf_symbol *s = &f->elf.symbols[k];
+            if (s->section || !s->name[0] || s->binding == STB_WEAK || s->binding == STB_LOCAL) continue;
+            if (s->provider) {
+                size_t n;
+                for (n = 0; n < f->elf.needed_count; ++n)
+                    if (!strcmp(f->elf.needed[n], s->provider)) break;
+                if (n == f->elf.needed_count) return 0;
+            } else if (!elf_requirement(local, items, count, i, f, "symbol", s->name, s)) return 0;
+        }
+    }
+    return 1;
+}
+
+static void json_string(const char *s)
+{
+    const unsigned char *p = (const unsigned char *)s;
+    putchar('"');
+    for (; *p; ++p) {
+        if (*p == '"' || *p == '\\') { putchar('\\'); putchar(*p); }
+        else if (*p < 32 || *p >= 127) printf("\\u%04x", *p);
+        else putchar(*p);
+    }
+    putchar('"');
+}
+
+static int symbol_context(const struct local_item *consumer, const struct elf_edge *edge,
+                            const struct local_item *provider, const struct holy_solver_item *item)
+{
+    size_t i, j;
+    for (i = 0; i < provider->scan.count; ++i) {
+        const struct holy_scanned_file *f = &provider->scan.files[i];
+        if (!compatible(edge->file, f) || !exports_symbol(&f->elf, edge->symbol)) continue;
+        if (f == edge->file) return 1;
+        for (j = 0; j < consumer->edge_count; ++j) {
+            const struct elf_edge *dependency = &consumer->edges[j];
+            if (dependency->file != edge->file) continue;
+            if ((!strcmp(dependency->kind, "soname") && f->elf.soname &&
+                 !strcmp(dependency->target, f->elf.soname)) ||
+                (!strcmp(dependency->kind, "interpreter") && dependency->target[0] == '/' &&
+                 !strcmp(dependency->target + 1, f->path)))
+                if (provides(item, consumer->requirements[dependency->requirement].first)) return 1;
+        }
+    }
+    return 0;
+}
+
+static void report_edges(const struct local_item *local, const struct holy_solver_item *items,
+                          size_t count, const int *selected, int json)
+{
+    size_t i, j, k;
+    for (i = 0; i < count; ++i) {
+        if (selected ? !selected[i] : i != 0) continue;
+        for (j = 0; j < local[i].edge_count; ++j) {
+            const struct elf_edge *edge = &local[i].edges[j];
+            const char *id = local[i].requirement_ids[edge->requirement];
+            const char *cap = local[i].requirements[edge->requirement].first;
+            int first = 1;
+            if (json) {
+                printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"elf-edge\",\"id\":\"%s\",\"consumer\":\"%s\",\"path\":",
+                       id, local[i].identity.digest);
+                json_string(edge->path);
+                printf(",\"kind\":\"%s\",\"target\":", edge->kind);
+                json_string(edge->target);
+                fputs(",\"providers\":[", stdout);
+            } else {
+                printf("elf-edge %s consumer=%s path=", id, local[i].identity.digest);
+                json_string(edge->path);
+                printf(" kind=%s target=", edge->kind);
+                json_string(edge->target);
+                fputs(" providers=", stdout);
+            }
+            for (k = 0; k < count; ++k) {
+                if ((selected && !selected[k]) || !provides(&items[k], cap)) continue;
+                if (!first) putchar(',');
+                if (json) json_string(local[k].identity.digest);
+                else fputs(local[k].identity.digest, stdout);
+                first = 0;
+            }
+            puts(json ? "]}" : "");
+        }
+    }
 }
 
 static int inert_metadata(const char *snapshot)
@@ -97,7 +356,7 @@ done:
 }
 
 static const char *missing_requirement(const struct local_item *local,
-                                        size_t count)
+                                        const struct holy_solver_item *items, size_t count)
 {
     unsigned char *seen = calloc(count, 1);
     size_t *queue = malloc(count * sizeof *queue);
@@ -111,8 +370,7 @@ static const char *missing_requirement(const struct local_item *local,
         for (j = 0; j < consumer->requirement_count; ++j) {
             size_t i, matches = 0, provider = 0;
             for (i = 0; i < count; ++i)
-                if (!strcmp(consumer->requirements[j].first,
-                            local[i].capability)) {
+                if (provides(&items[i], consumer->requirements[j].first)) {
                     ++matches;
                     provider = i;
                 }
@@ -162,6 +420,7 @@ int holy_resolve_local(const char *const *paths, size_t count, int json,
     size_t i, j, prepared = 0;
     int solved;
     const char *unresolved = NULL;
+    const char *unknown_context = NULL;
     const char *chosen_digest = NULL;
     char *chosen_id = NULL, *choice_capability = NULL;
     if (choice) {
@@ -175,18 +434,15 @@ int holy_resolve_local(const char *const *paths, size_t count, int json,
     if (!local || !items || !selected) goto done;
     for (i = 0; i < count; ++i) {
         char *snapshot;
-        const char **providers;
         if (!paths[i]) goto done;
         snapshot = holy_stage_local(paths[i], "holy-resolve");
         if (!snapshot) goto done;
         prepared = i + 1;
         if (!holy_verify_with_output(snapshot, 0) ||
-            !holy_scan_local_with_output(snapshot, 0) ||
+            !holy_scan_collect(snapshot, &local[i].scan) ||
             !holy_provides_local(snapshot, 0) ||
             !holy_package_identity(snapshot, &local[i].identity) ||
             strcmp(local[i].identity.os, "linux") ||
-            strcmp(local[i].identity.arch, "noarch") ||
-            strcmp(local[i].identity.libc, "nolibc") ||
             !inert_metadata(snapshot)) {
             unlink(snapshot); free(snapshot); goto done;
         }
@@ -200,18 +456,16 @@ int holy_resolve_local(const char *const *paths, size_t count, int json,
         for (j = 0; j < i; ++j)
             if (!strcmp(local[j].identity.digest, local[i].identity.digest))
                 goto done;
-        providers = malloc(sizeof *providers);
-        if (!providers) goto done;
-        providers[0] = local[i].capability;
         items[i].id = local[i].identity.digest;
-        items[i].provides = providers;
-        items[i].provides_count = 1;
+        if (!add_provide(&items[i], local[i].capability)) goto done;
+    }
+    if (!elf_requirements(local, items, count)) goto done;
+    for (i = 0; i < count; ++i) {
         items[i].requires = local[i].requirements;
         items[i].requires_count = local[i].requirement_count;
     }
     if (chosen_id) {
         size_t requirement = local[0].requirement_count, provider = count;
-        const char **providers;
         char *replacement;
         for (j = 0; j < local[0].requirement_count; ++j)
             if (!strcmp(local[0].requirement_ids[j], chosen_id)) {
@@ -224,8 +478,7 @@ int holy_resolve_local(const char *const *paths, size_t count, int json,
                 break;
             }
         if (requirement == local[0].requirement_count || provider == count ||
-            strcmp(local[0].requirements[requirement].first,
-                   local[provider].capability)) {
+            !provides(&items[provider], local[0].requirements[requirement].first)) {
             result = 3;
             goto done;
         }
@@ -234,17 +487,32 @@ int holy_resolve_local(const char *const *paths, size_t count, int json,
         sprintf(choice_capability, "choice:%s", chosen_id);
         replacement = strdup(choice_capability);
         if (!replacement) goto done;
-        providers = realloc((void *)items[provider].provides, 2 * sizeof *providers);
-        if (!providers) { free(replacement); goto done; }
-        items[provider].provides = providers;
-        providers[1] = choice_capability;
-        items[provider].provides_count = 2;
+        if (!add_provide(&items[provider], choice_capability)) { free(replacement); goto done; }
         free((char *)local[0].requirements[requirement].first);
         local[0].requirements[requirement].first = replacement;
     }
     solved = holy_solve_exact_unique(items, count, items[0].id, selected);
+    if (solved == 1) for (i = 0; i < count; ++i) if (selected[i]) {
+        for (j = 0; j < local[i].requirement_count; ++j) {
+            size_t k, matches = 0;
+            for (k = 0; k < count; ++k)
+                if (selected[k] && provides(&items[k], local[i].requirements[j].first)) ++matches;
+            if (matches > 1) { result = 3; goto done; }
+        }
+        for (j = 0; j < local[i].edge_count; ++j) {
+            const struct elf_edge *edge = &local[i].edges[j];
+            size_t k;
+            if (!edge->symbol) continue;
+            for (k = 0; k < count; ++k)
+                if (selected[k] && provides(&items[k], local[i].requirements[edge->requirement].first) &&
+                    !symbol_context(&local[i], edge, &local[k], &items[k])) {
+                    result = 3; goto done;
+                }
+        }
+    }
     if (solved == 1) {
         size_t selected_count = 0;
+        report_edges(local, items, count, selected, json);
         for (i = 0; i < count; ++i) if (selected[i]) {
             if (json)
                 printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"selected\",\"sha256\":\"%s\"}\n",
@@ -261,9 +529,19 @@ int holy_resolve_local(const char *const *paths, size_t count, int json,
     } else if (solved == 3) result = 3;
     else if (solved == 2) {
         result = 4;
-        unresolved = missing_requirement(local, count);
+        unresolved = missing_requirement(local, items, count);
+        if (unresolved) for (i = 0; i < count; ++i)
+            for (j = 0; j < local[i].edge_count; ++j) {
+                const struct elf_edge *edge = &local[i].edges[j];
+                if (strcmp(unresolved, local[i].requirement_ids[edge->requirement])) continue;
+                if (edge->symbol) unknown_context = "unknown-symbol-scope";
+                else if (!strcmp(edge->kind, "interpreter")) unknown_context = "unknown-interpreter-context";
+                if (unknown_context) result = 3;
+            }
     }
 done:
+    if ((result == 3 || result == 4) && prepared == count && local && items)
+        report_edges(local, items, count, NULL, json);
     if (result) fprintf(stderr, "holypkg: local resolution %s\n",
                         result == 2 ? "has an invalid choice" :
                         result == 3 ? "needs provider choice" :
@@ -272,7 +550,8 @@ done:
     if (unresolved) fprintf(stderr, "holypkg: unresolved requirement %s\n", unresolved);
     if (result && json) {
         if (unresolved)
-            printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"dependency-conflict\",\"requirement\":\"%s\"}\n", unresolved);
+            printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"%s\",\"requirement\":\"%s\"}\n",
+                   unknown_context ? unknown_context : "dependency-conflict", unresolved);
         else
             printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"%s\"}\n",
                    result == 2 ? "invalid-query" :
@@ -287,9 +566,14 @@ done:
         free(local[i].requirements);
         free(local[i].requirement_ids);
         free(local[i].capability);
+        free(local[i].edges);
+        holy_scan_free(&local[i].scan);
         holy_package_identity_free(&local[i].identity);
     }
-    if (items) for (i = 0; i < count; ++i) free((void *)items[i].provides);
+    if (items) for (i = 0; i < count; ++i) {
+        for (j = 0; j < items[i].provides_count; ++j) free((void *)items[i].provides[j]);
+        free((void *)items[i].provides);
+    }
     free(items); free(local); free(selected);
     free(chosen_id); free(choice_capability);
     return result;

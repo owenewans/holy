@@ -21,6 +21,10 @@
   redirected requests. Configured source sync and signatures remain open.
 - [x] Build and seal a local repository catalog; search and fetch its verified objects.
 - [x] Resolve a restricted local/catalog graph with libsolv; reject unsupported semantics.
+- [x] Add observed ELF interpreter, SONAME and strong symbol edges to that graph;
+  reject candidate class/ABI/version/symbol mismatches and expose stable IDs for
+  root provider choices. Unresolved launch scopes report unknown. File placement,
+  complete loader contexts and integration with dynamic-package transactions remain open.
 - [x] Journal installation, check and removal of `linux/nolibc` data and native static ELF
   artifacts into existing directories. Recovery covers empty aborted installs,
   completed installs and interrupted removals under documented conditions.

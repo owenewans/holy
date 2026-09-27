@@ -177,8 +177,8 @@ test ! -s "$tmp/out"
 sed -i 's/arch noarch/arch x86_64/' "$tmp/payload/HOLY/meta"
 tar -cf "$tmp/foreign.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/foreign.tar" "$tmp/foreign.holy"
-if "$bin" solve "local:$tmp/foreign.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
-test ! -s "$tmp/out"
+"$bin" solve "local:$tmp/foreign.holy" > "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
 printf 'broken\n' > "$tmp/broken.holy"
 if "$bin" solve "local:$tmp/root-1.holy" "local:$tmp/b-1.holy" "local:$tmp/broken.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 test ! -s "$tmp/out"
