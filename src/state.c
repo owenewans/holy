@@ -38,6 +38,8 @@ static int update_pending(int dir);
 static int completed_update(int transactions, const char *name);
 static int remove_record(int transactions, const char *digest,
                          unsigned long long generation, int broken, int create);
+static int remove_workdir(int transactions, const char *digest,
+                          unsigned long long generation, int broken);
 static int commit_remove_record(int transactions, const char *digest,
                                 unsigned long long generation, int broken);
 static char *update_record(int dir, const char *name);
@@ -1787,19 +1789,24 @@ done:
 }
 
 static int finish_remove_record(int dir, int installed, int item, int transactions,
-                                const char *digest, unsigned long long generation, int broken)
+                                const char *digest, unsigned long long generation,
+                                int broken, int retired)
 {
-    static const char *const names[] = { "meta", "files", "deps", "origin", "state" };
     char generation_record[32], temp_name[43] = {0};
-    size_t length, i;
-    int temp = -1, ok = 0;
-    for (i = 0; i < sizeof names / sizeof *names; ++i)
-        if (unlinkat(item, names[i], 0)) goto done;
-    if (unlinkat(item, "graph", 0) && errno != ENOENT) goto done;
-    if (unlinkat(item, "source", 0) && errno != ENOENT) goto done;
-    if (unlinkat(item, "provides", 0) && errno != ENOENT) goto done;
-    if (fsync(item) || unlinkat(installed, digest, AT_REMOVEDIR) ||
-        fsync(installed)) goto done;
+    size_t length;
+    int temp = -1, work = -1, ok = 0;
+    struct stat old, observed;
+    work = remove_workdir(transactions, digest, generation, broken);
+    if (work < 0 || fstat(item, &old)) goto done;
+    if (!retired) {
+        if (!fstatat(work, "old-instance", &observed, AT_SYMLINK_NOFOLLOW) ||
+            errno != ENOENT || fsync(item) ||
+            renameat(installed, digest, work, "old-instance")) goto done;
+    }
+    if (fstatat(work, "old-instance", &observed, AT_SYMLINK_NOFOLLOW) ||
+        !S_ISDIR(observed.st_mode) || old.st_dev != observed.st_dev ||
+        old.st_ino != observed.st_ino || fsync(work) || fsync(installed) ||
+        fsync(transactions)) goto done;
     length = (size_t)snprintf(generation_record, sizeof generation_record,
                               "%llu\n", generation + 1);
     if (length >= sizeof generation_record) goto done;
@@ -1812,6 +1819,7 @@ static int finish_remove_record(int dir, int installed, int item, int transactio
         unlinkat(transactions, "journal", 0) || fsync(transactions)) goto done;
     ok = 1;
 done:
+    if (work >= 0) close(work);
     if (temp >= 0) close(temp);
     if (temp_name[0]) unlinkat(dir, temp_name, 0);
     return ok;
@@ -1960,7 +1968,8 @@ int holy_state_remove(const char *digest, const char *root_path, int accept_brok
     if (!holy_install_remove_manifest(files, root)) goto done;
     if (close(files)) { files = -1; goto done; }
     files = -1;
-    if (!finish_remove_record(dir, installed, item, transactions, digest, generation, broken)) goto done;
+    if (!finish_remove_record(dir, installed, item, transactions, digest, generation,
+                              broken, 0)) goto done;
     printf("removed %s generation %llu\n", digest, generation + 1);
     result = 0;
 done:
@@ -1982,7 +1991,7 @@ int holy_state_continue_remove(const char *root_path)
     int root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     int dir = root < 0 ? -1 : state_dir_at(root, 0);
     int installed = -1, item = -1, transactions = -1, files = -1;
-    int result = 5, removing = 0, found;
+    int result = 5, removing = 0, found, retired = 0, work = -1;
     struct stat removed_st;
     if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation) ||
@@ -2008,19 +2017,27 @@ int holy_state_continue_remove(const char *root_path)
         goto done;
     }
     item = child_dir(installed, digest, 0);
-    if (item < 0) goto done;
+    if (item < 0) {
+        if (errno != ENOENT || !remove_record(transactions, digest, generation,
+                                              plan[63] == '1', 0)) goto done;
+        work = remove_workdir(transactions, digest, generation, plan[63] == '1');
+        item = work < 0 ? -1 : child_dir(work, "old-instance", 0);
+        if (item < 0) goto done;
+        retired = 1;
+    }
     files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (files < 0 || exclusive_claims(installed, digest, files) != 1 ||
         !remove_record(transactions, digest, generation, plan[63] == '1', 1) ||
         !holy_install_finish_remove_manifest(files, root) ||
         !finish_remove_record(dir, installed, item, transactions, digest, generation,
-                              plan[63] == '1')) goto done;
+                              plan[63] == '1', retired)) goto done;
     printf("recovered removal %s generation %llu\n", digest, generation + 1);
     result = 0;
 done:
     if (result) fprintf(stderr, "holypkg: removal recovery requires manual inspection (status %d)\n", result);
     if (files >= 0) close(files);
     if (item >= 0) close(item);
+    if (work >= 0) close(work);
     if (installed >= 0) close(installed);
     if (transactions >= 0) close(transactions);
     if (dir >= 0) close(dir);
@@ -3314,6 +3331,14 @@ static int remove_identity(const char *digest, unsigned long long generation,
     }
     identity[64] = 0;
     return 1;
+}
+
+static int remove_workdir(int transactions, const char *digest,
+                          unsigned long long generation, int broken)
+{
+    char plan[192], identity[65];
+    if (!remove_identity(digest, generation, broken, plan, identity)) return -1;
+    return child_dir(transactions, identity, 0);
 }
 
 static int remove_record(int transactions, const char *digest,

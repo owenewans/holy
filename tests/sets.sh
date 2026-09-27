@@ -78,6 +78,7 @@ test "$(cat "$db/generation")" -eq 1
 cp -a "$root" "$tmp/broken-root"
 cp -a "$root" "$tmp/broken-recover"
 cp -a "$root" "$tmp/broken-fault"
+cp -a "$root" "$tmp/broken-retired"
 cat > "$tmp/remove-fault.c" <<'C'
 #define _POSIX_C_SOURCE 200809L
 #include <dlfcn.h>
@@ -92,10 +93,24 @@ int unlinkat(int dir, const char *path, int flags)
     memcpy(&actual, &symbol, sizeof actual);
     if (!actual) abort();
     if ((getenv("HOLY_FAIL_JOURNAL") && !strcmp(path, "journal")) ||
-        (!getenv("HOLY_FAIL_JOURNAL") && !strcmp(path, "lib"))) {
+        (!getenv("HOLY_FAIL_JOURNAL") && !getenv("HOLY_FAIL_RETIRED") &&
+         !strcmp(path, "lib"))) {
         errno = ENOSPC; return -1;
     }
     return actual(dir, path, flags);
+}
+int renameat(int olddir, const char *oldpath, int newdir, const char *newpath)
+{
+    int (*actual)(int, const char *, int, const char *);
+    void *symbol = dlsym(RTLD_NEXT, "renameat");
+    memcpy(&actual, &symbol, sizeof actual);
+    if (!actual) abort();
+    if (getenv("HOLY_FAIL_RETIRED") && !strcmp(newpath, "old-instance")) {
+        int result = actual(olddir, oldpath, newdir, newpath);
+        if (result == 0) { errno = ENOSPC; return -1; }
+        return result;
+    }
+    return actual(olddir, oldpath, newdir, newpath);
 }
 C
 gcc -shared -fPIC -o "$tmp/remove-fault.so" "$tmp/remove-fault.c" -ldl
@@ -105,6 +120,15 @@ grep -qx 'plan 0000000000000000000000000000000000000000000000000000000000000001'
 expect 0 "$bin" db recover --continue --root "$tmp/broken-fault"
 expect 4 "$bin" db check "$app" --root "$tmp/broken-fault" --json
 grep -Rqx 'accept-broken yes' "$tmp/broken-fault/var/lib/holypkg/transactions"/*/decisions
+expect 5 env HOLY_FAIL_RETIRED=1 LD_PRELOAD="$tmp/remove-fault.so" \
+    "$bin" db rm "$lib" --accept-broken --root "$tmp/broken-retired"
+test ! -e "$tmp/broken-retired/var/lib/holypkg/installed/$lib"
+test "$(cat "$tmp/broken-retired/var/lib/holypkg/generation")" -eq 1
+test -f "$tmp/broken-retired/var/lib/holypkg/transactions"/*/old-instance/files
+expect 5 "$bin" db status --root "$tmp/broken-retired"
+expect 0 "$bin" db recover --continue --root "$tmp/broken-retired"
+expect 4 "$bin" db check "$app" --root "$tmp/broken-retired" --json
+grep -Rqx 'accept-broken yes' "$tmp/broken-retired/var/lib/holypkg/transactions"/*/decisions
 printf 'format holy-journal-1\nstage removing\ngeneration 1\nartifact %s\nplan %064d\n' \
     "$lib" 1 > "$tmp/broken-recover/var/lib/holypkg/transactions/journal"
 rm "$tmp/broken-recover/usr/share/lib"

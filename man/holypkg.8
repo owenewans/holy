@@ -584,7 +584,11 @@ the graph when the same requirement can be satisfied. A saved graph belonging
 to a removed consumer does not keep its former dependencies alive. A completed
 removal retains a transaction directory keyed by the SHA-256 of its plan,
 with the removed artifact, original generation, accept-broken decision and a
-committed marker. Recovery retains that decision when removal was interrupted.
+committed marker. The removed instance record is retained there as
+.B old-instance
+before the database generation changes. Recovery uses that record if removal
+stopped after the instance left the installed directory, and retains the
+decision when it completes.
 Grouped removal remains pending.
 .PP
 The db plan command reads the prepared reservation at the current database

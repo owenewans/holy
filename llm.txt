@@ -566,7 +566,7 @@ SOURCE IDENTITIES
      during package selection remain unimplemented.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=d9b632ad2950bc6897ef17263afc0add8d2ccd8412b38b6702ce5f60d5520065
+holypkg.8 source=holy version=development sha256=50a9a92eb505b957bec933c2896efab0589540ac81a06e932aac38d5e14d85dd
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1129,8 +1129,11 @@ DESCRIPTION
      graph belonging to a removed consumer does not keep its former dependencies
      alive.  A	completed  removal  retains a transaction directory keyed by the
      SHA-256 of its plan, with the removed artifact,  original	generation,  ac-
-     cept-broken decision and a committed marker. Recovery retains that decision
-     when removal was interrupted.  Grouped removal remains pending.
+     cept-broken decision and a committed marker. The removed instance record is
+     retained  there as old-instance before the database generation changes. Re-
+     covery uses that record if removal stopped after the instance left the  in-
+     stalled directory, and retains the decision when it completes.  Grouped re-
+     moval remains pending.
 
      The  db plan command reads the prepared reservation at the current database
      generation. It verifies a private snapshot of the cached  artifact,  checks
