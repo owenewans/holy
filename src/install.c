@@ -8,6 +8,8 @@
 #include <archive_entry.h>
 #include <openssl/evp.h>
 #include <errno.h>
+#include <dirent.h>
+#include <stdint.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,66 +32,261 @@ static int parent_fd(int root, const char *path, char **storage, const char **ba
     while ((slash = strchr(cursor, '/')) != NULL) {
         int next;
         *slash = '\0';
-        if (!*cursor || !strcmp(cursor, ".") || !strcmp(cursor, "..")) goto fail;
+        if (!*cursor || !strcmp(cursor, ".") || !strcmp(cursor, "..")) { errno = EINVAL; goto fail; }
         next = openat(current, cursor, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
         if (next < 0 || fstat(next, &st) || !S_ISDIR(st.st_mode) ||
             (st.st_uid != 0 && st.st_uid != geteuid()) ||
             (st.st_mode & 0022)) {
-            if (next >= 0) close(next);
+            if (next >= 0) { close(next); errno = EPERM; }
             goto fail;
         }
         close(current);
         current = next;
         cursor = slash + 1;
     }
-    if (!*cursor || !strcmp(cursor, ".") || !strcmp(cursor, "..")) goto fail;
+    if (!*cursor || !strcmp(cursor, ".") || !strcmp(cursor, "..")) { errno = EINVAL; goto fail; }
     *base = cursor;
     return current;
 fail:
+    {
+    int error = errno;
     if (current >= 0) close(current);
     free(*storage);
     *storage = NULL;
+    errno = error;
+    }
     return -1;
 }
 
-struct root_check {
-    int root;
+struct directory_list {
+    const struct holy_manifest_entry **items;
+    size_t count;
 };
+
+static int directory_order(const void *left, const void *right)
+{
+    const struct holy_manifest_entry *a = *(const struct holy_manifest_entry *const *)left;
+    const struct holy_manifest_entry *b = *(const struct holy_manifest_entry *const *)right;
+    return strcmp(a->path, b->path);
+}
+
+static int declared_directory(const struct directory_list *list, const char *path)
+{
+    size_t low = 0, high = list->count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        int order = strcmp(list->items[middle]->path, path);
+        if (!order) return 1;
+        if (order < 0) low = middle + 1;
+        else high = middle;
+    }
+    return 0;
+}
+
+static int planned_parents(int root, const char *path, const struct directory_list *list)
+{
+    char *copy = strdup(path), *cursor, *slash;
+    int current = dup(root), missing = 0, ok = 0;
+    if (!copy || current < 0 || !*path || *path == '/') goto done;
+    cursor = copy;
+    while ((slash = strchr(cursor, '/'))) {
+        int next = -1;
+        struct stat st;
+        *slash = 0;
+        if (!*cursor || !strcmp(cursor, ".") || !strcmp(cursor, "..")) goto done;
+        if (!missing) {
+            next = openat(current, cursor, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+            if (next < 0) {
+                if (errno != ENOENT) goto done;
+                missing = 1;
+            } else {
+                if (fstat(next, &st) || (st.st_uid != 0 && st.st_uid != geteuid()) || (st.st_mode & 0022)) {
+                    close(next); goto done;
+                }
+                close(current); current = next;
+            }
+        }
+        if (missing && !declared_directory(list, copy)) goto done;
+        *slash = '/'; cursor = slash + 1;
+    }
+    ok = *cursor && strcmp(cursor, ".") && strcmp(cursor, "..");
+done:
+    if (current >= 0) close(current);
+    free(copy);
+    return ok;
+}
+
+static int directory_name(const struct holy_manifest_entry *entry, char name[75])
+{
+    unsigned char hash[32];
+    unsigned length;
+    size_t i;
+    if (EVP_Digest(entry->path, strlen(entry->path), hash, &length, EVP_sha256(), NULL) != 1 ||
+        length != 32) return 0;
+    memcpy(name, ".holy-dir-", 10);
+    for (i = 0; i < 32; ++i) snprintf(name + 10 + i * 2, 3, "%02x", hash[i]);
+    return 1;
+}
+
+static int directory_empty(int fd)
+{
+    int copy = openat(fd, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC), ok = 0;
+    DIR *stream;
+    struct dirent *entry;
+    if (copy < 0) return 0;
+    stream = fdopendir(copy);
+    if (!stream) { close(copy); return 0; }
+    errno = 0;
+    while ((entry = readdir(stream)))
+        if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..")) break;
+    ok = !entry && !errno;
+    closedir(stream);
+    return ok;
+}
+
+static int directory_stage(int root, const struct holy_manifest_entry *entry, int create, int recovering)
+{
+    char name[75], *storage = NULL;
+    const char *base;
+    struct stat st;
+    int parent = -1, child = -1, ok = 0, exists;
+    if (!directory_name(entry, name)) goto done;
+    parent = parent_fd(root, entry->path, &storage, &base);
+    if (parent < 0) { ok = !create && errno == ENOENT; goto done; }
+    exists = !fstatat(parent, name, &st, AT_SYMLINK_NOFOLLOW);
+    if (!exists && errno != ENOENT) goto done;
+    if (exists && !recovering) goto done;
+    if (!create) { ok = 1; goto done; }
+    if (!exists && (mkdirat(parent, name, 0700) || fsync(parent))) goto done;
+    child = openat(parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (child < 0 || fstat(child, &st) || st.st_uid != geteuid() ||
+        !directory_empty(child)) goto done;
+    if (exists) {
+        if ((st.st_mode & 07777) != entry->mode || (long long)st.st_gid != entry->gid) goto done;
+    } else if (fchown(child, (uid_t)-1, (gid_t)entry->gid) || fchmod(child, entry->mode)) goto done;
+    if (fsync(child) || fstat(child, &st)) goto done;
+    {
+        struct stat current;
+        if (fstatat(parent, name, &current, AT_SYMLINK_NOFOLLOW) ||
+            current.st_dev != st.st_dev || current.st_ino != st.st_ino) goto done;
+    }
+#ifdef SYS_renameat2
+    if (syscall(SYS_renameat2, parent, name, parent, base, 1u) || fsync(parent)) goto done;
+#else
+    errno = ENOSYS;
+    goto done;
+#endif
+    ok = 1;
+done:
+    if (!ok) fputs("holypkg: directory staging requires inspection or a supported renameat2 filesystem\n", stderr);
+    if (child >= 0) close(child);
+    if (parent >= 0) close(parent);
+    free(storage);
+    return ok;
+}
+
+int holy_install_directory_plan(int root, const struct holy_manifest_entry *entries,
+                                 size_t count, int create, int recovering)
+{
+    struct directory_list list = {0};
+    size_t i;
+    int ok = 0;
+    if (count > SIZE_MAX / sizeof *list.items) return 0;
+    list.items = calloc(count ? count : 1, sizeof *list.items);
+    if (!list.items) return 0;
+    for (i = 0; i < count; ++i) if (entries[i].directory) {
+        const struct holy_manifest_entry *e = &entries[i];
+        if (!e->path || e->hardlink || e->link || e->group || e->size ||
+            (e->mode & ~0777u) || (e->mode & 0022) || !(e->mode & 0100) ||
+            e->uid != (long long)geteuid() || e->gid != (long long)getegid()) goto done;
+        list.items[list.count++] = e;
+    }
+    qsort(list.items, list.count, sizeof *list.items, directory_order);
+    for (i = 1; i < list.count; ++i)
+        if (!strcmp(list.items[i-1]->path, list.items[i]->path)) goto done;
+    for (i = 0; i < count; ++i)
+        if (!planned_parents(root, entries[i].path, &list)) goto done;
+    for (i = 0; i < list.count; ++i) {
+        int state = holy_install_check_entry(root, list.items[i]);
+        if (state != 1 && (state != 2 || !directory_stage(root, list.items[i], 0, recovering))) goto done;
+    }
+    if (create) for (i = 0; i < list.count; ++i) {
+        int state = holy_install_check_entry(root, list.items[i]);
+        if (state != 1 && (state != 2 || !directory_stage(root, list.items[i], 1, recovering))) goto done;
+    }
+    ok = 1;
+done:
+    free(list.items);
+    return ok;
+}
+
+struct root_check {
+    int root, recovering;
+    struct holy_manifest_entry *directories;
+    size_t count;
+    struct directory_list parents;
+};
+
+static int collect_directory(void *context, const struct holy_manifest_entry *entry)
+{
+    struct root_check *check = context;
+    struct holy_manifest_entry *items;
+    if (!entry->directory) return 1;
+    if (check->count == SIZE_MAX / sizeof *items) return 0;
+    items = realloc(check->directories, (check->count + 1) * sizeof *items);
+    if (!items) return 0;
+    check->directories = items;
+    items[check->count] = *entry;
+    items[check->count].path = strdup(entry->path);
+    if (!items[check->count].path) return 0;
+    ++check->count;
+    return 1;
+}
 
 static int check_entry(void *context, const struct holy_manifest_entry *entry)
 {
     struct root_check *check = context;
-    char *storage = NULL;
-    const char *base;
-    struct stat st;
-    int parent, ok = 0;
+    int state;
     if (entry->hardlink || entry->group ||
         (entry->link && (entry->mode != 0777 || entry->link[0] == '/')) ||
-        (entry->mode & 07000) ||
-        entry->uid != (long long)geteuid() ||
-        entry->gid != (long long)getegid()) return 0;
-    parent = parent_fd(check->root, entry->path, &storage, &base);
-    if (parent < 0) return 0;
-    if (!fstatat(parent, base, &st, AT_SYMLINK_NOFOLLOW))
-        ok = entry->directory && S_ISDIR(st.st_mode) &&
-             (st.st_mode & 07777) == entry->mode &&
-             (long long)st.st_uid == entry->uid &&
-             (long long)st.st_gid == entry->gid &&
-             (st.st_uid == 0 || st.st_uid == geteuid()) && !(st.st_mode & 0022);
-    else ok = errno == ENOENT && !entry->directory;
-    close(parent);
-    free(storage);
+        (entry->mode & 07000) || entry->uid != (long long)geteuid() ||
+        entry->gid != (long long)getegid() ||
+        !planned_parents(check->root, entry->path, &check->parents)) return 0;
+    state = holy_install_check_entry(check->root, entry);
+    return state == 2 || (state == 1 && (entry->directory || check->recovering));
+}
+
+static int prepare_directories(const char *snapshot, int root, int create, int recovering)
+{
+    struct root_check check = {0};
+    size_t i;
+    int ok = 0;
+    check.root = root; check.recovering = recovering;
+    if (!holy_verify_visit(snapshot, collect_directory, &check)) goto done;
+    check.parents.items = calloc(check.count ? check.count : 1, sizeof *check.parents.items);
+    if (!check.parents.items) goto done;
+    check.parents.count = check.count;
+    for (i = 0; i < check.count; ++i) check.parents.items[i] = &check.directories[i];
+    qsort(check.parents.items, check.count, sizeof *check.parents.items, directory_order);
+    ok = holy_install_directory_plan(root, check.directories, check.count, 0, recovering) &&
+         holy_verify_visit(snapshot, check_entry, &check) &&
+         (!create || holy_install_directory_plan(root, check.directories, check.count, 1, recovering));
+done:
+    for (i = 0; i < check.count; ++i) free((char *)check.directories[i].path);
+    free(check.parents.items);
+    free(check.directories);
+    if (!ok) fputs("holypkg: install requires intact or declared safe directories and matching payload state\n", stderr);
     return ok;
 }
 
 int holy_install_preflight(const char *snapshot, int root)
 {
-    struct root_check check = { root };
-    if (!holy_verify_visit(snapshot, check_entry, &check)) {
-        fprintf(stderr, "holypkg: install requires existing safe directories and new files or relative symlinks\n");
-        return 0;
-    }
-    return 1;
+    return prepare_directories(snapshot, root, 0, 0);
+}
+
+int holy_install_preflight_resume(const char *snapshot, int root)
+{
+    return prepare_directories(snapshot, root, 0, 1);
 }
 
 static int install_payload(const char *snapshot, int root, int missing_only)
@@ -99,6 +296,7 @@ static int install_payload(const char *snapshot, int root, int missing_only)
     char buffer[65536];
     int status, ok = 0;
     if (!archive) return 0;
+    if (!prepare_directories(snapshot, root, 1, missing_only)) goto done;
     if (archive_read_support_filter_lz4(archive) != ARCHIVE_OK ||
         archive_read_support_format_tar(archive) != ARCHIVE_OK ||
         archive_read_open_filename(archive, snapshot, 8192) != ARCHIVE_OK) goto done;
@@ -254,7 +452,7 @@ static int check_file(int root, char **v, struct stat *observed)
         if (size || strcmp(v[8], "-")) return -1;
     } else if (strlen(v[8]) != 64) return -1;
     parent = parent_fd(root, v[1], &storage, &base);
-    if (parent < 0) return 0;
+    if (parent < 0) return errno == ENOENT ? 2 : 0;
     if (symlink) {
         size_t length = strlen(v[12]);
         char *target;
@@ -275,8 +473,10 @@ static int check_file(int root, char **v, struct stat *observed)
         goto done;
     }
     if (!strcmp(v[0], "dir")) {
-        result = !fstatat(parent, base, &st, AT_SYMLINK_NOFOLLOW) &&
-                 S_ISDIR(st.st_mode) &&
+        if (fstatat(parent, base, &st, AT_SYMLINK_NOFOLLOW)) {
+            result = errno == ENOENT ? 2 : 0; goto done;
+        }
+        result = S_ISDIR(st.st_mode) &&
                  (st.st_mode & 07777) == mode &&
                  (unsigned long long)st.st_uid == uid &&
                  (unsigned long long)st.st_gid == gid &&
@@ -547,16 +747,14 @@ static int transition_absent(int root, const char *path)
     if (parent >= 0) {
         absent = fstatat(parent, base, &st, AT_SYMLINK_NOFOLLOW) && errno == ENOENT;
         close(parent);
-    }
+    } else absent = errno == ENOENT;
     free(storage);
     return absent;
 }
 
 int holy_install_check_entry(int root, const struct holy_manifest_entry *entry)
 {
-    int result = transition_matches(root, entry, NULL);
-    if (!result && entry->directory && transition_absent(root, entry->path)) return 2;
-    return result;
+    return transition_matches(root, entry, NULL);
 }
 
 static char *transition_temporary(const char *path, const char *name)

@@ -1075,6 +1075,7 @@ static int inspect_plan(const char *root_path, int root, int dir,
         if (plan.claim_error) result = plan.claim_error;
         goto done;
     }
+    if (!holy_install_preflight(snapshot, root)) { result = 4; goto done; }
     result = slot_available(dir, &identity, "-");
     if (result < 0) { result = 1; goto done; }
     if (!result) {
@@ -2841,7 +2842,7 @@ static int recover_set(const char *root_path, int resume)
             struct plan_hash claims = {0};
             if (errno != ENOENT || !resume || generation != journal.generation ||
                 slot_available(dir, &candidate->identity, candidate->source_id) != 1 ||
-                !holy_install_preflight(candidate->snapshot, root)) goto done;
+                !holy_install_preflight_resume(candidate->snapshot, root)) goto done;
             claims.dir = dir;
             claims.hash = EVP_MD_CTX_new();
             ok = claims.hash && EVP_DigestInit_ex(claims.hash, EVP_sha256(), NULL) == 1 &&
@@ -2872,7 +2873,7 @@ static int recover_set(const char *root_path, int resume)
     }
     for (i = 0; i < set.count; ++i) if (!present[i]) {
         const struct set_item *item = &set.items[i];
-        if (!holy_install_payload(item->snapshot, root) ||
+        if (!holy_install_payload_missing(item->snapshot, root) ||
             !save_instance(installed, item->identity.digest, item->snapshot, journal.generation,
                            set.graph, set.graph_length,
                            strcmp(item->identity.digest, set.resolution.root) ? "dependency" : "explicit",

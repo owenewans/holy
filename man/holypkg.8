@@ -382,8 +382,8 @@ The separate fetch --extract operation still refuses absolute symlinks.
 .PP
 The db plan-set command resolves one explicit root against already cached
 candidate hashes and cached artifacts from the installed catalog. It supports exact package dependencies between Linux
-data, native static and restricted dynamic packages, empty hooks/transforms, pre-existing safe
-directories and the same payload subset as db apply. It reports selected
+data, native static and restricted dynamic packages, empty hooks/transforms,
+existing or declared safe directories and the same payload subset as db apply. It reports selected
 artifacts, reasons and requirement edges without changing installed state.
 Unused candidates are excluded from the operation. The plan digest binds
 target-root device/inode, generation, selected graph, explicit provider choice
@@ -435,7 +435,8 @@ must contain those exact regular payload paths and satisfy the recorded
 architecture, runtime, symbol and version requirements. The planner rejects
 relative or tokenized dependency paths. Ordinary SONAME search returns
 decision-required because RPATH/RUNPATH and loader search are not modeled.
-Parent directories must already exist without symlink traversal. This interface
+Parent directories must exist or be declared in that package manifest;
+installation does not traverse symlinked parents. This interface
 does not automatically rewrite ELF files or resolve loader aliases.
 .PP
 An interrupted set leaves generation unchanged unless final commit already
@@ -443,9 +444,9 @@ published it. db status returns 5 for a recognized set journal.
 db recover --finish-set verifies cached artifacts, the original plan hash,
 installed metadata/graphs and actual payloads before completing generation
 publication and removing the journal. --continue-set additionally installs
-packages that have no instance or payload yet, after checking the whole remaining
-set. Neither mode overwrites a partial file or repeats a partially written
-instance. Those cases require inspection. Recovery rejects mixed journals,
+packages that have no installed instance yet, after checking the whole remaining
+set. Already written payload must match exactly; missing entries are restored.
+Neither mode overwrites a partial file or repeats a partially written instance. Those cases require inspection. Recovery rejects mixed journals,
 changed artifacts, ownership conflicts and drift in completed package files.
 The cache must retain the selected artifacts.
 .PP
@@ -504,9 +505,10 @@ generated ownership indexes are not required for correctness.
 Database apply installs only an approved linux/nolibc package
 with empty hooks, transform and requirements. Its payload may contain
 ordinary regular files, including native static ELF executables, relative
-symlinks and directory entries; every directory
-must already exist in the target root with the manifest's mode and numeric
-owner/group. A changed directory is rejected before writing a journal.
+symlinks and directory entries. Existing directories must match the manifest's
+mode and numeric owner/group. Missing parents require explicit directory entries
+in that package; apply creates them in parent-first order before writing files.
+A changed directory is rejected before writing a journal.
 No absolute symlink, hardlink, privileged mode
 or file collision is accepted. The caller must review the db plan digest and
 invoke db approve first. Apply holds the database writer lock, recomputes the
@@ -521,11 +523,22 @@ records a journal before changing the rootfs and publishes installed metadata
 and the next database generation after copying payload files. The installed
 record contains meta, files, deps, origin and state; local delivery has no
 trusted source-id. Apply does not run package hooks or configure services.
+Declared directories require local numeric ownership, owner search permission,
+and no group/other write or privileged mode bits. Apply prepares an empty
+.holy-dir-SHA256 sibling with the requested metadata, synchronizes it, then
+publishes it with renameat2(RENAME_NOREPLACE) and synchronizes the parent.
+Missing renameat2 support prevents publication. Existing directories are never
+chmodded or replaced. Archive entry order does not determine creation order.
+A complete staged directory can be reused by set/update/repair recovery;
+a partly initialized or nonempty staging directory requires inspection.
+Removal retains directories and unregistered contents.
+.PP
 An I/O failure after journal publication leaves an incomplete transaction
 for inspection; db status returns 5 and db recover does not retry file
 mutations. db recover --abort-empty can clear an incomplete journal only at
 its original generation, with the same approved artifact and no installed
-instance or payload files. It retains approval for a later apply or cancel.
+instance or payload files. Already created directories remain in place.
+It retains approval for a later apply or cancel.
 Otherwise the operator must inspect the rootfs and journal manually.
 A crash after publishing the next generation can leave the journal and
 approved reservation behind. db recover --finish-apply verifies the installed
@@ -565,7 +578,7 @@ Unassociated local packages retain source-id "-".
 .PP
 This preview writes no installed state or payload and executes no package code.
 Missing or modified installed files conflict; modified-config preservation,
-directory creation, hooks, new provider selection and multi-package replacement
+directory metadata changes, hooks, new provider selection and multi-package replacement
 are not implemented. The printed record is not accepted by db apply or
 db apply-set. JSON output is not implemented.
 .PP
@@ -635,7 +648,7 @@ emits one holy-installed-check-1 JSON line per artifact followed by a summary
 of passes and failures, or one error line on an invalid database, missing
 instance or incomplete transaction. Each artifact includes a findings array
 with code, severity and relative path for each mismatch. missing-file identifies
-an absent regular file or symlink under accessible parents; changed-file covers other
+an absent file, link or directory, including a path below a missing parent; changed-file covers other
 manifest mismatches, including inaccessible or symlinked parents. Paths encode
 non-ASCII bytes as \eu00HH; consumers reconstruct the original bytes. Findings
 follow manifest order; intact artifacts have an empty array. The artifact-level
@@ -647,8 +660,8 @@ installed holy-instance-2 artifact from the target cache. db repair SHA256
 --plan PLAN_SHA256 --root DIRECTORY applies the reviewed policy. The plan binds
 the artifact, stored graph, database generation and root device/inode. Its scope
 is all absent files in that artifact, including files removed after preparation.
-Changed or partial files are preserved and require manual review; directory
-metadata must remain intact. Repair does not run hooks or change providers.
+Changed or partial files are preserved and require manual review. Declared
+missing directories are restored; existing directory metadata must remain intact. Repair does not run hooks or change providers.
 .PP
 Repair records stage repairing before writing files, verifies restored contents
 and increments the generation once. An interrupted operation remains pending.

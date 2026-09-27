@@ -112,7 +112,7 @@ mkdir -p "$tmp/clean/usr/share"
 cp -a "$tmp/old" "$tmp/directories"
 mkdir "$tmp/directories/DATA/usr/share/new-directory"
 pack directories
-expect 6 "$helper" --file-plan "$tmp/old.holy" "$tmp/directories.holy" "$tmp/clean"
+expect 0 "$helper" --file-plan "$tmp/old.holy" "$tmp/directories.holy" "$tmp/clean"
 grep -q 'after dir "usr/share/new-directory"' "$tmp/record"
 cp -a "$tmp/old" "$tmp/absolute"
 ln -s /usr/share/retained "$tmp/absolute/DATA/usr/share/absolute"

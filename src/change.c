@@ -193,14 +193,21 @@ int holy_file_plan_check(const struct holy_file_plan *plan, int root, int recove
     size_t i;
     for (i = 0; i < plan->count; ++i) {
         const struct holy_file_change *c = &plan->changes[i];
+        if (failed) *failed = i;
+        if (!supported(c->before) || !supported(c->after) ||
+            (c->kind == HOLY_REPLACE && ((c->before && c->before->directory) ||
+                                        (c->after && c->after->directory)))) return 6;
+    }
+    if (failed) *failed = 0;
+    if (!holy_install_directory_plan(root, plan->new_entries, plan->new_count, 0, recovering)) return 4;
+    for (i = 0; i < plan->count; ++i) {
+        const struct holy_file_change *c = &plan->changes[i];
         int result = 0;
         if (failed) *failed = i;
-        if (!supported(c->before) || !supported(c->after)) return 6;
         if ((c->before && c->before->directory) || (c->after && c->after->directory)) {
             const struct holy_manifest_entry *e = c->before ? c->before : c->after;
-            if (c->kind == HOLY_REPLACE) return 6;
             result = holy_install_check_entry(root, e);
-            if (result != 1) return c->kind == HOLY_ADD && result == 2 ? 6 : 4;
+            if (result != 1 && !(c->kind == HOLY_ADD && result == 2)) return 4;
         } else if (!holy_install_transition_check(root, c->before, c->after, recovering)) return 4;
     }
     if (failed) *failed = plan->count;
@@ -256,6 +263,7 @@ int holy_file_plan_stage(const struct holy_file_plan *plan, const char *snapshot
     result = 6;
     if (!holy_package_identity(snapshot, &identity) || strcmp(identity.digest, plan->new_artifact)) goto done;
     result = 1;
+    if (!holy_install_directory_plan(root, plan->new_entries, plan->new_count, 1, recovering)) goto done;
     seen = calloc(plan->count ? plan->count : 1, 1);
     archive = archive_read_new();
     if (!seen || !archive || archive_read_support_filter_lz4(archive) != ARCHIVE_OK ||

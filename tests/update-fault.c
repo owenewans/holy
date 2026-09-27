@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include <errno.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
@@ -78,6 +79,22 @@ int fsync(int fd)
 #endif
     result = next_fsync(fd);
     if (result || !getenv("HOLY_UPDATE_FAULT") || !fd_path(fd, path)) return result;
+    if (fault("directory-ready") && strstr(path, "/.holy-dir-")) stop();
+    if (fault("payload-written") && strstr(path, "/opt/apps/deep/data")) stop();
+    if (getenv("HOLY_DIRECTORY_PARENT") && !strcmp(path, getenv("HOLY_DIRECTORY_PARENT"))) {
+        if (fault("directory-created") && getenv("HOLY_DIRECTORY_NAME") &&
+            !fstatat(fd, getenv("HOLY_DIRECTORY_NAME"), &st, AT_SYMLINK_NOFOLLOW)) stop();
+        if (fault("directory-partial")) {
+            int listing = openat(fd, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+            DIR *stream = listing < 0 ? NULL : fdopendir(listing);
+            struct dirent *entry;
+            if (stream) {
+                while ((entry = readdir(stream)))
+                    if (!strncmp(entry->d_name, ".holy-dir-", 10)) stop();
+                closedir(stream);
+            } else if (listing >= 0) close(listing);
+        }
+    }
     if (fault("database-before")) {
         snprintf(proc, sizeof proc, "/proc/self/fd/%d", fd);
         copy = open(proc, O_RDONLY | O_CLOEXEC);

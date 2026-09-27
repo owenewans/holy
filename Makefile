@@ -115,6 +115,7 @@ check: holypkg tests/resolution check-init check-solver check-install-payload ch
 	sh tests/state.sh ./holypkg
 	sh tests/sets.sh ./holypkg
 	sh tests/update.sh ./holypkg
+	sh tests/directories.sh ./holypkg
 	sh tests/orphan.sh ./holypkg
 	sh tests/dynamic.sh ./holypkg
 	sh tests/resolve.sh ./holypkg ./tests/resolution

@@ -1,10 +1,18 @@
 #ifndef HOLY_INSTALL_H
 #define HOLY_INSTALL_H
 
+#include <stddef.h>
+
 struct holy_manifest_entry;
 
 /* requires an already verified snapshot; root is an open target-root directory. */
 int holy_install_preflight(const char *snapshot, int root);
+/* exact existing payload or absent paths; caller owns an interrupted journal. */
+int holy_install_preflight_resume(const char *snapshot, int root);
+/* validates declared parents and directories; create requires a published journal.
+   existing directories are never chmodded, removed or replaced. */
+int holy_install_directory_plan(int root, const struct holy_manifest_entry *entries,
+                                 size_t count, int create, int recovering);
 /* writes new files/relative symlinks; partial payload remains for journal recovery. */
 int holy_install_payload(const char *snapshot, int root);
 /* 1 intact, 0 changed/missing, -1 invalid installed manifest. */

@@ -43,7 +43,7 @@
   supported install subset to its graph in the plan hash and installed state.
   Graph integrity checks preserve legacy state compatibility.
 - [x] Journal installation, check and removal of `linux/nolibc` data and native static ELF
-  artifacts into existing directories. Recovery covers empty aborted installs,
+  artifacts into existing or explicitly declared safe directories. Recovery covers empty aborted installs,
   completed installs and interrupted removals under documented conditions.
 - [x] Install relative symlinks with recorded targets and ownership; check, remove
   and recover them without following the links. Absolute links and hardlinks
@@ -97,7 +97,7 @@
   without writing files, accepting exact before/after states during recovery.
   Preserve unsupported entries in the record and reject their application.
   The cached update preview binds source, graph and ownership checks;
-  directory creation remains open.
+  directory creation is implemented below; directory metadata replacement remains open.
 - [x] Preview one cached slot replacement with `db plan-update`. Bind the
   generation, root/database identities, every installed state, source registry,
   file delta and proposed complete dependency graph. Reject changed payloads,
@@ -111,6 +111,13 @@
   injected SIGKILL and ENOSPC; preserve partial staging for explicit inspection.
   Test file addition/removal, regular/symlink transitions and a compatible ELF
   provider update. Hooks, config merging and general rollback remain open.
+- [x] Create missing manifest directories before payload installation, update or
+  repair. Validate every absent parent, preserve existing modes/owners and publish
+  prepared directories without replacement. Handle arbitrary archive entry order;
+  recover exact staged/published directories in interrupted sets and updates.
+  Reject symlinked parents, changed metadata and partially initialized staging.
+  Retain directories and untracked contents on removal. Full directory metadata
+  changes, privileged ownership and general single-install resume remain open.
 - [ ] Implement native HTTPS/Git source synchronization, signed generations and
   cache retention with provenance.
 - [x] Mirror an explicitly pinned HTTPS native catalog into a new sealed local
