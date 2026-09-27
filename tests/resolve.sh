@@ -146,8 +146,10 @@ test "$(wc -l < "$tmp/out")" -eq 2
 : > "$tmp/payload/HOLY/deps"
 printf 'provide package b noarch nolibc - metadata\n' > "$tmp/payload/HOLY/provides"
 build alias 1
-if "$bin" solve "local:$tmp/root-1.holy" "local:$tmp/alias-1.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
-test ! -s "$tmp/out"
+"$bin" solve "local:$tmp/root-1.holy" "local:$tmp/alias-1.holy" > "$tmp/out"
+alias_hash=$(sha256sum "$tmp/alias-1.holy")
+alias_hash=${alias_hash%% *}
+grep -qx "selected $alias_hash" "$tmp/out"
 : > "$tmp/payload/HOLY/provides"
 if "$bin" solve "local:$tmp/root-1.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 test ! -s "$tmp/out"

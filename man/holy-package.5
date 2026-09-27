@@ -79,7 +79,7 @@ current solver reports unsupported semantics instead of dropping that requiremen
 Foreign hooks and split transforms require their own installation support;
 archive verification does not authorize execution or claim that support exists.
 .SH INSTALLED GRAPH
-New local installations use holy-instance-2 state. The state includes a graph
+New local installations use holy-instance-4 state. The state includes a graph
 SHA-256; the graph file uses holy-resolution-1 with scope artifact-candidates,
 a root artifact, sorted selected artifact hashes and selected requirement edges.
 Each edge records consumer hash, requirement ID, provider hash, path, kind and
@@ -89,7 +89,8 @@ Database operations reject a missing, modified, writable or symlink graph.
 Legacy holy-instance-1 entries remain readable without a graph. Their absence
 of recorded provider choices does not establish dependency correctness.
 .PP
-Explicitly source-associated local installations use holy-instance-3. State
+Source-associated installations also preserve the source fields introduced in
+holy-instance-3. State
 records the registered source-id and SHA-256 of a separate source record containing
 that ID and the alias at installation. The graph and reason fields retain their
 version-2 semantics. The source record is manager-owned state, not copied from
@@ -99,7 +100,17 @@ the registered source does not rewrite installed origin records. Check, removal,
 orphan analysis and missing-only repair preserve this identity without requiring
 the source to remain active.
 .PP
-The set installation interface supports exact-name package dependencies, scoped pacman version constraints and native
+New records include a provides file copied from HOLY/provides and bind its
+SHA-256 in state. Empty provides is valid. Missing, modified, writable or symlink
+provides records invalidate the database. Installed package aliases can be
+located from these records; read-only database checks do not require the archive
+cache. Constructing an installation plan still requires verified cached artifacts.
+Legacy holy-instance-1/2/3 records remain readable. Alias discovery for a legacy
+record reads its verified cached artifact; missing cache returns unavailable
+instead of silently treating unknown capabilities as absent.
+.PP
+The set installation interface supports package names and declared aliases,
+scoped pacman version constraints and native
 dynamic packages with literal absolute interpreter and DT_NEEDED provider paths.
 It records explicit/dependency reasons. General loader search, automatic ELF
 rewriting remains unimplemented. Slot conflicts compare source-id, name, os,

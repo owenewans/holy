@@ -7,7 +7,13 @@
   identities to libsolv. Preserve the comparator family, apply arch/libc scopes,
   reject cross-family constraint satisfaction, and validate updates against
   installed consumer constraints. Run 92 upstream comparison cases and solver /
-  transaction fixtures. Other comparators and versioned virtual provides remain open.
+  transaction fixtures. Other comparators remain open.
+
+- [x] Resolve declared package aliases using their own versions and artifact ABI
+  scopes. Preserve claims and their hash in holy-instance-4, discover installed
+  aliases, and reject updates dropping required capabilities. Read legacy state
+  through verified cached artifacts when alias metadata is needed. File, command
+  and build claims still need dependency resolution support.
 
 - [x] Build gzip, LZ4, Zstandard, XZ and bzip2 codecs into the static musl client.
   Verify foreign import and native install/check/remove in a chroot without

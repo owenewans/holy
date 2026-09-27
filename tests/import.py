@@ -149,4 +149,9 @@ with tempfile.TemporaryDirectory() as scratch:
     assert "selected " + hashlib.sha256(newer[0].read_bytes()).hexdigest() in result
     assert "selected " + hashlib.sha256(older[0].read_bytes()).hexdigest() not in result
     run("solve", "local:" + str(consumers[0]), "local:" + str(older[0]), status=4)
+    _, virtual, _ = convert(package("version-virtual", payload, "provides = provider=2:1.0-3\n",
+        package_name="implementation", version="0.1-1"), "version-virtual-output")
+    result = run("solve", "local:" + str(consumers[0]), "local:" + str(virtual[0]))
+    assert "selected " + hashlib.sha256(virtual[0].read_bytes()).hexdigest() in result
+    assert "name implementation\n" in run("info", "local:" + str(virtual[0]))
     print("pacman import fixtures passed")

@@ -17,4 +17,7 @@ typedef int (*holy_capability_visit)(void *opaque, const char *kind,
 int holy_provides_visit(const char *package, holy_capability_visit visitor,
                         void *opaque);
 
+/* borrows a regular metadata descriptor; reads from offset zero without seeking. */
+int holy_provides_visit_fd(int fd, holy_capability_visit visitor, void *opaque);
+
 #endif

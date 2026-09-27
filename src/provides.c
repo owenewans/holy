@@ -6,6 +6,8 @@
 
 #include <archive.h>
 #include <archive_entry.h>
+#include <errno.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -227,4 +229,34 @@ int holy_provides_visit(const char *package, holy_capability_visit visitor,
 {
     if (!visitor) return 0;
     return inspect(package, 0, NULL, NULL, NULL, visitor, opaque);
+}
+
+int holy_provides_visit_fd(int fd, holy_capability_visit visitor, void *opaque)
+{
+    struct stat st;
+    struct capability *items = NULL;
+    char *data = NULL;
+    size_t count = 0, used = 0, i;
+    int ok = 0;
+    if (!visitor || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size < 0 || st.st_size > PROVIDES_LIMIT) return 0;
+    data = malloc((size_t)st.st_size + 1);
+    if (!data) return 0;
+    while (used < (size_t)st.st_size) {
+        ssize_t got = pread(fd, data + used, (size_t)st.st_size - used, (off_t)used);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) goto done;
+        used += (size_t)got;
+    }
+    data[used] = 0;
+    if (!parse(data, used, &items, &count)) goto done;
+    for (i = 0; i < count; ++i) {
+        char **v = items[i].fields;
+        if (!visitor(opaque, v[1], v[2], v[3], v[4], v[5], v[6])) goto done;
+    }
+    ok = 1;
+done:
+    for (i = 0; i < count; ++i) holy_tokens_free(items[i].fields, 7);
+    free(items); free(data);
+    return ok;
 }

@@ -78,10 +78,17 @@ expect 3 "$bin" db apply-set "$plan" "$app" "$lib" --source "$app=$one" --source
 expect 0 "$bin" db plan-set "$app" "$lib" --source "$app=$one" --source "$lib=$two" --root "$root"
 plan=$(plan_hash)
 expect 0 "$bin" db apply-set "$plan" "$app" "$lib" --source "$app=$one" --source "$lib=$two" --root "$root"
-grep -qx 'format holy-instance-3' "$db/installed/$app/state"
+grep -qx 'format holy-instance-4' "$db/installed/$app/state"
 grep -qx "source-id $one" "$db/installed/$app/state"
 grep -qx "source $one \"renamed\"" "$db/installed/$app/source"
 grep -qx "source-id $two" "$db/installed/$lib/state"
+cp "$db/installed/$lib/state" "$tmp/legacy-source-state"
+mv "$db/installed/$lib/provides" "$tmp/legacy-source-provides"
+sed '/^provides /d; s/holy-instance-4/holy-instance-3/' "$tmp/legacy-source-state" > "$db/installed/$lib/state"
+expect 0 "$bin" db status --root "$root"
+expect 0 "$bin" db check --all --root "$root"
+cp "$tmp/legacy-source-state" "$db/installed/$lib/state"
+mv "$tmp/legacy-source-provides" "$db/installed/$lib/provides"
 expect 0 "$bin" db check --all --root "$root"
 expect 0 "$bin" orphan --root "$root" --json
 cp "$db/installed/$lib/state" "$tmp/lib-state"

@@ -311,7 +311,7 @@ SEE ALSO
      holy-image(7), holypkg(8)
 
 Holy				 September 2026			    HOLY-INIT(8)
-holy-package.5 source=holy version=development sha256=49f33f6be02acd6c9c2741c0033a044761b2b5620056e33d292c856e149fbf3f
+holy-package.5 source=holy version=development sha256=8111bfdcf2a51208d820b8743e72a06ee212f50fd104f135ac982006c8ff05a9
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -399,7 +399,7 @@ FOREIGN IMPORT RECORDS
      that support exists.
 
 INSTALLED GRAPH
-     New local installations use holy-instance-2 state.	 The  state  includes  a
+     New local installations use holy-instance-4 state.	 The  state  includes  a
      graph  SHA-256;  the graph file uses holy-resolution-1 with scope artifact-
      candidates, a root artifact, sorted selected artifact hashes  and	selected
      requirement  edges.   Each	 edge  records	consumer  hash,	 requirement ID,
@@ -411,26 +411,36 @@ INSTALLED GRAPH
      sence  of	recorded provider choices does not establish dependency correct-
      ness.
 
-     Explicitly source-associated local installations use holy-instance-3. State
-     records the registered source-id and SHA-256 of a	separate  source  record
-     containing	 that  ID  and	the  alias at installation. The graph and reason
-     fields retain their version-2 semantics. The source record is manager-owned
-     state, not copied from the package. The database rejects  absent,	changed,
-     writable  or symlink source records and disagreement between the record and
-     state. Renaming or deactivating the registered source does not rewrite  in-
-     stalled  origin  records.	Check, removal, orphan analysis and missing-only
-     repair preserve this identity without requiring the source	 to  remain  ac-
-     tive.
+     Source-associated installations also preserve the source fields  introduced
+     in holy-instance-3. State records the registered source-id and SHA-256 of a
+     separate  source  record  containing that ID and the alias at installation.
+     The graph and reason fields retain their version-2	 semantics.  The  source
+     record  is	 manager-owned	state, not copied from the package. The database
+     rejects absent, changed, writable or symlink source records  and  disagree-
+     ment  between the record and state. Renaming or deactivating the registered
+     source does not rewrite installed origin records.	Check,	removal,  orphan
+     analysis  and  missing-only repair preserve this identity without requiring
+     the source to remain active.
 
-     The  set  installation  interface supports exact-name package dependencies,
-     scoped pacman version constraints and native dynamic packages with	 literal
+     New records include a provides file copied from HOLY/provides and bind  its
+     SHA-256  in  state. Empty provides is valid. Missing, modified, writable or
+     symlink provides records invalidate the database. Installed package aliases
+     can be located from these records; read-only database checks do not require
+     the archive cache. Constructing an installation plan still	 requires  veri-
+     fied cached artifacts.  Legacy holy-instance-1/2/3 records remain readable.
+     Alias  discovery  for  a  legacy record reads its verified cached artifact;
+     missing cache returns unavailable instead of silently treating unknown  ca-
+     pabilities as absent.
+
+     The set installation interface supports package names and declared aliases,
+     scoped  pacman version constraints and native dynamic packages with literal
      absolute interpreter and DT_NEEDED provider paths.	 It records explicit/de-
-     pendency  reasons.	 General  loader search, automatic ELF rewriting remains
-     unimplemented. Slot conflicts compare source-id, name, os, arch  and  libc;
+     pendency reasons. General loader search, automatic	 ELF  rewriting	 remains
+     unimplemented.  Slot  conflicts compare source-id, name, os, arch and libc;
      distinct artifacts in different slots may coexist with compatible file own-
-     ership.  Reviewed	cached	update	plans can replace one source-bound slot;
-     registering the same artifact in multiple slots remains unsupported.  Miss-
-     ing-only  cache repair preserves the installed graph and refuses changed or
+     ership. Reviewed cached update plans can  replace	one  source-bound  slot;
+     registering  the same artifact in multiple slots remains unsupported. Miss-
+     ing-only cache repair preserves the installed graph and refuses changed  or
      partial files.
 
 SEE ALSO
@@ -512,7 +522,7 @@ SOURCE IDENTITIES
      during package selection remain unimplemented.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=a8f482211742dbb8bca0fe5655207c01c33ca21980d9749ca1f51de1f7e61c74
+holypkg.8 source=holy version=development sha256=ba61e6841727f391f43805cb5c752c49a0e9ba66b0e76bce9d19e29417e1b803
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1212,138 +1222,141 @@ DESCRIPTION
      including the selected literal-path provider files.
 
      db repair-plan SHA256 --root DIRECTORY prepares missing-only restoration of
-     an installed holy-instance-2 artifact from	 the  target  cache.  db  repair
-     SHA256 --plan PLAN_SHA256 --root DIRECTORY applies the reviewed policy. The
-     plan  binds  the  artifact,  stored graph, database generation and root de-
-     vice/inode. Its scope is all absent files in that artifact, including files
-     removed after preparation.	 Changed or partial files are preserved and  re-
-     quire  manual  review.  Declared missing directories are restored; existing
-     directory metadata must remain intact. Repair does not run hooks or  change
-     providers.
+     an installed artifact with a recorded  dependency	graph  from  the  target
+     cache. db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY applies the re-
+     viewed  policy. The plan binds the artifact, stored graph, database genera-
+     tion and root device/inode. Its scope is all absent files in that artifact,
+     including files removed after preparation.	 Changed or  partial  files  are
+     preserved	and  require manual review. Declared missing directories are re-
+     stored; existing directory metadata must remain intact. Repair does not run
+     hooks or change providers.
 
      Repair records stage repairing before writing files, verifies restored con-
-     tents  and increments the generation once. An interrupted operation remains
-     pending.  db recover --repair resumes that recorded policy after  verifying
+     tents and increments the generation once. An interrupted operation	 remains
+     pending.	db recover --repair resumes that recorded policy after verifying
      cache, installed metadata, ownership and graph. Partial files are not over-
-     written.	Ordinary  check	 remains read-only. This is not general upgrade,
+     written.  Ordinary check remains read-only. This is  not  general	upgrade,
      rollback or configuration-file repair.
 
-     make bootstrap-musl INPUTS=DIRECTORY OUTPUT=DIRECTORY  builds  pinned  musl
-     1.2.5  as	an x86_64 native package, preserving source and build hashes and
-     licenses.	The build sets libc.musl-x86_64.so.1 as SONAME at link time;  it
-     does  not rewrite the self-bootstrapping loader with patchelf.  make check-
+     make  bootstrap-musl  INPUTS=DIRECTORY  OUTPUT=DIRECTORY builds pinned musl
+     1.2.5 as an x86_64 native package, preserving source and build  hashes  and
+     licenses.	 The build sets libc.musl-x86_64.so.1 as SONAME at link time; it
+     does not rewrite the self-bootstrapping loader with patchelf.  make  check-
      libc-recovery STATIC_HOLYPKG=FILE MUSL_CC=FILE MUSL_PACKAGE=FILE requires a
-     static client, a musl compiler and that runtime package. It installs  glibc
-     and  musl fixtures, runs both, removes each runtime and both together, then
+     static  client, a musl compiler and that runtime package. It installs glibc
+     and musl fixtures, runs both, removes each runtime and both together,  then
      executes cached repair inside the libc-free chroot. doas is required; guest
-     commands run with the  caller's  UID/GID.	This  tests  local  recovery  on
+     commands  run  with  the  caller's	 UID/GID.  This	 tests local recovery on
      x86_64, not boot, i686, network recovery or general foreign package conver-
      sion.
 
-     make  bootstrap-glibc  INPUTS=DIRECTORY  OUTPUT=DIRECTORY builds the pinned
+     make bootstrap-glibc INPUTS=DIRECTORY OUTPUT=DIRECTORY  builds  the  pinned
      glibc-2.42.tar.xz source as an ordinary user in a separate build directory.
-     Host GCC, G++, binutils, kernel headers,  make,  gawk,  bison,  Python  and
-     patchelf  are required. --without-gd avoids linking the optional memusages-
-     tat tool against the host's libgd closure. The output  glibc.holy	contains
+     Host  GCC,	 G++,  binutils,  kernel  headers, make, gawk, bison, Python and
+     patchelf are required. --without-gd avoids linking the optional  memusages-
+     tat  tool	against the host's libgd closure. The output glibc.holy contains
      libc.so.6, its loader and upstream licenses. It records input hashes, build
-     configuration   and  explicit  private-path  patches  in  bootstrap  origin
-     records. It is not yet a complete glibc  SDK  or  locale/NSS  package  set.
-     build.record  distinguishes  building from the separate runtime probes; the
-     full upstream test suite is not implied by a successful build. make  check-
-     bootstrap-glibc  OUTPUT=DIRECTORY	runs that retained build's upstream test
-     suite as an ordinary user and returns its actual status. GLIBC_PACKAGE  can
-     supply  this artifact to check-libc-recovery; without it that fixture snap-
+     configuration  and	 explicit  private-path	 patches  in  bootstrap	  origin
+     records.  It  is  not  yet	 a complete glibc SDK or locale/NSS package set.
+     build.record distinguishes building from the separate runtime  probes;  the
+     full  upstream test suite is not implied by a successful build. make check-
+     bootstrap-glibc OUTPUT=DIRECTORY runs that retained build's  upstream  test
+     suite  as an ordinary user and returns its actual status. GLIBC_PACKAGE can
+     supply this artifact to check-libc-recovery; without it that fixture  snap-
      shots the host glibc pair.
 
-     Database owner reads installed manifests and lists the artifact digest  and
-     kind  for	an  exact  relative or root-absolute path. Multiple packages may
+     Database  owner reads installed manifests and lists the artifact digest and
+     kind for an exact relative or root-absolute  path.	 Multiple  packages  may
      list the same directory. If multiple records claim one regular file or sym-
-     link, the command returns conflict status 4 without  listing  an  arbitrary
-     owner.  An	 absent path returns 6. It holds a shared database lock and does
-     not require the path to exist in the live rootfs; db check compares  actual
+     link,  the	 command  returns conflict status 4 without listing an arbitrary
+     owner. An absent path returns 6. It holds a shared database lock  and  does
+     not  require the path to exist in the live rootfs; db check compares actual
      contents.
 
-     Database  rm  removes  one	 intact supported installed instance by artifact
-     SHA-256. It verifies all listed  files  before  mutation,	refuses	 changed
-     files  and	 pending  reservations,	 then  writes a removing journal. Before
-     journaling, it also checks the other installed  manifests	for  conflicting
-     ownership	claims;	 shared	 directories  are  allowed. A conflict returns 4
-     without deleting files.  Recovery repeats this ownership check  before  re-
-     suming  an	 interrupted removal; conflicts retain the journal and return 5.
-     It unlinks only listed regular files, symlinks  and  the  instance	 record;
-     shared  directories and the cached artifact remain. The database generation
-     advances after removal. If an I/O failure interrupts  deletion,  db  status
-     reports  an  incomplete  journal.	db recover --continue accepts a removing
-     journal at its original generation with an intact installed record,  treats
+     Database rm removes one intact supported  installed  instance  by	artifact
+     SHA-256.  It  verifies  all  listed  files before mutation, refuses changed
+     files and pending reservations, then  writes  a  removing	journal.  Before
+     journaling,  it  also  checks the other installed manifests for conflicting
+     ownership claims; shared directories are  allowed.	 A  conflict  returns  4
+     without  deleting	files.	Recovery repeats this ownership check before re-
+     suming an interrupted removal; conflicts retain the journal and  return  5.
+     It	 unlinks  only	listed	regular files, symlinks and the instance record;
+     shared directories and the cached artifact remain. The database  generation
+     advances  after  removal.	If an I/O failure interrupts deletion, db status
+     reports an incomplete journal.  db recover --continue  accepts  a	removing
+     journal  at its original generation with an intact installed record, treats
      absent listed files as removed, verifies every remaining file without muta-
-     tion,  then  completes  removal. Changed files or partial installed records
-     require manual inspection. --abort-empty  applies	only  to  an  installing
-     journal,  never to removal. This command does not resolve reverse dependen-
+     tion, then completes removal. Changed files or  partial  installed	 records
+     require  manual  inspection.  --abort-empty  applies  only to an installing
+     journal, never to removal. This command does not resolve reverse  dependen-
      cies or remove general packages.
 
-     The info command reads an LZ4-frame-compressed tar archive and  prints  the
-     seven  required  fields  from  HOLY/meta. It reads archive data without ex-
-     tracting or executing it. It checks for repeated metadata	and  unsupported
-     format  versions.	 It  prints the SHA-256 digest of the input archive.  It
-     rejects archive entries outside HOLY and DATA, including dot segments.   It
-     requires  all  seven HOLY metadata members as regular files and rejects du-
+     The  info	command reads an LZ4-frame-compressed tar archive and prints the
+     seven required fields from HOLY/meta. It reads  archive  data  without  ex-
+     tracting  or  executing it. It checks for repeated metadata and unsupported
+     format versions.  It prints the SHA-256 digest of the  input  archive.   It
+     rejects  archive entries outside HOLY and DATA, including dot segments.  It
+     requires all seven HOLY metadata members as regular files and  rejects  du-
      plicate members.  It does not validate the payload manifest, hashes, signa-
      tures or installability.
 
      The  verify  command  checks  regular  DATA  files	 against  the  supported
-     HOLY/files	 records,  including  size,  mode, numeric owner and SHA-256. It
-     checks symlinks, directories and direct  hardlinks,  rejecting  unsupported
-     objects.  It does not install or authenticate packages; the two read passes
+     HOLY/files records, including size, mode, numeric	owner  and  SHA-256.  It
+     checks  symlinks,	directories  and direct hardlinks, rejecting unsupported
+     objects. It does not install or authenticate packages; the two read  passes
      do not provide a stable filesystem snapshot.
 
-     The manifest command stages a local archive, verifies the entire  supported
-     payload  and  HOLY/files,	then lists validated objects in path order. Each
-     line contains type, escaped relative path, mode, numeric UID/GID and  size;
-     files  include SHA-256, links include targets and grouped hardlinks include
-     their group. Fields are borrowed from the verified snapshot during	 inspec-
-     tion.   This  read-only  output does not prove that ownership can be mapped
+     The  manifest command stages a local archive, verifies the entire supported
+     payload and HOLY/files, then lists validated objects in  path  order.  Each
+     line  contains type, escaped relative path, mode, numeric UID/GID and size;
+     files include SHA-256, links include targets and grouped hardlinks	 include
+     their  group. Fields are borrowed from the verified snapshot during inspec-
+     tion.  This read-only output does not prove that ownership	 can  be  mapped
      onto a target root or that a file can be installed without collision.
 
-     The requirements command stages and verifies a regular archive, then  reads
+     The  requirements command stages and verifies a regular archive, then reads
      HOLY/deps using the holy.conf lexer. Its current typed subset accepts lines
      of eleven tokens:
      require ID CONSUMER KIND NAME ARCH LIBC RELATION VERSION ORIGINAL EVIDENCE
-     KIND  is  package,	 file, command, soname, symbol-version or build. ARCH is
+     KIND is package, file, command, soname, symbol-version or	build.	ARCH  is
      any, x86, x86_64 or noarch; LIBC is any, glibc, musl or nolibc. RELATION is
      any, eq, ge, le, gt or lt. VERSION is - only for any. ORIGINAL and EVIDENCE
-     retain the source expression and basis as text.  Requirement  IDs	must  be
-     unique.  The  command  rejects unsupported records and duplicate IDs rather
-     than dropping them; it does not evaluate version constraints  or  choose  a
-     provider.	 With  --json,	stdout	contains holy-requirements-1 requirement
+     retain  the  source  expression  and basis as text. Requirement IDs must be
+     unique. The command rejects unsupported records and  duplicate  IDs  rather
+     than  dropping  them;  it does not evaluate version constraints or choose a
+     provider.	With --json,  stdout  contains	holy-requirements-1  requirement
      events and a summary, or one error event on invalid input. Each requirement
      event has id, consumer, kind, name, arch, libc, relation, version, original
-     and evidence fields. The JSON encoder maps non-ASCII bytes	 to  \u00HH  es-
-     capes;  consumers	reconstruct  original bytes rather than treating them as
+     and  evidence  fields.  The JSON encoder maps non-ASCII bytes to \u00HH es-
+     capes; consumers reconstruct original bytes rather than  treating	them  as
      normalized text.
 
-     The solve	command	 verifies  and	scans  each  explicitly	 supplied  local
+     The  solve	 command  verifies  and	 scans	each  explicitly  supplied local
      archive, with the first archive as the requested root. Its supported subset
-     accepts  Linux  packages with validated payload ABI facts, empty HOLY/hooks
+     accepts Linux packages with validated payload ABI facts,  empty  HOLY/hooks
      and  HOLY/transform,  and	HOLY/deps  package  requirements  with	explicit
-     arch/libc	scopes	or any.	 Each consumer must equal its package name. Only
-     the package's own metadata name supplies  a  package  capability;	declared
-     aliases  in  HOLY/provides are parsed but do not satisfy requirements here.
-     Version constraints eq/ge/gt/le/lt use pacman ordering only when  the  con-
-     sumer  and	 provider  declare  x-version-family  pacman.  The  full foreign
-     epoch:version-release string belongs in version; release remains the native
-     artifact revision and is not appended a second time.  A missing  pkgrel  on
-     one  side does not constrain pkgrel. Numeric epochs, prerelease letters and
-     separator widths follow pacman's comparison rules.	 The comparator	 accepts
-     nonempty  printable  ASCII strings up to 65536 bytes; unsupported encodings
-     do not receive a guessed order.  The adapter filters candidates before  the
-     common  libsolv  solver  receives exact requirement capabilities. The mixed
-     solver pool does not compare foreign EVRs.	  Unsupported  consumer	 version
-     families and metadata dependency forms return 6.  Providers from another or
-     unknown  family cannot satisfy a constrained edge; if no matching candidate
-     remains, resolution returns dependency-conflict.  A supplied  --choose  an-
-     swer  cannot bypass these checks. Unversioned requirements retain their or-
-     dinary exact-name matching across families. Automatic newest-version selec-
-     tion, cross-family overrides and virtual versioned provides remain pending.
+     arch/libc scopes or any.  Each consumer must equal its  package  name.  The
+     package's	own  metadata  name  and  package claims in HOLY/provides supply
+     package capabilities. An alias retains its declared version; an unversioned
+     alias cannot satisfy a version  constraint.   Explicit  claim  scopes  must
+     agree  with the artifact's arch/libc; any inherits that artifact scope. Se-
+     lection preserves the actual package identity  and	 records  the  requested
+     alias on the dependency edge. Version constraints eq/ge/gt/le/lt use pacman
+     ordering  only when the consumer and provider declare x-version-family pac-
+     man. The full foreign epoch:version-release string belongs in version;  re-
+     lease  remains  the  native  artifact revision and is not appended a second
+     time.  A missing pkgrel on one side  does	not  constrain	pkgrel.	 Numeric
+     epochs,  prerelease letters and separator widths follow pacman's comparison
+     rules.  The comparator accepts nonempty printable ASCII strings up to 65536
+     bytes; unsupported encodings do not receive a guessed order.   The	 adapter
+     filters candidates before the common libsolv solver receives exact require-
+     ment  capabilities.  The  mixed  solver pool does not compare foreign EVRs.
+     Unsupported consumer version families and metadata dependency forms  return
+     6.	  Providers  from another or unknown family cannot satisfy a constrained
+     edge; if no matching candidate remains, resolution returns	 dependency-con-
+     flict.   A supplied --choose answer cannot bypass these checks. Unversioned
+     requirements retain exact capability-name matching across	families.  Auto-
+     matic  newest-version  selection and cross-family overrides remain pending.
      There are no source IDs, installed packages or  architecture  overrides  in
      this command.
 
@@ -1413,8 +1426,8 @@ DESCRIPTION
      decision-required. A missing name returns unavailable-artifact. An	 invalid
      generation returns invalid-catalog without partial results. --json uses the
      same  holy-local-solve-1  events  as  solve. This command reads all archive
-     payloads per query; it does not import remote sources, install packages  or
-     interpret	 typed	HOLY/provides  aliases	as  dependency	providers.   The
+     payloads per query and supports the same package aliases and  version  con-
+     straints.	 It  does  not	import	remote sources or install packages.  The
      --choose form applies the same one-operation, direct-root	requirement  se-
      lection  after validating the sealed index and matching the selected digest
      to an artifact in that generation. It does not write a saved rule.	 On suc-

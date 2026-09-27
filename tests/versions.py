@@ -14,7 +14,7 @@ with tempfile.TemporaryDirectory(prefix="holy-versions-") as scratch:
         assert result.returncode == status, (args, result.returncode, result.stdout, result.stderr)
         return result.stdout
 
-    def package(label, name, version, deps="", family="pacman", arch="noarch", libc="nolibc"):
+    def package(label, name, version, deps="", family="pacman", arch="noarch", libc="nolibc", provides=""):
         tree = tmp / label
         (tree / "HOLY").mkdir(parents=True)
         (tree / "DATA").mkdir()
@@ -25,7 +25,7 @@ with tempfile.TemporaryDirectory(prefix="holy-versions-") as scratch:
             metadata += "x-version-family " + family + "\n"
         (tree / "HOLY/meta").write_text(metadata)
         for field in ("deps", "provides", "hooks", "origin", "transform"):
-            (tree / "HOLY" / field).write_text(deps if field == "deps" else "")
+            (tree / "HOLY" / field).write_text(deps if field == "deps" else provides if field == "provides" else "")
         run("manifest", "generate", tree, "--output", tmp / (label + ".files"))
         (tmp / (label + ".files")).rename(tree / "HOLY/files")
         artifact = tmp / (label + ".holy")
@@ -90,4 +90,87 @@ with tempfile.TemporaryDirectory(prefix="holy-versions-") as scratch:
     run("db", "rm", second_hash, "--root", root)
     run("db", "rm", app_hash, "--root", root)
     run("db", "rm", new_hash, "--root", root)
-    print("version-constrained solver and transaction fixtures passed")
+    claim = "provide package library any any 2:1.0-3 fixture\n"
+    alias, alias_hash = package("alias", "implementation", "0.1-1", provides=claim)
+    lower, lower_hash = package("lower-alias", "other-implementation", "999-1",
+        provides="provide package library any any 2:1.0-1 fixture\n")
+    unversioned, _ = package("unversioned-alias", "unversioned", "999-1",
+        provides="provide package library any any - fixture\n")
+    alias_app, alias_app_hash = package("alias-app", "app", "1-1", dependency("ge", "2:1.0-2"))
+    selected = run("solve", "local:" + str(alias_app), "local:" + str(alias), "local:" + str(lower), "local:" + str(unversioned))
+    assert "selected " + alias_hash in selected and "selected " + lower_hash not in selected
+    run("solve", "local:" + str(alias_app), "local:" + str(unversioned), status=4)
+    mismatch, _ = package("scope-lie", "scope-lie", "1-1",
+        provides="provide package library x86 musl 2:1.0-3 fixture\n")
+    run("solve", "local:" + str(alias_app), "local:" + str(mismatch), status=6)
+    assert "name implementation\n" in run("info", "local:" + str(alias))
+    alternate, alternate_hash = package("alternate", "alternate", "5-1", provides=claim)
+    run("solve", "local:" + str(alias_app), "local:" + str(alias), "local:" + str(alternate), status=3)
+    chosen = run("solve", "local:" + str(alias_app), "local:" + str(alias), "local:" + str(alternate),
+        "--choose", "dep=" + alternate_hash)
+    assert "selected " + alternate_hash in chosen and "selected " + alias_hash not in chosen
+    scoped_alias, _ = package("scoped-alias", "implementation", "1-1", arch="x86", provides=claim)
+    scoped_app, _ = package("scoped-alias-app", "app", "1-1", dependency("ge", "2:1.0-2", "noarch", "nolibc"))
+    run("solve", "local:" + str(scoped_app), "local:" + str(scoped_alias), status=4)
+    alien_alias, _ = package("alien-alias", "implementation", "1-1", family="rpm", provides=claim)
+    run("solve", "local:" + str(alias_app), "local:" + str(alien_alias), status=4)
+    alias_root = tmp / "alias-root"
+    alias_root.mkdir()
+    run("db", "init", "--root", alias_root)
+    for artifact in (alias, alias_app):
+        run("cache", "stage", "local:" + str(artifact), "--root", alias_root)
+    plan = run("db", "plan-set", alias_hash, "--root", alias_root).split(" sha256 ")[1].split()[0]
+    run("db", "apply-set", plan, alias_hash, "--root", alias_root)
+    record = alias_root / "var/lib/holypkg/installed" / alias_hash
+    assert (record / "provides").read_text() == claim
+    assert "provides " + hashlib.sha256(claim.encode()).hexdigest() in (record / "state").read_text()
+    plan = run("db", "plan-set", alias_app_hash, "--root", alias_root).split(" sha256 ")[1].split()[0]
+    run("db", "apply-set", plan, alias_app_hash, "--root", alias_root)
+    graph = (alias_root / "var/lib/holypkg/installed" / alias_app_hash / "graph").read_text()
+    assert '"package" "library"' in graph and alias_hash in graph
+    cache = alias_root / "var/cache/holypkg/objects/sha256" / (alias_hash + ".holy")
+    cache.unlink()
+    run("db", "check", "--all", "--root", alias_root)
+    for corrupted in (claim + "bad\n", ""):
+        (record / "provides").write_text(corrupted)
+        run("db", "status", "--root", alias_root, status=1)
+    (record / "provides").write_text(claim)
+    (record / "provides").chmod(0o666)
+    run("db", "status", "--root", alias_root, status=1)
+    (record / "provides").chmod(0o600)
+    (record / "provides").unlink()
+    run("db", "status", "--root", alias_root, status=1)
+    (record / "provides").symlink_to(alias)
+    run("db", "status", "--root", alias_root, status=1)
+    (record / "provides").unlink()
+    (record / "provides").write_text(claim)
+    run("cache", "stage", "local:" + str(alias), "--root", alias_root)
+    replacement, replacement_hash = package("drop-claim", "implementation", "0.2-1")
+    run("cache", "stage", "local:" + str(replacement), "--root", alias_root)
+    run("db", "plan-update", alias_hash, replacement_hash, "--root", alias_root, status=4)
+    run("db", "rm", alias_app_hash, "--root", alias_root)
+    state = (record / "state").read_text()
+    legacy = state.replace("holy-instance-4", "holy-instance-2")
+    legacy = "\n".join(line for line in legacy.splitlines() if not line.startswith(("provides ", "source-record "))) + "\n"
+    (record / "state").write_text(legacy)
+    (record / "provides").unlink()
+    run("db", "status", "--root", alias_root)
+    cache.unlink()
+    run("db", "plan-set", alias_app_hash, "--root", alias_root, status=6)
+    run("cache", "stage", "local:" + str(alias), "--root", alias_root)
+    legacy_plan = run("db", "plan-set", alias_app_hash, "--root", alias_root).split(" sha256 ")[1].split()[0]
+    run("db", "apply-set", legacy_plan, alias_app_hash, "--root", alias_root)
+    run("db", "check", "--all", "--root", alias_root)
+    upgraded, upgraded_hash = package("keep-claim", "implementation", "0.3-1", provides=claim)
+    run("cache", "stage", "local:" + str(upgraded), "--root", alias_root)
+    update = run("db", "plan-update", alias_hash, upgraded_hash, "--root", alias_root).split(" sha256 ")[1].split()[0]
+    run("db", "apply-update", update, alias_hash, upgraded_hash, "--root", alias_root)
+    run("db", "check", "--all", "--root", alias_root)
+    updated_record = record.parent / upgraded_hash
+    assert (updated_record / "provides").read_text() == claim
+    assert "format holy-instance-4\n" in (updated_record / "state").read_text()
+    graph = (record.parent / alias_app_hash / "graph").read_text()
+    assert upgraded_hash in graph and alias_hash not in graph
+    run("db", "rm", alias_app_hash, "--root", alias_root)
+    run("db", "rm", upgraded_hash, "--root", alias_root)
+    print("version constraints, virtual capabilities and transaction fixtures passed")

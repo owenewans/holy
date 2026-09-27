@@ -116,12 +116,14 @@ cp "$tmp/state" "$db/installed/$a/state"
 cp "$tmp/graph" "$db/installed/$a/graph"
 cp "$db/installed/$detached/state" "$tmp/legacy-state"
 mv "$db/installed/$detached/graph" "$tmp/legacy-graph"
-sed -e 's/holy-instance-2/holy-instance-1/' -e '/^graph /d' "$tmp/legacy-state" > "$db/installed/$detached/state"
+mv "$db/installed/$detached/provides" "$tmp/legacy-provides"
+sed -e 's/holy-instance-4/holy-instance-1/' -e '/^graph /d; /^provides /d; /^source-record /d' "$tmp/legacy-state" > "$db/installed/$detached/state"
 expect 6 "$bin" orphan --root "$root" --json
 grep -q '"code":"unknown-installed-graph"' "$tmp/out"
 test "$(wc -l < "$tmp/out")" -eq 1
 cp "$tmp/legacy-state" "$db/installed/$detached/state"
 mv "$tmp/legacy-graph" "$db/installed/$detached/graph"
+mv "$tmp/legacy-provides" "$db/installed/$detached/provides"
 cp "$db/installed/$a/meta" "$tmp/meta"
 python3 - "$db/installed/$a/meta" <<'PY'
 import pathlib,sys

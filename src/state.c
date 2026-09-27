@@ -12,6 +12,7 @@
 #include "resolve.h"
 #include "scan.h"
 #include "deps.h"
+#include "provides.h"
 #include "source.h"
 #include "change.h"
 
@@ -177,7 +178,7 @@ static int instance_record_digest(int item, const char *name, char output[65])
     int ok = 0;
     if (fd < 0 || !hash || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
         (st.st_mode & 0022) || (st.st_uid != 0 && st.st_uid != geteuid()) ||
-        st.st_size < 1 || st.st_size > 16 * 1024 * 1024 ||
+        (st.st_size < 1 && strcmp(name, "provides")) || st.st_size < 0 || st.st_size > 16 * 1024 * 1024 ||
         EVP_DigestInit_ex(hash, EVP_sha256(), NULL) != 1) goto done;
     while ((got = read(fd, buffer, sizeof buffer)) != 0) {
         if (got < 0) { if (errno == EINTR) continue; goto done; }
@@ -203,7 +204,7 @@ static int graph_digest(int item, char output[65])
 static int instance_state_generation(int item, const char *digest,
                                      unsigned long long *recorded)
 {
-    char buffer[640], prefix[560], graph[65], source[65], source_hash[65], *end;
+    char buffer[640], prefix[560], graph[65], source[65], source_hash[65], claims[65], *end;
     struct stat st;
     unsigned long long generation;
     ssize_t got;
@@ -221,11 +222,24 @@ static int instance_state_generation(int item, const char *digest,
     close(fd);
     if (got != st.st_size || buffer[got - 1] != '\n' || memchr(buffer, 0, (size_t)got)) return 0;
     buffer[got] = '\0';
-    version = !strncmp(buffer, "format holy-instance-3\n", 23) ? 3 :
+    version = !strncmp(buffer, "format holy-instance-4\n", 23) ? 4 :
+              !strncmp(buffer, "format holy-instance-3\n", 23) ? 3 :
               !strncmp(buffer, "format holy-instance-2\n", 23) ? 2 : 1;
     if (strstr(buffer, "\nreason dependency\n")) reason = "dependency";
     if (version < 3 && (!fstatat(item, "source", &st, AT_SYMLINK_NOFOLLOW) || errno != ENOENT)) return 0;
-    if (version == 3) {
+    if (version < 4 && (!fstatat(item, "provides", &st, AT_SYMLINK_NOFOLLOW) || errno != ENOENT)) return 0;
+    if (version == 4) {
+        if (!graph_digest(item, graph) || !instance_record_digest(item, "provides", claims)) return 0;
+        if (!fstatat(item, "source", &st, AT_SYMLINK_NOFOLLOW)) {
+            if (!holy_source_instance(item, source, source_hash)) return 0;
+        } else {
+            if (errno != ENOENT) return 0;
+            strcpy(source, "-"); strcpy(source_hash, "-");
+        }
+        length = (size_t)snprintf(prefix, sizeof prefix,
+            "format holy-instance-4\nsource-id %s\nsource-record %s\ndelivery local\nreason %s\nartifact %s\ngraph %s\nprovides %s\ngeneration ",
+            source, source_hash, reason, digest, graph, claims);
+    } else if (version == 3) {
         if (!graph_digest(item, graph) || !holy_source_instance(item, source, source_hash)) return 0;
         length = (size_t)snprintf(prefix, sizeof prefix,
             "format holy-instance-3\nsource-id %s\nsource-record %s\ndelivery local\nreason %s\nartifact %s\ngraph %s\ngeneration ",
@@ -253,7 +267,7 @@ static int instance_state_generation(int item, const char *digest,
 
 static int installed_valid(int dir)
 {
-    static const char *const required[] = { "meta", "files", "deps", "origin", "state", "graph", "source" };
+    static const char *const required[] = { "meta", "files", "deps", "origin", "state", "graph", "source", "provides" };
     int installed = child_dir(dir, "installed", 0), ok = 1;
     DIR *list;
     struct dirent *entry;
@@ -294,7 +308,8 @@ static int installed_valid(int dir)
                 }
                 if (!member && errno) ok = 0;
                 if (seen != (1u << 5) - 1u && seen != (1u << 6) - 1u &&
-                    seen != (1u << 7) - 1u) ok = 0;
+                    seen != (1u << 7) - 1u && seen != ((1u << 6) - 1u + (1u << 7)) &&
+                    seen != (1u << 8) - 1u) ok = 0;
                 closedir(members);
             }
         }
@@ -1239,7 +1254,7 @@ static int record_file(int dir, const char *name, const void *data, size_t lengt
 static int instance_preflight(const char *snapshot)
 {
     static const char *const names[] = {
-        "HOLY/meta", "HOLY/files", "HOLY/deps", "HOLY/origin"
+        "HOLY/meta", "HOLY/files", "HOLY/deps", "HOLY/origin", "HOLY/provides"
     };
     struct archive *archive = archive_read_new();
     struct archive_entry *entry;
@@ -1262,7 +1277,7 @@ static int instance_preflight(const char *snapshot)
         }
         if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
     }
-    ok = status == ARCHIVE_EOF && seen == (1u << 4) - 1u;
+    ok = status == ARCHIVE_EOF && seen == (1u << 5) - 1u;
 done:
     archive_read_free(archive);
     return ok;
@@ -1272,10 +1287,10 @@ static int save_instance(int installed, const char *digest, const char *snapshot
                          unsigned long long generation, const char *graph, size_t graph_length,
                          const char *reason, const char *source_record)
 {
-    static const char *const names[] = { "meta", "files", "deps", "origin" };
+    static const char *const names[] = { "meta", "files", "deps", "origin", "provides" };
     struct archive *archive = NULL;
     struct archive_entry *entry;
-    char buffer[65536], state[640], graph_hash[65], source[65], source_hash[65];
+    char buffer[65536], state[640], graph_hash[65], source[65], source_hash[65], claims[65];
     int item = -1, status, ok = 0;
     unsigned seen = 0;
     size_t i;
@@ -1315,18 +1330,16 @@ static int save_instance(int installed, const char *digest, const char *snapshot
         if (close(fd)) goto done;
         seen |= 1u << i;
     }
-    if (status != ARCHIVE_EOF || seen != (1u << 4) - 1u) goto done;
+    if (status != ARCHIVE_EOF || seen != (1u << 5) - 1u) goto done;
     if (!record_file(item, "graph", graph, graph_length) ||
         !graph_digest(item, graph_hash)) goto done;
-    if (source_record) {
-        if (!record_file(item, "source", source_record, strlen(source_record)) ||
-            !holy_source_instance(item, source, source_hash)) goto done;
-        i = (size_t)snprintf(state, sizeof state,
-            "format holy-instance-3\nsource-id %s\nsource-record %s\ndelivery local\nreason %s\nartifact %s\ngraph %s\ngeneration %llu\n",
-            source, source_hash, reason, digest, graph_hash, generation + 1);
-    } else i = (size_t)snprintf(state, sizeof state,
-        "format holy-instance-2\nsource-id -\ndelivery local\nreason %s\nartifact %s\ngraph %s\ngeneration %llu\n",
-        reason, digest, graph_hash, generation + 1);
+    if (!instance_record_digest(item, "provides", claims)) goto done;
+    strcpy(source, "-"); strcpy(source_hash, "-");
+    if (source_record && (!record_file(item, "source", source_record, strlen(source_record)) ||
+        !holy_source_instance(item, source, source_hash))) goto done;
+    i = (size_t)snprintf(state, sizeof state,
+        "format holy-instance-4\nsource-id %s\nsource-record %s\ndelivery local\nreason %s\nartifact %s\ngraph %s\nprovides %s\ngeneration %llu\n",
+        source, source_hash, reason, digest, graph_hash, claims, generation + 1);
     if (i >= sizeof state || !record_file(item, "state", state, i) || fsync(item)) goto done;
     ok = 1;
 done:
@@ -1703,6 +1716,7 @@ static int finish_remove_record(int dir, int installed, int item, int transactio
         if (unlinkat(item, names[i], 0)) goto done;
     if (unlinkat(item, "graph", 0) && errno != ENOENT) goto done;
     if (unlinkat(item, "source", 0) && errno != ENOENT) goto done;
+    if (unlinkat(item, "provides", 0) && errno != ENOENT) goto done;
     if (fsync(item) || unlinkat(installed, digest, AT_REMOVEDIR) ||
         fsync(installed)) goto done;
     length = (size_t)snprintf(generation_record, sizeof generation_record,
@@ -2240,7 +2254,43 @@ struct installed_candidates {
     int installed;
     char **digests;
     size_t count;
+    const char *root;
 };
+
+struct named_claim { const char *name; int matched; };
+
+static int match_named_claim(void *opaque, const char *kind, const char *name,
+    const char *arch, const char *libc, const char *version, const char *evidence)
+{
+    struct named_claim *claim = opaque;
+    (void)arch; (void)libc; (void)version; (void)evidence;
+    if (!strcmp(kind, "package") && !strcmp(name, claim->name)) claim->matched = 1;
+    return 1;
+}
+
+static int installed_package_claim(struct installed_candidates *catalog, int item,
+                                    const char *digest, const char *name)
+{
+    struct named_claim claim = {name, 0};
+    int fd, ok, matches = installed_name(item, name);
+    if (matches) return matches;
+    fd = openat(item, "provides", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd >= 0) {
+        ok = holy_provides_visit_fd(fd, match_named_claim, &claim);
+        close(fd);
+    } else {
+        char *snapshot;
+        if (errno != ENOENT) return -1;
+        snapshot = holy_cache_snapshot(digest, catalog->root);
+        if (!snapshot) {
+            fprintf(stderr, "holypkg: legacy capability metadata needs cached artifact %s\n", digest);
+            return -1;
+        }
+        ok = holy_provides_visit(snapshot, match_named_claim, &claim);
+        unlink(snapshot); free(snapshot);
+    }
+    return ok ? claim.matched : -1;
+}
 
 static int add_installed_candidates(struct installed_candidates *catalog,
                                     const char *name, const char *path)
@@ -2259,7 +2309,7 @@ static int add_installed_candidates(struct installed_candidates *catalog,
         if (i != catalog->count) { errno = 0; continue; }
         item = child_dir(catalog->installed, entry->d_name, 0);
         if (item < 0) goto done;
-        if (name) matches = installed_name(item, name);
+        if (name) matches = installed_package_claim(catalog, item, entry->d_name, name);
         else {
             int files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
             matches = files < 0 ? -1 : holy_install_manifest_owns(files, path);
@@ -2293,7 +2343,7 @@ static int installed_requirement(void *context, const char *id,
 static int discover_installed(const char *root_path, int dir,
                               const char *const *digests, size_t *count, char ***output)
 {
-    struct installed_candidates catalog = {-1, NULL, 0};
+    struct installed_candidates catalog = {-1, NULL, 0, root_path};
     size_t i, j, k;
     int result = 1;
     catalog.digests = calloc(10000, sizeof *catalog.digests);
@@ -2739,13 +2789,16 @@ done:
 
 static int instance_matches_snapshot(int item, const char *snapshot)
 {
-    static const char *const names[] = {"meta", "files", "deps", "origin"};
+    static const char *const names[] = {"meta", "files", "deps", "origin", "provides"};
     struct archive *archive = archive_read_new();
     struct archive_entry *entry;
     unsigned seen = 0;
     char incoming[8192], installed[8192];
-    int status, ok = 0;
+    int status, ok = 0, has_claims;
+    struct stat claims_stat;
     size_t i;
+    has_claims = !fstatat(item, "provides", &claims_stat, AT_SYMLINK_NOFOLLOW);
+    if (!has_claims && errno != ENOENT) goto done;
     if (!archive || archive_read_support_filter_lz4(archive) != ARCHIVE_OK ||
         archive_read_support_format_tar(archive) != ARCHIVE_OK ||
         archive_read_open_filename(archive, snapshot, 8192) != ARCHIVE_OK) goto done;
@@ -2756,7 +2809,7 @@ static int instance_matches_snapshot(int item, const char *snapshot)
         int fd;
         for (i = 0; i < sizeof names / sizeof *names; ++i)
             if (path && !strncmp(path, "HOLY/", 5) && !strcmp(path + 5, names[i])) break;
-        if (i == sizeof names / sizeof *names) {
+        if (i == sizeof names / sizeof *names || (i == 4 && !has_claims)) {
             if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
             continue;
         }
@@ -2780,7 +2833,7 @@ static int instance_matches_snapshot(int item, const char *snapshot)
         if (got) goto done;
         seen |= 1u << i;
     }
-    ok = status == ARCHIVE_EOF && seen == (1u << 4) - 1u;
+    ok = status == ARCHIVE_EOF && seen == (1u << (has_claims ? 5 : 4)) - 1u;
 done:
     archive_read_free(archive);
     return ok;
@@ -3163,7 +3216,7 @@ done:
 
 static int clear_update_installed(int parent, const struct holy_resolution *resolution)
 {
-    static const char *const files[] = {"meta", "files", "deps", "origin", "graph", "state", "source"};
+    static const char *const files[] = {"meta", "files", "deps", "origin", "graph", "state", "source", "provides"};
     int installed = child_dir(parent, "installed", 1), item = -1, ok = 0;
     DIR *list = NULL, *members = NULL;
     struct dirent *entry;

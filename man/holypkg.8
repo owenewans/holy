@@ -722,7 +722,7 @@ changed-file code remains the aggregate failure indicator. This reports only
 data-manifest coverage, including the selected literal-path provider files.
 .PP
 db repair-plan SHA256 --root DIRECTORY prepares missing-only restoration of an
-installed holy-instance-2 artifact from the target cache. db repair SHA256
+installed artifact with a recorded dependency graph from the target cache. db repair SHA256
 --plan PLAN_SHA256 --root DIRECTORY applies the reviewed policy. The plan binds
 the artifact, stored graph, database generation and root device/inode. Its scope
 is all absent files in that artifact, including files removed after preparation.
@@ -829,9 +829,12 @@ The solve command verifies and scans each explicitly supplied local archive,
 with the first archive as the requested root. Its supported subset accepts
 Linux packages with validated payload ABI facts, empty HOLY/hooks and HOLY/transform, and
 HOLY/deps package requirements with explicit arch/libc scopes or any.
-Each consumer must equal its package name. Only the package's own metadata
-name supplies a package capability; declared aliases in HOLY/provides are parsed
-but do not satisfy requirements here. Version constraints eq/ge/gt/le/lt use
+Each consumer must equal its package name. The package's own metadata name and
+package claims in HOLY/provides supply package capabilities. An alias retains its
+declared version; an unversioned alias cannot satisfy a version constraint.
+Explicit claim scopes must agree with the artifact's arch/libc; any inherits
+that artifact scope. Selection preserves the actual package identity and records
+the requested alias on the dependency edge. Version constraints eq/ge/gt/le/lt use
 pacman ordering only when the consumer and provider declare x-version-family
 pacman. The full foreign epoch:version-release string belongs in version;
 release remains the native artifact revision and is not appended a second time.
@@ -845,8 +848,8 @@ Unsupported consumer version families and metadata dependency forms return 6.
 Providers from another or unknown family cannot satisfy a constrained edge;
 if no matching candidate remains, resolution returns dependency-conflict.
 A supplied --choose answer cannot bypass these checks. Unversioned requirements
-retain their ordinary exact-name matching across families. Automatic newest-version
-selection, cross-family overrides and virtual versioned provides remain pending. There are no source IDs, installed packages or
+retain exact capability-name matching across families. Automatic newest-version
+selection and cross-family overrides remain pending. There are no source IDs, installed packages or
 architecture overrides in this command.
 .PP
 ELF payloads add file-scoped interpreter, DT_NEEDED and strong undefined symbol
@@ -913,8 +916,8 @@ the unique exact-name root first. Two versions of the requested name return
 decision-required. A missing name returns unavailable-artifact. An invalid
 generation returns invalid-catalog without partial results. --json uses the
 same holy-local-solve-1 events as solve. This command reads all archive
-payloads per query; it does not import remote sources, install packages or
-interpret typed HOLY/provides aliases as dependency providers.
+payloads per query and supports the same package aliases and version constraints.
+It does not import remote sources or install packages.
 The --choose form applies the same one-operation, direct-root requirement
 selection after validating the sealed index and matching the selected digest
 to an artifact in that generation. It does not write a saved rule.
