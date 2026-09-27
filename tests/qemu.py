@@ -275,7 +275,8 @@ def main():
               'checks': {marker: 'pass' if marker in seen else 'unknown' for marker in sorted(expected)},
               'not_tested': (['libc-recovery'] if profile != 'dual-libc' or state == 'present' else []) +
                             ([] if disk_path else ['libc-recovery-reboot']) +
-                            ['i686-libc', 'installer', 'hardware', 'network', 'kernel-update']}
+                            (['i686-libc'] if arch != 'i686' or profile != 'dual-libc' else []) +
+                            ['installer', 'hardware', 'network', 'kernel-update']}
     if disk_path:
         report['overlay'] = {'path': str(run / 'root.qcow2'), 'sha256': digest(run / 'root.qcow2'),
                              'base_unchanged': base_unchanged}

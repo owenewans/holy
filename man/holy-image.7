@@ -3,13 +3,14 @@
 holy-image \- image build and libc recovery boot tests
 .SH BUILD
 make bootstrap-image builds a live ISO and runs its QEMU boot test. ARCH defaults
-to x86_64. ARCH=i686 selects a BIOS ISO with ROOT_STORAGE=ram and either
-IMAGE_PROFILE=static-core or IMAGE_PROFILE=dual-libc. This i686 ISO boots as BIOS optical media through El Torito;
-it is not a hybrid USB image. The i686 profile requires an i686 kernel and matching static
+to x86_64. ARCH=i686 supports BIOS optical ISOs with ROOT_STORAGE=ram or ext4
+and an independently bootable BIOS GPT disk with ROOT_STORAGE=gpt-ext4.
+The i686 ISO boots through El Torito; it is not a hybrid USB image.
+The i686 profile requires an i686 kernel and matching static
 BusyBox, dinit, mdevd, holypkg and C compiler inputs. The builder checks
 package and executable architectures before installation. The dual-libc profile
 also requires matching i686 glibc and musl runtime packages and C compilers.
-Installed-disk recovery for i686 remains separate acceptance work.
+The GPT profile has no i686 UEFI loader; its tested boot path is BIOS.
 IMAGE_PROFILE defaults to dual-libc; static-core explicitly selects the earlier
 profile without dynamic libraries. LIBC_BOOT_STATE is present by default.
 For dual-libc, glibc, musl or both remove those runtime payloads and their loader
@@ -88,7 +89,7 @@ prints disk.plan before writing the image and includes its hash in the boot
 plan. The GPT contains a 1 MiB BIOS Boot partition, a 128 MiB FAT32 ESP and
 a 512 MiB ext4 root. It verifies the partition layout, copies the kernel,
 initramfs and Limine configuration to the ESP, reads those files back and
-compares their bytes. Limine BIOS stages use partition 1; the UEFI loader
+compares their bytes. Limine BIOS stages use partition 1; on x86_64 the UEFI loader
 uses EFI/BOOT/BOOTX64.EFI. The kernel mounts /dev/vda3. Host filesystems are
 not mounted and physical disks are not accepted as output.
 .PP

@@ -48,10 +48,6 @@ case "$storage:$profile" in
         ;;
     *) echo 'ROOT_STORAGE must be ram, or ext4/gpt-ext4 with dual-libc' >&2; exit 2 ;;
 esac
-if test "$arch" = i686 && test "$storage" != ram; then
-    echo 'i686 image currently requires a ram root' >&2
-    exit 6
-fi
 if test "$storage" != gpt-ext4; then command -v xorriso >/dev/null || exit 6; fi
 extra_packages=
 case "$profile:$boot_state" in
@@ -461,7 +457,9 @@ assert [(p['start'], p['size'], p['name']) for p in table['partitions']] == [
 PY
     mkfs.fat -C -F 32 -n HOLYBOOT "$work/esp.fat" 131072
     mmd -i "$work/esp.fat" ::/EFI ::/EFI/BOOT
-    mcopy -i "$work/esp.fat" "$root/usr/share/limine/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
+    if test "$arch" = x86_64; then
+        mcopy -i "$work/esp.fat" "$root/usr/share/limine/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
+    fi
     mcopy -i "$work/esp.fat" "$root/usr/share/limine/limine-bios.sys" ::/limine-bios.sys
     mcopy -i "$work/esp.fat" "$root/boot/vmlinuz" ::/vmlinuz
     mcopy -i "$work/esp.fat" "$out/initramfs.img" ::/initramfs.img

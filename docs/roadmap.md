@@ -289,14 +289,22 @@
 - [x] Run current prototype fixtures under GCC, TCC and Clang ASan/UBSan.
 - [x] Boot the i686 static core with kernel 7.2.7, BusyBox, dinit, mdevd and
   static holypkg from a BIOS optical ISO under QEMU/TCG. The guest checks PID 1,
-  man bundle, device permissions and a local package transaction. Installed-disk
-  boot for i686 remains a separate gate.
+  man bundle, device permissions and a local package transaction. The dual-libc
+  disk boot gate is listed below.
 - [x] Boot an i686 BIOS dual-libc RAM ISO under QEMU/TCG with glibc and musl
   payloads absent at startup. The guest checks broken providers, restores both
   packages from cached native artifacts and runs C probes plus bidirectional
   pipes. The same fixture also checks a local package transaction. Separate
   present, glibc-only and musl-only initial-state runs are recorded in the
   build reports.
+- [x] Boot an i686 BIOS ISO with a persistent ext4 root under QEMU/TCG. With
+  both libc payloads absent, the guest restores them from cached artifacts,
+  reboots and verifies the restored libraries, package state and IPC probes.
+  The present/glibc-only/musl-only ext4 cases use the same two-boot contract.
+- [x] Boot an i686 BIOS GPT disk independently under QEMU/TCG. The guest mounts
+  its FAT boot partition, restores both libc packages, writes a boot-partition
+  witness and verifies that witness plus package state after reboot. i686 UEFI
+  and the interactive installer remain separate acceptance gates.
 - [x] Run `make check-root` against disposable target-root install, check,
   remove and recovery fixtures; this gate does not boot a system.
 - [x] Add a BIOS/UEFI `make check-qemu ARCH=... ISO=... BOOT_PLAN=...` runner
