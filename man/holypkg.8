@@ -2,6 +2,8 @@
 .SH NAME
 holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
+.B holypkg import INPUT --source NAME --format pacman --output NEW_DIRECTORY
+.br
 .B holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--ca-file FILE]
 .br
 .B holypkg source plan --config FILE --root DIRECTORY
@@ -138,6 +140,57 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 .SH DESCRIPTION
+.SS Local pacman binary import
+import snapshots a local pacman tar archive, retains its exact bytes as
+NEW_DIRECTORY/original and creates verified LZ4-frame .holy outputs. The output
+directory must not exist. --format selects the adapter explicitly; --source
+records provenance only and grants no registered source identity or trust.
+The command does not install files, execute package code or verify a publisher
+signature. Each output records verification=unverified.
+.PP
+The importer reads .PKGINFO identities, full epoch/version/release strings,
+package relations and original field values. It preserves .PKGINFO, .BUILDINFO,
+\&.MTREE, .INSTALL and .CHANGELOG beneath HOLY/foreign/pacman. Numeric and symbolic
+ownership, modes, symlinks and supported hardlinks survive conversion.
+The native installer still requires supported ownership and object semantics.
+.PP
+A single observed ELF ABI receives common data in the same output. Mixed ELF
+architectures or libc classes receive separate outputs plus a noarch/nolibc
+common-data output. Source architecture remains x-source-arch; observed payload
+facts determine output tags. Unknown ELF, unclassified executable formats,
+static library archives and pacman backup paths require a decision, status 3.
+Source packages require a recipe importer and are not treated as binary packages.
+.PP
+Package dependencies retain constraints and original expressions. Unsupported
+SONAME relations, conflicts, replacements and unknown metadata fields become
+foreign requirements; the current solver refuses these with status 6.
+Optional and build requirements remain in attributed origin records.
+An .INSTALL script remains review-required. The current installer refuses its
+nonempty hooks record. Split outputs also require scoped dependency and
+transform support before installation. Conversion success alone does not
+establish that an application can be installed or launched.
+.PP
+The conversion receipt binds the original SHA-256 to every output filename,
+SHA-256 and arch/libc pair. The importer publishes it only after completing all
+outputs. A failed conversion retains the original and any completed outputs;
+without a complete receipt the output set is incomplete. Existing output files
+are not overwritten. Origin metadata uses converter identity holy-pacman-1;
+executable build attestation and publisher verification remain unimplemented.
+.PP
+Libarchive supplies tar and built-in gzip, bzip2, XZ, Zstandard and LZ4 codecs
+when available in the selected build. A missing codec returns status 6 and does
+not invoke an external decoder. The current static dependency profile lacks
+bzip2, XZ and Zstandard. Import uses anonymous spool files instead of extracting
+foreign paths on the host. It rejects duplicate paths, unsafe links, non-directory
+ancestors, unsupported special nodes, ACLs and xattrs. Limits are 1 GiB compressed
+input, 1 GiB per entry, 4 GiB payload spool, 100000 entries and 1 MiB .PKGINFO.
+The native writer verifies outputs through /proc/self/fd before publication.
+.PP
+make check-pacman runs parser and archive fixtures, including a retained
+\&.PKGINFO from Arch gzip 1.15-1, malformed archives, hooks that must not execute,
+mixed ELF outputs and installation of a converted data package in a temporary root.
+The reference metadata format is
+https://alpm.archlinux.page/specifications/PKGINFO.5.html.
 .SS Pinned HTTPS catalog mirrors
 repo mirror downloads one explicit catalog generation into a new local
 directory. HTTPS_BASE must end with slash and contain no credentials, query

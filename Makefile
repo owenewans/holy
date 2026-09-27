@@ -87,7 +87,7 @@ static:
 	$(MAKE) clean
 	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lssl -lcrypto -llz4 -lz -leu -Wl,--end-group -lpthread -ldl" all
 
-HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o
+HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o backends/pacman.o
 
 holypkg: $(HOLY_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(SOLV_LIBS)
@@ -95,14 +95,17 @@ holypkg: $(HOLY_OBJECTS)
 src/solve.o: src/solve.c $(wildcard src/*.h) .build-config
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOLV_CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -c -o $@ $<
 
-src/%.o: src/%.c $(wildcard src/*.h) .build-config
+backends/%.o: backends/%.c $(wildcard backends/*.h) .build-config
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -c -o $@ $<
+
+src/%.o: src/%.c $(wildcard src/*.h) $(wildcard backends/*.h) .build-config
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -c -o $@ $<
 
 .PHONY: check-init
 check-init: holy-init
 	@./holy-init >/dev/null 2>&1; test $$? -eq 2
 
-check: holypkg tests/resolution check-init check-solver check-install-payload check-https
+check: check-pacman holypkg tests/resolution check-init check-solver check-install-payload check-https
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg
@@ -121,6 +124,12 @@ check: holypkg tests/resolution check-init check-solver check-install-payload ch
 	sh tests/resolve.sh ./holypkg ./tests/resolution
 	sh tests/elf-resolve.sh ./holypkg ./tests/resolution
 	sh tests/static.sh ./holypkg
+
+.PHONY: check-pacman
+check-pacman: holypkg
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o tests/pacman-helper tests/pacman.c backends/pacman.c
+	./tests/pacman-helper
+	python3 tests/import.py ./holypkg
 
 check-fixtures: check
 
@@ -179,4 +188,4 @@ tests/resolution: tests/resolution.c $(filter-out src/main.o,$(HOLY_OBJECTS)) ho
 clean:
 	rm -f holy-init
 	rm -f .build-config .build-config.tmp
-	rm -f holypkg tests/resolution tests/solver tests/install-helper $(HOLY_OBJECTS)
+	rm -f holypkg tests/resolution tests/solver tests/install-helper tests/pacman-helper $(HOLY_OBJECTS)

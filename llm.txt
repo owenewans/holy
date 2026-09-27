@@ -311,7 +311,7 @@ SEE ALSO
      holy-image(7), holypkg(8)
 
 Holy				 September 2026			    HOLY-INIT(8)
-holy-package.5 source=holy version=development sha256=0e1f759e3e20306fa913ce6bbdab8642fded93b2bd801136da513323fa829508
+holy-package.5 source=holy version=development sha256=4285f8855b9d0c4457ceca58864eeddccf85c9f8776a81d11118bfa93fa0b839
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -368,16 +368,29 @@ DESCRIPTION
      utes.
 
      The narrow database apply command installs approved data, native static ELF
-     files and relative symlinks into pre-existing  safe  directories.	Symlinks
-     require  mode  0777  and  the  caller's  numeric ownership. The transaction
-     records their targets, checks them without	 following  links,  and	 removes
-     only  intact owned entries. Absolute symlinks and hardlink installation re-
-     main unsupported.	The pack command writes and verifies this archive format
-     from a prepared tree of regular files, directories and symlinks.  The veri-
-     fier does not verify dependencies, signatures, symbolic owner names or  the
-     installed	filesystem. A full format implementation must verify file owner-
-     ship, links, xattrs, hooks, origin and transaction semantics before accept-
-     ing an artifact for installation.
+     files and relative symlinks into existing or explicitly declared  safe  di-
+     rectories.	 Symlinks  require mode 0777 and the caller's numeric ownership.
+     The transaction records their targets, checks them without following links,
+     and removes only intact owned entries. Absolute symlinks and  hardlink  in-
+     stallation	 remain	 unsupported.  The pack command writes and verifies this
+     archive format from a prepared tree of regular files, directories and  sym-
+     links.   The  verifier  does  not verify dependencies, signatures, symbolic
+     owner names or the installed filesystem. A full format implementation  must
+     verify  file ownership, links, xattrs, hooks, origin and transaction seman-
+     tics before accepting an artifact for installation.
+
+FOREIGN IMPORT RECORDS
+     The pacman importer preserves original package metadata  as  regular  files
+     beneath  HOLY/foreign/pacman.  HOLY/origin binds these records to the exact
+     original archive hash and retains original field values and  line	numbers.
+     The  source-name field is provenance, not authority to assign a trusted in-
+     stalled source-id.
+
+     A requirement of kind foreign preserves an unsupported  source  expression.
+     The  current  solver reports unsupported semantics instead of dropping that
+     requirement.  Foreign hooks and split transforms require their own	 instal-
+     lation  support; archive verification does not authorize execution or claim
+     that support exists.
 
 INSTALLED GRAPH
      New local installations use holy-instance-2 state.	 The  state  includes  a
@@ -408,10 +421,10 @@ INSTALLED GRAPH
      provider  paths.	It  records  explicit/dependency reasons. General loader
      search, automatic ELF rewriting remains unimplemented. Slot conflicts  com-
      pare  source-id,  name,  os, arch and libc; distinct artifacts in different
-     slots may coexist with compatible file ownership. Replacing a slot and reg-
-     istering the same artifact in multiple slots remain  unsupported.	Missing-
-     only cache repair preserves the installed graph and refuses changed or par-
-     tial files.
+     slots may coexist with compatible file ownership.	Reviewed  cached  update
+     plans  can	 replace one source-bound slot; registering the same artifact in
+     multiple slots remains unsupported. Missing-only cache repair preserves the
+     installed graph and refuses changed or partial files.
 
 SEE ALSO
      holypkg(8), holy.conf(5)
@@ -492,13 +505,14 @@ SOURCE IDENTITIES
      during package selection remain unimplemented.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=1269aec5f9d8b9686170520c59d7fd2bb043c266ee9aeec82be1866d93746733
+holypkg.8 source=holy version=development sha256=484f05a4591c79e072aa4f801cf65ace85be9fd8326e58107435e859168182d2
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
      holypkg - Holy local package tooling prototype
 
 SYNOPSIS
+     holypkg import INPUT --source NAME --format pacman --output NEW_DIRECTORY
      holypkg  repo  mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIREC-
      TORY [--ca-file FILE]
      holypkg source plan --config FILE --root DIRECTORY
@@ -574,6 +588,62 @@ SYNOPSIS
      holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 
 DESCRIPTION
+   Local pacman binary import
+     import snapshots a local pacman tar archive, retains  its	exact  bytes  as
+     NEW_DIRECTORY/original  and  creates  verified LZ4-frame .holy outputs. The
+     output directory must not exist. --format selects the  adapter  explicitly;
+     --source  records	provenance only and grants no registered source identity
+     or trust.	The command does not install files, execute package code or ver-
+     ify a publisher signature. Each output records verification=unverified.
+
+     The importer reads .PKGINFO identities, full epoch/version/release strings,
+     package relations and original field values. It preserves .PKGINFO, .BUILD-
+     INFO, .MTREE, .INSTALL and .CHANGELOG beneath HOLY/foreign/pacman.	 Numeric
+     and  symbolic  ownership,	modes,	symlinks and supported hardlinks survive
+     conversion.  The native installer still requires  supported  ownership  and
+     object semantics.
+
+     A	single	observed  ELF ABI receives common data in the same output. Mixed
+     ELF  architectures	 or  libc  classes  receive  separate  outputs	plus   a
+     noarch/nolibc  common-data	 output.  Source  architecture remains x-source-
+     arch; observed payload facts determine output tags. Unknown ELF,  unclassi-
+     fied  executable  formats,	 static library archives and pacman backup paths
+     require a decision, status 3.  Source packages require  a	recipe	importer
+     and are not treated as binary packages.
+
+     Package  dependencies  retain  constraints and original expressions. Unsup-
+     ported SONAME  relations,	conflicts,  replacements  and  unknown	metadata
+     fields  become  foreign requirements; the current solver refuses these with
+     status 6.	Optional and build  requirements  remain  in  attributed  origin
+     records.  An .INSTALL script remains review-required. The current installer
+     refuses its nonempty hooks record. Split outputs also require scoped depen-
+     dency  and	 transform support before installation. Conversion success alone
+     does not establish that an application can be installed or launched.
+
+     The conversion receipt binds the original SHA-256 to every output filename,
+     SHA-256 and arch/libc pair. The importer publishes it only after completing
+     all outputs. A failed conversion retains the  original  and  any  completed
+     outputs;  without a complete receipt the output set is incomplete. Existing
+     output files are not overwritten. Origin metadata uses  converter	identity
+     holy-pacman-1;  executable build attestation and publisher verification re-
+     main unimplemented.
+
+     Libarchive supplies tar and built-in gzip, bzip2,	XZ,  Zstandard	and  LZ4
+     codecs when available in the selected build. A missing codec returns status
+     6	and  does  not invoke an external decoder. The current static dependency
+     profile lacks bzip2, XZ and Zstandard. Import uses	 anonymous  spool  files
+     instead  of  extracting  foreign  paths  on  the host. It rejects duplicate
+     paths, unsafe links, non-directory ancestors,  unsupported	 special  nodes,
+     ACLs  and xattrs. Limits are 1 GiB compressed input, 1 GiB per entry, 4 GiB
+     payload spool, 100000 entries and 1 MiB .PKGINFO.	The native writer  veri-
+     fies outputs through /proc/self/fd before publication.
+
+     make  check-pacman	 runs  parser and archive fixtures, including a retained
+     .PKGINFO from Arch gzip 1.15-1, malformed archives, hooks that must not ex-
+     ecute, mixed ELF outputs and installation of a converted data package in  a
+     temporary	root.	The  reference	metadata  format  is  https://alpm.arch-
+     linux.page/specifications/PKGINFO.5.html.
+
    Pinned HTTPS catalog mirrors
      repo mirror downloads one explicit catalog generation into a new local  di-
      rectory.  HTTPS_BASE  must end with slash and contain no credentials, query

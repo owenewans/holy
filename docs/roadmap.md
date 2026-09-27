@@ -3,6 +3,13 @@
 
 ## Package manager
 
+- [x] Import local pacman binary archives through libarchive into verified native
+  outputs, preserve original artifacts and metadata, classify/split known ELF ABIs,
+  and bind outputs with a conversion receipt. Fixtures cover an actual gzip
+  PKGINFO, links, malformed archives, inactive hooks and data installation.
+  Repository sync, publisher verification, config files, recipe import and full
+  foreign relation/hook/transform installation remain open.
+
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.
 - [x] Plan and atomically apply a source identity registry under the database
   writer lock. Preserve IDs across alias changes and retain inactive origin

@@ -27,7 +27,7 @@ static int one_of(const char *value, const char *const *values, size_t count)
 static int valid_requirement(char **v, size_t n)
 {
     static const char *const kinds[] = {
-        "package", "file", "command", "soname", "symbol-version", "build"
+        "package", "file", "command", "soname", "symbol-version", "build", "foreign"
     };
     static const char *const arches[] = {"any", "x86", "x86_64", "noarch"};
     static const char *const libcs[] = {"any", "glibc", "musl", "nolibc"};

@@ -4,6 +4,8 @@
 #include "scan.h"
 #include "deps.h"
 #include "provides.h"
+#include "package.h"
+#include "stage.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -435,5 +437,83 @@ done:
     if (fd >= 0) close(fd);
     if (temporary) { unlink(temporary); free(temporary); }
     if (root >= 0) close(root);
+    return ok;
+}
+
+
+int holy_pack_stream(int spool, const struct holy_stream_entry *entries, size_t count,
+                      int directory, const char *name)
+{
+    struct archive *writer = NULL;
+    struct archive_entry *entry = NULL;
+    struct stat st;
+    char temporary[43] = {0}, inspect[64], buffer[65536];
+    int fd = -1, copy = -1, ok = 0;
+    size_t i;
+    const char **paths = NULL;
+    if (!*name || strchr(name, '/') || !strcmp(name, ".") || !strcmp(name, "..") ||
+        fstat(spool, &st) || !S_ISREG(st.st_mode) || st.st_size < 0) return 0;
+    if (count > SIZE_MAX / sizeof *paths || !(paths = malloc(count * sizeof *paths))) return 0;
+    for (i = 0; i < count; ++i) {
+        const struct holy_stream_entry *e = &entries[i];
+        if (!holy_safe_archive_path(e->path) || e->size < 0 || e->offset < 0 ||
+            e->uid < 0 || e->gid < 0 || (e->mode & ~07777u) ||
+            ((e->directory || e->link || e->hardlink) && e->size) ||
+            (!e->directory && !e->link && !e->hardlink &&
+             (e->offset > st.st_size || e->size > st.st_size - e->offset))) goto done;
+        paths[i] = e->path;
+    }
+    qsort(paths, count, sizeof *paths, compare_names);
+    for (i = 1; i < count; ++i) if (!strcmp(paths[i-1], paths[i])) goto done;
+    fd = holy_temporary_at(directory, temporary);
+    if (fd < 0 || (copy = dup(fd)) < 0 || !(writer = archive_write_new())) goto done;
+    if (archive_write_add_filter_lz4(writer) != ARCHIVE_OK ||
+        archive_write_set_format_pax_restricted(writer) != ARCHIVE_OK ||
+        archive_write_set_options(writer, "hdrcharset=UTF-8") != ARCHIVE_OK ||
+        archive_write_open_fd(writer, copy) != ARCHIVE_OK) goto done;
+    for (i = 0; i < count; ++i) {
+        const struct holy_stream_entry *e = &entries[i];
+        long long offset = 0;
+        entry = archive_entry_new();
+        if (!entry) goto done;
+        archive_entry_set_pathname(entry, e->path);
+        archive_entry_set_filetype(entry, e->directory ? AE_IFDIR : e->link ? AE_IFLNK : AE_IFREG);
+        archive_entry_set_perm(entry, e->mode);
+        archive_entry_set_uid(entry, e->uid);
+        archive_entry_set_gid(entry, e->gid);
+        if (e->owner) archive_entry_set_uname(entry, e->owner);
+        if (e->group) archive_entry_set_gname(entry, e->group);
+        if (e->link) archive_entry_set_symlink(entry, e->link);
+        if (e->hardlink) archive_entry_set_hardlink(entry, e->hardlink);
+        archive_entry_set_size(entry, e->size);
+        archive_entry_set_mtime(entry, 0, 0);
+        if (archive_write_header(writer, entry) != ARCHIVE_OK) goto done;
+        while (offset < e->size) {
+            size_t wanted = e->size - offset < (long long)sizeof buffer ?
+                            (size_t)(e->size - offset) : sizeof buffer;
+            ssize_t got = pread(spool, buffer, wanted, (off_t)(e->offset + offset));
+            if (got < 0 && errno == EINTR) continue;
+            if (got <= 0 || archive_write_data(writer, buffer, (size_t)got) != got) goto done;
+            offset += got;
+        }
+        archive_entry_free(entry); entry = NULL;
+    }
+    if (archive_write_close(writer) != ARCHIVE_OK) goto done;
+    archive_write_free(writer); writer = NULL;
+    if (fcntl(copy, F_GETFD) >= 0) close(copy);
+    copy = -1;
+    if (fsync(fd)) goto done;
+    snprintf(inspect, sizeof inspect, "/proc/self/fd/%d", fd);
+    if (!holy_verify_with_output(inspect, 0) || !holy_scan_local_with_output(inspect, 0) ||
+        !holy_deps_local_with_output(inspect, 0) || !holy_provides_local(inspect, 0) ||
+        linkat(directory, temporary, directory, name, 0) || fsync(directory)) goto done;
+    ok = 1;
+done:
+    free(paths);
+    if (entry) archive_entry_free(entry);
+    if (writer) archive_write_free(writer);
+    if (copy >= 0 && fcntl(copy, F_GETFD) >= 0) close(copy);
+    if (fd >= 0) close(fd);
+    if (temporary[0]) unlinkat(directory, temporary, 0);
     return ok;
 }

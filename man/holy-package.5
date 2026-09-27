@@ -53,7 +53,7 @@ that carry archive xattrs or ACLs, even if HOLY/files says XATTRS=-. The
 planned full format includes those attributes.
 .PP
 The narrow database apply command installs approved data, native static ELF
-files and relative symlinks into pre-existing safe directories. Symlinks
+files and relative symlinks into existing or explicitly declared safe directories. Symlinks
 require mode 0777 and the caller's numeric ownership. The transaction records
 their targets, checks them without following links, and removes only intact
 owned entries. Absolute symlinks and hardlink installation remain unsupported.
@@ -63,6 +63,16 @@ The verifier does not verify dependencies,
 signatures, symbolic owner names or the installed filesystem. A full format
 implementation must verify file ownership, links, xattrs, hooks, origin and
 transaction semantics before accepting an artifact for installation.
+.SH FOREIGN IMPORT RECORDS
+The pacman importer preserves original package metadata as regular files beneath
+HOLY/foreign/pacman. HOLY/origin binds these records to the exact original archive
+hash and retains original field values and line numbers. The source-name field
+is provenance, not authority to assign a trusted installed source-id.
+.PP
+A requirement of kind foreign preserves an unsupported source expression. The
+current solver reports unsupported semantics instead of dropping that requirement.
+Foreign hooks and split transforms require their own installation support;
+archive verification does not authorize execution or claim that support exists.
 .SH INSTALLED GRAPH
 New local installations use holy-instance-2 state. The state includes a graph
 SHA-256; the graph file uses holy-resolution-1 with scope artifact-candidates,
@@ -89,8 +99,8 @@ dynamic packages with literal absolute interpreter and DT_NEEDED provider paths.
 It records explicit/dependency reasons. General loader search, automatic ELF
 rewriting remains unimplemented. Slot conflicts compare source-id, name, os,
 arch and libc; distinct artifacts in different slots may coexist with compatible
-file ownership. Replacing a slot and registering the same artifact in multiple
-slots remain unsupported. Missing-only cache repair
+file ownership. Reviewed cached update plans can replace one source-bound slot;
+registering the same artifact in multiple slots remains unsupported. Missing-only cache repair
 preserves the installed graph and refuses changed or partial files.
 .SH SEE ALSO
 .BR holypkg (8),

@@ -17,6 +17,7 @@
 #include "docs.h"
 #include "graph.h"
 #include "source.h"
+#include "import.h"
 
 #include <stdio.h>
 #include <locale.h>
@@ -31,6 +32,14 @@ int main(int argc, char **argv)
     int ok;
 
     setlocale(LC_CTYPE, "");
+
+    if (argc > 1 && !strcmp(argv[1], "import")) {
+        if (argc == 9 && !strcmp(argv[3], "--source") && !strcmp(argv[5], "--format") &&
+            !strcmp(argv[6], "pacman") && !strcmp(argv[7], "--output"))
+            return holy_import_pacman(argv[2], argv[4], argv[8]);
+        fputs("usage: holypkg import INPUT --source NAME --format pacman --output DIRECTORY\n", stderr);
+        return 2;
+    }
 
     if (argc > 1 && !strcmp(argv[1], "source")) {
         if (argc == 7 && !strcmp(argv[2], "plan") && !strcmp(argv[3], "--config") && !strcmp(argv[5], "--root"))
