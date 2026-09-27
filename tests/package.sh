@@ -212,6 +212,17 @@ printf 'file usr/bin/hello %s root root %s %s %s %s none - -\n' \
     "$(sha256sum "$path" | cut -d ' ' -f 1)" >> "$tmp/script-payload/HOLY/files"
 tar -cf "$tmp/script.tar" -C "$tmp/script-payload" HOLY DATA
 lz4 -q "$tmp/script.tar" "$tmp/script.holy"
+cp -a "$tmp/script-payload/DATA" "$tmp/script-root"
+if "$bin" check "local:$tmp/script.holy" --root "$tmp/script-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q '"code":"missing-interpreter".*"path":"/bin/sh".*"evidence":"shebang"' "$tmp/out"
+mkdir -p "$tmp/script-root/bin"
+cp -L /bin/sh "$tmp/script-root/bin/sh"
+"$bin" check "local:$tmp/script.holy" --root "$tmp/script-root" --json > "$tmp/out"
+grep -q '"status":"pass","coverage":"local-payload"' "$tmp/out"
+printf 'not an executable format\n' > "$tmp/script-root/bin/sh"
+chmod 755 "$tmp/script-root/bin/sh"
+if "$bin" check "local:$tmp/script.holy" --root "$tmp/script-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q '"code":"unknown-interpreter".*"evidence":"shebang"' "$tmp/out"
 rc=0
 "$bin" preview "local:$tmp/script.holy" --root "$tmp/decision-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 3
@@ -227,6 +238,13 @@ printf 'file usr/bin/hello %s root root %s %s %s %s none - -\n' \
 mv "$tmp/script-files" "$tmp/script-payload/HOLY/files"
 tar -cf "$tmp/script-env.tar" -C "$tmp/script-payload" HOLY DATA
 lz4 -q "$tmp/script-env.tar" "$tmp/script-env.holy"
+cp -p "$tmp/script-payload/DATA/usr/bin/hello" "$tmp/script-root/usr/bin/hello"
+if "$bin" check "local:$tmp/script-env.holy" --root "$tmp/script-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q '"code":"missing-interpreter".*"path":"/usr/bin/env".*"evidence":"shebang-env"' "$tmp/out"
+mkdir -p "$tmp/script-root/usr/bin"
+cp -L /usr/bin/env "$tmp/script-root/usr/bin/env"
+if "$bin" check "local:$tmp/script-env.holy" --root "$tmp/script-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q '"code":"unknown-interpreter".*"evidence":"shebang-env"' "$tmp/out"
 rc=0
 "$bin" preview "local:$tmp/script-env.holy" --root "$tmp/decision-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 3

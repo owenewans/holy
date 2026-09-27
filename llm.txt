@@ -811,7 +811,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=8c8d24f89a0788d71e4cb8dcc498dfe695aac37f83a6ca3500a91965bd9bbeae
+holypkg.8 source=holy version=development sha256=e465020815c3027cc9e3e6c1f79fc21c0d431ba6588e70565b2614b013036fb5
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1969,9 +1969,16 @@ DESCRIPTION
      openat2  syscall  reports	unavailable-path-resolution  with  requires=ope-
      nat2:RESOLVE_IN_ROOT, unknown status and exit code 6.  Presence  and  class
      alone  do	not  prove  dynamic  linking,  compatible libc or nested library
-     availability.  If all findings are unknown, the summary status  is	 unknown
-     rather  than fail; the check still returns nonzero because it cannot report
-     pass.
+     availability.  For a matching executable script, check reads the first she-
+     bang line and looks up its absolute interpreter inside the target	root.  A
+     missing target reports missing-interpreter. An existing executable ELF sat-
+     isfies  this  path check. A malformed, relative or overlong shebang reports
+     unknown-interpreter.  For /usr/bin/env, check  reports  unknown-interpreter
+     after  finding  env  because  it  does  not  resolve  the command using the
+     script's runtime PATH. Script interpreters, their nested  loaders	and  li-
+     braries are not recursively checked.  If all findings are unknown, the sum-
+     mary  status  is  unknown rather than fail; the check still returns nonzero
+     because it cannot report pass.
 
      With --json, check prints one JSON object per finding and a final pass/fail
      summary on stdout. The schema is holy-check-1; changed-payload and missing-

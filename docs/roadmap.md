@@ -123,6 +123,9 @@
 - [x] Check one or all installed data manifests against the target root without
   downloads or repair; report each changed artifact in the all-packages pass.
   Emit machine-readable pass/fail summaries and per-path findings for this restricted check.
+- [x] Check direct executable shebang interpreters for local `.holy` payloads
+  inside the target root. Report unresolved `env`, malformed shebangs and
+  interpreter chains as unknown; nested runtime dependencies remain open.
 - [x] Reject existing directory mode/owner drift before data-only install;
   report installed directory drift in check without removing shared directories.
 - [x] Compare installed slots by source-id, name, os, arch and libc. Permit distinct

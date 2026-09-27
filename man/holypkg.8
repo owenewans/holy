@@ -1156,6 +1156,13 @@ unknown-interpreter. A missing openat2 syscall reports unavailable-path-resoluti
 with requires=openat2:RESOLVE_IN_ROOT, unknown status and exit code 6.
 Presence and class alone do not prove dynamic linking, compatible libc or
 nested library availability.
+For a matching executable script, check reads the first shebang line and
+looks up its absolute interpreter inside the target root. A missing target
+reports missing-interpreter. An existing executable ELF satisfies this path
+check. A malformed, relative or overlong shebang reports unknown-interpreter.
+For /usr/bin/env, check reports unknown-interpreter after finding env because
+it does not resolve the command using the script's runtime PATH. Script
+interpreters, their nested loaders and libraries are not recursively checked.
 If all findings are unknown, the summary status is unknown rather than fail;
 the check still returns nonzero because it cannot report pass.
 .PP
