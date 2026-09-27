@@ -135,6 +135,10 @@ check-qemu-gate:
 	sh tests/qemu-gate.sh
 
 .PHONY: check-recovery-matrix
+.PHONY: check-image-docs
+check-image-docs:
+	sh tests/image-docs.sh "$(IMAGE_DIRECTORY)"
+
 check-recovery-matrix:
 	@test -n "$(REPORT)" && test -n "$(REPORTS)" || { echo 'REPORT and eight REPORTS paths are required' >&2; exit 6; }
 	python3 tests/recovery-matrix.py --output "$(REPORT)" $(REPORTS)

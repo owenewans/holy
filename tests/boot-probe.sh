@@ -55,6 +55,17 @@ if test "$profile" = static-core; then
     done
 fi
 echo 'HOLY-BOOT-1 static-core verified'
+stage=documentation
+docs=$($bb sha256sum /usr/share/holy/llm.txt)
+test "${docs%% *}" = "$($bb cat /etc/holy/docs.sha256)"
+$pkg docs --root / --output /run/installed-man.txt
+shipped=$($bb sed '$s/generation [0-9][0-9]*/generation current/' /usr/share/holy/llm.txt | $bb sha256sum)
+current=$($bb sed '$s/generation [0-9][0-9]*/generation current/' /run/installed-man.txt | $bb sha256sum)
+test "$shipped" = "$current"
+$bb grep -q '^page .*package "dinit" ' /run/installed-man.txt
+$bb grep -q '^page .*package "holypkg" ' /run/installed-man.txt
+$bb grep -q '^summary .*missing-man ' /run/installed-man.txt
+echo 'HOLY-BOOT-1 docs installed-man-bundle'
 stage=devices
 /usr/bin/dinitctl --socket-path /run/dinitctl status mdevd > /run/mdevd.status
 $bb grep -q 'State: STARTED' /run/mdevd.status

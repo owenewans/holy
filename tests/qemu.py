@@ -161,7 +161,7 @@ def main():
                  ('readonly=on,' if field == 'UEFI_CODE' else '') + 'file=' + str(dest)]
     expected = {f'HOLY-BOOT-1 plan {plan}', f'HOLY-BOOT-1 arch {arch}', 'HOLY-BOOT-1 pid1 dinit',
                 'HOLY-BOOT-1 shell busybox', 'HOLY-BOOT-1 pkg holypkg',
-                'HOLY-BOOT-1 static-core verified',
+                 'HOLY-BOOT-1 static-core verified', 'HOLY-BOOT-1 docs installed-man-bundle',
                 'HOLY-BOOT-1 device mdevd-coldplug',
                 'HOLY-BOOT-1 transaction install-check-remove', 'HOLY-BOOT-1 result pass'}
     if profile == 'dual-libc':

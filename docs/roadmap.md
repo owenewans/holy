@@ -93,7 +93,10 @@
   verify source hashes, decode supported compressed pages, preserve aliases
   and same-name providers, report missing/omitted pages, and refuse changed
   inputs or pending transactions. Static gzip decoding passes a libc-free
-  chroot fixture. Image-builder integration and rendered upstream text remain open.
+  chroot fixture. The image builder generates its own bundle from installed
+  sources and binds its hash to the image plan. BIOS/UEFI guests verify and
+  regenerate it before libc recovery and after reboot. Altered bundle/source
+  disk fixtures fail the documentation boot stage. Text remains roff source.
 
 - [x] Build pinned x86_64 musl-static BusyBox as a native package and test its
   installed shell in a chroot without dynamic libc directories. Build logs,

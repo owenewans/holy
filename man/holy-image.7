@@ -209,9 +209,29 @@ is not the interactive installer. Kernel updates still require integration
 with ESP contents and the generated initramfs.
 Those gates remain separate from this boot result. Recovery tests missing
 payloads with retained package records, not forced removal of referenced packages.
-The repository documentation bundle currently contains Holy pages; the
-installed dinit pages accompany its package but are not yet merged into that
-bundle. QEMU virtual devices do not establish physical GPU support.
+The repository documentation bundle contains Holy pages. The image builder
+uses holypkg docs after its package transaction to generate
+/usr/share/holy/llm.txt from the installed man sources, including dinit.
+This generated file is separate from package-owned source pages; its SHA-256
+is recorded in the frozen image plan and /etc/holy/docs.sha256. The output
+directory retains llm.txt and docs.record with the coverage summary. Packages
+without man pages and unsupported page encodings appear in that bundle.
+.PP
+On each boot, the guest verifies the shipped bundle's digest and regenerates
+it with static holypkg before libc recovery. It compares the complete contents,
+normalizing only the final summary's database generation because package
+transactions between boots advance that counter. A documentation failure
+fails the boot contract. The bundle contains attributed roff sources rather
+than rendered upstream text. QEMU virtual devices do not establish physical
+GPU support.
+.PP
+make check-image-docs IMAGE_DIRECTORY=DIRECTORY tests an ext4/dual-libc/both
+build's documentation failures. It copies root.ext4 into two disposable disks,
+changes the generated bundle in one and the installed holypkg man source in
+the other, then boots each through the original ISO under BIOS/TCG. Both
+guests must stop the boot contract at the documentation stage. The original
+root image's hash must remain unchanged. The fixture requires debugfs and
+the QEMU tools; it never edits the original image or mounts a host disk.
 .SH SOURCES
 Limine configuration and ISO layout:
 https://github.com/limine-bootloader/limine/blob/v12.x/CONFIG.md

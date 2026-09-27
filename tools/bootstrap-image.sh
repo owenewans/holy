@@ -145,7 +145,6 @@ mkdir -p "$tree/DATA/usr/bin" "$tree/DATA/usr/share/man/man5" \
 cp "$static" "$out/inputs/holypkg"
 cp "$out/inputs/holypkg" "$tree/DATA/usr/bin/holypkg"
 for section in 5 7 8; do cp "$project/man/"*."$section" "$tree/DATA/usr/share/man/man$section/"; done
-cp "$project/llm.txt" "$tree/DATA/usr/share/holy/llm.txt"
 sha256sum "$out/inputs/holypkg" >> "$tree/HOLY/origin"
 pack holypkg
 metadata linux "$version" x86_64
@@ -245,6 +244,13 @@ printf 'install-plan %s\n' "$plan" >> "$record"
 "$bin" db apply-set "$plan" "$@" --root "$root"
 test "$(cat "$root/var/lib/holypkg/generation")" -eq 1
 "$bin" db check --all --root "$root" > "$out/root-check.record"
+"$bin" docs --root "$root" --output "$root/usr/share/holy/llm.txt"
+chmod 0644 "$root/usr/share/holy/llm.txt"
+cp "$root/usr/share/holy/llm.txt" "$out/llm.txt"
+docs_hash=$(sha256sum "$out/llm.txt")
+printf '%s\n' "${docs_hash%% *}" > "$root/etc/holy/docs.sha256"
+printf 'documentation-sha256 %s\n' "${docs_hash%% *}" >> "$record"
+tail -n 1 "$out/llm.txt" > "$out/docs.record"
 for abi in glibc musl; do
     case "$boot_state:$abi" in
         both:*|glibc:glibc|musl:musl)

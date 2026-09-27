@@ -1,4 +1,78 @@
-holy-image.7 source=holy version=development sha256=e0e5fd1e0e96d964dc98d9d7f8bc392c4930ff5e443c641388fcd88e3abf58b5
+holy.conf.5 source=holy version=development sha256=f4d22f73b5fe5b390f051cb5d942debd32545c255de5f6b2aa868e0e2582abda
+HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
+
+NAME
+     holy.conf - Holy source configuration format
+
+STATUS
+     This  page	 describes  the syntax checker and source identity registration.
+     Configured source fetching, general multi-source resolution and general in-
+     stallation are not implemented; the restricted local data/static-ELF trans-
+     action uses separate commands.
+
+SYNOPSIS
+     holypkg config check FILE
+
+DESCRIPTION
+     Input must be UTF-8. Each record contains a  key  and  whitespace-separated
+     arguments. Double quotes retain spaces. A hash sign at the start of a token
+     begins  a comment outside quotes. Escapes are backslash-quote, double-back-
+     slash, backslash-n, backslash-t, backslash-r and  backslash-x  followed  by
+     two hexadecimal digits. NUL is rejected.  The parser does not run shell ex-
+     pansion.
+
+     Sections are [general], [resolver], [source NAME] and [rule NAME].	 Include
+     takes one path relative to the containing file. Repeated scalar keys within
+     a	section	 are  errors with both source locations. The source repo and re-
+     solver prefer keys are lists and can repeat.  Recursive  includes	are  re-
+     jected.   The  checker validates lexical and structural syntax; it does not
+     yet validate rule references. It checks that source parents  exist	 and  do
+     not  form	cycles.	  It rejects userinfo in URL authorities without echoing
+     credentials in diagnostics. It validates key names,  argument  counts,  and
+     the  scripts,  trust, ask-sources and prefer values. The alias local is re-
+     served and cannot name a source.
+
+     Each populated source section requires type and at least one url  or  repo.
+     Repository	 names	within	one source must be distinct. Each populated rule
+     requires consumer, require and provider. Empty values are	rejected.  These
+     checks  do not prove that a repository is reachable or its packages can re-
+     solve.
+
+EXAMPLE
+     [general]
+     arch x86_64
+     scripts ask
+     [source arch]
+     type pacman
+     repo core "https://mirror.example/arch/$repo/os/$arch"
+
+FILES
+     /etc/holy.conf is the proposed system path. The checker takes  an	explicit
+     file.
+
+SOURCE IDENTITIES
+     The source plan command reads this syntax, including includes, and proposes
+     a registry replacement. The source apply command consumes that frozen plan;
+     it	 does  not  reread the configuration. See holypkg(8) for the command se-
+     quence.
+
+     The current source ID is SHA-256 of a canonical, sorted  representation  of
+     type,  url	 and  repo records. Alias, parent and trust policy are excluded.
+     Renaming an alias preserves the ID. Changing an endpoint, backend	type  or
+     repository	 name  creates another ID and retains the previous definition as
+     inactive history.	Readding the same definition  reactivates  its	existing
+     ID.  Equivalent  URL spellings and mirrors are not automatically identified
+     as one source.
+
+     Registration requires endpoints with a scheme followed by ://  and	 rejects
+     URL  userinfo,  queries,  fragments  and whitespace. Plans therefore cannot
+     carry those credential forms. Two aliases with the same definition	 require
+     a	decision.   Registration  neither contacts a repository nor verifies its
+     signatures. It does not yet bind installed instances to source IDs or apply
+     source trust and parent policies during package selection.
+
+Holy				 September 2026			    HOLY.CONF(5)
+holy-image.7 source=holy version=development sha256=d664252827509f4de3cc2a00d4e2c904583fe54b3f645a6413781fb5b3c0526c
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
 NAME
@@ -226,16 +300,37 @@ COVERAGE
      the generated initramfs.  Those gates remain separate from	 this  boot  re-
      sult.  Recovery  tests  missing payloads with retained package records, not
      forced removal of referenced packages.  The repository documentation bundle
-     currently contains Holy pages; the	 installed  dinit  pages  accompany  its
-     package  but  are	not yet merged into that bundle. QEMU virtual devices do
-     not establish physical GPU support.
+     contains Holy pages. The image builder uses holypkg docs after its	 package
+     transaction  to  generate	/usr/share/holy/llm.txt	 from  the installed man
+     sources, including dinit.	This generated file is	separate  from	package-
+     owned  source  pages;  its SHA-256 is recorded in the frozen image plan and
+     /etc/holy/docs.sha256. The output directory retains llm.txt and docs.record
+     with the coverage summary. Packages without man pages and unsupported  page
+     encodings appear in that bundle.
+
+     On	 each  boot, the guest verifies the shipped bundle's digest and regener-
+     ates it with static holypkg before libc recovery. It compares the	complete
+     contents,	normalizing only the final summary's database generation because
+     package transactions between boots advance that  counter.	A  documentation
+     failure  fails  the  boot	contract.  The	bundle	contains attributed roff
+     sources rather than rendered upstream text. QEMU virtual devices do not es-
+     tablish physical GPU support.
+
+     make  check-image-docs  IMAGE_DIRECTORY=DIRECTORY	 tests	 an   ext4/dual-
+     libc/both build's documentation failures. It copies root.ext4 into two dis-
+     posable  disks,  changes  the  generated  bundle  in  one and the installed
+     holypkg man source in the other, then boots each through the  original  ISO
+     under  BIOS/TCG.  Both guests must stop the boot contract at the documenta-
+     tion stage. The original root image's hash must remain unchanged. The  fix-
+     ture requires debugfs and the QEMU tools; it never edits the original image
+     or mounts a host disk.
 
 SOURCES
-     Limine  configuration  and	 ISO   layout:	 https://github.com/limine-boot-
-     loader/limine/blob/v12.x/CONFIG.md	   and	 https://github.com/limine-boot-
+     Limine   configuration   and  ISO	layout:	 https://github.com/limine-boot-
+     loader/limine/blob/v12.x/CONFIG.md	  and	 https://github.com/limine-boot-
      loader/limine/blob/v12.x/USAGE.md.	      dracut	  module      interface:
      https://github.com/dracut-ng/dracut-ng/blob/main/man/dracut.modules.7.adoc.
-     QEMU  block device and backing-file options: https://www.qemu.org/docs/mas-
+     QEMU block device and backing-file options:  https://www.qemu.org/docs/mas-
      ter/system/invocation.html.
 
 SEE ALSO
@@ -380,80 +475,6 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holy.conf.5 source=holy version=development sha256=f4d22f73b5fe5b390f051cb5d942debd32545c255de5f6b2aa868e0e2582abda
-HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
-
-NAME
-     holy.conf - Holy source configuration format
-
-STATUS
-     This  page	 describes  the syntax checker and source identity registration.
-     Configured source fetching, general multi-source resolution and general in-
-     stallation are not implemented; the restricted local data/static-ELF trans-
-     action uses separate commands.
-
-SYNOPSIS
-     holypkg config check FILE
-
-DESCRIPTION
-     Input must be UTF-8. Each record contains a  key  and  whitespace-separated
-     arguments. Double quotes retain spaces. A hash sign at the start of a token
-     begins  a comment outside quotes. Escapes are backslash-quote, double-back-
-     slash, backslash-n, backslash-t, backslash-r and  backslash-x  followed  by
-     two hexadecimal digits. NUL is rejected.  The parser does not run shell ex-
-     pansion.
-
-     Sections are [general], [resolver], [source NAME] and [rule NAME].	 Include
-     takes one path relative to the containing file. Repeated scalar keys within
-     a	section	 are  errors with both source locations. The source repo and re-
-     solver prefer keys are lists and can repeat.  Recursive  includes	are  re-
-     jected.   The  checker validates lexical and structural syntax; it does not
-     yet validate rule references. It checks that source parents  exist	 and  do
-     not  form	cycles.	  It rejects userinfo in URL authorities without echoing
-     credentials in diagnostics. It validates key names,  argument  counts,  and
-     the  scripts,  trust, ask-sources and prefer values. The alias local is re-
-     served and cannot name a source.
-
-     Each populated source section requires type and at least one url  or  repo.
-     Repository	 names	within	one source must be distinct. Each populated rule
-     requires consumer, require and provider. Empty values are	rejected.  These
-     checks  do not prove that a repository is reachable or its packages can re-
-     solve.
-
-EXAMPLE
-     [general]
-     arch x86_64
-     scripts ask
-     [source arch]
-     type pacman
-     repo core "https://mirror.example/arch/$repo/os/$arch"
-
-FILES
-     /etc/holy.conf is the proposed system path. The checker takes  an	explicit
-     file.
-
-SOURCE IDENTITIES
-     The source plan command reads this syntax, including includes, and proposes
-     a registry replacement. The source apply command consumes that frozen plan;
-     it	 does  not  reread the configuration. See holypkg(8) for the command se-
-     quence.
-
-     The current source ID is SHA-256 of a canonical, sorted  representation  of
-     type,  url	 and  repo records. Alias, parent and trust policy are excluded.
-     Renaming an alias preserves the ID. Changing an endpoint, backend	type  or
-     repository	 name  creates another ID and retains the previous definition as
-     inactive history.	Readding the same definition  reactivates  its	existing
-     ID.  Equivalent  URL spellings and mirrors are not automatically identified
-     as one source.
-
-     Registration requires endpoints with a scheme followed by ://  and	 rejects
-     URL  userinfo,  queries,  fragments  and whitespace. Plans therefore cannot
-     carry those credential forms. Two aliases with the same definition	 require
-     a	decision.   Registration  neither contacts a repository nor verifies its
-     signatures. It does not yet bind installed instances to source IDs or apply
-     source trust and parent policies during package selection.
-
-Holy				 September 2026			    HOLY.CONF(5)
 holypkg.8 source=holy version=development sha256=f962a80d4afb096c5f8656ca3a542d5c59c900299a7def85faabb29c23a39e4b
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
