@@ -1,4 +1,4 @@
-holy-image.7 source=holy version=development sha256=f078bc4922ccf8ededcede68cbc190ac01d1fec36153d55a3612c8c69a30b7a4
+holy-image.7 source=holy version=development sha256=8bb5aac60cf11b52aa098fee86aeda59e4ad69a6f94cd581b3340a1bf0346764
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
 NAME
@@ -42,6 +42,12 @@ BUILD
 
      STATIC_HOLYPKG
 	    Previously built musl-static holypkg executable.
+
+     STATIC_HOLYINSTALL
+	    Previously built musl-static  holyinstall  executable.  The	 builder
+	    checks its architecture and nolibc runtime, packages it with holyin-
+	    stall(8),  and  the guest calls its disk subcommand without changing
+	    the running system.
 
      STATIC_CC
 	    Path to the musl C compiler driver for the early init helper.
@@ -91,13 +97,13 @@ INPUTS AND ROOT
 
      The static core binary, selected kernel, Limine data and Holy boot configu-
      ration  also become native packages. The holy-base metapackage requires the
-     resulting seven packages. The dual-libc profile adds the two runtime  pack-
-     ages  and	two  C probe packages. holypkg resolves the selected set, prints
-     its plan and applies its reviewed digest with one writer lock and one  gen-
-     eration  change into root/. install.plan retains the selected artifacts and
-     requirement edges.	 The builder prepares the profile's  directories  first.
-     It	 does  not extract foreign distro roots or modify the host package data-
-     base.
+     resulting eight packages, including holyinstall. The dual-libc profile adds
+     the two runtime packages and two C probe packages. holypkg resolves the se-
+     lected set, prints its plan and applies its reviewed digest with one writer
+     lock and one generation change into root/.	 install.plan  retains	the  se-
+     lected artifacts and requirement edges.  The builder prepares the profile's
+     directories  first.  It does not extract foreign distro roots or modify the
+     host package database.
 
      For ROOT_STORAGE=ext4, mke2fs copies that prepared root into a 512 MiB  raw
      root.ext4 without mounting it on the host. Limine passes holy.root=/dev/vda
@@ -106,14 +112,15 @@ INPUTS AND ROOT
      kernel  and  initramfs; this is not yet an independently installed bootable
      disk.
 
-     ROOT_STORAGE=gpt-ext4 creates a new 768 MiB regular disk.raw.  The	 builder
-     prints disk.plan before writing the image and includes its hash in the boot
-     plan. The GPT contains a 1 MiB BIOS Boot partition, a 128 MiB FAT32 ESP and
-     a	512  MiB ext4 root. It verifies the partition layout, copies the kernel,
-     initramfs and Limine configuration to the ESP, reads those files  back  and
-     compares  their  bytes.  Limine  BIOS stages use partition 1; on x86_64 the
-     UEFI loader uses EFI/BOOT/BOOTX64.EFI. The kernel	mounts	/dev/vda3.  Host
-     filesystems are not mounted and physical disks are not accepted as output.
+     ROOT_STORAGE=gpt-ext4 creates a new 1 GiB	regular	 disk.raw.  The	 builder
+     uses holyinstall disk plan/apply and includes the reviewed plan hash in the
+     boot  plan.  The  GPT contains a 1 MiB BIOS Boot partition, a 256 MiB FAT32
+     ESP and a 765 MiB ext4 root. It verifies the partition layout,  copies  the
+     kernel,  initramfs	 and  Limine configuration to the ESP, reads those files
+     back and compares their bytes. Limine  BIOS  stages  use  partition  1;  on
+     x86_64  the  UEFI	loader	uses  EFI/BOOT/BOOTX64.EFI.  The  kernel  mounts
+     /dev/vda3. Host filesystems are not mounted and physical disks are not  ac-
+     cepted as output.
 
      The GPT profile passes holy.esp=/dev/vda2. holy-init mounts that FAT parti-
      tion  at  /boot  before starting dinit, using nosuid,nodev,noexec and masks

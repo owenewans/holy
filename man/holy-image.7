@@ -41,6 +41,11 @@ The following make variables are required:
 STATIC_HOLYPKG
 Previously built musl-static holypkg executable.
 .TP
+STATIC_HOLYINSTALL
+Previously built musl-static holyinstall executable. The builder checks its
+architecture and nolibc runtime, packages it with holyinstall(8), and the
+guest calls its disk subcommand without changing the running system.
+.TP
 STATIC_CC
 Path to the musl C compiler driver for the early init helper.
 .TP
@@ -85,7 +90,7 @@ The dynamic musl package owns its own license file.
 .PP
 The static core binary, selected kernel, Limine data and Holy boot configuration
 also become native packages. The holy-base metapackage requires the resulting
-seven packages. The dual-libc profile adds the two runtime packages and two C
+eight packages, including holyinstall. The dual-libc profile adds the two runtime packages and two C
 probe packages. holypkg resolves the selected set, prints its plan and
 applies its reviewed digest with one writer lock and one generation change
 into root/. install.plan retains the selected artifacts and requirement edges.
@@ -98,10 +103,10 @@ and holy.rootfstype=ext4. holy-init mounts the disk, moves runtime mounts and
 executes BusyBox switch_root followed by dinit. The ISO still provides kernel
 and initramfs; this is not yet an independently installed bootable disk.
 .PP
-ROOT_STORAGE=gpt-ext4 creates a new 768 MiB regular disk.raw. The builder
-prints disk.plan before writing the image and includes its hash in the boot
-plan. The GPT contains a 1 MiB BIOS Boot partition, a 128 MiB FAT32 ESP and
-a 512 MiB ext4 root. It verifies the partition layout, copies the kernel,
+ROOT_STORAGE=gpt-ext4 creates a new 1 GiB regular disk.raw. The builder
+uses holyinstall disk plan/apply and includes the reviewed plan hash in the
+boot plan. The GPT contains a 1 MiB BIOS Boot partition, a 256 MiB FAT32 ESP and
+a 765 MiB ext4 root. It verifies the partition layout, copies the kernel,
 initramfs and Limine configuration to the ESP, reads those files back and
 compares their bytes. Limine BIOS stages use partition 1; on x86_64 the UEFI loader
 uses EFI/BOOT/BOOTX64.EFI. The kernel mounts /dev/vda3. Host filesystems are

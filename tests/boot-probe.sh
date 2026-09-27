@@ -45,7 +45,7 @@ echo "HOLY-BOOT-1 kernel $($bb uname -r)"
 test "$($bb ash -c 'printf shell-probe')" = shell-probe
 echo 'HOLY-BOOT-1 shell busybox'
 stage=static-core
-for executable in busybox dinit dinitctl mdevd mdevd-coldplug holypkg holy-init; do
+for executable in busybox dinit dinitctl mdevd mdevd-coldplug holypkg holyinstall holy-init; do
     $pkg elf "/usr/bin/$executable" > /run/core-elf
     $bb grep -qx 'runtime nolibc' /run/core-elf
 done
@@ -55,6 +55,10 @@ if test "$profile" = static-core; then
     done
 fi
 echo 'HOLY-BOOT-1 static-core verified'
+stage=installer
+if /usr/bin/holyinstall disk > /run/installer-usage 2>&1; then exit 1; else test "$?" -eq 2; fi
+$bb grep -q '^usage: holyinstall disk ' /run/installer-usage
+echo 'HOLY-BOOT-1 installer static-cli'
 stage=devices
 /usr/bin/dinitctl --socket-path /run/dinitctl status mdevd > /run/mdevd.status
 $bb grep -q 'State: STARTED' /run/mdevd.status
@@ -173,6 +177,7 @@ current=$($bb sed '$s/generation [0-9][0-9]*/generation current/' /run/installed
 test "$shipped" = "$current"
 $bb grep -q '^page .*package "dinit" ' /run/installed-man.txt
 $bb grep -q '^page .*package "holypkg" ' /run/installed-man.txt
+$bb grep -q '^page .*package "holyinstall" ' /run/installed-man.txt
 $bb grep -q '^summary .*missing-man ' /run/installed-man.txt
 echo 'HOLY-BOOT-1 docs installed-man-bundle'
 stage=packages

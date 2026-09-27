@@ -15,6 +15,7 @@ PATH=$PATH:/usr/sbin:/sbin
 export PATH
 bin=$(realpath "$1")
 static=$(realpath "$2")
+installer=$(realpath "${STATIC_HOLYINSTALL:?STATIC_HOLYINSTALL required}")
 cc=$(realpath "$3")
 busybox=$(realpath "$4")
 dinit=$(realpath "$5")
@@ -119,6 +120,9 @@ exec > "$out/build.log" 2>&1
 "$bin" elf "$static" > "$out/core.elf"
 grep -qx 'runtime nolibc' "$out/core.elf"
 grep -qx "machine $package_arch" "$out/core.elf"
+"$bin" elf "$installer" > "$out/installer.elf"
+grep -qx 'runtime nolibc' "$out/installer.elf"
+grep -qx "machine $package_arch" "$out/installer.elf"
 "$cc" --version > "$out/compiler.record"
 "$cc" -std=c99 -Wall -Wextra -Werror -pedantic -Os -static -fno-pie -no-pie \
     "$project/src/early-init.c" -o "$work/holy-init"
@@ -201,9 +205,20 @@ mkdir -p "$tree/DATA/usr/bin" "$tree/DATA/usr/share/man/man5" \
     "$tree/DATA/usr/share/man/man7" "$tree/DATA/usr/share/man/man8" "$tree/DATA/usr/share/holy"
 cp "$static" "$out/inputs/holypkg"
 cp "$out/inputs/holypkg" "$tree/DATA/usr/bin/holypkg"
-for section in 5 7 8; do cp "$project/man/"*."$section" "$tree/DATA/usr/share/man/man$section/"; done
+for section in 5 7 8; do
+    for page in "$project/man/"*."$section"; do
+        test "${page##*/}" = holyinstall.8 || cp "$page" "$tree/DATA/usr/share/man/man$section/"
+    done
+done
 sha256sum "$out/inputs/holypkg" >> "$tree/HOLY/origin"
 pack holypkg
+metadata holyinstall bootstrap "$package_arch"
+mkdir -p "$tree/DATA/usr/bin" "$tree/DATA/usr/share/man/man8"
+cp "$installer" "$out/inputs/holyinstall"
+cp "$out/inputs/holyinstall" "$tree/DATA/usr/bin/holyinstall"
+cp "$project/man/holyinstall.8" "$tree/DATA/usr/share/man/man8/holyinstall.8"
+sha256sum "$out/inputs/holyinstall" "$project/man/holyinstall.8" > "$tree/HOLY/origin"
+pack holyinstall
 metadata linux "$version" "$package_arch"
 mkdir -p "$tree/DATA/boot"
 cp "$kernel" "$out/inputs/kernel"
@@ -279,7 +294,7 @@ sha256sum "$project/src/early-init.c" "$project/tests/boot-probe.sh" \
     "$project/profiles/dinit/"* > "$tree/HOLY/origin"
 pack holy-boot
 metadata holy-base bootstrap noarch
-for name in busybox dinit mdevd holypkg linux limine holy-boot $extra_packages; do
+for name in busybox dinit mdevd holypkg holyinstall linux limine holy-boot $extra_packages; do
     "$bin" info "local:$out/packages/$name.holy" > "$work/package-info"
     actual_name=$(sed -n 's/^name //p' "$work/package-info")
     case "$actual_name" in ''|*[!a-zA-Z0-9._+-]*) echo 'unsupported bootstrap package name' >&2; exit 6 ;; esac
@@ -307,7 +322,7 @@ fi
 "$bin" db init --root "$root"
 set --
 accepted_arch=
-for name in holy-base busybox dinit mdevd holypkg linux limine holy-boot $extra_packages; do
+for name in holy-base busybox dinit mdevd holypkg holyinstall linux limine holy-boot $extra_packages; do
     package="$out/packages/$name.holy"
     digest=$(sha256sum "$package")
     digest=${digest%% *}
@@ -374,15 +389,9 @@ for abi in glibc musl; do
 done
 sha256sum "$project/tools/bootstrap-image.sh" "$project/profiles/dracut/module-setup.sh" >> "$record"
 if test "$storage" = gpt-ext4; then
-    cat > "$out/disk.plan" <<'EOF'
-label: gpt
-unit: sectors
-sector-size: 512
-
-start=2048, size=2048, type=21686148-6449-6E6F-744E-656564454649, name="holy-bios"
-start=4096, size=262144, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="holy-esp"
-start=266240, size=1048576, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, name="holy-root"
-EOF
+    truncate -s 1G "$out/disk.raw"
+    printf '[disk]\nimage "%s"\nlayout gpt-ext4\n' "$out/disk.raw" > "$work/disk.conf"
+    "$installer" disk plan --config "$work/disk.conf" --output "$out/disk.plan"
     cat "$out/disk.plan"
     sha256sum "$out/disk.plan" >> "$record"
 fi
@@ -395,7 +404,11 @@ root_disk=
 root_cmdline=
 if test "$storage" != ram; then
     root_disk="$out/root.ext4"
-    truncate -s 512M "$root_disk"
+    if test "$storage" = gpt-ext4; then
+        truncate -s 765M "$root_disk"
+    else
+        truncate -s 512M "$root_disk"
+    fi
     mke2fs -q -t ext4 -F -d "$root" "$root_disk"
     chmod 0444 "$root_disk"
     sha256sum "$root_disk" >> "$record"
@@ -501,17 +514,17 @@ iso_image="$out/holy-$arch.iso"
 if test "$storage" = gpt-ext4; then
     boot_media=disk
     iso_image=
-    truncate -s 768M "$out/disk.raw"
-    sfdisk --no-reread --no-tell-kernel "$out/disk.raw" < "$out/disk.plan"
+    "$installer" disk apply --plan "$out/disk.plan" --confirm "$out/disk.raw"
+    test "$(tail -n 1 "$out/disk.plan.journal")" = committed
     sfdisk --json "$out/disk.raw" > "$out/disk-layout.json"
     python3 - "$out/disk-layout.json" <<'PY'
 import json, sys
 table = json.load(open(sys.argv[1]))['partitiontable']
 assert table['label'] == 'gpt' and table['sectorsize'] == 512
-assert [(p['start'], p['size'], p['name']) for p in table['partitions']] == [
-    (2048, 2048, 'holy-bios'), (4096, 262144, 'holy-esp'), (266240, 1048576, 'holy-root')]
+assert [(p['start'], p['size']) for p in table['partitions']] == [
+    (2048, 2048), (4096, 524288), (528384, 1566720)]
 PY
-    mkfs.fat -C -F 32 -n HOLYBOOT "$work/esp.fat" 131072
+    mkfs.fat -C -F 32 -s 4 -n HOLYBOOT "$work/esp.fat" 262144
     mmd -i "$work/esp.fat" ::/EFI ::/EFI/BOOT
     if test "$arch" = x86_64; then
         mcopy -i "$work/esp.fat" "$root/usr/share/limine/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
@@ -529,7 +542,7 @@ PY
         rm "$work/readback"
     done
     dd if="$work/esp.fat" of="$out/disk.raw" bs=1M seek=2 conv=notrunc status=none
-    dd if="$root_disk" of="$out/disk.raw" bs=1M seek=130 conv=notrunc status=none
+    dd if="$root_disk" of="$out/disk.raw" bs=1M seek=258 conv=notrunc status=none
     limine bios-install "$out/disk.raw" 1
     sfdisk --verify "$out/disk.raw"
     chmod 0444 "$out/disk.raw"
@@ -563,7 +576,7 @@ ARCH="$arch" BOOT_MEDIA="$boot_media" ISO="$iso_image" BOOT_PLAN="$plan" REPORT_
 printf 'result boot-tested-%s\n' "$profile" >> "$record"
 if test "$storage" = ram; then printf 'not-tested libc-recovery-reboot\n' >> "$record"; fi
 if test "$network_recovery" = fixture; then
-    printf 'not-tested installer public-network-dns graphics\n' >> "$record"
+    printf 'not-tested installer-full-flow public-network-dns graphics\n' >> "$record"
 else
-    printf 'not-tested installer network graphics\n' >> "$record"
+    printf 'not-tested installer-full-flow network graphics\n' >> "$record"
 fi
