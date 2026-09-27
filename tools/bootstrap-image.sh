@@ -66,6 +66,10 @@ case "$network_recovery" in
         ;;
     *) echo 'NETWORK_RECOVERY must be off or fixture' >&2; exit 2 ;;
 esac
+if test "$boot_state" = remove-both && { test "$storage" = ram || test "$profile" != dual-libc || test "$network_recovery" != off; }; then
+    echo 'remove-both requires persistent dual-libc root without network fixture' >&2
+    exit 2
+fi
 case "$storage:$profile" in
     ram:*) ;;
     ext4:dual-libc|gpt-ext4:dual-libc)
@@ -80,7 +84,7 @@ if test "$storage" != gpt-ext4; then command -v xorriso >/dev/null || exit 6; fi
 extra_packages=
 case "$profile:$boot_state" in
     static-core:present) ;;
-    dual-libc:present|dual-libc:glibc|dual-libc:musl|dual-libc:both)
+    dual-libc:present|dual-libc:glibc|dual-libc:musl|dual-libc:both|dual-libc:remove-both)
         glibc=$(realpath "${GLIBC_PACKAGE:?GLIBC_PACKAGE required}")
         musl=$(realpath "${MUSL_PACKAGE:?MUSL_PACKAGE required}")
         glibc_cc=$(command -v "${GLIBC_CC:-gcc}")

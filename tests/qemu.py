@@ -138,7 +138,7 @@ def main():
         error('FIRMWARE must be bios or uefi', 2)
     profile = os.environ.get('IMAGE_PROFILE', 'dual-libc')
     state = os.environ.get('LIBC_BOOT_STATE', 'present')
-    if profile not in ('static-core', 'dual-libc') or state not in ('present', 'glibc', 'musl', 'both'):
+    if profile not in ('static-core', 'dual-libc') or state not in ('present', 'glibc', 'musl', 'both', 'remove-both'):
         error('unsupported image profile or libc boot state', 2)
     if profile == 'static-core' and state != 'present':
         error('libc boot state requires dual-libc profile', 2)
@@ -147,6 +147,8 @@ def main():
     if network == 'fixture' and (profile != 'dual-libc' or state != 'both' or media != 'iso'):
         error('network fixture requires dual-libc, both absent and ISO boot', 2)
     disk_path = os.environ.get('ROOT_DISK', '')
+    if state == 'remove-both' and (not disk_path or network != 'off'):
+        error('remove-both requires persistent root without network fixture', 2)
     if media == 'disk' and not disk_path:
         error('disk boot requires ROOT_DISK', 6)
     qemu_img = shutil.which('qemu-img')
@@ -289,7 +291,9 @@ def main():
                 'HOLY-BOOT-1 transaction install-check-remove', 'HOLY-BOOT-1 result pass'}
     if profile == 'dual-libc':
         expected.update({f'HOLY-BOOT-1 profile {profile}', f'HOLY-BOOT-1 libc-initial {state}',
-                         f'HOLY-BOOT-1 libc-recovery {state}', 'HOLY-BOOT-1 libc-probes glibc-musl-pipe'})
+                         'HOLY-BOOT-1 libc-probes glibc-musl-pipe'})
+        if state != 'remove-both':
+            expected.add(f'HOLY-BOOT-1 libc-recovery {state}')
         for abi in ('glibc', 'musl'):
             if state in (abi, 'both'):
                 expected.update({f'HOLY-BOOT-1 missing-libc {abi}', f'HOLY-BOOT-1 restored-libc {abi}'})
@@ -307,12 +311,24 @@ def main():
         first = expected - {'HOLY-BOOT-1 result pass'}
         first.update({'HOLY-BOOT-1 boot 1', 'HOLY-BOOT-1 root ext4',
                       'HOLY-BOOT-1 first-boot pass', 'HOLY-BOOT-1 reboot requested'})
-        second = {marker for marker in expected if not marker.startswith((
-            'HOLY-BOOT-1 libc-initial ', 'HOLY-BOOT-1 libc-recovery ',
-            'HOLY-BOOT-1 missing-libc ', 'HOLY-BOOT-1 restored-libc '))}
-        second.update({'HOLY-BOOT-1 boot 2', 'HOLY-BOOT-1 root ext4',
-                       'HOLY-BOOT-1 libc-initial restored', 'HOLY-BOOT-1 libc-recovery restored'})
+        if state == 'remove-both':
+            first.update({f'HOLY-BOOT-1 removed-libc {abi}' for abi in ('glibc', 'musl')})
+            second = expected - {'HOLY-BOOT-1 libc-initial remove-both'}
+            second.update({'HOLY-BOOT-1 boot 2', 'HOLY-BOOT-1 root ext4',
+                           'HOLY-BOOT-1 libc-initial removed-both',
+                           'HOLY-BOOT-1 libc-recovery removed-both'})
+            for abi in ('glibc', 'musl'):
+                second.update({f'HOLY-BOOT-1 missing-libc {abi}',
+                               f'HOLY-BOOT-1 reinstalled-libc {abi}',
+                               f'HOLY-BOOT-1 restored-libc {abi}'})
+        else:
+            second = {marker for marker in expected if not marker.startswith((
+                'HOLY-BOOT-1 libc-initial ', 'HOLY-BOOT-1 libc-recovery ',
+                'HOLY-BOOT-1 missing-libc ', 'HOLY-BOOT-1 restored-libc '))}
+            second.update({'HOLY-BOOT-1 boot 2', 'HOLY-BOOT-1 root ext4',
+                           'HOLY-BOOT-1 libc-initial restored', 'HOLY-BOOT-1 libc-recovery restored'})
         expected_boots = [first, second]
+        expected |= first | second
     cancelled = []
 
     def request_stop(number, frame):

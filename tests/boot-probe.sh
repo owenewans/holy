@@ -55,17 +55,6 @@ if test "$profile" = static-core; then
     done
 fi
 echo 'HOLY-BOOT-1 static-core verified'
-stage=documentation
-docs=$($bb sha256sum /usr/share/holy/llm.txt)
-test "${docs%% *}" = "$($bb cat /etc/holy/docs.sha256)"
-$pkg docs --root / --output /run/installed-man.txt
-shipped=$($bb sed '$s/generation [0-9][0-9]*/generation current/' /usr/share/holy/llm.txt | $bb sha256sum)
-current=$($bb sed '$s/generation [0-9][0-9]*/generation current/' /run/installed-man.txt | $bb sha256sum)
-test "$shipped" = "$current"
-$bb grep -q '^page .*package "dinit" ' /run/installed-man.txt
-$bb grep -q '^page .*package "holypkg" ' /run/installed-man.txt
-$bb grep -q '^summary .*missing-man ' /run/installed-man.txt
-echo 'HOLY-BOOT-1 docs installed-man-bundle'
 stage=devices
 /usr/bin/dinitctl --socket-path /run/dinitctl status mdevd > /run/mdevd.status
 $bb grep -q 'State: STARTED' /run/mdevd.status
@@ -92,15 +81,17 @@ if test "$profile" = dual-libc; then
     state=$($bb cat /etc/holy/libc-boot-state)
     network=$($bb cat /etc/holy/network-recovery)
     case "$network" in off|fixture) ;; *) exit 1 ;; esac
-    case "$state" in present|glibc|musl|both) ;; *) exit 1 ;; esac
-    if test "$boot" = 2; then state=restored; fi
+    case "$state" in present|glibc|musl|both|remove-both) ;; *) exit 1 ;; esac
+    if test "$boot" = 2; then
+        if test "$state" = remove-both; then state=removed-both; else state=restored; fi
+    fi
     for abi in glibc musl; do
         case "$abi" in
             glibc) loader=$glibc_loader ;;
             musl) loader=$musl_loader ;;
         esac
         case "$state:$abi" in
-            both:*|glibc:glibc|musl:musl)
+            both:*|removed-both:*|glibc:glibc|musl:musl)
                 test ! -e "$loader"
                 if test "$abi" = glibc; then
                     test ! -e "$glibc_runtime"
@@ -140,14 +131,22 @@ if test "$profile" = dual-libc; then
     fi
     for abi in glibc musl; do
         case "$state:$abi" in
-            both:*|glibc:glibc|musl:musl)
+            both:*|removed-both:*|glibc:glibc|musl:musl)
                 digest=$($bb cat "/etc/holy/$abi.sha256")
                 $pkg info "local:/var/cache/holypkg/objects/sha256/$digest.holy" > /run/libc-info
                 $bb grep -qx "libc $abi" /run/libc-info
-                $pkg db repair-plan "$digest" --root / > /run/libc-plan
-                hash=$($bb sed -n 's/^repair-plan .* sha256 \([0-9a-f]*\) missing-only read-only$/\1/p' /run/libc-plan)
-                test "${#hash}" -eq 64
-                $pkg db repair "$digest" --plan "$hash" --root / > /run/libc-repair
+                if test "$state" = removed-both; then
+                    $pkg db plan-set "$digest" --root / > /run/libc-plan
+                    hash=$($bb sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' /run/libc-plan)
+                    test "${#hash}" -eq 64
+                    $pkg db apply-set "$hash" "$digest" --root / > /run/libc-repair
+                    echo "HOLY-BOOT-1 reinstalled-libc $abi"
+                else
+                    $pkg db repair-plan "$digest" --root / > /run/libc-plan
+                    hash=$($bb sed -n 's/^repair-plan .* sha256 \([0-9a-f]*\) missing-only read-only$/\1/p' /run/libc-plan)
+                    test "${#hash}" -eq 64
+                    $pkg db repair "$digest" --plan "$hash" --root / > /run/libc-repair
+                fi
                 $bb cat /run/libc-repair
                 echo "HOLY-BOOT-1 restored-libc $abi"
                 ;;
@@ -163,8 +162,19 @@ if test "$profile" = dual-libc; then
     $bb grep -qx glibc-probe /run/pipe-result
     $pkg db check --all --root / > /run/libc-check
     echo 'HOLY-BOOT-1 libc-probes glibc-musl-pipe'
-    echo "HOLY-BOOT-1 libc-recovery $state"
+    if test "$state" != remove-both; then echo "HOLY-BOOT-1 libc-recovery $state"; fi
 fi
+stage=documentation
+docs=$($bb sha256sum /usr/share/holy/llm.txt)
+test "${docs%% *}" = "$($bb cat /etc/holy/docs.sha256)"
+$pkg docs --root / --output /run/installed-man.txt
+shipped=$($bb sed '$s/generation [0-9][0-9]*/generation current/' /usr/share/holy/llm.txt | $bb sha256sum)
+current=$($bb sed '$s/generation [0-9][0-9]*/generation current/' /run/installed-man.txt | $bb sha256sum)
+test "$shipped" = "$current"
+$bb grep -q '^page .*package "dinit" ' /run/installed-man.txt
+$bb grep -q '^page .*package "holypkg" ' /run/installed-man.txt
+$bb grep -q '^summary .*missing-man ' /run/installed-man.txt
+echo 'HOLY-BOOT-1 docs installed-man-bundle'
 stage=packages
 $pkg db check --all --root / > /run/package-check
 $pkg info local:/usr/share/holy/fixture.holy > /run/package-info
@@ -189,6 +199,20 @@ test ! -e /usr/share/holy/fixture-installed
 echo 'HOLY-BOOT-1 transaction install-check-remove'
 if test "$storage" = ext4 && test "$boot" = 1; then
     stage=reboot
+    if test "$($bb cat /etc/holy/libc-boot-state)" = remove-both; then
+        stage=libc-removal
+        for abi in glibc musl; do
+            digest=$($bb cat "/etc/holy/$abi.sha256")
+            probe=$($bb cat "/etc/holy/probe-$abi.sha256")
+            if $pkg db rm "$digest" --root / > /run/provider-remove 2>&1; then exit 1; else test "$?" -eq 3; fi
+            $pkg db rm "$digest" --accept-broken --root / > /run/provider-remove 2>&1
+            if $pkg db check "$probe" --root / --json > /run/broken-provider; then exit 1; else test "$?" -eq 4; fi
+            $bb grep -q '"code":"broken-provider"' /run/broken-provider
+            echo "HOLY-BOOT-1 removed-libc $abi"
+        done
+        if $pkg db check --all --root / > /run/libc-check 2>&1; then exit 1; else test "$?" -eq 4; fi
+        stage=reboot
+    fi
     $bb mkdir -p /var/lib/holy-boot-test
     printf '%s\n' "$plan" > /var/lib/holy-boot-test/reboot
     $bb sync

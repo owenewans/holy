@@ -16,6 +16,13 @@ profile without dynamic libraries. LIBC_BOOT_STATE is present by default.
 For dual-libc, glibc, musl or both remove those runtime payloads and their loader
 links before creating initramfs, while retaining installed records and cached
 .holy artifacts. These are intentional damage fixtures, not package removals.
+LIBC_BOOT_STATE=remove-both requires an ext4 or gpt-ext4 dual-libc root. The
+first guest boot runs both dynamic probes, then holypkg removes both runtime
+packages with an explicit broken-dependency decision and reboots. Static
+BusyBox, dinit and holypkg run on the second boot, report broken providers,
+install the same two cached .holy artifacts through reviewed plans and repeat
+the probes. The QEMU report requires both boot contracts and an unchanged
+read-only base image.
 ROOT_STORAGE defaults to ram. ext4 selects a persistent recovery test for
 dual-libc and requires mke2fs and qemu-img. The kernel must include ext4 and
 virtio-blk, and the BusyBox package must include switch_root, sync and reboot.
@@ -233,8 +240,9 @@ gpt-ext4 loads its kernel and initramfs from the disk's ESP. Both test
 recovery followed by reboot on a persistent root overlay. The GPT builder
 is not the interactive installer. Kernel updates still require integration
 with ESP contents and the generated initramfs.
-Those gates remain separate from this boot result. Recovery tests missing
-payloads with retained package records, not forced removal of referenced packages.
+Those gates remain separate from this boot result. The glibc/musl/both damage
+fixtures retain package records; remove-both exercises package removal and
+reinstallation after a persistent reboot.
 The repository documentation bundle contains Holy pages. The image builder
 uses holypkg docs after its package transaction to generate
 /usr/share/holy/llm.txt from the installed man sources, including dinit.
@@ -244,7 +252,7 @@ directory retains llm.txt and docs.record with the coverage summary. Packages
 without man pages and unsupported page encodings appear in that bundle.
 .PP
 On each boot, the guest verifies the shipped bundle's digest and regenerates
-it with static holypkg before libc recovery. It compares the complete contents,
+it with static holypkg after any libc recovery. It compares the complete contents,
 normalizing only the final summary's database generation because package
 transactions between boots advance that counter. A documentation failure
 fails the boot contract. The bundle contains attributed roff sources rather

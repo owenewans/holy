@@ -318,6 +318,12 @@
   fixture CA and artifact hashes, repairs both runtimes and runs dynamic/IPC
   probes. Guest DNS resolution and hostname-verified HTTPS are covered for both
   architectures; public CA and external network coverage remain open.
+- [x] On persistent ext4 QEMU roots, remove both dynamic libc packages through
+  holypkg with an explicit broken-dependency decision, reboot into the static
+  core, then reinstall both native artifacts from cache. Check broken-provider
+  diagnostics, package state and dynamic/IPC probes after the second boot on
+  x86_64 and i686. The i686 BIOS GPT case also boots independently from its
+  FAT ESP and passes the same two-boot contract.
 - [x] Run `make check-root` against disposable target-root install, check,
   remove and recovery fixtures; this gate does not boot a system.
 - [x] Add a BIOS/UEFI `make check-qemu ARCH=... ISO=... BOOT_PLAN=...` runner
