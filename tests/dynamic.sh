@@ -9,7 +9,8 @@ runtime=/usr/lib/holy/x86_64-linux-gnu
 loader=$runtime/ld-linux-x86-64.so.2
 libc=$runtime/libc.so.6
 library=$runtime/libholyfixture.so.1
-mkdir -p "$root$runtime" "$root/usr/bin" "$root/usr/lib64" "$root/tmp"
+mkdir -p "$root$runtime" "$root/usr/bin" "$root/usr/lib64" "$root/tmp" \
+    "$root/usr/share/licenses/glibc" "$root/usr/share/doc/glibc"
 ln -s usr/lib64 "$root/lib64"
 expect() {
     wanted=$1
@@ -45,6 +46,10 @@ gcc -o "$tmp/probe" "$tmp/main.c" "$tmp/library.so"
 host_loader=$(patchelf --print-interpreter "$tmp/probe")
 "$bin" db init --root "$root" > "$tmp/out"
 new runtime
+if test -n "${GLIBC_PACKAGE:-}"; then
+    cp "$GLIBC_PACKAGE" "$tmp/runtime.holy"
+    "$bin" cache stage "local:$tmp/runtime.holy" --root "$root" > "$tmp/out"
+else
 mkdir -p "$tree/DATA$runtime" "$tree/DATA/usr/lib64"
 cp -L "$host_loader" "$tree/DATA$loader"
 cp -L "$(gcc -print-file-name=libc.so.6)" "$tree/DATA$libc"
@@ -52,6 +57,7 @@ sha256sum "$tree/DATA$loader" "$tree/DATA$libc" > "$tree/HOLY/origin"
 patchelf --set-interpreter "$loader" --replace-needed ld-linux-x86-64.so.2 "$loader" "$tree/DATA$libc"
 ln -s ../lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2 "$tree/DATA/usr/lib64/ld-linux-x86-64.so.2"
 pack runtime
+fi
 new library
 mkdir -p "$tree/DATA$runtime"
 cp "$tmp/library.so" "$tree/DATA$library"

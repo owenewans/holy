@@ -82,6 +82,12 @@ def main():
     firmware = os.environ.get('FIRMWARE', 'bios')
     if firmware not in ('bios', 'uefi'):
         error('FIRMWARE must be bios or uefi', 2)
+    profile = os.environ.get('IMAGE_PROFILE', 'dual-libc')
+    state = os.environ.get('LIBC_BOOT_STATE', 'present')
+    if profile not in ('static-core', 'dual-libc') or state not in ('present', 'glibc', 'musl', 'both'):
+        error('unsupported image profile or libc boot state', 2)
+    if profile == 'static-core' and state != 'present':
+        error('libc boot state requires dual-libc profile', 2)
     firmware_files = {}
     if firmware == 'uefi':
         for field in ('UEFI_CODE', 'UEFI_VARS'):
@@ -116,6 +122,12 @@ def main():
                 'HOLY-BOOT-1 static-core verified',
                 'HOLY-BOOT-1 device mdevd-coldplug',
                 'HOLY-BOOT-1 transaction install-check-remove', 'HOLY-BOOT-1 result pass'}
+    if profile == 'dual-libc':
+        expected.update({f'HOLY-BOOT-1 profile {profile}', f'HOLY-BOOT-1 libc-initial {state}',
+                         f'HOLY-BOOT-1 libc-recovery {state}', 'HOLY-BOOT-1 libc-probes glibc-musl-pipe'})
+        for abi in ('glibc', 'musl'):
+            if state in (abi, 'both'):
+                expected.update({f'HOLY-BOOT-1 missing-libc {abi}', f'HOLY-BOOT-1 restored-libc {abi}'})
     if 'KERNEL_VERSION' in os.environ:
         expected.add('HOLY-BOOT-1 kernel ' + os.environ['KERNEL_VERSION'])
     cancelled = []
@@ -173,14 +185,16 @@ def main():
                     process.kill()
                     process.wait()
     report = {'schema': 'holy-qemu-report-2', 'arch': arch, 'accelerator': accel,
-              'firmware': firmware, 'network': 'disabled', 'plan': plan, 'inputs': inputs,
+              'firmware': firmware, 'profile': profile, 'libc_boot_state': state,
+              'network': 'disabled', 'plan': plan, 'inputs': inputs,
               'argv': args, 'pid': process.pid, 'exit': code,
               'cancel_signal': cancelled[0] if cancelled else None,
               'elapsed_seconds': time.monotonic() - started,
               'boot_timeout_seconds': int(limit), 'shutdown_timeout_seconds': 5,
               'reason': reason, 'result': result, 'missing_markers': sorted(expected - seen),
               'checks': {marker: 'pass' if marker in seen else 'unknown' for marker in sorted(expected)},
-              'not_tested': ['libc-recovery', 'installer', 'hardware', 'network', 'kernel-update']}
+              'not_tested': (['libc-recovery'] if profile != 'dual-libc' or state == 'present' else []) +
+                            ['libc-recovery-reboot', 'i686-libc', 'installer', 'hardware', 'network', 'kernel-update']}
     (run / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     (run / 'report').write_text(
         f'format holy-qemu-report-2\narch {arch}\niso-sha256 {inputs["iso"]["sha256"]}\n'

@@ -91,7 +91,10 @@
   plus both dynamic libc runtimes for i686 and x86_64.
 - [x] Build pinned x86_64 musl as a native runtime package with source hashes,
   license and a natively linked loader SONAME. Run pthread/allocation probes
-  alongside glibc. Integration of both dynamic runtimes into the boot image remains open.
+  alongside glibc.
+- [x] Build pinned glibc 2.42 loader/libc payloads from source as a native
+  bootstrap package with licenses and recorded private-path patches. Complete
+  SDK, auxiliary libraries, locale/NSS packaging and upstream-suite acceptance remain open.
 - [x] Run static holypkg inside an x86_64 root after deleting both glibc and musl
   runtime payloads; restore from cached LZ4 .holy files and run both dynamic probes.
   Repeat each libc separately, including loader symlink restoration. This gate
@@ -109,8 +112,14 @@
 - [x] Build an x86_64 static-core ISO through native package transactions, a
   private dracut sysroot and Limine. Audit initramfs payloads against the installed
   root and reject dynamic ELF. Boot with dinit as PID 1, BusyBox, mdevd/coldplug
-  and a local package install/check/remove in QEMU. This RAM profile does not
-  yet install an on-disk system or restore dynamic libc.
+  and a local package install/check/remove in QEMU.
+- [x] Extend that RAM profile with both dynamic libc packages and separate
+  C probes. Boot present, glibc-missing, musl-missing and both-missing images
+  under BIOS/TCG and UEFI/TCG. Restore absent payloads and loader links from
+  cached .holy files inside the guest, verify broken-provider diagnostics,
+  run allocation/thread/clock probes and pipe data between the two ABIs.
+  The image audit rejects unexpected ldconfig aliases and undeclared dynamic
+  ELF. Persistent recovery across reboot and on-disk installation remain open.
 - [ ] Package Limine, dracut, kernel, firmware, SDK/sysroots and the default
   ConnMan+iwd network profile; test static local and HTTPS libc recovery.
 - [ ] Implement C99 `holyinstall` with reviewed disk/boot/account/network plans

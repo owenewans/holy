@@ -33,9 +33,17 @@ holy-init: src/early-init.c .build-config
 bootstrap-musl: holypkg
 	sh tools/bootstrap-musl.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/musl-bootstrap)"
 
+.PHONY: bootstrap-glibc check-bootstrap-glibc
+bootstrap-glibc: holypkg
+	sh tools/bootstrap-glibc.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/glibc-bootstrap)"
+
+check-bootstrap-glibc:
+	@test "$$(id -u)" != 0 && test -f "$(or $(OUTPUT),out/glibc-bootstrap)/glibc.holy" || { echo 'ordinary user and completed glibc build required' >&2; exit 6; }
+	$(MAKE) -C "$(or $(OUTPUT),out/glibc-bootstrap)/build" -j"$(or $(JOBS),2)" check
+
 .PHONY: bootstrap-image
 bootstrap-image: holypkg llm.txt
-	sh tools/bootstrap-image.sh ./holypkg "$(STATIC_HOLYPKG)" "$(STATIC_CC)" "$(BUSYBOX_PACKAGE)" "$(DINIT_PACKAGE)" "$(MDEVD_PACKAGE)" "$(KERNEL_IMAGE)" "$(KERNEL_VERSION)" "$(LIMINE_DIR)" "$(OUTPUT)"
+	IMAGE_PROFILE="$(or $(IMAGE_PROFILE),dual-libc)" LIBC_BOOT_STATE="$(or $(LIBC_BOOT_STATE),present)" GLIBC_PACKAGE="$(GLIBC_PACKAGE)" MUSL_PACKAGE="$(MUSL_PACKAGE)" GLIBC_CC="$(or $(GLIBC_CC),gcc)" MUSL_CC="$(MUSL_CC)" sh tools/bootstrap-image.sh ./holypkg "$(STATIC_HOLYPKG)" "$(STATIC_CC)" "$(BUSYBOX_PACKAGE)" "$(DINIT_PACKAGE)" "$(MDEVD_PACKAGE)" "$(KERNEL_IMAGE)" "$(KERNEL_VERSION)" "$(LIMINE_DIR)" "$(OUTPUT)"
 
 .PHONY: bootstrap-dinit check-bootstrap-dinit
 .PHONY: bootstrap-mdevd check-bootstrap-mdevd
@@ -63,7 +71,7 @@ check-static-core:
 .PHONY: check-libc-recovery
 check-libc-recovery:
 	@test -x "$(STATIC_HOLYPKG)" && test -x "$(MUSL_CC)" && test -f "$(MUSL_PACKAGE)" || { echo 'STATIC_HOLYPKG, MUSL_CC and MUSL_PACKAGE are required' >&2; exit 6; }
-	HOLY_TEST_DYNAMIC_CHROOT=1 HOLY_TEST_STATIC_RECOVERY=1 MUSL_CC="$(MUSL_CC)" MUSL_PACKAGE="$(MUSL_PACKAGE)" sh tests/dynamic.sh "$(STATIC_HOLYPKG)"
+	HOLY_TEST_DYNAMIC_CHROOT=1 HOLY_TEST_STATIC_RECOVERY=1 GLIBC_PACKAGE="$(GLIBC_PACKAGE)" MUSL_CC="$(MUSL_CC)" MUSL_PACKAGE="$(MUSL_PACKAGE)" sh tests/dynamic.sh "$(STATIC_HOLYPKG)"
 
 .PHONY: check-static-network
 check-static-network:

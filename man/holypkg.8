@@ -472,6 +472,20 @@ then executes cached repair inside the libc-free chroot. doas is required;
 guest commands run with the caller's UID/GID. This tests local recovery on
 x86_64, not boot, i686, network recovery or general foreign package conversion.
 .PP
+make bootstrap-glibc INPUTS=DIRECTORY OUTPUT=DIRECTORY builds the pinned
+glibc-2.42.tar.xz source as an ordinary user in a separate build directory.
+Host GCC, G++, binutils, kernel headers, make, gawk, bison, Python and patchelf
+are required. --without-gd avoids linking the optional memusagestat tool
+against the host's libgd closure. The output glibc.holy contains libc.so.6,
+its loader and upstream licenses. It records input hashes, build configuration
+and explicit private-path patches in bootstrap origin records. It is not yet
+a complete glibc SDK or locale/NSS package set. build.record distinguishes
+building from the separate runtime probes; the full upstream test suite is
+not implied by a successful build. make check-bootstrap-glibc OUTPUT=DIRECTORY
+runs that retained build's upstream test suite as an ordinary user and returns
+its actual status. GLIBC_PACKAGE can supply this artifact to
+check-libc-recovery; without it that fixture snapshots the host glibc pair.
+.PP
 Database owner reads installed manifests and lists the artifact digest
 and kind for an exact relative or root-absolute path. Multiple packages may
 list the same directory. If multiple records claim one regular file or symlink, the

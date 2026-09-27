@@ -11,6 +11,8 @@ if test "${HOLY_IMAGE_NAMESPACE:-}" != 1; then
 fi
 test "$(id -u)" = 0 && awk '$1 == 0 && $2 != 0 && $3 == 1 { ok = 1 } END { exit !ok }' /proc/self/uid_map || exit 6
 umask 022
+PATH=$PATH:/usr/sbin:/sbin
+export PATH
 bin=$(realpath "$1")
 static=$(realpath "$2")
 cc=$(realpath "$3")
@@ -23,10 +25,26 @@ limine_dir=$(realpath "$9")
 shift 9
 case "$version" in ''|*[!a-zA-Z0-9._+-]*) exit 2 ;; esac
 test "$(uname -m)" = x86_64 || exit 6
-for tool in dracut xorriso limine sha256sum cpio gzip python3 qemu-system-x86_64; do
+for tool in dracut ldconfig xorriso limine sha256sum cpio gzip python3 qemu-system-x86_64; do
     command -v "$tool" >/dev/null || { echo "$tool required" >&2; exit 6; }
 done
 project=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+profile=${IMAGE_PROFILE:-dual-libc}
+boot_state=${LIBC_BOOT_STATE:-present}
+extra_packages=
+case "$profile:$boot_state" in
+    static-core:present) ;;
+    dual-libc:present|dual-libc:glibc|dual-libc:musl|dual-libc:both)
+        glibc=$(realpath "${GLIBC_PACKAGE:?GLIBC_PACKAGE required}")
+        musl=$(realpath "${MUSL_PACKAGE:?MUSL_PACKAGE required}")
+        glibc_cc=$(command -v "${GLIBC_CC:-gcc}")
+        musl_cc=$(realpath "${MUSL_CC:?MUSL_CC required}")
+        test -f "$glibc" && test -f "$musl" && test -x "$musl_cc" || exit 6
+        command -v patchelf >/dev/null || exit 6
+        extra_packages='glibc musl probe-glibc probe-musl'
+        ;;
+    *) echo 'unsupported image profile or libc boot state' >&2; exit 2 ;;
+esac
 mkdir -p "$(dirname "$1")"
 mkdir -m 0700 "$1"
 out=$(realpath "$1")
@@ -35,7 +53,7 @@ root="$out/root"
 mkdir "$work" "$root" "$out/packages" "$out/inputs" "$out/reports"
 started=$(date +%s)
 record="$out/build.record"
-printf 'format holy-bootstrap-image-1\narch x86_64\nprofile static-core\nkernel-version %s\n' "$version" > "$record"
+printf 'format holy-bootstrap-image-1\narch x86_64\nprofile %s\nlibc-boot-state %s\nkernel-version %s\n' "$profile" "$boot_state" "$version" > "$record"
 finish() {
     rc=$?
     trap - EXIT
@@ -70,17 +88,44 @@ pack() {
     "$bin" pack "$tree" --output "$out/packages/$1.holy"
     rm -rf "$tree"
 }
-for name in busybox dinit mdevd; do
-    case "$name" in busybox) input=$busybox ;; dinit) input=$dinit ;; mdevd) input=$mdevd ;; esac
+for name in busybox dinit mdevd $extra_packages; do
+    case "$name" in
+        busybox) input=$busybox ;; dinit) input=$dinit ;; mdevd) input=$mdevd ;;
+        glibc) input=$glibc ;; musl) input=$musl ;; probe-*) continue ;;
+    esac
     cp "$input" "$out/inputs/$name.holy"
     parent=$(sha256sum "$out/inputs/$name.holy")
     parent=${parent%% *}
     "$bin" fetch "local:$out/inputs/$name.holy" --extract --output "$tree"
     test ! -s "$tree/HOLY/transform" || exit 6
+    if test "$name" = busybox && test -f "$tree/DATA/usr/share/licenses/musl/COPYRIGHT"; then
+        mv "$tree/DATA/usr/share/licenses/musl/COPYRIGHT" "$tree/DATA/usr/share/licenses/busybox/musl.COPYRIGHT"
+        printf '\nbootstrap-file-mapping usr/share/licenses/musl/COPYRIGHT usr/share/licenses/busybox/musl.COPYRIGHT\n' >> "$tree/HOLY/origin"
+    fi
     find "$tree/DATA" -type d -exec chmod 0755 '{}' +
     printf '\nbootstrap-parent-sha256 %s\nbootstrap-ownership 0 0\nbootstrap-directory-mode 0755\n' "$parent" >> "$tree/HOLY/origin"
     pack "$name"
 done
+if test "$profile" = dual-libc; then
+    for abi in glibc musl; do
+        case "$abi" in
+            glibc) compiler=$glibc_cc; loader=/usr/lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2; needed=libc.so.6; provider=/usr/lib/holy/x86_64-linux-gnu/libc.so.6 ;;
+            musl) compiler=$musl_cc; loader=/usr/lib/holy/x86_64-linux-musl/ld-musl-x86_64.so.1; needed=libc.so; provider=$loader ;;
+        esac
+        metadata "probe-$abi" 1 x86_64
+        sed "s/libc nolibc/libc $abi/" "$tree/HOLY/meta" > "$work/meta"
+        mv "$work/meta" "$tree/HOLY/meta"
+        mkdir -p "$tree/DATA/usr/bin"
+        probe="$tree/DATA/usr/bin/holy-probe-$abi"
+        "$compiler" -std=c99 -Wall -Wextra -Werror -pedantic -O2 -pthread \
+            "-DHOLY_LIBC=\"$abi\"" "$project/tests/libc-probe.c" -o "$probe"
+        sha256sum "$project/tests/libc-probe.c" "$probe" >> "$tree/HOLY/origin"
+        patchelf --set-interpreter "$loader" --replace-needed "$needed" "$provider" "$probe"
+        printf 'bootstrap-patchelf interpreter %s\nbootstrap-patchelf needed %s %s\n' "$loader" "$needed" "$provider" >> "$tree/HOLY/origin"
+        sha256sum "$probe" >> "$tree/HOLY/origin"
+        pack "probe-$abi"
+    done
+fi
 metadata holypkg bootstrap x86_64
 mkdir -p "$tree/DATA/usr/bin" "$tree/DATA/usr/share/man/man5" \
     "$tree/DATA/usr/share/man/man7" "$tree/DATA/usr/share/man/man8" "$tree/DATA/usr/share/holy"
@@ -125,6 +170,14 @@ chmod 0644 "$tree/DATA/usr/share/holy/fixture.holy"
 cp "$out/packages/boot-fixture-root.holy" "$tree/DATA/usr/share/holy/fixture-root.holy"
 chmod 0644 "$tree/DATA/usr/share/holy/fixture-root.holy"
 printf '%s\n' "$version" > "$tree/DATA/etc/holy/kernel-version"
+printf '%s\n' "$profile" > "$tree/DATA/etc/holy/image-profile"
+printf '%s\n' "$boot_state" > "$tree/DATA/etc/holy/libc-boot-state"
+if test "$profile" = dual-libc; then
+    for name in $extra_packages; do
+        hash=$(sha256sum "$out/packages/$name.holy")
+        printf '%s\n' "${hash%% *}" > "$tree/DATA/etc/holy/$name.sha256"
+    done
+fi
 printf 'root:x:0:0:root:/root:/bin/sh\n' > "$tree/DATA/etc/passwd"
 printf 'root:x:0:\n' > "$tree/DATA/etc/group"
 printf 'root:!:0:0:99999:7:::\n' > "$tree/DATA/etc/shadow"
@@ -140,7 +193,7 @@ sha256sum "$project/src/early-init.c" "$project/tests/boot-probe.sh" \
     "$project/profiles/dinit/"* > "$tree/HOLY/origin"
 pack holy-boot
 metadata holy-base bootstrap noarch
-for name in busybox dinit mdevd holypkg linux limine holy-boot; do
+for name in busybox dinit mdevd holypkg linux limine holy-boot $extra_packages; do
     "$bin" info "local:$out/packages/$name.holy" > "$work/package-info"
     actual_name=$(sed -n 's/^name //p' "$work/package-info")
     case "$actual_name" in ''|*[!a-zA-Z0-9._+-]*) echo 'unsupported bootstrap package name' >&2; exit 6 ;; esac
@@ -155,9 +208,13 @@ mkdir -p "$root/usr/bin" "$root/usr/lib/holy" "$root/usr/lib32" "$root/usr/lib64
     "$root/usr/include/mdevd" "$root/usr/share/limine" "$root/etc/dinit.d" \
     "$root/etc/holy" "$root/boot" "$root/dev" "$root/proc" "$root/sys" \
     "$root/run" "$root/tmp" "$root/root"
+if test "$profile" = dual-libc; then
+    mkdir -p "$root/usr/lib/holy/x86_64-linux-gnu" "$root/usr/lib/holy/x86_64-linux-musl" \
+        "$root/usr/share/licenses/glibc" "$root/usr/share/doc/glibc" "$root/usr/share/doc/musl"
+fi
 "$bin" db init --root "$root"
 set --
-for name in holy-base busybox dinit mdevd holypkg linux limine holy-boot; do
+for name in holy-base busybox dinit mdevd holypkg linux limine holy-boot $extra_packages; do
     package="$out/packages/$name.holy"
     digest=$(sha256sum "$package")
     digest=${digest%% *}
@@ -173,6 +230,20 @@ printf 'install-plan %s\n' "$plan" >> "$record"
 "$bin" db apply-set "$plan" "$@" --root "$root"
 test "$(cat "$root/var/lib/holypkg/generation")" -eq 1
 "$bin" db check --all --root "$root" > "$out/root-check.record"
+for abi in glibc musl; do
+    case "$boot_state:$abi" in
+        both:*|glibc:glibc|musl:musl)
+            case "$abi" in
+                glibc) paths='usr/lib/holy/x86_64-linux-gnu/libc.so.6 usr/lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2 usr/lib64/ld-linux-x86-64.so.2' ;;
+                musl) paths='usr/lib/holy/x86_64-linux-musl/ld-musl-x86_64.so.1 usr/lib/ld-musl-x86_64.so.1' ;;
+            esac
+            for path in $paths; do
+                rm "$root/$path"
+                printf 'omitted-payload %s\n' "$path" >> "$record"
+            done
+            ;;
+    esac
+done
 sha256sum "$project/tools/bootstrap-image.sh" "$project/profiles/dracut/module-setup.sh" >> "$record"
 cp "$record" "$out/plan"
 plan=$(sha256sum "$out/plan")
@@ -186,7 +257,7 @@ for file in dracut-functions.sh dracut-logger.sh dracut-install dracut-util drac
 done
 cp "$project/profiles/dracut/module-setup.sh" "$work/dracut/modules.d/90holy/"
 mkdir -p "$root/usr/lib/modules/$version" "$work/dracut-tmp"
-HOLY_ROOT="$root" DRACUT_NO_MKNOD=1 DRACUT_TESTBIN=/usr/bin/busybox dracutbasedir="$work/dracut" dracut --conf /dev/null \
+HOLY_ROOT="$root" DRACUT_LDCONFIG='ldconfig -X' DRACUT_NO_MKNOD=1 DRACUT_TESTBIN=/usr/bin/busybox dracutbasedir="$work/dracut" dracut --conf /dev/null \
     --sysroot "$root" --tmpdir "$work/dracut-tmp" \
     --confdir "$work/empty-conf" --modules holy --no-kernel --no-hostonly \
     --no-hostonly-cmdline --no-early-microcode --nohardlink --nostrip --gzip \
@@ -194,9 +265,13 @@ HOLY_ROOT="$root" DRACUT_NO_MKNOD=1 DRACUT_TESTBIN=/usr/bin/busybox dracutbasedi
 mkdir "$work/audit"
 gzip -dc "$out/initramfs.img" > "$work/initramfs.cpio"
 (cd "$work/audit" && cpio -id --no-absolute-filenames < "$work/initramfs.cpio")
-python3 - "$root" "$work/audit" "$bin" > "$out/initramfs.audit" <<'PY'
+python3 - "$root" "$work/audit" "$bin" "$profile" > "$out/initramfs.audit" <<'PY'
 import hashlib, os, pathlib, stat, subprocess, sys
 root, unpacked = map(pathlib.Path, sys.argv[1:3])
+dynamic = {'usr/lib/holy/x86_64-linux-gnu/libc.so.6',
+           'usr/lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2',
+           'usr/lib/holy/x86_64-linux-musl/ld-musl-x86_64.so.1',
+           'usr/bin/holy-probe-glibc', 'usr/bin/holy-probe-musl'} if sys.argv[4] == 'dual-libc' else set()
 generated = {'etc/ld.so.cache', 'var/cache/ldconfig/aux-cache',
              'usr/lib/dracut/modules.txt', 'usr/lib/dracut/build-parameter.txt'}
 def digest(path):
@@ -231,9 +306,12 @@ for parent, dirs, files in os.walk(unpacked):
                 elf = f.read(4) == b'\x7fELF'
             if elf:
                 facts = subprocess.check_output([sys.argv[3], 'elf', str(path)], text=True)
-                if 'runtime nolibc' not in facts.splitlines():
+                if relative.as_posix() in dynamic:
+                    print('dynamic-fixture-elf', relative)
+                elif 'runtime nolibc' not in facts.splitlines():
                     raise SystemExit('non-static ELF: ' + str(relative))
-                print('static-elf', relative)
+                else:
+                    print('static-elf', relative)
         else:
             raise SystemExit('unexpected object: ' + str(relative))
 for parent, dirs, files in os.walk(root):
@@ -253,7 +331,7 @@ cat > "$work/iso/boot/limine/limine.conf" <<EOF
 timeout: 0
 serial: yes
 verbose: yes
-/Holy static core test
+/Holy $profile test
     protocol: linux
     kernel_path: boot():/boot/vmlinuz
     module_path: boot():/boot/initramfs.img
@@ -266,7 +344,8 @@ xorriso -as mkisofs -R -r -J -b boot/limine/limine-bios-cd.bin \
 limine bios-install "$out/holy-x86_64.iso"
 sha256sum "$out/holy-x86_64.iso" "$out/initramfs.img" "$root/boot/vmlinuz" >> "$record"
 ARCH=x86_64 ISO="$out/holy-x86_64.iso" BOOT_PLAN="$plan" REPORT_DIR="$out/reports" \
+    IMAGE_PROFILE="$profile" LIBC_BOOT_STATE="$boot_state" \
     KERNEL_IMAGE="$root/boot/vmlinuz" KERNEL_VERSION="$version" INITRAMFS="$out/initramfs.img" \
     sh "$project/tests/qemu.sh"
-printf 'result boot-tested-static-core\n' >> "$record"
-printf 'not-tested dynamic-libc-recovery i686 installer network graphics\n' >> "$record"
+printf 'result boot-tested-%s\n' "$profile" >> "$record"
+printf 'not-tested libc-recovery-reboot i686 installer network graphics\n' >> "$record"
