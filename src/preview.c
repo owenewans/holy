@@ -105,8 +105,8 @@ done:
     return state;
 }
 
-int holy_preview_local_format(const char *package, const char *root_path,
-                              int json)
+static int preview(const char *package, const char *root_path,
+                   int json, int resolved, int completed)
 {
     struct archive *archive = NULL;
     struct archive_entry *entry;
@@ -250,8 +250,8 @@ int holy_preview_local_format(const char *package, const char *root_path,
             }
         }
     }
-    rc = conflicts ? 4 :
-         (requirements || elf_needed || script_interpreters) ? 3 : 0;
+    rc = (conflicts && !completed) ? 4 :
+         ((!resolved && requirements) || elf_needed || script_interpreters) ? 3 : 0;
 done:
     if (rc == 2) fprintf(stderr, "holypkg: cannot preview package\n");
     if (json > 0 && rc != 0 && rc != 3 && rc != 4)
@@ -274,4 +274,14 @@ done:
 int holy_preview_local(const char *package, const char *root_path)
 {
     return holy_preview_local_format(package, root_path, 0);
+}
+
+int holy_preview_local_format(const char *package, const char *root_path, int json)
+{
+    return preview(package, root_path, json, 0, 0);
+}
+
+int holy_preview_resolved(const char *package, const char *root_path, int completed)
+{
+    return preview(package, root_path, -1, 1, completed);
 }

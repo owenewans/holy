@@ -166,6 +166,26 @@ int main(int argc, char **argv)
     if (argc == 6 && !strcmp(argv[1], "cache") &&
         !strcmp(argv[2], "verify") && !strcmp(argv[4], "--root"))
         return holy_cache_verify(argv[3], argv[5]) ? 0 : 1;
+    if (argc >= 6 && !strcmp(argv[1], "db") &&
+        (!strcmp(argv[2], "plan-set") || !strcmp(argv[2], "apply-set"))) {
+        int start = !strcmp(argv[2], "apply-set") ? 4 : 3;
+        int end = argc - 2;
+        const char *choice = NULL;
+        if (strcmp(argv[argc - 2], "--root")) return 2;
+        if (end >= start + 2 && !strcmp(argv[end - 2], "--choose")) {
+            choice = argv[end - 1];
+            end -= 2;
+        }
+        if (end <= start) return 2;
+        return holy_state_set((const char *const *)(argv + start), (size_t)(end - start),
+                              choice, start == 4 ? argv[3] : NULL, argv[argc - 1]);
+    }
+    if (argc == 6 && !strcmp(argv[1], "db") &&
+        !strcmp(argv[2], "recover") && !strcmp(argv[3], "--finish-set") &&
+        !strcmp(argv[4], "--root")) return holy_state_finish_set(argv[5]);
+    if (argc == 6 && !strcmp(argv[1], "db") &&
+        !strcmp(argv[2], "recover") && !strcmp(argv[3], "--continue-set") &&
+        !strcmp(argv[4], "--root")) return holy_state_continue_set(argv[5]);
     if (argc == 5 && !strcmp(argv[1], "db") && !strcmp(argv[3], "--root")) {
         if (!strcmp(argv[2], "init")) return holy_state_init(argv[4]) ? 0 : 1;
         if (!strcmp(argv[2], "status")) return holy_state_status(argv[4], 0);
@@ -252,7 +272,7 @@ int main(int argc, char **argv)
         !strcmp(argv[3], "--root") && !strcmp(argv[5], "--json"))
         return holy_check_local(argv[2] + 6, argv[4], 1);
     if (argc != 4 || strcmp(argv[1], "config") || strcmp(argv[2], "check")) {
-        fprintf(stderr, "usage: holypkg config check FILE | holypkg info|verify|manifest|scan local:FILE | holypkg manifest generate DIRECTORY --output FILE | holypkg requirements|provides local:FILE [--json] | holypkg solve local:ROOT [local:CANDIDATE...] [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE] | holypkg pack DIRECTORY --output FILE.holy | holypkg check|preview local:FILE --root DIRECTORY [--json] | holypkg cache stage local:FILE --root DIRECTORY | holypkg cache verify SHA256 --root DIRECTORY | holypkg db init|status|cancel|recover|preflight|plan|recheck|apply --root DIRECTORY | holypkg db recover --abort-empty|--continue|--finish-apply --root DIRECTORY | holypkg db check SHA256|--all --root DIRECTORY [--json] | holypkg db rm SHA256 --root DIRECTORY | holypkg db owner PATH --root DIRECTORY | holypkg db status|preflight --root DIRECTORY --json | holypkg db reserve SHA256 --root DIRECTORY | holypkg db approve PLAN_SHA256 --root DIRECTORY | holypkg elf FILE | holypkg repo index|list|seal DIRECTORY | holypkg repo search DIRECTORY NAME | holypkg repo solve DIRECTORY NAME [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg repo providers DIRECTORY KIND NAME [--json] | holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY\n");
+        fprintf(stderr, "usage: holypkg config check FILE | holypkg info|verify|manifest|scan local:FILE | holypkg manifest generate DIRECTORY --output FILE | holypkg requirements|provides local:FILE [--json] | holypkg solve local:ROOT [local:CANDIDATE...] [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE] | holypkg pack DIRECTORY --output FILE.holy | holypkg check|preview local:FILE --root DIRECTORY [--json] | holypkg cache stage local:FILE --root DIRECTORY | holypkg cache verify SHA256 --root DIRECTORY | holypkg db init|status|cancel|recover|preflight|plan|recheck|apply --root DIRECTORY | holypkg db recover --abort-empty|--continue|--finish-apply --root DIRECTORY | holypkg db check SHA256|--all --root DIRECTORY [--json] | holypkg db rm SHA256 --root DIRECTORY | holypkg db owner PATH --root DIRECTORY | holypkg db status|preflight --root DIRECTORY --json | holypkg db reserve SHA256 --root DIRECTORY | holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] --root DIRECTORY | holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] --root DIRECTORY | holypkg db recover --finish-set|--continue-set --root DIRECTORY | holypkg db approve PLAN_SHA256 --root DIRECTORY | holypkg elf FILE | holypkg repo index|list|seal DIRECTORY | holypkg repo search DIRECTORY NAME | holypkg repo solve DIRECTORY NAME [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg repo providers DIRECTORY KIND NAME [--json] | holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY\n");
         return 2;
     }
     path = argv[3];

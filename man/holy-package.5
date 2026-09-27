@@ -70,9 +70,9 @@ target using the holy.conf lexer. The plan hash includes these canonical bytes.
 Database operations reject a missing, modified, writable or symlink graph.
 Legacy holy-instance-1 entries remain readable without a graph. Their absence
 of recorded provider choices does not establish dependency correctness.
-The current installation subset still admits only dependency-free data or
-native static packages; dynamic-package placement and multi-package apply
-remain unimplemented.
+The set installation interface supports exact package dependencies between data
+and native static packages and records explicit/dependency reasons. Dynamic
+package placement and general source-ID slots remain unimplemented.
 .SH SEE ALSO
 .BR holypkg (8),
 .BR holy.conf (5)

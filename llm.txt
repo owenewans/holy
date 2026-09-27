@@ -1,4 +1,4 @@
-holy-image.7 source=holy version=development sha256=902a09f16b03b2d0f85a51c7886b800b02daa743f60a7f2f62cbe2e89560d053
+holy-image.7 source=holy version=development sha256=f61aa762a6c9662cb76b420478dd97c281ab5549ce140241d39c6a8df7afafdb
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
 NAME
@@ -43,10 +43,13 @@ INPUTS AND ROOT
      artifacts. The original archives remain in inputs/.
 
      The static core binary, selected kernel, Limine data and Holy boot configu-
-     ration also become native packages. holypkg installs  the	resulting  seven
-     packages through cache, reservation, plan approval and journaled apply into
-     root/.   The  builder prepares the profile's directories first. It does not
-     extract foreign distro roots or modify the host package database.
+     ration also become native packages. The holy-base metapackage requires  the
+     resulting	seven packages. holypkg resolves all eight artifacts, prints the
+     set plan and applies its reviewed digest with one writer lock and one  gen-
+     eration  change into root/. install.plan retains the selected artifacts and
+     requirement edges.	 The builder prepares the profile's  directories  first.
+     It	 does  not extract foreign distro roots or modify the host package data-
+     base.
 
      The profile installs merged-/usr links, a locked root account and the dinit
      services boot, console, mdevd, coldplug and holy-test. mdevd reports readi-
@@ -90,32 +93,33 @@ QEMU
 
      Guest markers must confirm the expected plan and architecture, dinit as PID
      1 by /proc/1/exe, a BusyBox shell probe, mdevd/coldplug and a complete  lo-
-     cal  package  install/check/remove.  The guest checks the critical executa-
-     bles' static ELF classification and absence of the	 four  expected	 dynamic
-     loaders.  KERNEL_VERSION additionally requires the matching release marker.
-     A	failure	 marker overrides pass markers.	 The runner sends QMP quit after
-     the probes or a boot timeout, waits  up  to  five	seconds,  then	kills  a
+     cal  two-package  dependency-set install/check/remove, including refusal to
+     remove the referenced provider first. The guest checks  the  critical  exe-
+     cutables'	static	ELF  classification and absence of the four expected dy-
+     namic loaders.  KERNEL_VERSION additionally requires the  matching	 release
+     marker. A failure marker overrides pass markers.  The runner sends QMP quit
+     after  the probes or a boot timeout, waits up to five seconds, then kills a
      process which did not exit. Process launch or exit status alone cannot pass
      a boot test.
 
-     Each  run	retains	 serial.log,  QEMU output, a text report and report.json
-     (holy-qemu-report-2). Reports include argv,  accelerator,	firmware,  input
-     hashes,  elapsed  time, stage deadlines, exit reason and per-marker status.
-     Optional KERNEL_IMAGE, INITRAMFS and ROOT_IMAGE inputs  add  their	 hashes.
-     They  identify  caller-supplied  files,  not  guest measurements of running
+     Each run retains serial.log, QEMU output, a  text	report	and  report.json
+     (holy-qemu-report-2).  Reports  include  argv, accelerator, firmware, input
+     hashes, elapsed time, stage deadlines, exit reason and  per-marker	 status.
+     Optional  KERNEL_IMAGE,  INITRAMFS	 and ROOT_IMAGE inputs add their hashes.
+     They identify caller-supplied files,  not	guest  measurements  of	 running
      code.
 
 COVERAGE
-     This profile tests the static core in RAM. The reference image still  needs
-     both  dynamic libc packages, libc removal/restoration, networking, storage,
-     the installer and i686. Those gates remain separate from this boot	 result.
-     The  repository documentation bundle currently contains Holy pages; the in-
-     stalled dinit pages accompany its package but are not yet merged into  that
+     This  profile tests the static core in RAM. The reference image still needs
+     both dynamic libc packages, libc removal/restoration, networking,	storage,
+     the  installer and i686. Those gates remain separate from this boot result.
+     The repository documentation bundle currently contains Holy pages; the  in-
+     stalled  dinit pages accompany its package but are not yet merged into that
      bundle. QEMU virtual devices do not establish physical GPU support.
 
 SOURCES
-     Limine   configuration   and  ISO	layout:	 https://github.com/limine-boot-
-     loader/limine/blob/v12.x/CONFIG.md	  and	 https://github.com/limine-boot-
+     Limine  configuration  and	 ISO   layout:	 https://github.com/limine-boot-
+     loader/limine/blob/v12.x/CONFIG.md	   and	 https://github.com/limine-boot-
      loader/limine/blob/v12.x/USAGE.md.	      dracut	  module      interface:
      https://github.com/dracut-ng/dracut-ng/blob/main/man/dracut.modules.7.adoc.
 
@@ -155,7 +159,7 @@ SEE ALSO
      holy-image(7), holypkg(8)
 
 Holy				 September 2026			    HOLY-INIT(8)
-holy-package.5 source=holy version=development sha256=39be1b074db1ef987c4e9ac32aed912e9f78c496629b410497091dd35499aba3
+holy-package.5 source=holy version=development sha256=599219786598a1c1cfaa369af5a48672de9ddce49ce706c097fae28a2e630738
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -231,9 +235,10 @@ INSTALLED GRAPH
      Database operations reject a missing, modified, writable or symlink  graph.
      Legacy  holy-instance-1  entries remain readable without a graph. Their ab-
      sence of recorded provider choices does not establish  dependency	correct-
-     ness.   The  current  installation subset still admits only dependency-free
-     data or native static packages; dynamic-package placement and multi-package
-     apply remain unimplemented.
+     ness.   The  set installation interface supports exact package dependencies
+     between data and native static  packages  and  records  explicit/dependency
+     reasons. Dynamic package placement and general source-ID slots remain unim-
+     plemented.
 
 SEE ALSO
      holypkg(8), holy.conf(5)
@@ -292,7 +297,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=8086cdc7bb196ca6f82c6d4537d297452d1fd24af720167e92337a4667ed6bf4
+holypkg.8 source=holy version=development sha256=5bfb778863cfd445b82b07c18723992b3224b5d0ebbae8b20980a257fdab439b
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -340,6 +345,11 @@ SYNOPSIS
      holypkg db approve PLAN_SHA256 --root DIRECTORY
      holypkg db recheck --root DIRECTORY
      holypkg db apply --root DIRECTORY
+     holypkg  db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256]
+     --root DIRECTORY
+     holypkg  db   apply-set   PLAN_SHA256   ROOT_SHA256   [CANDIDATE_SHA256...]
+     [--choose ID=SHA256] --root DIRECTORY
+     holypkg db recover --finish-set|--continue-set --root DIRECTORY
      holypkg db check SHA256 --root DIRECTORY
      holypkg db check --all --root DIRECTORY
      holypkg db check SHA256|--all --root DIRECTORY --json
@@ -541,6 +551,40 @@ DESCRIPTION
      files.   These  commands do not resolve chains of symlinks or prove runtime
      targets exist.  The separate fetch --extract operation  still  refuses  ab-
      solute symlinks.
+
+     The  db  plan-set command resolves one explicit root against already cached
+     candidate hashes. It supports exact package dependencies between  linux/no-
+     libc  data	 or native static packages, empty hooks/transforms, pre-existing
+     safe directories and the same payload subset as db apply.	It  reports  se-
+     lected  artifacts, reasons and requirement edges without changing installed
+     state.  Unused candidates are excluded from the operation. The plan  digest
+     binds   target-root  device/inode,	 generation,  selected	graph,	explicit
+     provider choice and every selected manifest. Inter-package	 path/name  con-
+     flicts are rejected.
+
+     The  db  apply-set command accepts the reviewed plan digest followed by the
+     same root and candidates. It holds one writer lock, checks the  plan  again
+     and  writes transactions/set-journal before the first payload. All selected
+     packages share one generation increment. Installed state  records	the  ex-
+     plicit  root  and	dependency  reasons;  each instance retains the selected
+     graph. Package hooks, dynamic library placement,  existing-provider  reuse,
+     upgrades and grouped removal are not implemented by this interface.
+
+     An	 interrupted set leaves generation unchanged unless final commit already
+     published it. db status returns 5 for a recognized set journal.  db recover
+     --finish-set verifies cached artifacts, the original plan	hash,  installed
+     metadata/graphs  and  actual payloads before completing generation publica-
+     tion and removing the journal. --continue-set additionally	 installs  pack-
+     ages that have no instance or payload yet, after checking the whole remain-
+     ing  set.	Neither	 mode  overwrites  a partial file or repeats a partially
+     written instance. Those cases require inspection.	Recovery  rejects  mixed
+     journals,	changed	 artifacts,  ownership	conflicts and drift in completed
+     package files.  The cache must retain the selected artifacts.
+
+     The current db rm rejects removal of a provider still referenced by another
+     installed consumer with status 3. A saved graph belonging to a removed con-
+     sumer does not keep its former dependencies alive. Grouped removal	 and  an
+     explicitly accepted broken-dependency override remain pending.
 
      The  db plan command reads the prepared reservation at the current database
      generation. It verifies a private snapshot of the cached  artifact,  checks

@@ -110,6 +110,9 @@ metadata boot-fixture 1 noarch
 mkdir -p "$tree/DATA/usr/share/holy"
 printf 'installed-in-guest\n' > "$tree/DATA/usr/share/holy/fixture-installed"
 pack boot-fixture
+metadata boot-fixture-root 1 noarch
+printf 'require fixture-1 boot-fixture-root package boot-fixture any any any - boot-fixture metadata\n' > "$tree/HOLY/deps"
+pack boot-fixture-root
 metadata holy-boot bootstrap x86_64
 mkdir -p "$tree/DATA/usr/bin" "$tree/DATA/usr/lib/holy" "$tree/DATA/etc/dinit.d" \
     "$tree/DATA/etc/holy" "$tree/DATA/usr/share/holy"
@@ -119,6 +122,8 @@ cp "$project/tests/boot-probe.sh" "$tree/DATA/usr/lib/holy/boot-probe.sh"
 chmod 0644 "$tree/DATA/usr/lib/holy/boot-probe.sh"
 cp "$out/packages/boot-fixture.holy" "$tree/DATA/usr/share/holy/fixture.holy"
 chmod 0644 "$tree/DATA/usr/share/holy/fixture.holy"
+cp "$out/packages/boot-fixture-root.holy" "$tree/DATA/usr/share/holy/fixture-root.holy"
+chmod 0644 "$tree/DATA/usr/share/holy/fixture-root.holy"
 printf '%s\n' "$version" > "$tree/DATA/etc/holy/kernel-version"
 printf 'root:x:0:0:root:/root:/bin/sh\n' > "$tree/DATA/etc/passwd"
 printf 'root:x:0:\n' > "$tree/DATA/etc/group"
@@ -134,6 +139,14 @@ ln -s usr/bin/holy-init "$tree/DATA/init"
 sha256sum "$project/src/early-init.c" "$project/tests/boot-probe.sh" \
     "$project/profiles/dinit/"* > "$tree/HOLY/origin"
 pack holy-boot
+metadata holy-base bootstrap noarch
+for name in busybox dinit mdevd holypkg linux limine holy-boot; do
+    "$bin" info "local:$out/packages/$name.holy" > "$work/package-info"
+    actual_name=$(sed -n 's/^name //p' "$work/package-info")
+    case "$actual_name" in ''|*[!a-zA-Z0-9._+-]*) echo 'unsupported bootstrap package name' >&2; exit 6 ;; esac
+    printf 'require base-%s holy-base package %s any any any - %s metadata\n' "$name" "$actual_name" "$actual_name" >> "$tree/HOLY/deps"
+done
+pack holy-base
 mkdir -p "$root/usr/bin" "$root/usr/lib/holy" "$root/usr/lib32" "$root/usr/lib64" \
     "$root/usr/share/man/man5" "$root/usr/share/man/man7" "$root/usr/share/man/man8" "$root/usr/share/holy" \
     "$root/usr/share/licenses/busybox" "$root/usr/share/licenses/musl" \
@@ -143,20 +156,22 @@ mkdir -p "$root/usr/bin" "$root/usr/lib/holy" "$root/usr/lib32" "$root/usr/lib64
     "$root/etc/holy" "$root/boot" "$root/dev" "$root/proc" "$root/sys" \
     "$root/run" "$root/tmp" "$root/root"
 "$bin" db init --root "$root"
-for name in busybox dinit mdevd holypkg linux limine holy-boot; do
+set --
+for name in holy-base busybox dinit mdevd holypkg linux limine holy-boot; do
     package="$out/packages/$name.holy"
     digest=$(sha256sum "$package")
     digest=${digest%% *}
     printf 'package %s %s\n' "$name" "$digest" >> "$record"
     "$bin" cache stage "local:$package" --root "$root"
-    "$bin" db reserve "$digest" --root "$root"
-    "$bin" db plan --root "$root" > "$work/plan"
-    cat "$work/plan"
-    plan=$(sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' "$work/plan")
-    test "${#plan}" -eq 64
-    "$bin" db approve "$plan" --root "$root"
-    "$bin" db apply --root "$root"
+    set -- "$@" "$digest"
 done
+"$bin" db plan-set "$@" --root "$root" > "$out/install.plan"
+cat "$out/install.plan"
+plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$out/install.plan")
+test "${#plan}" -eq 64
+printf 'install-plan %s\n' "$plan" >> "$record"
+"$bin" db apply-set "$plan" "$@" --root "$root"
+test "$(cat "$root/var/lib/holypkg/generation")" -eq 1
 "$bin" db check --all --root "$root" > "$out/root-check.record"
 sha256sum "$project/tools/bootstrap-image.sh" "$project/profiles/dracut/module-setup.sh" >> "$record"
 cp "$record" "$out/plan"

@@ -80,6 +80,12 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db apply --root DIRECTORY
 .br
+.B holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] --root DIRECTORY
+.br
+.B holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] --root DIRECTORY
+.br
+.B holypkg db recover --finish-set|--continue-set --root DIRECTORY
+.br
 .B holypkg db check SHA256 --root DIRECTORY
 .br
 .B holypkg db check --all --root DIRECTORY
@@ -281,6 +287,39 @@ to that root. Dangling links are preserved. Symlink xattr inspection requires
 /proc/self/fd on the build host. Metadata files must remain ordinary files.
 These commands do not resolve chains of symlinks or prove runtime targets exist.
 The separate fetch --extract operation still refuses absolute symlinks.
+.PP
+The db plan-set command resolves one explicit root against already cached
+candidate hashes. It supports exact package dependencies between linux/nolibc
+data or native static packages, empty hooks/transforms, pre-existing safe
+directories and the same payload subset as db apply. It reports selected
+artifacts, reasons and requirement edges without changing installed state.
+Unused candidates are excluded from the operation. The plan digest binds
+target-root device/inode, generation, selected graph, explicit provider choice
+and every selected manifest. Inter-package path/name conflicts are rejected.
+.PP
+The db apply-set command accepts the reviewed plan digest followed by the same
+root and candidates. It holds one writer lock, checks the plan again and writes
+transactions/set-journal before the first payload. All selected packages share
+one generation increment. Installed state records the explicit root and
+dependency reasons; each instance retains the selected graph. Package hooks,
+dynamic library placement, existing-provider reuse, upgrades and grouped removal
+are not implemented by this interface.
+.PP
+An interrupted set leaves generation unchanged unless final commit already
+published it. db status returns 5 for a recognized set journal.
+db recover --finish-set verifies cached artifacts, the original plan hash,
+installed metadata/graphs and actual payloads before completing generation
+publication and removing the journal. --continue-set additionally installs
+packages that have no instance or payload yet, after checking the whole remaining
+set. Neither mode overwrites a partial file or repeats a partially written
+instance. Those cases require inspection. Recovery rejects mixed journals,
+changed artifacts, ownership conflicts and drift in completed package files.
+The cache must retain the selected artifacts.
+.PP
+The current db rm rejects removal of a provider still referenced by another
+installed consumer with status 3. A saved graph belonging to a removed consumer
+does not keep its former dependencies alive. Grouped removal and an explicitly
+accepted broken-dependency override remain pending.
 .PP
 The db plan command reads the prepared reservation at the current database
 generation. It verifies a private snapshot of the cached artifact, checks

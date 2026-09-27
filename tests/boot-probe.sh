@@ -37,14 +37,17 @@ echo 'HOLY-BOOT-1 pkg holypkg'
 digest=$($bb sha256sum /usr/share/holy/fixture.holy)
 digest=${digest%% *}
 $pkg cache stage local:/usr/share/holy/fixture.holy --root / > /run/package-stage
-$pkg db reserve "$digest" --root / > /run/package-reserve
-$pkg db plan --root / > /run/package-plan
-hash=$($bb sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' /run/package-plan)
+root_digest=$($bb sha256sum /usr/share/holy/fixture-root.holy)
+root_digest=${root_digest%% *}
+$pkg cache stage local:/usr/share/holy/fixture-root.holy --root / > /run/root-package-stage
+$pkg db plan-set "$root_digest" "$digest" --root / > /run/package-plan
+hash=$($bb sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' /run/package-plan)
 test "${#hash}" -eq 64
-$pkg db approve "$hash" --root / > /run/package-approve
-$pkg db apply --root / > /run/package-apply
+$pkg db apply-set "$hash" "$root_digest" "$digest" --root / > /run/package-apply
 $pkg db check "$digest" --root / > /run/package-check
 test "$($bb cat /usr/share/holy/fixture-installed)" = installed-in-guest
+if $pkg db rm "$digest" --root / > /run/provider-remove 2>&1; then exit 1; else test "$?" -eq 3; fi
+$pkg db rm "$root_digest" --root / > /run/root-package-remove
 $pkg db rm "$digest" --root / > /run/package-remove
 test ! -e /usr/share/holy/fixture-installed
 echo 'HOLY-BOOT-1 transaction install-check-remove'

@@ -6,4 +6,7 @@ int holy_preview_local(const char *package, const char *root);
 /* json emits events; -1 suppresses successful output for plan validation. */
 int holy_preview_local_format(const char *package, const char *root, int json);
 
+/* caller supplies a solved graph; completed requires separate payload verification. */
+int holy_preview_resolved(const char *package, const char *root, int completed);
+
 #endif

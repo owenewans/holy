@@ -93,6 +93,7 @@ check: holypkg tests/resolution check-init check-solver check-install-payload ch
 	CC="$(CC)" sh tests/elf.sh ./holypkg
 	sh tests/repo.sh ./holypkg
 	sh tests/state.sh ./holypkg
+	sh tests/sets.sh ./holypkg
 	sh tests/resolve.sh ./holypkg ./tests/resolution
 	sh tests/elf-resolve.sh ./holypkg ./tests/resolution
 	sh tests/static.sh ./holypkg
@@ -101,6 +102,7 @@ check-fixtures: check
 
 check-root: check-install-payload
 	sh tests/state.sh ./holypkg
+	sh tests/sets.sh ./holypkg
 	sh tests/static.sh ./holypkg
 
 check-qemu:

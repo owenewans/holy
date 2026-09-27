@@ -1,6 +1,8 @@
 #ifndef HOLY_STATE_H
 #define HOLY_STATE_H
 
+#include <stddef.h>
+
 /* initializes an empty database under an explicit target root. */
 int holy_state_init(const char *root_path);
 /* 0 empty, 5 recognized prepared reservation, 1 invalid database. */
@@ -33,5 +35,11 @@ int holy_state_continue_remove(const char *root_path);
 int holy_state_finish_apply(const char *root_path);
 /* lookup installed data-file ownership without inspecting the live payload. */
 int holy_state_owner(const char *path, const char *root_path);
+
+/* selected cached set, one reviewed hash and one generation change. */
+int holy_state_set(const char *const *digests, size_t count, const char *choice,
+                   const char *approved, const char *root_path);
+int holy_state_finish_set(const char *root_path);
+int holy_state_continue_set(const char *root_path);
 
 #endif

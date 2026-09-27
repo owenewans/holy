@@ -38,8 +38,10 @@ parent hashes and normalization in origin. These are new unsigned local
 artifacts. The original archives remain in inputs/.
 .PP
 The static core binary, selected kernel, Limine data and Holy boot configuration
-also become native packages. holypkg installs the resulting seven packages
-through cache, reservation, plan approval and journaled apply into root/.
+also become native packages. The holy-base metapackage requires the resulting
+seven packages. holypkg resolves all eight artifacts, prints the set plan and
+applies its reviewed digest with one writer lock and one generation change
+into root/. install.plan retains the selected artifacts and requirement edges.
 The builder prepares the profile's directories first. It does not extract
 foreign distro roots or modify the host package database.
 .PP
@@ -82,7 +84,8 @@ disabled, and no host writable disks or directories are attached.
 .PP
 Guest markers must confirm the expected plan and architecture, dinit as
 PID 1 by /proc/1/exe, a BusyBox shell probe, mdevd/coldplug and a complete
-local package install/check/remove. The guest checks the critical executables'
+local two-package dependency-set install/check/remove, including refusal to
+remove the referenced provider first. The guest checks the critical executables'
 static ELF classification and absence of the four expected dynamic loaders.
 KERNEL_VERSION additionally requires the
 matching release marker. A failure marker overrides pass markers.

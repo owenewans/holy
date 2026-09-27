@@ -43,8 +43,12 @@
   report installed directory drift in check without removing shared directories.
 - [x] Reject a second local data package with an already installed name during
   plan construction. This is a temporary restriction, not source-ID slot support.
-- [ ] Define stable source IDs, version families, installed ownership and selected
-  dependency edges for general packages; implement multi-package transactions.
+- [x] Install a resolved cached static/data set with one writer lock, plan hash
+  and generation change; persist reasons/edges, reject referenced-provider removal,
+  and recover completed sets or resume untouched remaining packages after failure.
+  The bootstrap image installs its base through this set engine.
+- [ ] Define stable source IDs and version families; extend transactions to
+  installed-provider reuse, replacements, dynamic libraries and grouped removal.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions.
 - [x] Install, run, check and remove a native static syscall-only ELF fixture;
