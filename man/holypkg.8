@@ -540,6 +540,13 @@ database generation, ownership, source or dependency decisions and is not a
 public update command. Directory creation and durable update journaling remain
 unimplemented.
 .PP
+The internal resolver can also validate a complete proposed artifact set.
+It requires every supplied artifact, including disconnected consumers and
+dependency cycles. Missing requirements fail the set; ambiguous provider edges
+still require a decision. The caller must construct the installed set after
+replacement and preserve instance reasons and source bindings. This interface
+does not discover update candidates or apply transactions.
+.PP
 Static executable installation verifies ELF architecture and nolibc facts;
 it does not execute package programs. The caller may run an installed program
 as a separate action. Executable payloads with an unknown format are refused;

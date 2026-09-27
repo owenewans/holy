@@ -492,7 +492,7 @@ SOURCE IDENTITIES
      during package selection remain unimplemented.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=e96f80c445876cb00c47a22283678fd9b6f851b125fdc208b8791effe96547ec
+holypkg.8 source=holy version=development sha256=457d9cca7066c39628362e52e9838a751fcceaa8eb592d5ca87b4bb2f62bae8f
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1001,6 +1001,13 @@ DESCRIPTION
      ponent  does  not yet bind database generation, ownership, source or depen-
      dency decisions and is not a public update command. Directory creation  and
      durable update journaling remain unimplemented.
+
+     The  internal  resolver can also validate a complete proposed artifact set.
+     It requires every supplied artifact, including disconnected  consumers  and
+     dependency	 cycles.  Missing  requirements fail the set; ambiguous provider
+     edges still require a decision. The caller must construct the installed set
+     after replacement and preserve instance reasons and source	 bindings.  This
+     interface does not discover update candidates or apply transactions.
 
      Static  executable installation verifies ELF architecture and nolibc facts;
      it does not execute package programs. The caller may run an installed  pro-

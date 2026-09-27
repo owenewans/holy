@@ -218,6 +218,17 @@ for needed_path in './libholyfixture.so.1' '/usr/$LIB/libholyfixture.so.1' '/usr
     if "$bin" solve "local:$tmp/nonliteral-consumer.holy" "local:$tmp/runtime.holy" \
         --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 done
+if test "$#" -ge 2; then
+    api=$2
+    "$api" --set "$tmp/good.holy" "$tmp/consumer.holy" "$tmp/runtime.holy" > "$tmp/set-record"
+    test "$(grep -c '^artifact ' "$tmp/set-record")" -eq 3
+    "$api" - "$tmp/wrong-symbol.holy" "$tmp/consumer.holy" "$tmp/runtime.holy" > "$tmp/single-record"
+    test "$(grep -c '^artifact ' "$tmp/single-record")" -eq 2
+    if "$api" --set "$tmp/wrong-symbol.holy" "$tmp/consumer.holy" "$tmp/runtime.holy" > "$tmp/set-record" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+    test ! -s "$tmp/set-record"
+    "$api" --set "$tmp/compatibility.holy" "$tmp/consumer.holy" "$tmp/runtime.holy" > "$tmp/set-record"
+    test "$(grep -c '^artifact ' "$tmp/set-record")" -eq 3
+fi
 if test "${HOLY_TEST_STATIC_CHROOT:-0}" = 1; then
     "$bin" elf "$bin" > "$tmp/out"
     grep -qx 'runtime nolibc' "$tmp/out"

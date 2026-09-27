@@ -76,6 +76,26 @@ if test "$#" -ge 2; then
     grep -Fqx "edge \"$root_hash\" \"b-1\" \"$b2_hash\" \"-\" \"package\" \"b\"" "$tmp/chosen"
     if "$api" - "$tmp/root-1.holy" > "$tmp/record" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
     test ! -s "$tmp/record"
+    "$api" --set "$tmp/root-1.holy" "$tmp/b-1.holy" "$tmp/unused-1.holy" > "$tmp/record"
+    "$api" --set "$tmp/root-1.holy" "$tmp/unused-1.holy" "$tmp/b-1.holy" > "$tmp/reordered"
+    cmp "$tmp/record" "$tmp/reordered"
+    test "$(grep -c '^artifact ' "$tmp/record")" -eq 3
+    if "$api" --set "$tmp/root-1.holy" "$tmp/b-1.holy" "$tmp/b-2.holy" > "$tmp/record" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+    test ! -s "$tmp/record"
+    printf 'require missing-1 unused package missing any any any - missing metadata\n' > "$tmp/payload/HOLY/deps"
+    build unused 2
+    "$api" - "$tmp/root-1.holy" "$tmp/b-1.holy" "$tmp/unused-2.holy" > "$tmp/record"
+    test "$(grep -c '^artifact ' "$tmp/record")" -eq 2
+    if "$api" --set "$tmp/root-1.holy" "$tmp/b-1.holy" "$tmp/unused-2.holy" > "$tmp/record" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+    test ! -s "$tmp/record"
+    printf 'require y-1 x package y any any any - y metadata\n' > "$tmp/payload/HOLY/deps"
+    build x 1
+    printf 'require x-1 y package x any any any - x metadata\n' > "$tmp/payload/HOLY/deps"
+    build y 1
+    "$api" --set "$tmp/root-1.holy" "$tmp/b-1.holy" "$tmp/x-1.holy" "$tmp/y-1.holy" > "$tmp/record"
+    test "$(grep -c '^artifact ' "$tmp/record")" -eq 4
+    test "$(grep -c '^edge ' "$tmp/record")" -eq 3
+    : > "$tmp/payload/HOLY/deps"
 fi
 if "$bin" repo solve "$tmp/repo-choice" root --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"decision-required"}' "$tmp/out"

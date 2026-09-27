@@ -31,6 +31,11 @@
   redirected requests. Configured source sync and signatures remain open.
 - [x] Build and seal a local repository catalog; search and fetch its verified objects.
 - [x] Resolve a restricted local/catalog graph with libsolv; reject unsupported semantics.
+- [x] Validate every artifact in a proposed complete set, including consumers
+  outside the selected update's dependency graph. Preserve disconnected packages
+  and cycles, reject missing requirements and keep ambiguous provider edges
+  decision-required. Update planning must still supply the proposed installed
+  set and bind it to database generation, source and ownership decisions.
 - [x] Add observed ELF interpreter, SONAME and strong symbol edges to that graph;
   reject candidate class/ABI/version/symbol mismatches and expose stable IDs for
   root provider choices. Unresolved launch scopes report unknown. Literal absolute

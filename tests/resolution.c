@@ -43,7 +43,10 @@ int main(int argc, char **argv)
     int status;
     if (argc == 1) return record_limits();
     if (argc < 3) return 2;
-    status = holy_resolve_collect((const char *const *)(argv + 2),
+    status = !strcmp(argv[1], "--set") ?
+             holy_resolve_collect_set((const char *const *)(argv + 2),
+                                      (size_t)argc - 2, &result) :
+             holy_resolve_collect((const char *const *)(argv + 2),
                                   (size_t)argc - 2,
                                   strcmp(argv[1], "-") ? argv[1] : NULL, &result);
     if (status) {

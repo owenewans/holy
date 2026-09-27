@@ -27,5 +27,8 @@ int holy_solve_exact(const struct holy_solver_item *items, size_t count,
    provider edges within the same set can still be ambiguous. */
 int holy_solve_exact_unique(const struct holy_solver_item *items, size_t count,
                             const char *requested_id, int *selected);
+/* requires every supplied item; cannot drop a conflicting or broken consumer.
+   returns 1 on success, 2 conflict, 0 invalid input or operational failure. */
+int holy_solve_exact_set(const struct holy_solver_item *items, size_t count, int *selected);
 
 #endif

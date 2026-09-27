@@ -501,7 +501,7 @@ static int collect_result(const struct local_item *local, const struct holy_solv
 
 static int resolve(const char *const *paths, size_t count, int json,
                     const char *generation, const char *choice,
-                    struct holy_resolution *output)
+                    struct holy_resolution *output, int all)
 {
     struct local_item *local = NULL;
     struct holy_solver_item *items = NULL;
@@ -580,7 +580,8 @@ static int resolve(const char *const *paths, size_t count, int json,
         free((char *)local[0].requirements[requirement].first);
         local[0].requirements[requirement].first = replacement;
     }
-    solved = holy_solve_exact_unique(items, count, items[0].id, selected);
+    solved = all ? holy_solve_exact_set(items, count, selected) :
+                   holy_solve_exact_unique(items, count, items[0].id, selected);
     if (solved == 1) for (i = 0; i < count; ++i) if (selected[i]) {
         for (j = 0; j < local[i].requirement_count; ++j) {
             size_t k, matches = 0;
@@ -676,14 +677,21 @@ done:
 int holy_resolve_local(const char *const *paths, size_t count, int json,
                        const char *generation, const char *choice)
 {
-    return resolve(paths, count, json, generation, choice, NULL);
+    return resolve(paths, count, json, generation, choice, NULL, 0);
 }
 
 int holy_resolve_collect(const char *const *paths, size_t count,
                           const char *choice, struct holy_resolution *result)
 {
     memset(result, 0, sizeof *result);
-    return resolve(paths, count, -1, NULL, choice, result);
+    return resolve(paths, count, -1, NULL, choice, result, 0);
+}
+
+int holy_resolve_collect_set(const char *const *paths, size_t count,
+                              struct holy_resolution *result)
+{
+    memset(result, 0, sizeof *result);
+    return resolve(paths, count, -1, NULL, NULL, result, 1);
 }
 
 void holy_resolution_free(struct holy_resolution *result)

@@ -9,7 +9,7 @@
 #include <string.h>
 
 static int solve(const struct holy_solver_item *items, size_t count,
-                 const char *requested_id, int *selected, int unique)
+                 const char *requested_id, int *selected, int unique, int all)
 {
     Pool *pool = NULL;
     Repo *repo;
@@ -20,7 +20,7 @@ static int solve(const struct holy_solver_item *items, size_t count,
     int rc = 0;
     if (selected && count && count <= 100000)
         memset(selected, 0, count * sizeof *selected);
-    if (!items || !selected || !requested_id || !*requested_id ||
+    if (!items || !selected || (!all && (!requested_id || !*requested_id)) ||
         !count || count > 100000) return 0;
     for (i = 0; i < count; ++i) {
         if (!items[i].id || !*items[i].id ||
@@ -43,7 +43,7 @@ static int solve(const struct holy_solver_item *items, size_t count,
         s->evr = pool_str2id(pool, "0", 1);
         s->arch = pool_str2id(pool, "noarch", 1);
         if (!s->name || !s->evr || !s->arch) goto done;
-        if (!strcmp(items[i].id, requested_id)) requested = id;
+        if (!all && !strcmp(items[i].id, requested_id)) requested = id;
         for (j = 0; j < items[i].provides_count; ++j) {
             Id capability;
             if (!items[i].provides[j] || !*items[i].provides[j]) goto done;
@@ -74,19 +74,21 @@ static int solve(const struct holy_solver_item *items, size_t count,
             s->conflicts = repo_addid_dep(repo, s->conflicts, dep, 0);
         }
     }
-    if (!requested) goto done;
+    if (!all && !requested) goto done;
     repo_internalize(repo);
     pool_createwhatprovides(pool);
     solver = solver_create(pool);
     if (!solver) goto done;
     queue_init(&jobs);
-    queue_push2(&jobs, SOLVER_INSTALL | SOLVER_SOLVABLE, requested);
+    if (all) for (i = 0; i < count; ++i)
+        queue_push2(&jobs, SOLVER_INSTALL | SOLVER_SOLVABLE, repo->start + (Id)i);
+    else queue_push2(&jobs, SOLVER_INSTALL | SOLVER_SOLVABLE, requested);
     if (solver_solve(solver, &jobs)) rc = 2;
     else {
         for (i = 0; i < count; ++i)
             selected[i] = solver_get_decisionlevel(solver, repo->start + (Id)i) > 0;
         rc = 1;
-        if (unique) for (i = 0; i < count; ++i) {
+        if (unique && !all) for (i = 0; i < count; ++i) {
             Solver *trial;
             int problems;
             if (!selected[i] || repo->start + (Id)i == requested) continue;
@@ -112,11 +114,16 @@ done:
 int holy_solve_exact(const struct holy_solver_item *items, size_t count,
                      const char *requested_id, int *selected)
 {
-    return solve(items, count, requested_id, selected, 0);
+    return solve(items, count, requested_id, selected, 0, 0);
 }
 
 int holy_solve_exact_unique(const struct holy_solver_item *items, size_t count,
                             const char *requested_id, int *selected)
 {
-    return solve(items, count, requested_id, selected, 1);
+    return solve(items, count, requested_id, selected, 1, 0);
+}
+
+int holy_solve_exact_set(const struct holy_solver_item *items, size_t count, int *selected)
+{
+    return solve(items, count, NULL, selected, 0, 1);
 }

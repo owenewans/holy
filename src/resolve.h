@@ -19,6 +19,11 @@ struct holy_resolution {
    candidates, not physical library bindings in a launch context. */
 int holy_resolve_collect(const char *const *paths, size_t count,
                           const char *choice, struct holy_resolution *result);
+/* validates a complete proposed set; every input remains selected. ambiguous
+   provider edges still require a decision. root records the first input only;
+   installed reasons and source/slot decisions belong to the caller. */
+int holy_resolve_collect_set(const char *const *paths, size_t count,
+                              struct holy_resolution *result);
 void holy_resolution_free(struct holy_resolution *result);
 /* canonical lexer-compatible record; caller owns the allocated bytes. */
 int holy_resolution_record(const struct holy_resolution *result,
