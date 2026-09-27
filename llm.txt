@@ -277,7 +277,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=3fba96cfda13237180b66bbfc85cb6c909a683951a8023da8111b9026ed5a3b8
+holypkg.8 source=holy version=development sha256=7d3464c8851919abbd98de20c3a19923a90089da26e66cf56803b1450cac0fb9
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -801,13 +801,18 @@ DESCRIPTION
      For matching regular ELF payloads, check reads PT_INTERP and tests	 whether
      an	 executable  ELF file with matching class and machine exists at that ab-
      solute path inside the target root. Missing targets  report  missing-inter-
-     preter; the wrong class or machine reports incompatible-interpreter. A sym-
-     linked  path  component  or final loader, an invalid ELF or an inaccessible
-     path reports unknown-interpreter because check cannot prove the  loader  is
-     usable.   Presence and class alone do not prove dynamic linking, compatible
-     libc or nested library availability.  If all findings are unknown, the sum-
-     mary status is unknown rather than fail; the check	 still	returns	 nonzero
-     because it cannot report pass.
+     preter;  the  wrong  class or machine reports incompatible-interpreter. The
+     lookup follows ordinary symlinks using openat2 with RESOLVE_IN_ROOT and RE-
+     SOLVE_NO_MAGICLINKS.  Absolute symlink targets and	 parent	 traversal  stay
+     within  the opened target root; merged-/usr and final loader links are sup-
+     ported. A dangling link reports missing-interpreter. A  loop,  magic  link,
+     invalid  ELF  or  inaccessible  path reports unknown-interpreter. A missing
+     openat2  syscall  reports	unavailable-path-resolution  with  requires=ope-
+     nat2:RESOLVE_IN_ROOT,  unknown  status and exit code 6.  Presence and class
+     alone do not prove dynamic	 linking,  compatible  libc  or	 nested	 library
+     availability.   If	 all findings are unknown, the summary status is unknown
+     rather than fail; the check still returns nonzero because it cannot  report
+     pass.
 
      With --json, check prints one JSON object per finding and a final pass/fail
      summary on stdout. The schema is holy-check-1; changed-payload and missing-

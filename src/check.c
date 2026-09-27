@@ -1,3 +1,4 @@
+#define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include "check.h"
 #include "package.h"
@@ -10,12 +11,14 @@
 #include <archive_entry.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/openat2.h>
 #include <openssl/evp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 static int parent_fd(int root, const char *path, char **storage, const char **base)
@@ -125,15 +128,14 @@ done:
     return ok;
 }
 
-/* 1: compatible ELF found, 0: missing, 2: wrong arch, -1: unknown. */
+/* 1: compatible ELF, 0: missing, 2: wrong arch, -2: missing syscall, -1: unknown. */
 static int interpreter_status(int root, const char *interpreter,
                               int elf_class, uint16_t machine)
 {
-    char *storage = NULL;
     char *path;
-    const char *name;
     struct stat st;
-    int parent, fd = -1, result = -1;
+    struct open_how how = {0};
+    int fd = -1, result = -1;
     size_t length = strlen(interpreter);
     if (interpreter[0] != '/' || !interpreter[1] ||
         length > (size_t)-1 - 6) return -1;
@@ -142,11 +144,12 @@ static int interpreter_status(int root, const char *interpreter,
     snprintf(path, length + 6, "DATA%s", interpreter);
     if (!holy_safe_archive_path(path)) { free(path); return -1; }
     free(path);
-    parent = parent_fd(root, interpreter + 1, &storage, &name);
-    if (parent < 0) return errno == ENOENT ? 0 : -1;
-    fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    how.flags = O_RDONLY | O_CLOEXEC | O_NONBLOCK;
+    how.resolve = RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS;
+    fd = (int)syscall(SYS_openat2, root, interpreter, &how, sizeof how);
     if (fd < 0) {
         if (errno == ENOENT) result = 0;
+        else if (errno == ENOSYS) result = -2;
     } else if (!fstat(fd, &st) && S_ISREG(st.st_mode) && (st.st_mode & 0111)) {
         struct holy_elf_info info;
         int parsed = holy_elf_read_fd(fd, &info);
@@ -155,8 +158,6 @@ static int interpreter_status(int root, const char *interpreter,
         holy_elf_free(&info);
     }
     if (fd >= 0) close(fd);
-    if (parent != root) close(parent);
-    free(storage);
     return result;
 }
 
@@ -225,15 +226,20 @@ static void report_interpreter(const char *consumer, const char *interpreter,
                                int status, int json)
 {
     const char *code = status == 0 ? "missing-interpreter" :
-                       status == 2 ? "incompatible-interpreter" : "unknown-interpreter";
-    if (!json) fprintf(stderr, "holypkg: %s %s for %s\n", code,
-                       interpreter, consumer);
+                       status == 2 ? "incompatible-interpreter" :
+                       status == -2 ? "unavailable-path-resolution" : "unknown-interpreter";
+    if (!json) {
+        fprintf(stderr, "holypkg: %s %s for %s\n", code, interpreter, consumer);
+        if (status == -2)
+            fputs("holypkg: requires openat2 with RESOLVE_IN_ROOT\n", stderr);
+    }
     else {
         printf("{\"schema\":\"holy-check-1\",\"code\":\"%s\",\"severity\":\"%s\",\"status\":\"%s\",\"consumer\":",
                 code, status >= 0 ? "error" : "warning", status >= 0 ? "fail" : "unknown");
         json_string(consumer);
         fputs(",\"path\":", stdout);
         json_string(interpreter);
+        if (status == -2) fputs(",\"requires\":\"openat2:RESOLVE_IN_ROOT\"", stdout);
         puts("}");
     }
 }
@@ -243,14 +249,14 @@ int holy_check_local(const char *package, const char *root_path, int json)
     struct archive *a = NULL;
     struct archive_entry *entry;
     char *snapshot = holy_stage_local(package, "holy-check");
-    int root = -1, status, ok = 0, completed = 0;
+    int root = -1, status, ok = 0, completed = 0, unavailable = 0;
     size_t checked = 0, findings = 0, unknowns = 0;
     if (!snapshot) fprintf(stderr, "holypkg: could not stage regular local input\n");
     if (!snapshot || !holy_verify_with_output(snapshot, 0) ||
         !holy_scan_local_with_output(snapshot, 0)) {
         if (json) puts("{\"schema\":\"holy-check-1\",\"code\":\"invalid-package\",\"severity\":\"error\",\"status\":\"unknown\"}");
         if (snapshot) { unlink(snapshot); free(snapshot); }
-        return 0;
+        return 2;
     }
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0) { perror("holypkg: check root"); goto done; }
@@ -322,6 +328,7 @@ int holy_check_local(const char *package, const char *root_path, int json)
                 report_interpreter(path, interpreter, loader, json);
                 ++findings;
                 if (loader < 0) ++unknowns;
+                if (loader == -2) unavailable = 1;
             }
         }
         free(interpreter);
@@ -345,5 +352,5 @@ done:
     if (root >= 0) close(root);
     unlink(snapshot);
     free(snapshot);
-    return ok;
+    return completed && ok ? 0 : unavailable ? 6 : 1;
 }

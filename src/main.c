@@ -237,7 +237,7 @@ int main(int argc, char **argv)
     if (argc == 5 && !strcmp(argv[1], "check") &&
         !strncmp(argv[2], "local:", 6) && argv[2][6] &&
         !strcmp(argv[3], "--root"))
-        return holy_check_local(argv[2] + 6, argv[4], 0) ? 0 : 1;
+        return holy_check_local(argv[2] + 6, argv[4], 0);
     if (argc == 5 && !strcmp(argv[1], "preview") &&
         !strncmp(argv[2], "local:", 6) && argv[2][6] &&
         !strcmp(argv[3], "--root"))
@@ -249,7 +249,7 @@ int main(int argc, char **argv)
     if (argc == 6 && !strcmp(argv[1], "check") &&
         !strncmp(argv[2], "local:", 6) && argv[2][6] &&
         !strcmp(argv[3], "--root") && !strcmp(argv[5], "--json"))
-        return holy_check_local(argv[2] + 6, argv[4], 1) ? 0 : 1;
+        return holy_check_local(argv[2] + 6, argv[4], 1);
     if (argc != 4 || strcmp(argv[1], "config") || strcmp(argv[2], "check")) {
         fprintf(stderr, "usage: holypkg config check FILE | holypkg info|verify|manifest|scan local:FILE | holypkg manifest generate DIRECTORY --output FILE | holypkg requirements|provides local:FILE [--json] | holypkg solve local:ROOT [local:CANDIDATE...] [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE] | holypkg pack DIRECTORY --output FILE.holy | holypkg check|preview local:FILE --root DIRECTORY [--json] | holypkg cache stage local:FILE --root DIRECTORY | holypkg cache verify SHA256 --root DIRECTORY | holypkg db init|status|cancel|recover|preflight|plan|recheck|apply --root DIRECTORY | holypkg db recover --abort-empty|--continue|--finish-apply --root DIRECTORY | holypkg db check SHA256|--all --root DIRECTORY [--json] | holypkg db rm SHA256 --root DIRECTORY | holypkg db owner PATH --root DIRECTORY | holypkg db status|preflight --root DIRECTORY --json | holypkg db reserve SHA256 --root DIRECTORY | holypkg db approve PLAN_SHA256 --root DIRECTORY | holypkg elf FILE | holypkg repo index|list|seal DIRECTORY | holypkg repo search DIRECTORY NAME | holypkg repo solve DIRECTORY NAME [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg repo providers DIRECTORY KIND NAME [--json] | holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY\n");
         return 2;

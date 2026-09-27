@@ -318,6 +318,56 @@ grep -q '"code":"incompatible-interpreter"' "$tmp/out"
 rm "$tmp/elf-root$loader"
 ln -s nowhere "$tmp/elf-root$loader"
 if "$bin" check "local:$tmp/elf.holy" --root "$tmp/elf-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q '"code":"missing-interpreter"' "$tmp/out"
+rm "$tmp/elf-root$loader"
+mkdir -p "$tmp/elf-root/usr/lib/holy/x86_64-linux-gnu" "$tmp/elf-root/usr/lib64"
+cp -L "$loader" "$tmp/elf-root/usr/lib/holy/x86_64-linux-gnu/loader"
+ln -s /usr/lib/holy/x86_64-linux-gnu/loader "$tmp/elf-root$loader"
+"$bin" check "local:$tmp/elf.holy" --root "$tmp/elf-root" --json > "$tmp/out"
+grep -q '"status":"pass","coverage":"local-payload"' "$tmp/out"
+case "$loader" in /lib64/*)
+    mv "$tmp/elf-root$loader" "$tmp/elf-root/usr/lib64/"
+    rmdir "$tmp/elf-root/lib64"
+    ln -s usr/lib64 "$tmp/elf-root/lib64"
+    rm "$tmp/elf-root$loader"
+    ln -s ../lib/holy/x86_64-linux-gnu/loader "$tmp/elf-root$loader"
+    "$bin" check "local:$tmp/elf.holy" --root "$tmp/elf-root" --json > "$tmp/out"
+    grep -q '"status":"pass","coverage":"local-payload"' "$tmp/out"
+    ;; esac
+rm "$tmp/elf-root$loader"
+ln -s ../../../../../../usr/lib/holy/x86_64-linux-gnu/loader "$tmp/elf-root$loader"
+"$bin" check "local:$tmp/elf.holy" --root "$tmp/elf-root" --json > "$tmp/out"
+grep -q '"status":"pass","coverage":"local-payload"' "$tmp/out"
+python3 - "$bin" "local:$tmp/elf.holy" "$tmp/elf-root" > "$tmp/out" <<'PY'
+import ctypes, errno, os, sys
+class Filter(ctypes.Structure):
+    _fields_ = [('code', ctypes.c_ushort), ('jt', ctypes.c_ubyte),
+                ('jf', ctypes.c_ubyte), ('k', ctypes.c_uint32)]
+class Program(ctypes.Structure):
+    _fields_ = [('length', ctypes.c_ushort), ('filters', ctypes.POINTER(Filter))]
+rules = (Filter * 4)(Filter(0x20, 0, 0, 0), Filter(0x15, 0, 1, 437),
+                    Filter(0x06, 0, 0, 0x50000 | errno.ENOSYS),
+                    Filter(0x06, 0, 0, 0x7fff0000))
+program = Program(4, rules)
+libc = ctypes.CDLL(None, use_errno=True)
+assert libc.prctl(38, 1, 0, 0, 0) == 0
+assert libc.prctl(22, 2, ctypes.byref(program), 0, 0) == 0
+pid = os.fork()
+if pid == 0:
+    os.execv(sys.argv[1], [sys.argv[1], 'check', sys.argv[2], '--root', sys.argv[3], '--json'])
+_, status = os.waitpid(pid, 0)
+assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 6
+PY
+grep -q '"code":"unavailable-path-resolution"' "$tmp/out"
+grep -q '"requires":"openat2:RESOLVE_IN_ROOT"' "$tmp/out"
+cp -L "$loader" "$tmp/outside-loader"
+rm "$tmp/elf-root$loader"
+ln -s "$tmp/outside-loader" "$tmp/elf-root$loader"
+if "$bin" check "local:$tmp/elf.holy" --root "$tmp/elf-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q '"code":"missing-interpreter"' "$tmp/out"
+rm "$tmp/elf-root$loader"
+ln -s "$(basename "$loader")" "$tmp/elf-root$loader"
+if "$bin" check "local:$tmp/elf.holy" --root "$tmp/elf-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q '"code":"unknown-interpreter"' "$tmp/out"
 grep -q '"status":"unknown","coverage":"local-payload"' "$tmp/out"
 test -z "$(find "$tmp" -maxdepth 1 -name 'holy-scan-*' -print)"

@@ -555,9 +555,13 @@ stable snapshot if the root changes during checking.
 For matching regular ELF payloads, check reads PT_INTERP and tests whether an
 executable ELF file with matching class and machine exists at that absolute
 path inside the target root. Missing targets report missing-interpreter;
-the wrong class or machine reports incompatible-interpreter. A symlinked path
-component or final loader, an invalid ELF or an inaccessible path reports
-unknown-interpreter because check cannot prove the loader is usable.
+the wrong class or machine reports incompatible-interpreter. The lookup follows
+ordinary symlinks using openat2 with RESOLVE_IN_ROOT and RESOLVE_NO_MAGICLINKS.
+Absolute symlink targets and parent traversal stay within the opened target root;
+merged-/usr and final loader links are supported. A dangling link reports
+missing-interpreter. A loop, magic link, invalid ELF or inaccessible path reports
+unknown-interpreter. A missing openat2 syscall reports unavailable-path-resolution
+with requires=openat2:RESOLVE_IN_ROOT, unknown status and exit code 6.
 Presence and class alone do not prove dynamic linking, compatible libc or
 nested library availability.
 If all findings are unknown, the summary status is unknown rather than fail;
