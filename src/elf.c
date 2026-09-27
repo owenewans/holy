@@ -202,6 +202,7 @@ static int version_needs(Elf *elf, uint64_t offset, uint64_t available,
             info->versions[info->version_count].provider = source;
             info->versions[info->version_count].name = name;
             info->versions[info->version_count].weak = !!(aux.vna_flags & VER_FLG_WEAK);
+            info->versions[info->version_count].index = aux.vna_other & 0x7fff;
             ++info->version_count;
             if (j + 1 < need.vn_cnt) {
                 if (!aux.vna_next || aux.vna_next > available - aux_cursor) {
@@ -243,7 +244,8 @@ static int version_definitions(Elf *elf, uint64_t offset, uint64_t available,
         aux_cursor = cursor + def.vd_aux;
         for (j = 0; j < def.vd_cnt; ++j) {
             GElf_Verdaux aux;
-            char *name, **next;
+            char *name;
+            struct holy_elf_definition *next;
             if (aux_cursor > available - min_aux || aux_cursor > INT_MAX ||
                 !gelf_getverdaux(data, (int)aux_cursor, &aux)) return 0;
             name = dynamic_string(strings, string_length, aux.vda_name, 0);
@@ -252,12 +254,16 @@ static int version_definitions(Elf *elf, uint64_t offset, uint64_t available,
                 free(name);
                 return 0;
             }
-            next = realloc(info->defined_versions,
-                           (info->defined_version_count + 1) *
-                           sizeof *info->defined_versions);
-            if (!next) { free(name); return 0; }
-            info->defined_versions = next;
-            info->defined_versions[info->defined_version_count++] = name;
+            if (j) free(name);
+            else {
+                next = realloc(info->defined_versions,
+                               (info->defined_version_count + 1) *
+                               sizeof *info->defined_versions);
+                if (!next) { free(name); return 0; }
+                info->defined_versions = next;
+                info->defined_versions[info->defined_version_count].name = name;
+                info->defined_versions[info->defined_version_count++].index = def.vd_ndx & 0x7fff;
+            }
             if (j + 1 < def.vd_cnt) {
                 if (!aux.vda_next || aux.vda_next > available - aux_cursor) return 0;
                 aux_cursor += aux.vda_next;
@@ -271,6 +277,146 @@ static int version_definitions(Elf *elf, uint64_t offset, uint64_t available,
     return 1;
 }
 
+static int hash_symbol_count(Elf *elf, uint64_t file_size, size_t phdr_count,
+                             uint64_t address, int gnu, size_t *count)
+{
+    uint64_t offset, available, skip;
+    uint32_t *words, buckets, first, bloom, last = 0;
+    Elf_Data *data;
+    size_t i, chain;
+    if (!map_virtual(elf, phdr_count, address, gnu ? 16 : 8,
+                     file_size, &offset, &available)) return 0;
+    data = elf_getdata_rawchunk(elf, (off_t)offset, gnu ? 16 : 8, ELF_T_WORD);
+    if (!data) return 0;
+    words = data->d_buf;
+    buckets = words[0];
+    first = words[1];
+    if (!gnu) {
+        if (!buckets || !first || (uint64_t)buckets + first > (available - 8) / 4)
+            return 0;
+        *count = first;
+        return 1;
+    }
+    bloom = words[2];
+    if (!buckets || !bloom || (bloom & (bloom - 1))) return 0;
+    skip = 16 + (uint64_t)bloom * (gelf_getclass(elf) == ELFCLASS64 ? 8 : 4);
+    if (skip > available || buckets > (available - skip) / 4 ||
+        buckets > 4 * 1024 * 1024) return 0;
+    data = elf_getdata_rawchunk(elf, (off_t)(offset + skip), (size_t)buckets * 4, ELF_T_WORD);
+    if (!data) return 0;
+    words = data->d_buf;
+    for (i = 0; i < buckets; ++i) {
+        if (words[i] && words[i] < first) return 0;
+        if (words[i] > last) last = words[i];
+    }
+    /* an empty gnu hash does not bound the unexported import symbols. */
+    if (!last) { *count = 0; return first != 0; }
+    skip += (uint64_t)buckets * 4;
+    chain = (size_t)last - first;
+    if (chain >= (available - skip) / 4) return 0;
+    available = (available - skip) / 4;
+    if (available > 4 * 1024 * 1024) available = 4 * 1024 * 1024;
+    data = elf_getdata_rawchunk(elf, (off_t)(offset + skip), (size_t)available * 4, ELF_T_WORD);
+    if (!data) return 0;
+    words = data->d_buf;
+    for (; chain < available; ++chain) {
+        if (words[chain] & 1) {
+            if ((uint64_t)first + chain + 1 > SIZE_MAX) return 0;
+            *count = (size_t)first + chain + 1;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int dynamic_symbols(Elf *elf, uint64_t file_size, size_t phdr_count,
+                           uint64_t address, uint64_t syment,
+                           uint64_t hash, int has_hash, uint64_t gnu_hash,
+                           int has_gnu_hash, uint64_t versym, int has_versym,
+                           const char *strings, size_t string_length,
+                           struct holy_elf_info *info)
+{
+    struct version_ref { const char *name, *provider; } *versions = NULL;
+    Elf_Data *symbols, *indices = NULL;
+    uint64_t offset, available;
+    size_t count = 0, gnu_count = 0, names_size = 0, i;
+    size_t entry = gelf_fsize(elf, ELF_T_SYM, 1, EV_CURRENT);
+    int ok = 0;
+    if (!entry || syment != entry || (!has_hash && !has_gnu_hash)) return 0;
+    if (has_hash && !hash_symbol_count(elf, file_size, phdr_count, hash, 0, &count)) return 0;
+    if (has_gnu_hash && !hash_symbol_count(elf, file_size, phdr_count, gnu_hash, 1, &gnu_count)) return 0;
+    if (has_hash && has_gnu_hash && gnu_count && count != gnu_count) return 0;
+    if (!has_hash) count = gnu_count;
+    if (!count) {
+        Elf_Scn *section = NULL;
+        while ((section = elf_nextscn(elf, section)) != NULL) {
+            GElf_Shdr header;
+            if (!gelf_getshdr(section, &header)) return 0;
+            if (header.sh_type == SHT_DYNSYM && header.sh_addr == address) {
+                if (header.sh_entsize != entry || header.sh_size % entry ||
+                    header.sh_size > 16 * 1024 * 1024) return 0;
+                count = (size_t)(header.sh_size / entry);
+                break;
+            }
+        }
+    }
+    if (!count || count > 16 * 1024 * 1024 / entry || count > INT_MAX ||
+        count > SIZE_MAX / sizeof *info->symbols ||
+        !map_virtual(elf, phdr_count, address, count * entry, file_size, &offset, &available)) return 0;
+    symbols = elf_getdata_rawchunk(elf, (off_t)offset, count * entry, ELF_T_SYM);
+    if (!symbols) return 0;
+    if (has_versym) {
+        if (!map_virtual(elf, phdr_count, versym, count * 2, file_size, &offset, &available)) return 0;
+        indices = elf_getdata_rawchunk(elf, (off_t)offset, count * 2, ELF_T_HALF);
+        if (!indices) return 0;
+    }
+    versions = calloc(32768, sizeof *versions);
+    if (!versions) return 0;
+    for (i = 0; i < info->version_count; ++i) {
+        struct holy_elf_version *v = &info->versions[i];
+        if (v->index < 2 || versions[v->index].name) goto done;
+        versions[v->index].name = v->name;
+        versions[v->index].provider = v->provider;
+    }
+    for (i = 0; i < info->defined_version_count; ++i) {
+        struct holy_elf_definition *v = &info->defined_versions[i];
+        if (!v->index || versions[v->index].name) goto done;
+        versions[v->index].name = v->name;
+    }
+    info->symbols = calloc(count, sizeof *info->symbols);
+    if (!info->symbols) goto done;
+    info->symbol_count = count;
+    for (i = 0; i < count; ++i) {
+        GElf_Sym symbol;
+        GElf_Versym index = 1;
+        struct holy_elf_symbol *out = &info->symbols[i];
+        if (!gelf_getsym(symbols, (int)i, &symbol) || symbol.st_shndx == SHN_XINDEX ||
+            (indices && !gelf_getversym(indices, (int)i, &index))) goto done;
+        if (!i && (symbol.st_name || symbol.st_info || symbol.st_other ||
+                   symbol.st_shndx || symbol.st_value || symbol.st_size)) goto done;
+        out->name = dynamic_string(strings, string_length, symbol.st_name, 1);
+        if (!out->name) goto done;
+        if (strlen(out->name) + 1 > 64 * 1024 * 1024 - names_size) goto done;
+        names_size += strlen(out->name) + 1;
+        out->binding = GELF_ST_BIND(symbol.st_info);
+        out->type = GELF_ST_TYPE(symbol.st_info);
+        out->visibility = symbol.st_other & 7;
+        out->section = symbol.st_shndx;
+        out->version_index = index & 0x7fff;
+        out->version_hidden = !!(index & 0x8000);
+        if (out->version_index > 1) {
+            struct version_ref *v = &versions[out->version_index];
+            if (!v->name) goto done;
+            out->version = v->name;
+            out->provider = v->provider;
+        }
+    }
+    ok = 1;
+done:
+    free(versions);
+    return ok;
+}
+
 static int dynamic_table(Elf *elf, int fd, uint64_t file_size,
                          size_t phdr_count, const GElf_Phdr *dynamic,
                          struct holy_elf_info *info)
@@ -279,11 +425,13 @@ static int dynamic_table(Elf *elf, int fd, uint64_t file_size,
     uint64_t table_addr = 0, table_size = 0, soname = 0, rpath = 0, runpath = 0;
     uint64_t verneed_addr = 0, verneed_num = 0;
     uint64_t verdef_addr = 0, verdef_num = 0;
+    uint64_t symtab = 0, syment = 0, hash = 0, gnu_hash = 0, versym = 0;
     uint64_t *needed = NULL;
     size_t needed_count = 0, entry_size, entries, i, j;
     int has_addr = 0, has_size = 0, has_soname = 0, has_rpath = 0, has_runpath = 0;
     int has_verneed = 0, has_verneednum = 0;
     int has_verdef = 0, has_verdefnum = 0;
+    int has_symtab = 0, has_syment = 0, has_hash = 0, has_gnu_hash = 0, has_versym = 0;
     int ended = 0, ok = 0;
     char *strings = NULL;
     if (!dynamic->p_filesz || dynamic->p_filesz > 16 * 1024 * 1024 ||
@@ -300,7 +448,22 @@ static int dynamic_table(Elf *elf, int fd, uint64_t file_size,
         uint64_t *next;
         if (!gelf_getdyn(data, (int)i, &item)) goto done;
         if (item.d_tag == DT_NULL) { ended = 1; break; }
-        if (item.d_tag == DT_STRTAB) {
+        if (item.d_tag == DT_SYMTAB) {
+            if (has_symtab++) goto done;
+            symtab = item.d_un.d_ptr;
+        } else if (item.d_tag == DT_SYMENT) {
+            if (has_syment++) goto done;
+            syment = item.d_un.d_val;
+        } else if (item.d_tag == DT_HASH) {
+            if (has_hash++) goto done;
+            hash = item.d_un.d_ptr;
+        } else if (item.d_tag == DT_GNU_HASH) {
+            if (has_gnu_hash++) goto done;
+            gnu_hash = item.d_un.d_ptr;
+        } else if (item.d_tag == DT_VERSYM) {
+            if (has_versym++) goto done;
+            versym = item.d_un.d_ptr;
+        } else if (item.d_tag == DT_STRTAB) {
             if (has_addr++) goto done;
             table_addr = item.d_un.d_ptr;
         } else if (item.d_tag == DT_STRSZ) {
@@ -335,10 +498,11 @@ static int dynamic_table(Elf *elf, int fd, uint64_t file_size,
             verdef_num = item.d_un.d_val;
         }
     }
-    if (!ended) goto done;
+    if (!ended || has_symtab != has_syment ||
+        (!has_symtab && (has_hash || has_gnu_hash || has_versym))) goto done;
     if (has_verneed != has_verneednum || has_verdef != has_verdefnum) goto done;
     if (needed_count || has_soname || has_rpath || has_runpath || has_verneed ||
-        has_verdef) {
+        has_verdef || has_symtab) {
         uint64_t string_offset = 0, available = 0;
         if (!has_addr || !has_size || !table_size || table_size > 16 * 1024 * 1024)
             goto done;
@@ -383,6 +547,9 @@ static int dynamic_table(Elf *elf, int fd, uint64_t file_size,
                                      strings, (size_t)table_size, info)) goto done;
         }
     }
+    if (has_symtab && (!strings || !dynamic_symbols(elf, file_size, phdr_count,
+        symtab, syment, hash, has_hash, gnu_hash, has_gnu_hash, versym,
+        has_versym, strings, (size_t)table_size, info))) goto done;
     ok = 1;
 done:
     free(strings);
@@ -496,11 +663,18 @@ void holy_elf_free(struct holy_elf_info *info)
     {
         size_t i;
         for (i = 0; i < info->defined_version_count; ++i)
-            free(info->defined_versions[i]);
+            free(info->defined_versions[i].name);
     }
     free(info->defined_versions);
     info->defined_versions = NULL;
     info->defined_version_count = 0;
+    {
+        size_t i;
+        for (i = 0; i < info->symbol_count; ++i) free(info->symbols[i].name);
+    }
+    free(info->symbols);
+    info->symbols = NULL;
+    info->symbol_count = 0;
 }
 
 const char *holy_elf_machine(const struct holy_elf_info *info)

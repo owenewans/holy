@@ -49,7 +49,16 @@ int main(int argc, char **argv)
                 printf("version %s %s%s\n", info.versions[i].provider,
                        info.versions[i].name, info.versions[i].weak ? " weak" : "");
             for (i = 0; i < info.defined_version_count; ++i)
-                printf("version-def %s\n", info.defined_versions[i]);
+                printf("version-def %s\n", info.defined_versions[i].name);
+            for (i = 0; i < info.symbol_count; ++i) {
+                const struct holy_elf_symbol *s = &info.symbols[i];
+                if (!s->name[0]) continue;
+                printf("symbol %s binding=%u type=%u visibility=%u section=%u version-index=%u hidden=%d version=%s provider=%s\n",
+                    s->name, s->binding, s->type, s->visibility,
+                    (unsigned)s->section, (unsigned)s->version_index,
+                    s->version_hidden, s->version ? s->version : "none",
+                    s->provider ? s->provider : "none");
+            }
         }
         else fprintf(stderr, "holypkg: %s ELF input\n", rc == 1 ? "not an" : "invalid");
         holy_elf_free(&info);

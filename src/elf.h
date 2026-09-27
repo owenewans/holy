@@ -8,6 +8,21 @@ struct holy_elf_version {
     char *provider;
     char *name;
     int weak;
+    uint16_t index;
+};
+
+struct holy_elf_definition {
+    char *name;
+    uint16_t index;
+};
+
+struct holy_elf_symbol {
+    char *name;
+    /* raw ELF values; section zero denotes an undefined reference. */
+    unsigned binding, type, visibility;
+    uint16_t section, version_index;
+    int version_hidden;
+    const char *version, *provider; /* borrowed from version records */
 };
 
 struct holy_elf_info {
@@ -23,8 +38,10 @@ struct holy_elf_info {
     char *runpath;
     struct holy_elf_version *versions;
     size_t version_count;
-    char **defined_versions;
+    struct holy_elf_definition *defined_versions;
     size_t defined_version_count;
+    struct holy_elf_symbol *symbols;
+    size_t symbol_count;
     uint32_t isa_needed;
     int isa_present;
 };

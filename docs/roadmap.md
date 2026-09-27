@@ -5,6 +5,10 @@
 
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.
 - [x] Verify local LZ4-frame `.holy` archives, file manifests, hashes and basic ELF facts.
+- [x] Read dynamic symbols, binding/visibility and per-symbol GNU versions through
+  libelf, including ELF32/ELF64 without section headers when the hash tables give
+  a symbol count. Preserve weak imports and compatibility/default versions.
+  Symbol lookup order and dependency-provider validation remain open.
 - [x] Classify static ET_EXEC without dynamic linkage as nolibc; reject
   unclassified ELF in native package scan rather than trusting a libc label.
 - [x] Pack a prepared regular-file/dir/symlink tree into a verified native `.holy`;

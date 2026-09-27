@@ -148,7 +148,22 @@ int holy_scan_local_facts(const char *path, int emit, size_t *needed)
                 fputs("version-def ", stdout);
                 print_token(name + 5);
                 putchar(' ');
-                print_token(info.defined_versions[i]);
+                print_token(info.defined_versions[i].name);
+                putchar('\n');
+            }
+            for (i = 0; i < info.symbol_count; ++i) {
+                const struct holy_elf_symbol *s = &info.symbols[i];
+                if (!s->name[0]) continue;
+                fputs("symbol ", stdout);
+                print_token(name + 5);
+                putchar(' ');
+                print_token(s->name);
+                printf(" binding=%u type=%u visibility=%u section=%u version-index=%u hidden=%d version=",
+                       s->binding, s->type, s->visibility, (unsigned)s->section,
+                       (unsigned)s->version_index, s->version_hidden);
+                print_token(s->version ? s->version : "none");
+                fputs(" provider=", stdout);
+                print_token(s->provider ? s->provider : "none");
                 putchar('\n');
             }
         }

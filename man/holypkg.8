@@ -576,12 +576,20 @@ machine (x86, x86_64 or x32), the PT_INTERP path, and a libc runtime hint
 only for recognized glibc or musl interpreters. It reads PT_DYNAMIC to list
 DT_NEEDED, SONAME, RPATH and RUNPATH even without section headers. GNU
 DT_VERNEED records list provider SONAME, version and weak flag. GNU DT_VERDEF
-records list version-definition names; these records do not prove that a
-specific symbol satisfies a consumer's versioned reference. GNU x86
+records list version-definition names. DT_SYMTAB and DT_VERSYM records expose
+each dynamic symbol's binding, type, visibility, section index, version index,
+hidden-version flag, version name and version-provider SONAME when recorded.
+Undefined weak symbols retain binding=2 and section=0. IFUNC symbols retain
+type=10; the reader does not execute their resolvers.
+Symbol counts come from SysV or GNU hash tables. For an empty GNU hash with
+no SysV hash, the reader needs the matching SHT_DYNSYM section; removing that
+section makes the symbol extent unsupported. Other supported hash tables work
+without section headers. Malformed symbol names, version indices, entry sizes
+or address ranges reject the input. GNU x86
 ISA-needed properties in PT_NOTE report x86-64-baseline/v2/v3/v4 when present;
 absent or unrecognized properties report unknown. ET_EXEC without PT_INTERP,
 PT_DYNAMIC or DT_NEEDED reports nolibc. Other files without a recognized
-interpreter report unknown. It does not inspect exported symbol versions or plugin loading;
+interpreter report unknown. It does not model symbol lookup order or plugin loading;
 its output is not a dependency resolution or package ABI verdict.
 .PP
 The local scan command stages a regular .holy input in a private file, verifies
@@ -596,7 +604,8 @@ package libc tag. ET_DYN without an interpreter is not classified as nolibc.
 Static ET_EXEC is classified only without PT_DYNAMIC or DT_NEEDED. These
 checks do not prove plugin requirements or resolve dependencies.
 For each ELF it also prints SONAME, DT_NEEDED, GNU version needs with weak or
-required status, and version definitions, when present. These file-scoped
+required status, version definitions and dynamic symbols with the fields
+described above, when present. These file-scoped
 facts do not prove that a provider exists or that a versioned symbol resolves.
 .PP
 The preview command stages and verifies a native archive, checks ELF ABI facts,
