@@ -2,6 +2,12 @@
 .SH NAME
 holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
+.B holypkg source plan --config FILE --root DIRECTORY
+.br
+.B holypkg source apply PLAN --sha256 HASH --root DIRECTORY
+.br
+.B holypkg source list --root DIRECTORY
+.br
 .B holypkg orphan [--root DIRECTORY] [--json]
 .br
 .B holypkg docs --root DIRECTORY --output FILE
@@ -971,6 +977,31 @@ index. It verifies the complete index and artifacts, then copies the selected
 snapshot to an existing output directory as SHA256.holy. It rejects a missing
 digest or a changed unrelated artifact. The copy does not install or grant
 trust to the package; repository metadata and objects remain unsigned.
+.SH SOURCE REGISTRATION
+source plan reads the explicit configuration and writes a complete proposed
+registry to stdout. It reports alias changes, origin changes, additions and
+deactivations on stderr. Review and save the plan, then supply its SHA-256 to
+source apply. An existing initialized database is required. No source command
+downloads packages or runs package code.
+.PP
+The plan binds the previous registry digest, installed database generation and
+database device/inode. Apply stages the plan, verifies its approved digest and
+checks those inputs under the database writer lock. It never rereads config or
+includes. A changed input, another database or a discarded historical source
+returns decision-required (3). Malformed proposed registry data returns 2;
+I/O or existing-state corruption returns 1; an incomplete transaction returns 5.
+.PP
+The registry is /var/lib/holypkg/sources under the target root. Its
+holy-sources-1 records contain ID, alias, active/inactive state and canonical
+definition. Replacement uses a private temporary file, fsync, rename and directory
+fsync. Registry revisions are separate from installed database generations.
+List prints identities and status without endpoint definitions.
+.PP
+An ID identifies a configured origin; it is not signature evidence. The current
+registry retains inactive origins but is not yet connected to installed package
+slots, configured catalog synchronization or source-aware update plans. These
+commands do not yet implement JSON output. See holy.conf(5) for identity rules
+and endpoint restrictions.
 .SH ORPHAN PACKAGES
 orphan reads a consistent installed-state snapshot under the database's shared
 lock. The default root is /. It follows saved consumer-to-provider edges from

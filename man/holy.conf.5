@@ -2,7 +2,7 @@
 .SH NAME
 holy.conf \- Holy source configuration format
 .SH STATUS
-This page describes the implemented syntax checker. Configured source activation,
+This page describes the syntax checker and source identity registration. Configured source fetching,
 general multi-source resolution and general installation are not implemented;
 the restricted local data/static-ELF transaction uses separate commands.
 .SH SYNOPSIS
@@ -40,3 +40,21 @@ repo core "https://mirror.example/arch/$repo/os/$arch"
 .fi
 .SH FILES
 /etc/holy.conf is the proposed system path. The checker takes an explicit file.
+.SH SOURCE IDENTITIES
+The source plan command reads this syntax, including includes, and proposes a
+registry replacement. The source apply command consumes that frozen plan; it
+does not reread the configuration. See holypkg(8) for the command sequence.
+.PP
+The current source ID is SHA-256 of a canonical, sorted representation of type,
+url and repo records. Alias, parent and trust policy are excluded. Renaming an
+alias preserves the ID. Changing an endpoint, backend type or repository name
+creates another ID and retains the previous definition as inactive history.
+Readding the same definition reactivates its existing ID. Equivalent URL
+spellings and mirrors are not automatically identified as one source.
+.PP
+Registration requires endpoints with a scheme followed by :// and rejects URL
+userinfo, queries, fragments and whitespace. Plans therefore cannot carry those
+credential forms. Two aliases with the same definition require a decision.
+Registration neither contacts a repository nor verifies its signatures. It does
+not yet bind installed instances to source IDs or apply source trust and parent
+policies during package selection.

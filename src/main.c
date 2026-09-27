@@ -16,6 +16,7 @@
 #include "pack.h"
 #include "docs.h"
 #include "graph.h"
+#include "source.h"
 
 #include <stdio.h>
 #include <locale.h>
@@ -30,6 +31,17 @@ int main(int argc, char **argv)
     int ok;
 
     setlocale(LC_CTYPE, "");
+
+    if (argc > 1 && !strcmp(argv[1], "source")) {
+        if (argc == 7 && !strcmp(argv[2], "plan") && !strcmp(argv[3], "--config") && !strcmp(argv[5], "--root"))
+            return holy_source_plan(argv[4], argv[6]);
+        if (argc == 8 && !strcmp(argv[2], "apply") && !strcmp(argv[4], "--sha256") && !strcmp(argv[6], "--root"))
+            return holy_source_apply(argv[3], argv[5], argv[7]);
+        if (argc == 5 && !strcmp(argv[2], "list") && !strcmp(argv[3], "--root"))
+            return holy_source_list(argv[4]);
+        fputs("usage: holypkg source plan --config FILE --root DIRECTORY | source apply PLAN --sha256 HASH --root DIRECTORY | source list --root DIRECTORY\n", stderr);
+        return 2;
+    }
 
     if (argc > 1 && !strcmp(argv[1], "orphan")) {
         const char *root = "/";

@@ -511,6 +511,30 @@ static int compare_instance_names(const void *a, const void *b)
     return strcmp(*(const char *const *)a, *(const char *const *)b);
 }
 
+int holy_state_lock(const char *root_path, int exclusive,
+                     unsigned long long *generation, int *status)
+{
+    unsigned long long current;
+    char digest[65], approved[65];
+    int dir = state_dir(root_path, 0), pending;
+    *status = 1;
+    if (dir < 0 || flock(dir, exclusive ? LOCK_EX : LOCK_SH) ||
+        !state_layout(dir, 0) || !read_generation(dir, &current)) goto failed;
+    pending = transaction_pending(dir, current);
+    if (pending < 0) goto failed;
+    if (pending) { *status = 5; goto failed; }
+    pending = pending_child(dir, current, digest, approved);
+    if (pending < 0) goto failed;
+    if (pending) { *status = 5; goto failed; }
+    if (!installed_valid(dir)) goto failed;
+    *generation = current;
+    *status = 0;
+    return dir;
+failed:
+    if (dir >= 0) close(dir);
+    return -1;
+}
+
 int holy_state_visit(const char *root_path, holy_instance_visit visit, void *context,
                      unsigned long long *generation)
 {

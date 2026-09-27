@@ -50,4 +50,8 @@ typedef int (*holy_instance_visit)(void *, int, int, const char *);
 int holy_state_visit(const char *root_path, holy_instance_visit visit, void *context,
                      unsigned long long *generation);
 
+/* returns a locked database fd, caller closes it; status uses CLI codes. */
+int holy_state_lock(const char *root_path, int exclusive,
+                     unsigned long long *generation, int *status);
+
 #endif

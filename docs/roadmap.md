@@ -4,6 +4,11 @@
 ## Package manager
 
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.
+- [x] Plan and atomically apply a source identity registry under the database
+  writer lock. Preserve IDs across alias changes and retain inactive origin
+  history; reject stale, wrong-root and history-dropping plans. Apply consumes
+  the reviewed plan without rereading user includes. Installed source-ID slots,
+  source-aware updates, configured sync and trust enforcement remain open.
 - [x] Verify local LZ4-frame `.holy` archives, file manifests, hashes and basic ELF facts.
 - [x] Read dynamic symbols, binding/visibility and per-symbol GNU versions through
   libelf, including ELF32/ELF64 without section headers when the hash tables give

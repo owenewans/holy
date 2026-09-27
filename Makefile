@@ -87,7 +87,7 @@ static:
 	$(MAKE) clean
 	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lssl -lcrypto -llz4 -lz -leu -Wl,--end-group -lpthread -ldl" all
 
-HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o
+HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o
 
 holypkg: $(HOLY_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(SOLV_LIBS)
@@ -105,6 +105,7 @@ check-init: holy-init
 check: holypkg tests/resolution check-init check-solver check-install-payload check-https
 	./tests/resolution
 	sh tests/config.sh ./holypkg
+	sh tests/source.sh ./holypkg
 	sh tests/package.sh ./holypkg
 	sh tests/docs.sh
 	sh tests/installed-docs.sh ./holypkg

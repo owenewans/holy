@@ -380,17 +380,17 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holy.conf.5 source=holy version=development sha256=2b55062677cdd7da0de1b2d2049b90e865a526830400b71035a22e27217bed11
+holy.conf.5 source=holy version=development sha256=f4d22f73b5fe5b390f051cb5d942debd32545c255de5f6b2aa868e0e2582abda
 HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
 
 NAME
      holy.conf - Holy source configuration format
 
 STATUS
-     This page describes the implemented syntax checker. Configured source acti-
-     vation,  general  multi-source  resolution and general installation are not
-     implemented; the restricted local data/static-ELF transaction uses separate
-     commands.
+     This  page	 describes  the syntax checker and source identity registration.
+     Configured source fetching, general multi-source resolution and general in-
+     stallation are not implemented; the restricted local data/static-ELF trans-
+     action uses separate commands.
 
 SYNOPSIS
      holypkg config check FILE
@@ -432,14 +432,38 @@ FILES
      /etc/holy.conf is the proposed system path. The checker takes  an	explicit
      file.
 
+SOURCE IDENTITIES
+     The source plan command reads this syntax, including includes, and proposes
+     a registry replacement. The source apply command consumes that frozen plan;
+     it	 does  not  reread the configuration. See holypkg(8) for the command se-
+     quence.
+
+     The current source ID is SHA-256 of a canonical, sorted  representation  of
+     type,  url	 and  repo records. Alias, parent and trust policy are excluded.
+     Renaming an alias preserves the ID. Changing an endpoint, backend	type  or
+     repository	 name  creates another ID and retains the previous definition as
+     inactive history.	Readding the same definition  reactivates  its	existing
+     ID.  Equivalent  URL spellings and mirrors are not automatically identified
+     as one source.
+
+     Registration requires endpoints with a scheme followed by ://  and	 rejects
+     URL  userinfo,  queries,  fragments  and whitespace. Plans therefore cannot
+     carry those credential forms. Two aliases with the same definition	 require
+     a	decision.   Registration  neither contacts a repository nor verifies its
+     signatures. It does not yet bind installed instances to source IDs or apply
+     source trust and parent policies during package selection.
+
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=e509ec1a12a83571a24b77295b73bc08bd8017bab7347219b3a9cf8b3ab2fc74
+holypkg.8 source=holy version=development sha256=f962a80d4afb096c5f8656ca3a542d5c59c900299a7def85faabb29c23a39e4b
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
      holypkg - Holy local package tooling prototype
 
 SYNOPSIS
+     holypkg source plan --config FILE --root DIRECTORY
+     holypkg source apply PLAN --sha256 HASH --root DIRECTORY
+     holypkg source list --root DIRECTORY
      holypkg orphan [--root DIRECTORY] [--json]
      holypkg docs --root DIRECTORY --output FILE
      holypkg config check FILE
@@ -1388,40 +1412,68 @@ DESCRIPTION
      or grant trust to the package; repository metadata and objects  remain  un-
      signed.
 
+SOURCE REGISTRATION
+     source plan reads the explicit configuration and writes a complete proposed
+     registry to stdout. It reports alias changes, origin changes, additions and
+     deactivations  on stderr. Review and save the plan, then supply its SHA-256
+     to source apply. An existing initialized database is  required.  No  source
+     command downloads packages or runs package code.
+
+     The  plan binds the previous registry digest, installed database generation
+     and database device/inode. Apply stages the plan, verifies its approved di-
+     gest and checks those inputs under	 the  database	writer	lock.  It  never
+     rereads  config  or  includes.  A changed input, another database or a dis-
+     carded historical source returns decision-required (3). Malformed	proposed
+     registry data returns 2; I/O or existing-state corruption returns 1; an in-
+     complete transaction returns 5.
+
+     The  registry  is /var/lib/holypkg/sources under the target root. Its holy-
+     sources-1 records contain ID, alias, active/inactive  state  and  canonical
+     definition.  Replacement  uses  a private temporary file, fsync, rename and
+     directory fsync. Registry revisions are separate  from  installed	database
+     generations.   List  prints  identities and status without endpoint defini-
+     tions.
+
+     An ID identifies a configured origin; it is  not  signature  evidence.  The
+     current  registry	retains inactive origins but is not yet connected to in-
+     stalled package slots, configured catalog synchronization	or  source-aware
+     update  plans.  These  commands  do  not  yet  implement  JSON  output. See
+     holy.conf(5) for identity rules and endpoint restrictions.
+
 ORPHAN PACKAGES
-     orphan  reads  a  consistent  installed-state snapshot under the database's
-     shared lock. The default root is /. It follows  saved  consumer-to-provider
-     edges  from every instance marked explicit and reports dependency instances
-     outside that reachable graph. A dependency cycle with no explicit	consumer
+     orphan reads a consistent installed-state	snapshot  under	 the  database's
+     shared  lock.  The default root is /. It follows saved consumer-to-provider
+     edges from every instance marked explicit and reports dependency  instances
+     outside  that reachable graph. A dependency cycle with no explicit consumer
      is also orphaned.	Only each current instance's own edges participate; ref-
-     erences  copied  from  an	older  transaction's other consumers do not keep
+     erences copied from an older transaction's	 other	consumers  do  not  keep
      packages alive.
 
-     The command does not remove files, run package  code,  fetch  artifacts  or
-     need  the package cache. Each candidate includes its artifact hash, package
+     The  command  does	 not  remove files, run package code, fetch artifacts or
+     need the package cache. Each candidate includes its artifact hash,	 package
      name and the reason unreachable-from-explicit. Names in text output use the
-     metadata lexer's byte escapes. JSON names preserve	 valid	UTF-8.	This  is
+     metadata  lexer's	byte  escapes.	JSON names preserve valid UTF-8. This is
      graph analysis, not a payload or application-health check; use db check for
      file integrity.
 
-     With  --json, holy-orphan-1 candidate events contain artifact, name, reason
-     and generation. A final summary contains generation,  installed,  explicit,
+     With --json, holy-orphan-1 candidate events contain artifact, name,  reason
+     and  generation.  A final summary contains generation, installed, explicit,
      reachable and orphans counts. Candidates are ordered by artifact hash. Out-
-     put  is  delayed  until  the  complete graph has been read and linked, so a
-     missing provider never produces a partial orphan list. Errors  produce  one
-     error  event with code and status: invalid-state (1), missing-provider (4),
-     incomplete-transaction (5),  or  unknown-installed-graph  (6).  Legacy  in-
+     put is delayed until the complete graph has been  read  and  linked,  so  a
+     missing  provider	never produces a partial orphan list. Errors produce one
+     error event with code and status: invalid-state (1), missing-provider  (4),
+     incomplete-transaction  (5),  or  unknown-installed-graph	(6).  Legacy in-
      stalled entries without saved graphs require migration before this analysis
      can prove reachability.
 
 EXIT STATUS
-     0	indicates success under the implemented checks; 1 indicates a failed lo-
-     cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
-     tion  or package inspection. Diagnostics go to standard error except --json
+     0 indicates success under the implemented checks; 1 indicates a failed  lo-
+     cal  fetch,  extraction or check; 2 indicates invalid arguments, configura-
+     tion or package inspection. Diagnostics go to standard error except  --json
      check events, which go to standard output.
 
-     Preview returns 3 when valid requirements need provider  decisions,  4  for
-     path  conflicts  and  6 when hooks or privileged modes need unsupported re-
+     Preview  returns  3  when valid requirements need provider decisions, 4 for
+     path conflicts and 6 when hooks or privileged modes  need	unsupported  re-
      view. It returns 1 on target-root I/O failure.
 
 SEE ALSO
