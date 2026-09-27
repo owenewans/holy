@@ -202,6 +202,24 @@ $pkg db rm "$root_digest" --root / > /run/root-package-remove
 $pkg db rm "$digest" --root / > /run/package-remove
 test ! -e /usr/share/holy/fixture-installed
 echo 'HOLY-BOOT-1 transaction install-check-remove'
+stage=installer-transaction
+target=/run/holyinstall-root
+$bb mkdir -p "$target/usr/share"
+$pkg db init --root "$target" > /run/installer-init
+$pkg cache stage local:/usr/share/holy/fixture.holy --root "$target" > /run/installer-stage
+$pkg cache stage local:/usr/share/holy/fixture-root.holy --root "$target" > /run/installer-root-stage
+printf '[install]\nroot "%s"\nartifact %s\nartifact %s\n' \
+    "$target" "$root_digest" "$digest" > /run/installer.conf
+/usr/bin/holyinstall --config /run/installer.conf --plan /run/installer.plan \
+    --holypkg /usr/bin/holypkg > /run/installer-preview
+$bb grep -q '^plan-set .* read-only$' /run/installer-preview
+test ! -e "$target/usr/share/holy/fixture-installed"
+test "$($bb cat "$target/var/lib/holypkg/generation")" = 0
+/usr/bin/holyinstall --apply /run/installer.plan --holypkg /usr/bin/holypkg \
+    > /run/installer-apply
+test "$($bb cat "$target/usr/share/holy/fixture-installed")" = installed-in-guest
+$pkg db check --all --root "$target" > /run/installer-check
+echo 'HOLY-BOOT-1 installer root-plan-apply'
 if test "$storage" = ext4 && test "$boot" = 1; then
     stage=reboot
     if test "$($bb cat /etc/holy/libc-boot-state)" = remove-both; then

@@ -44,7 +44,8 @@ Previously built musl-static holypkg executable.
 STATIC_HOLYINSTALL
 Previously built musl-static holyinstall executable. The builder checks its
 architecture and nolibc runtime, packages it with holyinstall(8), and the
-guest calls its disk subcommand without changing the running system.
+guest calls its disk subcommand without changing the running system and tests
+package plan/apply in a disposable target root.
 .TP
 STATIC_CC
 Path to the musl C compiler driver for the early init helper.

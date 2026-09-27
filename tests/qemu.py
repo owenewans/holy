@@ -289,7 +289,8 @@ def main():
                  'HOLY-BOOT-1 static-core verified', 'HOLY-BOOT-1 installer static-cli',
                  'HOLY-BOOT-1 docs installed-man-bundle',
                 'HOLY-BOOT-1 device mdevd-coldplug',
-                'HOLY-BOOT-1 transaction install-check-remove', 'HOLY-BOOT-1 result pass'}
+                'HOLY-BOOT-1 transaction install-check-remove',
+                'HOLY-BOOT-1 installer root-plan-apply', 'HOLY-BOOT-1 result pass'}
     if profile == 'dual-libc':
         expected.update({f'HOLY-BOOT-1 profile {profile}', f'HOLY-BOOT-1 libc-initial {state}',
                          'HOLY-BOOT-1 libc-probes glibc-musl-pipe'})

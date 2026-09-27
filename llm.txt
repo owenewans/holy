@@ -1,4 +1,4 @@
-holy-image.7 source=holy version=development sha256=8bb5aac60cf11b52aa098fee86aeda59e4ad69a6f94cd581b3340a1bf0346764
+holy-image.7 source=holy version=development sha256=14a8542ba205a89a752b4628167bfc67cf38161de0f26a4a143fab4cf4d8ebfd
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
 NAME
@@ -47,7 +47,8 @@ BUILD
 	    Previously built musl-static  holyinstall  executable.  The	 builder
 	    checks its architecture and nolibc runtime, packages it with holyin-
 	    stall(8),  and  the guest calls its disk subcommand without changing
-	    the running system.
+	    the running system and tests package plan/apply in a disposable tar-
+	    get root.
 
      STATIC_CC
 	    Path to the musl C compiler driver for the early init helper.
