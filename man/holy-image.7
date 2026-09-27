@@ -155,6 +155,22 @@ Persistent tests additionally record both boot results, the first-boot
 completion time, root storage type and whether the read-only base stayed intact.
 Optional KERNEL_IMAGE, INITRAMFS and ROOT_IMAGE inputs add their hashes.
 They identify caller-supplied files, not guest measurements of running code.
+.SS Retained recovery matrix
+make check-recovery-matrix REPORT=NEW_FILE REPORTS="REPORT_PATHS" validates
+eight retained QEMU report.json files: present, glibc, musl and both initial
+states, each under BIOS and UEFI. Each case must contain two complete ext4
+boots. The validator checks per-boot serial evidence and reported checks,
+including PID 1 identity after reboot. It rehashes the retained ISO, raw root,
+recovery overlay and UEFI code snapshots. BIOS and UEFI runs of each initial
+state must use the same plan, ISO and raw root. Missing or duplicate cases,
+changed snapshots and incomplete second boots fail the matrix.
+.PP
+The command creates a new holy-recovery-matrix-1 JSON report containing each
+input report and serial hash, image identities, acceleration and elapsed time.
+The output must not exist. Run the guest tests before invoking this command;
+the validator reads retained evidence and does not start new VMs. Local hashes
+bind the retained files, not an authenticated publisher. Preserve each run
+directory alongside the summary for revalidation.
 .SH COVERAGE
 The bootstrap glibc package currently contains
 libc.so.6 and its loader with licenses, not the complete SDK, locale archive,

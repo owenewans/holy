@@ -130,6 +130,11 @@ check-qemu:
 check-qemu-gate:
 	sh tests/qemu-gate.sh
 
+.PHONY: check-recovery-matrix
+check-recovery-matrix:
+	@test -n "$(REPORT)" && test -n "$(REPORTS)" || { echo 'REPORT and eight REPORTS paths are required' >&2; exit 6; }
+	python3 tests/recovery-matrix.py --output "$(REPORT)" $(REPORTS)
+
 check-https: holypkg
 	@command -v python3 >/dev/null && command -v openssl >/dev/null || { echo 'python3 and openssl required for HTTPS fixture' >&2; exit 6; }
 	sh tests/https.sh ./holypkg

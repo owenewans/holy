@@ -137,6 +137,12 @@
 
 ## Acceptance gates
 
+- [x] Validate the x86_64 ext4 recovery matrix across present/glibc/musl/both
+  initial states and BIOS/UEFI under TCG: eight cases, sixteen boots. The
+  retained-evidence gate checks per-boot identity, restoration and package/IPC
+  probes, hashes input snapshots and rejects incomplete or duplicate cases.
+  This matrix uses an ISO kernel and persistent disposable root overlays.
+
 - [x] Run current prototype fixtures under GCC, TCC and Clang ASan/UBSan.
 - [x] Run `make check-root` against disposable target-root install, check,
   remove and recovery fixtures; this gate does not boot a system.

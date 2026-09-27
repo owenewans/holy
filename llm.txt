@@ -1,4 +1,57 @@
-holy-image.7 source=holy version=development sha256=8a1ab9ad6d2d1fe0a198de213a976b36d6cbde4e8cd5f46cc3a5664b3356b454
+holy.conf.5 source=holy version=development sha256=2b55062677cdd7da0de1b2d2049b90e865a526830400b71035a22e27217bed11
+HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
+
+NAME
+     holy.conf - Holy source configuration format
+
+STATUS
+     This page describes the implemented syntax checker. Configured source acti-
+     vation,  general  multi-source  resolution and general installation are not
+     implemented; the restricted local data/static-ELF transaction uses separate
+     commands.
+
+SYNOPSIS
+     holypkg config check FILE
+
+DESCRIPTION
+     Input must be UTF-8. Each record contains a  key  and  whitespace-separated
+     arguments. Double quotes retain spaces. A hash sign at the start of a token
+     begins  a comment outside quotes. Escapes are backslash-quote, double-back-
+     slash, backslash-n, backslash-t, backslash-r and  backslash-x  followed  by
+     two hexadecimal digits. NUL is rejected.  The parser does not run shell ex-
+     pansion.
+
+     Sections are [general], [resolver], [source NAME] and [rule NAME].	 Include
+     takes one path relative to the containing file. Repeated scalar keys within
+     a	section	 are  errors with both source locations. The source repo and re-
+     solver prefer keys are lists and can repeat.  Recursive  includes	are  re-
+     jected.   The  checker validates lexical and structural syntax; it does not
+     yet validate rule references. It checks that source parents  exist	 and  do
+     not  form	cycles.	  It rejects userinfo in URL authorities without echoing
+     credentials in diagnostics. It validates key names,  argument  counts,  and
+     the  scripts,  trust, ask-sources and prefer values. The alias local is re-
+     served and cannot name a source.
+
+     Each populated source section requires type and at least one url  or  repo.
+     Repository	 names	within	one source must be distinct. Each populated rule
+     requires consumer, require and provider. Empty values are	rejected.  These
+     checks  do not prove that a repository is reachable or its packages can re-
+     solve.
+
+EXAMPLE
+     [general]
+     arch x86_64
+     scripts ask
+     [source arch]
+     type pacman
+     repo core "https://mirror.example/arch/$repo/os/$arch"
+
+FILES
+     /etc/holy.conf is the proposed system path. The checker takes  an	explicit
+     file.
+
+Holy				 September 2026			    HOLY.CONF(5)
+holy-image.7 source=holy version=development sha256=cc3becb57d464fd11ff54d46f2ea92984060b9a625058702076434a6871761bf
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
 NAME
@@ -168,24 +221,42 @@ QEMU
      hashes.  They identify caller-supplied files,  not	 guest	measurements  of
      running code.
 
+   Retained recovery matrix
+     make check-recovery-matrix REPORT=NEW_FILE REPORTS="REPORT_PATHS" validates
+     eight  retained  QEMU report.json files: present, glibc, musl and both ini-
+     tial states, each under BIOS and UEFI. Each case must contain two	complete
+     ext4  boots.  The	validator  checks  per-boot serial evidence and reported
+     checks, including PID 1 identity after reboot.  It	 rehashes  the	retained
+     ISO, raw root, recovery overlay and UEFI code snapshots. BIOS and UEFI runs
+     of	 each initial state must use the same plan, ISO and raw root. Missing or
+     duplicate cases, changed snapshots and incomplete second boots fail the ma-
+     trix.
+
+     The command creates a new	holy-recovery-matrix-1	JSON  report  containing
+     each  input  report  and  serial  hash,  image identities, acceleration and
+     elapsed time.  The output must not exist. Run the guest tests before invok-
+     ing this command; the validator reads retained evidence and does not  start
+     new  VMs.	Local  hashes bind the retained files, not an authenticated pub-
+     lisher. Preserve each run directory alongside the summary for revalidation.
+
 COVERAGE
-     The  bootstrap  glibc  package  currently contains libc.so.6 and its loader
-     with licenses, not the complete SDK, locale archive, NSS modules or  auxil-
-     iary  glibc  libraries. The reference image still needs networking, the in-
-     staller and i686. The ext4 fixture tests recovery followed by reboot  using
-     an	 ISO  kernel and a persistent root overlay.  Those gates remain separate
-     from this boot result. Recovery tests missing payloads with retained  pack-
-     age  records,  not	 forced	 removal of referenced packages.  The repository
-     documentation bundle currently contains Holy  pages;  the	installed  dinit
-     pages  accompany  its package but are not yet merged into that bundle. QEMU
+     The bootstrap glibc package currently contains  libc.so.6	and  its  loader
+     with  licenses, not the complete SDK, locale archive, NSS modules or auxil-
+     iary glibc libraries. The reference image still needs networking,	the  in-
+     staller  and i686. The ext4 fixture tests recovery followed by reboot using
+     an ISO kernel and a persistent root overlay.  Those gates	remain	separate
+     from  this boot result. Recovery tests missing payloads with retained pack-
+     age records, not forced removal of	 referenced  packages.	 The  repository
+     documentation  bundle  currently  contains	 Holy pages; the installed dinit
+     pages accompany its package but are not yet merged into that  bundle.  QEMU
      virtual devices do not establish physical GPU support.
 
 SOURCES
-     Limine  configuration  and	 ISO   layout:	 https://github.com/limine-boot-
-     loader/limine/blob/v12.x/CONFIG.md	   and	 https://github.com/limine-boot-
+     Limine   configuration   and  ISO	layout:	 https://github.com/limine-boot-
+     loader/limine/blob/v12.x/CONFIG.md	  and	 https://github.com/limine-boot-
      loader/limine/blob/v12.x/USAGE.md.	      dracut	  module      interface:
      https://github.com/dracut-ng/dracut-ng/blob/main/man/dracut.modules.7.adoc.
-     QEMU  block device and backing-file options: https://www.qemu.org/docs/mas-
+     QEMU block device and backing-file options:  https://www.qemu.org/docs/mas-
      ter/system/invocation.html.
 
 SEE ALSO
@@ -322,59 +393,6 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holy.conf.5 source=holy version=development sha256=2b55062677cdd7da0de1b2d2049b90e865a526830400b71035a22e27217bed11
-HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
-
-NAME
-     holy.conf - Holy source configuration format
-
-STATUS
-     This page describes the implemented syntax checker. Configured source acti-
-     vation,  general  multi-source  resolution and general installation are not
-     implemented; the restricted local data/static-ELF transaction uses separate
-     commands.
-
-SYNOPSIS
-     holypkg config check FILE
-
-DESCRIPTION
-     Input must be UTF-8. Each record contains a  key  and  whitespace-separated
-     arguments. Double quotes retain spaces. A hash sign at the start of a token
-     begins  a comment outside quotes. Escapes are backslash-quote, double-back-
-     slash, backslash-n, backslash-t, backslash-r and  backslash-x  followed  by
-     two hexadecimal digits. NUL is rejected.  The parser does not run shell ex-
-     pansion.
-
-     Sections are [general], [resolver], [source NAME] and [rule NAME].	 Include
-     takes one path relative to the containing file. Repeated scalar keys within
-     a	section	 are  errors with both source locations. The source repo and re-
-     solver prefer keys are lists and can repeat.  Recursive  includes	are  re-
-     jected.   The  checker validates lexical and structural syntax; it does not
-     yet validate rule references. It checks that source parents  exist	 and  do
-     not  form	cycles.	  It rejects userinfo in URL authorities without echoing
-     credentials in diagnostics. It validates key names,  argument  counts,  and
-     the  scripts,  trust, ask-sources and prefer values. The alias local is re-
-     served and cannot name a source.
-
-     Each populated source section requires type and at least one url  or  repo.
-     Repository	 names	within	one source must be distinct. Each populated rule
-     requires consumer, require and provider. Empty values are	rejected.  These
-     checks  do not prove that a repository is reachable or its packages can re-
-     solve.
-
-EXAMPLE
-     [general]
-     arch x86_64
-     scripts ask
-     [source arch]
-     type pacman
-     repo core "https://mirror.example/arch/$repo/os/$arch"
-
-FILES
-     /etc/holy.conf is the proposed system path. The checker takes  an	explicit
-     file.
-
-Holy				 September 2026			    HOLY.CONF(5)
 holypkg.8 source=holy version=development sha256=a91081f69246c7ce1960cd21b07dbf42fc8054fa585226a15e2ae713f13983e5
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
