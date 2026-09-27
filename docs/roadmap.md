@@ -67,7 +67,9 @@
   Resolve simple Depends entries and exact/unversioned Provides claims with
   Debian version ordering within the deb family. Alternatives, Pre-Depends and
   other unsupported relationships stay foreign requirements; conffiles require
-  a decision. APT indexes, signatures and full hook integration remain open.
+  a decision. Verify listed `control/md5sums` files against the payload before
+  conversion; the original MD5 list is not source authentication. APT indexes,
+  signatures and full hook integration remain open.
 
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.
 - [x] Plan and atomically apply a source identity registry under the database

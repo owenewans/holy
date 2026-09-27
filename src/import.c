@@ -11,6 +11,7 @@
 #include <archive.h>
 #include <archive_entry.h>
 #include <openssl/evp.h>
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -496,6 +497,89 @@ done:
     return ok;
 }
 
+static int deb_md5_matches(const struct foreign_input *input,
+                           const struct foreign_entry *entry, const char *expected)
+{
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    unsigned char digest[16], buffer[65536];
+    unsigned length;
+    long long offset = 0;
+    size_t i;
+    int ok = 0;
+    if (!ctx || EVP_DigestInit_ex(ctx, EVP_md5(), NULL) != 1) goto done;
+    while (offset < entry->stream.size) {
+        size_t size = (size_t)(entry->stream.size - offset);
+        if (size > sizeof buffer) size = sizeof buffer;
+        if (pread(fileno(input->spool), buffer, size,
+                  (off_t)(entry->stream.offset + offset)) != (ssize_t)size ||
+            EVP_DigestUpdate(ctx, buffer, size) != 1) goto done;
+        offset += (long long)size;
+    }
+    if (EVP_DigestFinal_ex(ctx, digest, &length) != 1 || length != sizeof digest) goto done;
+    for (i = 0; i < sizeof digest; ++i) {
+        char hex[3];
+        snprintf(hex, sizeof hex, "%02x", digest[i]);
+        if (tolower((unsigned char)expected[i * 2]) != hex[0] ||
+            tolower((unsigned char)expected[i * 2 + 1]) != hex[1]) goto done;
+    }
+    ok = 1;
+done:
+    EVP_MD_CTX_free(ctx);
+    return ok;
+}
+
+static int verify_deb_md5sums(const struct foreign_input *input)
+{
+    const struct foreign_entry *list = NULL;
+    struct foreign_entry **sorted = NULL;
+    unsigned char *seen = NULL;
+    char *data = NULL;
+    size_t i, offset = 0;
+    int ok = 0;
+    for (i = 0; i < input->count; ++i)
+        if (!strcmp(input->entries[i].original, "@control/md5sums")) list = &input->entries[i];
+    if (!list) return 1;
+    if (list->stream.size < 0 || list->stream.size > 16 * 1024 * 1024) goto done;
+    data = malloc((size_t)list->stream.size + 1);
+    sorted = malloc(input->count * sizeof *sorted);
+    seen = calloc(input->count, 1);
+    if (!data || !sorted || !seen ||
+        pread(fileno(input->spool), data, (size_t)list->stream.size,
+              (off_t)list->stream.offset) != list->stream.size) goto done;
+    data[list->stream.size] = 0;
+    if (memchr(data, 0, (size_t)list->stream.size)) goto done;
+    for (i = 0; i < input->count; ++i) sorted[i] = &input->entries[i];
+    qsort(sorted, input->count, sizeof *sorted, path_order);
+    while (offset < (size_t)list->stream.size) {
+        char *line = data + offset, *end = memchr(line, '\n', (size_t)list->stream.size - offset);
+        char *path, *canonical;
+        struct foreign_entry *entry;
+        size_t j, index;
+        if (end) { *end = 0; offset = (size_t)(end - data) + 1; }
+        else offset = (size_t)list->stream.size;
+        if (strlen(line) < 35 || line[32] != ' ' || line[33] != ' ' ||
+            !line[34] || line[strlen(line) - 1] == ' ' || line[strlen(line) - 1] == '\t') goto done;
+        for (j = 0; j < 32; ++j) if (!isxdigit((unsigned char)line[j])) goto done;
+        path = line + 34;
+        canonical = normalized(path, 0);
+        if (!canonical) goto done;
+        j = strcmp(canonical, path);
+        free(canonical);
+        if (j) goto done;
+        entry = find_path(sorted, input->count, path);
+        if (!entry || entry->metadata || entry->stream.directory || entry->stream.link) goto done;
+        index = (size_t)(entry - input->entries);
+        if (seen[index]++) goto done;
+        if (entry->stream.hardlink) entry = &input->entries[entry->hardlink_group];
+        if (!deb_md5_matches(input, entry, line)) goto done;
+    }
+    ok = 1;
+done:
+    if (!ok) fputs("holypkg: Debian md5sums does not match payload\n", stderr);
+    free(data); free(sorted); free(seen);
+    return ok;
+}
+
 static int append_text(struct foreign_input *input, struct holy_stream_entry *entry,
                         const char *path, const char *text, size_t size)
 {
@@ -907,7 +991,8 @@ int holy_import_deb(const char *input_path, const char *source, const char *outp
         (st.st_mode & 0777) != 0700 || !preserve_original(snapshot, output_fd)) goto done;
     result = collect_deb(snapshot, &input);
     if (result) goto done;
-    if (!validate_paths(&input) || !parse_deb(input.pkginfo, input.pkginfo_size, &metadata)) {
+    if (!validate_paths(&input) || !verify_deb_md5sums(&input) ||
+        !parse_deb(input.pkginfo, input.pkginfo_size, &metadata)) {
         fputs("holypkg: malformed deb control or payload paths\n", stderr);
         result = 2; goto done;
     }

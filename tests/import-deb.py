@@ -22,6 +22,9 @@ def tar(members, mode="w:gz"):
             entry.mode = 0o755 if kind == "dir" else 0o644
             if kind == "dir":
                 entry.type = tarfile.DIRTYPE
+            elif kind == "hardlink":
+                entry.type = tarfile.LNKTYPE
+                entry.linkname = body.decode()
             else:
                 entry.size = len(body)
             archive.addfile(entry, io.BytesIO(body) if kind == "file" else None)
@@ -74,6 +77,29 @@ with tempfile.TemporaryDirectory() as scratch:
         return artifacts
 
     artifact = convert(foreign("basic"), "basic-output")[0]
+    payload = b"deb import\n"
+    md5_line = hashlib.md5(payload).hexdigest().encode() + b"  usr/share/debfixture\n"
+    def with_md5(name, checksums, body=payload):
+        return foreign(name, order=[("debian-binary", b"2.0\n"),
+            ("control.tar.gz", tar([("control", b"Package: debfixture\nVersion: 1\nArchitecture: all\n", "file"),
+                                    ("md5sums", checksums, "file")])),
+            ("data.tar.gz", tar([("usr/", b"", "dir"), ("usr/share/", b"", "dir"),
+                                 ("usr/share/debfixture", body, "file")]))])
+    convert(with_md5("md5-valid", md5_line), "md5-valid-output")
+    convert(with_md5("md5-mismatch", md5_line, b"changed\n"), "md5-mismatch-output", status=2)
+    convert(with_md5("md5-missing", b"0" * 32 + b"  usr/share/missing\n"),
+            "md5-missing-output", status=2)
+    convert(with_md5("md5-duplicate", md5_line + md5_line), "md5-duplicate-output", status=2)
+    convert(with_md5("md5-invalid", b"0" * 32 + b"  ../outside\n"),
+            "md5-invalid-output", status=2)
+    hardlink_checksums = md5_line + hashlib.md5(payload).hexdigest().encode() + b"  usr/share/alias\n"
+    convert(foreign("md5-hardlink", order=[("debian-binary", b"2.0\n"),
+        ("control.tar.gz", tar([("control", b"Package: debfixture\nVersion: 1\nArchitecture: all\n", "file"),
+                                ("md5sums", hardlink_checksums, "file")])),
+        ("data.tar.gz", tar([("usr/", b"", "dir"), ("usr/share/", b"", "dir"),
+                             ("usr/share/debfixture", payload, "file"),
+                             ("usr/share/alias", b"usr/share/debfixture", "hardlink")]))]),
+        "md5-hardlink-output")
     for codec, mode in (("plain", "w"), ("gzip", "w:gz"), ("xz", "w:xz"), ("bzip2", "w:bz2")):
         control_part = tar([("control", b"Package: debfixture\nVersion: 1\nArchitecture: all\n", "file")],
                            mode if codec != "bzip2" else "w")

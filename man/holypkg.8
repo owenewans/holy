@@ -166,6 +166,9 @@ foreign requirements. The converter supports Architecture all, amd64 and i386;
 it checks observed ELF machines against that
 claim and returns status 3 for unknown or mismatched payloads. It does not
 sync APT indexes or verify Debian signatures.
+When control/md5sums is present, the importer verifies each listed regular
+payload file before writing native outputs. MD5 detects payload mismatch here;
+it does not authenticate the source archive.
 make check-deb exercises valid and malformed ar members, codecs, dependencies,
 inactive hooks and native install/check/remove in a temporary root.
 .PP

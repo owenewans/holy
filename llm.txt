@@ -794,7 +794,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=50b8c2f75379cff7774242f7ff7aaf83d4e8c9037e1a804f59396c8db39fef31
+holypkg.8 source=holy version=development sha256=5a15083efdff0bb6ae4c5365ae8227d9f2a36eedf376a72ab85ae6b922bbae54
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -908,9 +908,12 @@ DESCRIPTION
      pendency. Unsupported or duplicate claims remain foreign requirements.  The
      converter supports Architecture all, amd64 and i386; it checks observed ELF
      machines  against that claim and returns status 3 for unknown or mismatched
-     payloads. It does not sync APT indexes or verify Debian  signatures.   make
-     check-deb	exercises  valid and malformed ar members, codecs, dependencies,
-     inactive hooks and native install/check/remove in a temporary root.
+     payloads. It does not sync APT indexes or verify Debian  signatures.   When
+     control/md5sums  is present, the importer verifies each listed regular pay-
+     load file before writing native outputs. MD5 detects payload mismatch here;
+     it does not authenticate the  source  archive.   make  check-deb  exercises
+     valid  and	 malformed  ar members, codecs, dependencies, inactive hooks and
+     native install/check/remove in a temporary root.
 
      The importer reads .PKGINFO identities, full epoch/version/release strings,
      package relations and original field values. It preserves .PKGINFO, .BUILD-
