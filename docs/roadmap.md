@@ -173,6 +173,14 @@
 
 ## Base system and images
 
+- [x] Build musl-static dependencies, holypkg and holy-init for i686 and x86_64
+  with explicit compiler and linker targets. Check ELF class/machine and pointer
+  width, and run a static C package through pack/install/check/execute/remove
+  under QEMU user mode (pentium2 or qemu64). The i686 client also passes codec
+  import and DNS/HTTPS fixtures without dynamic libc on a compatible x86_64
+  kernel. i686 boot, dinit's 32-bit C++ runtime and both 32-bit dynamic libc
+  packages remain separate unfinished acceptance gates.
+
 - [x] Generate an attributed installed-man source bundle with `holypkg docs`:
   verify source hashes, decode supported compressed pages, preserve aliases
   and same-name providers, report missing/omitted pages, and refuse changed

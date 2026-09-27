@@ -8,8 +8,17 @@ fi
 inputs=$(realpath "$1")
 headers=$(realpath "$3")
 sources=$(realpath "$(dirname "$0")/../profiles/static-sources")
-test "$(uname -m)" = x86_64 || { printf 'static dependencies currently require x86_64\n' >&2; exit 6; }
-for tool in gcc make cmake autoreconf automake libtoolize perl tar sha256sum pkg-config; do
+case "${ARCH:-x86_64}" in
+    x86_64) target=x86_64-linux-musl; arch=x86_64; cpu_flags=-m64; link_flags=-Wl,-m,elf_x86_64; openssl_target=linux-x86_64; elf_class=ELF64; machine='Advanced Micro Devices X86-64'; bits=64 ;;
+    i686|x86) target=i686-linux-musl; arch=x86; cpu_flags='-m32 -march=i686 -mtune=generic'; link_flags=-Wl,-m,elf_i386; openssl_target=linux-x86; elf_class=ELF32; machine='Intel 80386'; bits=32 ;;
+    *) printf 'unsupported static target: %s\n' "$ARCH" >&2; exit 6 ;;
+esac
+unset ARCH MAKEFLAGS MAKEOVERRIDES MFLAGS
+case "$(uname -m)" in
+    x86_64|i?86) ;;
+    *) printf 'static dependency bootstrap requires an x86 builder\n' >&2; exit 6 ;;
+esac
+for tool in gcc ar ranlib make cmake autoreconf automake libtoolize perl tar sha256sum pkg-config readelf; do
     command -v "$tool" >/dev/null || { printf 'missing tool: %s\n' "$tool" >&2; exit 6; }
 done
 for dir in linux asm asm-generic; do
@@ -35,6 +44,7 @@ trap 'exit 1' HUP INT TERM
 exec > "$out/build.log" 2>&1
 cp "$sources" "$out/sources"
 gcc --version > "$out/build.record"
+printf 'arch %s\ntarget %s\ncpu-flags %s\nlink-flags %s\n' "$arch" "$target" "$cpu_flags" "$link_flags" >> "$out/build.record"
 sha256sum "$0" "$sources" >> "$out/build.record"
 while read -r digest archive url; do
     cp "$inputs/$archive" "$work/$archive"
@@ -47,7 +57,8 @@ unset CC CFLAGS CPPFLAGS LDFLAGS LDLIBS
 jobs=${JOBS:-2}
 (
     cd "$work/musl-1.2.5"
-    CC=gcc ./configure --prefix="$out/toolchain" --syslibdir="$out/toolchain/lib"
+    CC=gcc CFLAGS="$cpu_flags" LDFLAGS="$cpu_flags" AR=ar RANLIB=ranlib \
+        ./configure --target="$target" --prefix="$out/toolchain" --syslibdir="$out/toolchain/lib"
     make -j"$jobs"
     make install
 )
@@ -59,7 +70,7 @@ if gcc -fno-link-libatomic -x c -c /dev/null -o "$work/flag.o" 2>/dev/null; then
     flag=-fno-link-libatomic
 fi
 mkdir -p "$out/bin" "$out/include" "$out/lib"
-printf '#!/bin/sh\nexec "%s/toolchain/bin/musl-gcc" %s "$@"\n' "$out" "$flag" > "$out/bin/holy-musl-gcc"
+printf '#!/bin/sh\nexec "%s/toolchain/bin/musl-gcc" %s %s %s "$@"\n' "$out" "$cpu_flags" "$link_flags" "$flag" > "$out/bin/holy-musl-gcc"
 chmod 755 "$out/bin/holy-musl-gcc"
 CC="$out/bin/holy-musl-gcc"
 CPPFLAGS="-I$out/include"
@@ -67,11 +78,34 @@ LDFLAGS="-L$out/lib"
 PKG_CONFIG_LIBDIR="$out/lib/pkgconfig"
 export CC CPPFLAGS LDFLAGS PKG_CONFIG_LIBDIR
 unset PKG_CONFIG_PATH
+cat > "$work/target.c" <<'EOF'
+#include <stdio.h>
+int main(void)
+{
+    volatile unsigned long long dividend = 0x100000001ULL, divisor = 3;
+    printf("pointer-bits %u\n", (unsigned)(sizeof(void *) * 8));
+    return dividend / divisor != 1431655765ULL;
+}
+EOF
+"$CC" -static "$work/target.c" -o "$out/target-probe"
+LC_ALL=C readelf -h "$out/target-probe" > "$out/target-probe.elf"
+grep -q "Class:.*$elf_class" "$out/target-probe.elf" || exit 6
+grep -q "Machine:.*$machine" "$out/target-probe.elf" || exit 6
+"$out/target-probe" > "$out/target-probe.out" || {
+    printf 'builder cannot execute the selected target probe: %s\n' "$target" >&2
+    exit 6
+}
+grep -qx "pointer-bits $bits" "$out/target-probe.out" || exit 6
+sha256sum "$out/target-probe" >> "$out/build.record"
 build_configure() (
     source=$1
     shift
     cd "$work/$source"
-    ./configure --prefix="$out" "$@"
+    if [ "$source" = zlib-1.3.2 ]; then
+        ./configure --prefix="$out" "$@"
+    else
+        ./configure --host="$target" --build="$(gcc -dumpmachine)" --prefix="$out" "$@"
+    fi
     make -j"$jobs"
     make install
 )
@@ -86,7 +120,7 @@ build_configure xz-5.8.1 --disable-shared --enable-static --disable-nls \
     --disable-xz --disable-xzdec --disable-lzmadec --disable-lzmainfo --disable-scripts
 (
     cd "$work/openssl-3.5.8"
-    ./Configure linux-x86_64 no-shared no-module no-tests --prefix="$out" --libdir=lib
+    ./Configure "$openssl_target" no-shared no-module no-tests --prefix="$out" --libdir=lib
     make -j"$jobs"
     make install_sw
 )
@@ -111,7 +145,7 @@ install -m 644 "$work/argp-standalone-1.5.0/libargp.a" "$out/lib/"
 install -m 644 "$work/argp-standalone-1.5.0/argp.h" "$out/include/"
 (
     cd "$work/elfutils-0.196"
-    ./configure --prefix="$out" --disable-debuginfod --disable-libdebuginfod \
+    ./configure --host="$target" --build="$(gcc -dumpmachine)" --prefix="$out" --disable-debuginfod --disable-libdebuginfod \
         --disable-nls --disable-demangler --without-zstd --without-bzlib --without-lzma
     make -C libelf -j"$jobs" libelf.a
     make -C lib -j"$jobs" libeu.a

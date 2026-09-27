@@ -82,9 +82,13 @@ check-static-import:
 check-static-network:
 	python3 tests/static-network.py "$(or $(STATIC_HOLYPKG),./holypkg)" "$(or $(BUSYBOX_PACKAGE),out/busybox-bootstrap/busybox.holy)" "$(or $(REPORT),out/static-network.json)"
 
-.PHONY: static-deps static
+.PHONY: static-deps static check-static-target
+check-static-target:
+	@test -x "$(STATIC_HOLYPKG)" && test -x "$(MUSL_CC)" || { echo 'STATIC_HOLYPKG and MUSL_CC are required' >&2; exit 6; }
+	python3 tests/target.py "$(STATIC_HOLYPKG)" "$(or $(ARCH),x86_64)" "$(MUSL_CC)"
+
 static-deps:
-	sh tools/static-deps.sh "$(INPUTS)" "$(or $(OUTPUT),out/static-deps)" "$(KERNEL_HEADERS)"
+	ARCH="$(or $(ARCH),x86_64)" sh tools/static-deps.sh "$(INPUTS)" "$(or $(OUTPUT),out/static-deps)" "$(KERNEL_HEADERS)"
 
 static:
 	@test -n "$(STATIC_DEPS)" || { echo 'STATIC_DEPS must name the musl dependency prefix' >&2; exit 6; }

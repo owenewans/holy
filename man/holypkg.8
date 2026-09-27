@@ -347,25 +347,39 @@ After service shutdown it checks both installed manifests and removes both
 packages through the database. This covers package installation, service
 control and the static C++ runtime. PID 1 boot remains a separate test.
 .PP
-make static-deps INPUTS=DIRECTORY OUTPUT=DIRECTORY KERNEL_HEADERS=DIRECTORY
-builds x86_64 musl dependencies from the pinned archives listed with URLs and
+make static-deps ARCH=x86_64|i686 INPUTS=DIRECTORY OUTPUT=DIRECTORY KERNEL_HEADERS=DIRECTORY
+builds musl dependencies for the selected target from the pinned archives listed with URLs and
 SHA-256 digests in profiles/static-sources. It copies and verifies inputs
 before unpacking. The caller supplies Linux userspace headers with linux,
 asm and asm-generic subdirectories. Their installed copies receive a hash
 inventory. GCC, make, CMake, autotools, libtool, Perl and archive tools are
-host build requirements. JOBS controls parallelism, default 2.
+host build requirements. The multilib GCC installation must supply libgcc for
+the selected target. JOBS controls parallelism, default 2. ARCH defaults to
+x86_64; i686 uses the x86 package architecture, not the x32 ABI.
+The compiler wrapper selects the target machine and linker emulation. The
+bootstrap compiles and runs a static probe, checking ELF class, machine and
+pointer width before building dependencies. The builder must execute the target
+for these configure/probe steps. Compiler flags and probe evidence are retained.
 .PP
-The output is a new private prefix containing static libarchive/LZ4, zlib,
+The output is a new private prefix containing static libarchive/LZ4, zlib, XZ,
+Zstandard, bzip2,
 libelf, libsolv, curl and OpenSSL, plus build compatibility libraries.
 Its musl toolchain includes a private dynamic loader for upstream configure
 probes; the final holypkg link uses -static. No host libc is replaced.
 Source manifests, build logs, library hashes, exit status and elapsed seconds
-remain in the prefix. Archive support in this bootstrap configuration is
-limited to the enabled codecs, including native LZ4; full foreign codec
-coverage is a separate build profile.
+remain in the prefix. Archive decoding includes gzip, LZ4, XZ, Zstandard and
+bzip2; the native writer still emits only LZ4 frames.
 .PP
 make static STATIC_DEPS=DIRECTORY checks the completed dependency prefix,
 cleans existing object files and builds holypkg with its musl compiler.
+make check-static-target ARCH=i686|x86_64 STATIC_HOLYPKG=FILE MUSL_CC=FILE
+checks the static client's ELF class and machine, then runs it under QEMU user
+emulation. The selected CPU is pentium2 for i686 or qemu64 for x86_64. The test
+builds a static C payload with that compiler and exercises native packing,
+installation, check, execution and removal. Its JSON report binds client and
+package hashes and records coverage. This is a userspace ISA test; kernel boot,
+dynamic libc and physical hardware have separate acceptance gates.
+.PP
 make check-static-core STATIC_HOLYPKG=FILE BUSYBOX_PACKAGE=FILE copies that
 binary into a disposable root without dynamic libc directories. Inside the
 chroot, holypkg verifies and caches the supplied BusyBox package, installs,
