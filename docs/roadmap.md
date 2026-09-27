@@ -19,7 +19,8 @@ it does not mean a bootable distribution or general package support.
   with numeric ownership and SHA-256; reject unsupported objects.
 - [x] Stage verified objects in a target-root cache; preview collisions.
 - [x] Fetch a pinned native `.holy` over HTTPS with certificate checks and a
-  local CA fixture; configured source sync and signatures remain open.
+  local CA fixture; reject credential-bearing redirect targets before making
+  redirected requests. Configured source sync and signatures remain open.
 - [x] Build and seal a local repository catalog; search and fetch its verified objects.
 - [x] Resolve a restricted local/catalog graph with libsolv; reject unsupported semantics.
 - [x] Journal installation, check and removal of **data-only** `linux/noarch/nolibc`

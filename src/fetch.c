@@ -12,6 +12,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 static int hash_fd(int fd, unsigned char digest[32])
@@ -169,12 +170,13 @@ int holy_fetch_https(const char *url, const char *expected,
     struct download transfer = { .fd = -1, .hash = NULL, .bytes = 0 };
     CURL *curl = NULL;
     struct stat st;
+    struct timespec started, now;
     unsigned char digest[32], prior[32];
     unsigned int digest_size;
     char name[70], temporary[43] = {0};
     char *path = NULL;
     size_t i, output_length;
-    int dir = -1, previous = -1, result = 1, initialized = 0;
+    int dir = -1, previous = -1, result = 1, initialized = 0, redirect;
     if (!expected || strlen(expected) != 64) return 2;
     for (i = 0; i < 64; ++i)
         if (!((expected[i] >= '0' && expected[i] <= '9') ||
@@ -183,7 +185,8 @@ int holy_fetch_https(const char *url, const char *expected,
         fprintf(stderr, "holypkg: HTTPS URL must omit credentials\n");
         return 2;
     }
-    if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) return 1;
+    if (clock_gettime(CLOCK_MONOTONIC, &started) ||
+        curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) return 1;
     initialized = 1;
     dir = open(output, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dir < 0 || fstat(dir, &st) || !S_ISDIR(st.st_mode) ||
@@ -196,20 +199,45 @@ int holy_fetch_https(const char *url, const char *expected,
     if (curl_easy_setopt(curl, CURLOPT_URL, url) != CURLE_OK ||
         curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "https") != CURLE_OK ||
         curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "https") != CURLE_OK ||
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L) != CURLE_OK ||
-        curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L) != CURLE_OK ||
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L) != CURLE_OK ||
         curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L) != CURLE_OK ||
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L) != CURLE_OK ||
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L) != CURLE_OK ||
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 20L) != CURLE_OK ||
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 300L) != CURLE_OK ||
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receive) != CURLE_OK ||
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &transfer) != CURLE_OK ||
         (ca_file && curl_easy_setopt(curl, CURLOPT_CAINFO, ca_file) != CURLE_OK))
         goto done;
     result = 6;
-    if (curl_easy_perform(curl) != CURLE_OK ||
-        EVP_DigestFinal_ex(transfer.hash, digest, &digest_size) != 1 ||
+    for (redirect = 0; ; ++redirect) {
+        long response = 0;
+        long remaining;
+        char *target = NULL, *copy;
+        if (clock_gettime(CLOCK_MONOTONIC, &now)) { result = 1; goto done; }
+        if (now.tv_sec - started.tv_sec > 300) goto done;
+        remaining = 300000L - (long)(now.tv_sec - started.tv_sec) * 1000L -
+                    (long)(now.tv_nsec - started.tv_nsec) / 1000000L;
+        if (remaining <= 0 ||
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, remaining) != CURLE_OK)
+            goto done;
+        if (curl_easy_perform(curl) != CURLE_OK ||
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response) != CURLE_OK)
+            goto done;
+        if (response >= 200 && response < 300) break;
+        if (response < 300 || response >= 400 || redirect == 5 ||
+            curl_easy_getinfo(curl, CURLINFO_REDIRECT_URL, &target) != CURLE_OK ||
+            !target || !secure_url(target)) goto done;
+        copy = strdup(target);
+        if (!copy) { result = 1; goto done; }
+        if (curl_easy_setopt(curl, CURLOPT_URL, copy) != CURLE_OK ||
+            ftruncate(transfer.fd, 0) || lseek(transfer.fd, 0, SEEK_SET) < 0 ||
+            EVP_DigestInit_ex(transfer.hash, EVP_sha256(), NULL) != 1) {
+            free(copy);
+            goto done;
+        }
+        free(copy);
+    }
+    if (EVP_DigestFinal_ex(transfer.hash, digest, &digest_size) != 1 ||
         digest_size != 32 || fsync(transfer.fd)) goto done;
     for (i = 0; i < 32; ++i) snprintf(name + i * 2, 3, "%02x", digest[i]);
     memcpy(name + 64, ".holy", 6);

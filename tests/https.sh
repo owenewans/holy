@@ -30,7 +30,17 @@ mkfifo "$tmp/port"
 python3 -u -c '
 import http.server, os, ssl, sys
 os.chdir(sys.argv[1])
-server = http.server.HTTPServer(("127.0.0.1", 0), http.server.SimpleHTTPRequestHandler)
+class Handler(http.server.SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path in ("/redirect.holy", "/credential.holy"):
+            userinfo = "user:pass@" if self.path == "/credential.holy" else ""
+            self.send_response(302)
+            self.send_header("Location", f"https://{userinfo}localhost:{self.server.server_port}/native.holy")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        return super().do_GET()
+server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
 ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 ctx.load_cert_chain(sys.argv[2], sys.argv[3])
 server.socket = ctx.wrap_socket(server.socket, server_side=True)
@@ -45,6 +55,15 @@ url="https://localhost:$port/native.holy"
     --ca-file "$tmp/cert.pem" > "$tmp/result"
 grep -qx "$tmp/out/$digest.holy" "$tmp/result"
 cmp "$tmp/serve/native.holy" "$tmp/out/$digest.holy"
+"$bin" fetch "https://localhost:$port/redirect.holy" --sha256 "$digest" --output "$tmp/out" \
+    --ca-file "$tmp/cert.pem" > "$tmp/result"
+grep -qx "$tmp/out/$digest.holy" "$tmp/result"
+before=$(grep -c '"GET /native.holy HTTP/' "$tmp/server.log")
+if "$bin" fetch "https://localhost:$port/credential.holy" --sha256 "$digest" --output "$tmp/out" \
+   --ca-file "$tmp/cert.pem" > "$tmp/result" 2> "$tmp/error"; then exit 1; else test "$?" -eq 6; fi
+test "$(grep -c '"GET /native.holy HTTP/' "$tmp/server.log")" -eq "$before"
+test ! -s "$tmp/result"
+if grep -Eq 'user|pass' "$tmp/error"; then exit 1; fi
 "$bin" fetch "$url" --sha256 "$digest" --output "$tmp/out" \
     --ca-file "$tmp/cert.pem" > "$tmp/result"
 bad=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

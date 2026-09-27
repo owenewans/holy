@@ -49,7 +49,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=c5ed28f2487b26244ae528f759e88359db9f5cf12a886d26b12b68e3f3431371
+holypkg.8 source=holy version=development sha256=27eb51e96b710030b5dd1d6e4b68fdf693b08734f81a418922de4396f880efb3
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -121,14 +121,16 @@ DESCRIPTION
      Pinned HTTPS fetch downloads  one	native	.holy  into  an	 existing,  non-
      writable-	by-others  output  directory.  It  requires an expected SHA-256,
      HTTPS including redirects, certificate validation and an URL without embed-
-     ded user/password.	 --ca-file explicitly selects a trusted CA  file  for  a
-     private  test  or	source.	  The command limits downloads to 1 GiB and five
-     minutes, verifies the completed archive, then publishes SHA256.holy without
-     replacing an existing object. If the name exists, it  compares  the  stored
-     bytes  with  the expected digest. HTTP, unknown certificates, wrong digests
-     and malformed archives cannot publish a new object. This fetch does not as-
-     sign source-id, verify a repository signature, install files or run  hooks.
-     General foreign binary fetch remains separate.
+     ded user/password.	 The downloader checks each redirect target  before  re-
+     questing  it  and refuses credentials in redirect URLs. --ca-file selects a
+     trusted CA file for a private test or source. The command limits the entire
+     redirect chain to 1 GiB and five minutes, verifies the  completed	archive,
+     then  publishes  SHA256.holy  without  replacing an existing object. If the
+     name exists, it compares the stored bytes with the expected  digest.  HTTP,
+     unknown certificates, wrong digests and malformed archives cannot publish a
+     new  object. This fetch does not assign source-id, verify a repository sig-
+     nature, install files or run hooks. General foreign  binary  fetch	 remains
+     separate.
 
      Pack reads a prepared tree containing only HOLY/ and DATA/. HOLY/ must con-
      tain  exactly  meta,  files, deps, provides, hooks, origin and transform as

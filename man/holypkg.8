@@ -116,9 +116,11 @@ of the separate owenewans/holypkg project.
 Pinned HTTPS fetch downloads one native .holy into an existing, non-writable-
 by-others output directory. It requires an expected SHA-256, HTTPS including
 redirects, certificate validation and an URL without embedded user/password.
---ca-file explicitly selects a trusted CA file for a private test or source.
-The command limits downloads to 1 GiB and five minutes, verifies the completed
-archive, then publishes SHA256.holy without replacing an existing object. If
+The downloader checks each redirect target before requesting it and refuses
+credentials in redirect URLs. --ca-file selects a trusted CA file for a
+private test or source. The command limits the entire redirect chain to
+1 GiB and five minutes, verifies the completed archive, then publishes
+SHA256.holy without replacing an existing object. If
 the name exists, it compares the stored bytes with the expected digest. HTTP,
 unknown certificates, wrong digests and malformed archives cannot publish a
 new object. This fetch does not assign source-id, verify a repository signature,
