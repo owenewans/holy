@@ -84,9 +84,14 @@ def main():
     if arch not in ('i686', 'x86_64'):
         error('ARCH must be i686 or x86_64', 2)
     qemu = shutil.which('qemu-system-' + ('i386' if arch == 'i686' else arch))
+    media = os.environ.get('BOOT_MEDIA', 'iso')
+    if media not in ('iso', 'disk'):
+        error('BOOT_MEDIA must be iso or disk', 2)
     iso = Path(os.environ.get('ISO', ''))
-    if not qemu or not iso.is_file():
-        error('QEMU and readable ISO required', 6)
+    if not qemu or (media == 'iso' and not iso.is_file()):
+        error('QEMU and selected readable boot input required', 6)
+    if media == 'disk' and os.environ.get('ISO'):
+        error('disk boot must not provide an ISO', 2)
     plan = os.environ.get('BOOT_PLAN', '')
     if len(plan) != 64 or any(c not in '0123456789abcdef' for c in plan):
         error('BOOT_PLAN must be SHA-256', 2)
@@ -103,6 +108,8 @@ def main():
     if profile == 'static-core' and state != 'present':
         error('libc boot state requires dual-libc profile', 2)
     disk_path = os.environ.get('ROOT_DISK', '')
+    if media == 'disk' and not disk_path:
+        error('disk boot requires ROOT_DISK', 6)
     qemu_img = shutil.which('qemu-img')
     if disk_path and (profile != 'dual-libc' or not Path(disk_path).is_file() or not qemu_img):
         error('disk recovery requires dual-libc, a regular raw ROOT_DISK and qemu-img', 6)
@@ -118,10 +125,12 @@ def main():
     if not report_dir.is_dir():
         error('missing report directory', 6)
     run = Path(tempfile.mkdtemp(prefix='holy-qemu-' + arch + '-', dir=report_dir)).resolve()
-    inputs = {'iso': {'source': str(iso.resolve())}}
-    shutil.copyfile(iso, run / 'input.iso')
-    os.chmod(run / 'input.iso', 0o444)
-    inputs['iso']['sha256'] = digest(run / 'input.iso')
+    inputs = {}
+    if media == 'iso':
+        inputs['iso'] = {'source': str(iso.resolve())}
+        shutil.copyfile(iso, run / 'input.iso')
+        os.chmod(run / 'input.iso', 0o444)
+        inputs['iso']['sha256'] = digest(run / 'input.iso')
     if disk_path:
         base = run / 'root.raw'
         shutil.copyfile(disk_path, base)
@@ -134,12 +143,14 @@ def main():
             path = Path(os.environ[field])
             inputs[field.lower()] = {'source': str(path.resolve()), 'sha256': digest(path)}
     args = [qemu, '-accel', accel, '-m', '1024', '-display', 'none', '-monitor', 'none',
-            '-net', 'none', '-boot', 'd', '-cdrom', str(run / 'input.iso'),
+            '-net', 'none', '-boot', 'c' if media == 'disk' else 'd',
             '-serial', 'file:' + str(run / 'serial.log')]
+    if media == 'iso':
+        args += ['-cdrom', str(run / 'input.iso')]
     if disk_path:
         args += ['-blockdev', json.dumps({'driver': 'qcow2', 'node-name': 'holy-root',
                  'file': {'driver': 'file', 'filename': str(run / 'root.qcow2')}}),
-                 '-device', 'virtio-blk-pci,drive=holy-root']
+                 '-device', 'virtio-blk-pci,drive=holy-root' + (',bootindex=1' if media == 'disk' else '')]
     else:
         args += ['-no-reboot']
     for field, path in firmware_files.items():
@@ -254,6 +265,7 @@ def main():
               'elapsed_seconds': time.monotonic() - started,
               'boot_timeout_seconds': int(limit), 'shutdown_timeout_seconds': 5,
               'root_storage': 'ext4-overlay' if disk_path else 'ram', 'boots': boots,
+              'boot_media': media,
               'first_boot_completed_seconds': first_completed,
               'reason': reason, 'result': result,
               'missing_markers': ([f'boot-{b["boot"]}: {marker}' for b in boots for marker in b['missing_markers']]
@@ -267,7 +279,7 @@ def main():
                              'base_unchanged': base_unchanged}
     (run / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     (run / 'report').write_text(
-        f'format holy-qemu-report-2\narch {arch}\niso-sha256 {inputs["iso"]["sha256"]}\n'
+        f'format holy-qemu-report-2\narch {arch}\nboot-media {media}\niso-sha256 {inputs.get("iso", {}).get("sha256", "none")}\n'
         f'plan {plan}\naccelerator {accel}\nfirmware {firmware}\nexit {code}\n'
         f'reason {reason}\nresult {result}\n')
     print(f'holy-qemu: {result} report {run}/report')

@@ -128,6 +128,11 @@
   Verify the read-only raw base remains unchanged; a missing disk fails with
   a device timeout instead of falling back to RAM. This is an ISO booting a
   prepared ext4 image, not an installed disk with its own Limine/ESP.
+- [x] Build a standalone GPT disk with a BIOS Boot partition, FAT32 ESP and
+  ext4 root. Boot through Limine without a CD-ROM in BIOS/TCG and UEFI/TCG:
+  present and both-libcs-missing cases each pass two complete boots, including
+  cache repair, dynamic/IPC and package probes. The raw base remains unchanged.
+  ESP mounting and kernel-update integration remain open, as does holyinstall.
 - [ ] Package Limine, dracut, kernel, firmware, SDK/sysroots and the default
   ConnMan+iwd network profile; test static local and HTTPS libc recovery.
 - [ ] Implement C99 `holyinstall` with reviewed disk/boot/account/network plans

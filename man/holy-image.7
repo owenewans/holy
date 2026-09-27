@@ -11,6 +11,9 @@ links before creating initramfs, while retaining installed records and cached
 ROOT_STORAGE defaults to ram. ext4 selects a persistent recovery test for
 dual-libc and requires mke2fs and qemu-img. The kernel must include ext4 and
 virtio-blk, and the BusyBox package must include switch_root, sync and reboot.
+gpt-ext4 selects an independently bootable GPT disk with the same ext4
+recovery contract. It additionally requires sfdisk, mkfs.fat and mtools;
+xorriso is only required for ISO profiles.
 The following make variables are required:
 .TP
 STATIC_HOLYPKG
@@ -71,6 +74,15 @@ root.ext4 without mounting it on the host. Limine passes holy.root=/dev/vda
 and holy.rootfstype=ext4. holy-init mounts the disk, moves runtime mounts and
 executes BusyBox switch_root followed by dinit. The ISO still provides kernel
 and initramfs; this is not yet an independently installed bootable disk.
+.PP
+ROOT_STORAGE=gpt-ext4 creates a new 768 MiB regular disk.raw. The builder
+prints disk.plan before writing the image and includes its hash in the boot
+plan. The GPT contains a 1 MiB BIOS Boot partition, a 128 MiB FAT32 ESP and
+a 512 MiB ext4 root. It verifies the partition layout, copies the kernel,
+initramfs and Limine configuration to the ESP, reads those files back and
+compares their bytes. Limine BIOS stages use partition 1; the UEFI loader
+uses EFI/BOOT/BOOTX64.EFI. The kernel mounts /dev/vda3. Host filesystems are
+not mounted and physical disks are not accepted as output.
 .PP
 The profile installs merged-/usr links, a locked root account and the dinit
 services boot, console, mdevd, coldplug and holy-test. mdevd reports readiness
@@ -172,11 +184,20 @@ the validator reads retained evidence and does not start new VMs. Local hashes
 bind the retained files, not an authenticated publisher. Preserve each run
 directory alongside the summary for revalidation.
 .SH COVERAGE
+BOOT_MEDIA=disk selects standalone disk boot in the QEMU runner and requires
+ROOT_DISK. ISO must be empty; the runner attaches no CD-ROM. Each run uses
+its own qcow2 overlay and records boot_media, two boot contracts and the
+unchanged raw base. gpt-ext4 produces disk.raw, disk.plan, disk-layout.json
+and limine.conf instead of an ISO. BIOS and UEFI remain separate test runs.
+.PP
 The bootstrap glibc package currently contains
 libc.so.6 and its loader with licenses, not the complete SDK, locale archive,
 NSS modules or auxiliary glibc libraries. The reference image still needs
-networking, the installer and i686. The ext4 fixture tests recovery followed
-by reboot using an ISO kernel and a persistent root overlay.
+networking, the installer and i686. The ext4 fixture uses an ISO kernel;
+gpt-ext4 loads its kernel and initramfs from the disk's ESP. Both test
+recovery followed by reboot on a persistent root overlay. The GPT builder
+is not the interactive installer. It does not yet mount the ESP in the
+installed root or integrate kernel updates with ESP contents.
 Those gates remain separate from this boot result. Recovery tests missing
 payloads with retained package records, not forced removal of referenced packages.
 The repository documentation bundle currently contains Holy pages; the

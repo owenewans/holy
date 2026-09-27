@@ -25,7 +25,7 @@ limine_dir=$(realpath "$9")
 shift 9
 case "$version" in ''|*[!a-zA-Z0-9._+-]*) exit 2 ;; esac
 test "$(uname -m)" = x86_64 || exit 6
-for tool in dracut ldconfig xorriso limine sha256sum cpio gzip python3 qemu-system-x86_64; do
+for tool in dracut ldconfig limine sha256sum cpio gzip python3 qemu-system-x86_64; do
     command -v "$tool" >/dev/null || { echo "$tool required" >&2; exit 6; }
 done
 project=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
@@ -34,11 +34,15 @@ boot_state=${LIBC_BOOT_STATE:-present}
 storage=${ROOT_STORAGE:-ram}
 case "$storage:$profile" in
     ram:*) ;;
-    ext4:dual-libc)
+    ext4:dual-libc|gpt-ext4:dual-libc)
         for tool in mke2fs qemu-img; do command -v "$tool" >/dev/null || exit 6; done
+        if test "$storage" = gpt-ext4; then
+            for tool in sfdisk mkfs.fat mcopy mmd; do command -v "$tool" >/dev/null || exit 6; done
+        fi
         ;;
-    *) echo 'ROOT_STORAGE must be ram, or ext4 with dual-libc' >&2; exit 2 ;;
+    *) echo 'ROOT_STORAGE must be ram, or ext4/gpt-ext4 with dual-libc' >&2; exit 2 ;;
 esac
+if test "$storage" != gpt-ext4; then command -v xorriso >/dev/null || exit 6; fi
 extra_packages=
 case "$profile:$boot_state" in
     static-core:present) ;;
@@ -180,7 +184,7 @@ cp "$out/packages/boot-fixture-root.holy" "$tree/DATA/usr/share/holy/fixture-roo
 chmod 0644 "$tree/DATA/usr/share/holy/fixture-root.holy"
 printf '%s\n' "$version" > "$tree/DATA/etc/holy/kernel-version"
 printf '%s\n' "$profile" > "$tree/DATA/etc/holy/image-profile"
-printf '%s\n' "$storage" > "$tree/DATA/etc/holy/root-storage"
+case "$storage" in gpt-ext4) printf 'ext4\n' ;; *) printf '%s\n' "$storage" ;; esac > "$tree/DATA/etc/holy/root-storage"
 printf '%s\n' "$boot_state" > "$tree/DATA/etc/holy/libc-boot-state"
 if test "$profile" = dual-libc; then
     for name in $extra_packages; do
@@ -255,6 +259,19 @@ for abi in glibc musl; do
     esac
 done
 sha256sum "$project/tools/bootstrap-image.sh" "$project/profiles/dracut/module-setup.sh" >> "$record"
+if test "$storage" = gpt-ext4; then
+    cat > "$out/disk.plan" <<'EOF'
+label: gpt
+unit: sectors
+sector-size: 512
+
+start=2048, size=2048, type=21686148-6449-6E6F-744E-656564454649, name="holy-bios"
+start=4096, size=262144, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, name="holy-esp"
+start=266240, size=1048576, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, name="holy-root"
+EOF
+    cat "$out/disk.plan"
+    sha256sum "$out/disk.plan" >> "$record"
+fi
 cp "$record" "$out/plan"
 plan=$(sha256sum "$out/plan")
 plan=${plan%% *}
@@ -262,13 +279,14 @@ printf '%s\n' "$plan" > "$root/etc/holy/boot-plan"
 printf '%s\n' "$plan" > "$out/boot-plan"
 root_disk=
 root_cmdline=
-if test "$storage" = ext4; then
+if test "$storage" != ram; then
     root_disk="$out/root.ext4"
     truncate -s 512M "$root_disk"
     mke2fs -q -t ext4 -F -d "$root" "$root_disk"
     chmod 0444 "$root_disk"
     sha256sum "$root_disk" >> "$record"
     root_cmdline='holy.root=/dev/vda holy.rootfstype=ext4'
+    if test "$storage" = gpt-ext4; then root_cmdline='holy.root=/dev/vda3 holy.rootfstype=ext4'; fi
 fi
 mkdir -p "$work/dracut/modules.d/90holy" "$work/dracut/dracut.conf.d" "$work/empty-conf"
 dracut_base=${DRACUT_BASE:-/usr/lib64/dracut}
@@ -357,13 +375,53 @@ verbose: yes
     module_path: boot():/boot/initramfs.img
     cmdline: console=ttyS0,115200 rdinit=/init holy.test=1 panic=1 $root_cmdline
 EOF
-xorriso -as mkisofs -R -r -J -b boot/limine/limine-bios-cd.bin \
+boot_media=iso
+iso_image="$out/holy-x86_64.iso"
+if test "$storage" = gpt-ext4; then
+    boot_media=disk
+    iso_image=
+    truncate -s 768M "$out/disk.raw"
+    sfdisk --no-reread --no-tell-kernel "$out/disk.raw" < "$out/disk.plan"
+    sfdisk --json "$out/disk.raw" > "$out/disk-layout.json"
+    python3 - "$out/disk-layout.json" <<'PY'
+import json, sys
+table = json.load(open(sys.argv[1]))['partitiontable']
+assert table['label'] == 'gpt' and table['sectorsize'] == 512
+assert [(p['start'], p['size'], p['name']) for p in table['partitions']] == [
+    (2048, 2048, 'holy-bios'), (4096, 262144, 'holy-esp'), (266240, 1048576, 'holy-root')]
+PY
+    mkfs.fat -C -F 32 -n HOLYBOOT "$work/esp.fat" 131072
+    mmd -i "$work/esp.fat" ::/EFI ::/EFI/BOOT
+    mcopy -i "$work/esp.fat" "$root/usr/share/limine/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
+    mcopy -i "$work/esp.fat" "$root/usr/share/limine/limine-bios.sys" ::/limine-bios.sys
+    mcopy -i "$work/esp.fat" "$root/boot/vmlinuz" ::/vmlinuz
+    mcopy -i "$work/esp.fat" "$out/initramfs.img" ::/initramfs.img
+    sed -e 's@boot():/boot/vmlinuz@boot():/vmlinuz@' \
+        -e 's@boot():/boot/initramfs.img@boot():/initramfs.img@' \
+        "$work/iso/boot/limine/limine.conf" > "$out/limine.conf"
+    mcopy -i "$work/esp.fat" "$out/limine.conf" ::/limine.conf
+    for file in vmlinuz initramfs.img limine.conf; do
+        mcopy -i "$work/esp.fat" "::/$file" "$work/readback"
+        case "$file" in vmlinuz) cmp "$root/boot/vmlinuz" "$work/readback" ;; *) cmp "$out/$file" "$work/readback" ;; esac
+        rm "$work/readback"
+    done
+    dd if="$work/esp.fat" of="$out/disk.raw" bs=1M seek=2 conv=notrunc status=none
+    dd if="$root_disk" of="$out/disk.raw" bs=1M seek=130 conv=notrunc status=none
+    limine bios-install "$out/disk.raw" 1
+    sfdisk --verify "$out/disk.raw"
+    chmod 0444 "$out/disk.raw"
+    root_disk="$out/disk.raw"
+    sha256sum "$out/disk.raw" "$out/disk-layout.json" "$out/limine.conf" >> "$record"
+else
+    xorriso -as mkisofs -R -r -J -b boot/limine/limine-bios-cd.bin \
     -no-emul-boot -boot-load-size 4 -boot-info-table \
     --efi-boot boot/limine/limine-uefi-cd.bin -efi-boot-part --efi-boot-image \
-    --protective-msdos-label "$work/iso" -o "$out/holy-x86_64.iso"
-limine bios-install "$out/holy-x86_64.iso"
-sha256sum "$out/holy-x86_64.iso" "$out/initramfs.img" "$root/boot/vmlinuz" >> "$record"
-ARCH=x86_64 ISO="$out/holy-x86_64.iso" BOOT_PLAN="$plan" REPORT_DIR="$out/reports" \
+    --protective-msdos-label "$work/iso" -o "$iso_image"
+    limine bios-install "$iso_image"
+    sha256sum "$iso_image" >> "$record"
+fi
+sha256sum "$out/initramfs.img" "$root/boot/vmlinuz" >> "$record"
+ARCH=x86_64 BOOT_MEDIA="$boot_media" ISO="$iso_image" BOOT_PLAN="$plan" REPORT_DIR="$out/reports" \
     IMAGE_PROFILE="$profile" LIBC_BOOT_STATE="$boot_state" \
     ROOT_DISK="$root_disk" \
     KERNEL_IMAGE="$root/boot/vmlinuz" KERNEL_VERSION="$version" INITRAMFS="$out/initramfs.img" \

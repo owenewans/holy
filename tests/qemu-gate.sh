@@ -2,7 +2,7 @@
 set -eu
 export QEMU_ACCEL=tcg
 export FIRMWARE=bios
-unset KERNEL_IMAGE INITRAMFS ROOT_IMAGE ROOT_DISK KERNEL_VERSION
+unset KERNEL_IMAGE INITRAMFS ROOT_IMAGE ROOT_DISK BOOT_MEDIA KERNEL_VERSION
 
 python3 - <<'PY'
 import importlib.util
@@ -22,6 +22,21 @@ PY
 tmp=$(mktemp -d "${TMPDIR:-/tmp/opencode}/holy-qemu-fixture-XXXXXX")
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 plan=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+for case_name in missing-disk forbidden-iso; do
+    iso=
+    expected=6
+    if test "$case_name" = forbidden-iso; then iso="$tmp/unused.iso"; expected=2; fi
+    if ARCH=x86_64 BOOT_MEDIA=disk ISO="$iso" BOOT_PLAN="$plan" \
+       REPORT_DIR="$tmp" sh tests/qemu.sh > "$tmp/out" 2> "$tmp/err"; then
+        exit 1
+    else
+        test "$?" -eq "$expected"
+    fi
+    case "$case_name" in
+        missing-disk) grep -q 'disk boot requires ROOT_DISK' "$tmp/err" ;;
+        forbidden-iso) grep -q 'disk boot must not provide an ISO' "$tmp/err" ;;
+    esac
+done
 for arch in i686 x86_64; do
     if ARCH="$arch" ISO="$tmp/missing.iso" BOOT_PLAN="$plan" \
        REPORT_DIR="$tmp" sh tests/qemu.sh > "$tmp/out" 2> "$tmp/err"; then

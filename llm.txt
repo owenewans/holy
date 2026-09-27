@@ -1,57 +1,4 @@
-holy.conf.5 source=holy version=development sha256=2b55062677cdd7da0de1b2d2049b90e865a526830400b71035a22e27217bed11
-HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
-
-NAME
-     holy.conf - Holy source configuration format
-
-STATUS
-     This page describes the implemented syntax checker. Configured source acti-
-     vation,  general  multi-source  resolution and general installation are not
-     implemented; the restricted local data/static-ELF transaction uses separate
-     commands.
-
-SYNOPSIS
-     holypkg config check FILE
-
-DESCRIPTION
-     Input must be UTF-8. Each record contains a  key  and  whitespace-separated
-     arguments. Double quotes retain spaces. A hash sign at the start of a token
-     begins  a comment outside quotes. Escapes are backslash-quote, double-back-
-     slash, backslash-n, backslash-t, backslash-r and  backslash-x  followed  by
-     two hexadecimal digits. NUL is rejected.  The parser does not run shell ex-
-     pansion.
-
-     Sections are [general], [resolver], [source NAME] and [rule NAME].	 Include
-     takes one path relative to the containing file. Repeated scalar keys within
-     a	section	 are  errors with both source locations. The source repo and re-
-     solver prefer keys are lists and can repeat.  Recursive  includes	are  re-
-     jected.   The  checker validates lexical and structural syntax; it does not
-     yet validate rule references. It checks that source parents  exist	 and  do
-     not  form	cycles.	  It rejects userinfo in URL authorities without echoing
-     credentials in diagnostics. It validates key names,  argument  counts,  and
-     the  scripts,  trust, ask-sources and prefer values. The alias local is re-
-     served and cannot name a source.
-
-     Each populated source section requires type and at least one url  or  repo.
-     Repository	 names	within	one source must be distinct. Each populated rule
-     requires consumer, require and provider. Empty values are	rejected.  These
-     checks  do not prove that a repository is reachable or its packages can re-
-     solve.
-
-EXAMPLE
-     [general]
-     arch x86_64
-     scripts ask
-     [source arch]
-     type pacman
-     repo core "https://mirror.example/arch/$repo/os/$arch"
-
-FILES
-     /etc/holy.conf is the proposed system path. The checker takes  an	explicit
-     file.
-
-Holy				 September 2026			    HOLY.CONF(5)
-holy-image.7 source=holy version=development sha256=cc3becb57d464fd11ff54d46f2ea92984060b9a625058702076434a6871761bf
+holy-image.7 source=holy version=development sha256=b7a16ee8b9cd56ee2bc2cbd197609ba14fc97e8c843111dc87e35a6a7456a746
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
 NAME
@@ -66,7 +13,10 @@ BUILD
      records and cached ROOT_STORAGE defaults to ram. ext4 selects a  persistent
      recovery  test  for  dual-libc and requires mke2fs and qemu-img. The kernel
      must include ext4 and virtio-blk, and  the	 BusyBox  package  must	 include
-     switch_root, sync and reboot.  The following make variables are required:
+     switch_root,  sync	 and reboot.  gpt-ext4 selects an independently bootable
+     GPT disk with the same ext4 recovery  contract.  It  additionally	requires
+     sfdisk,  mkfs.fat	and  mtools;  xorriso is only required for ISO profiles.
+     The following make variables are required:
 
      STATIC_HOLYPKG
 	    Previously built musl-static holypkg executable.
@@ -78,60 +28,69 @@ BUILD
 	    Native .holy outputs of the matching bootstrap targets.
 
      GLIBC_PACKAGE, MUSL_PACKAGE
-	    For	 dual-libc, the native bootstrap libc packages with private lit-
-	    eral loader paths. bootstrap-glibc and  bootstrap-musl  produce  the
+	    For dual-libc, the native bootstrap libc packages with private  lit-
+	    eral  loader  paths.  bootstrap-glibc and bootstrap-musl produce the
 	    tested input layouts.
 
      GLIBC_CC, MUSL_CC
-	    Compilers  for the two dynamic C fixtures. GLIBC_CC defaults to gcc;
-	    MUSL_CC must name a musl compiler. The image build checks their  ac-
-	    tual  runtime requirements against the selected libc payloads before
+	    Compilers for the two dynamic C fixtures. GLIBC_CC defaults to  gcc;
+	    MUSL_CC  must name a musl compiler. The image build checks their ac-
+	    tual runtime requirements against the selected libc payloads  before
 	    installation.
 
      KERNEL_IMAGE, KERNEL_VERSION
-	    Local Linux kernel image and its expected  uname  release.	The  se-
-	    lected  kernel  must  include initramfs/gzip, devtmpfs, proc, sysfs,
-	    tmpfs, devpts and serial console support. No kernel modules are  in-
+	    Local  Linux  kernel  image	 and its expected uname release. The se-
+	    lected kernel must include initramfs/gzip,	devtmpfs,  proc,  sysfs,
+	    tmpfs,  devpts and serial console support. No kernel modules are in-
 	    cluded by this profile.
 
      LIMINE_DIR
-	    Directory  containing  limine-bios.sys,  limine-bios-cd.bin, limine-
+	    Directory containing  limine-bios.sys,  limine-bios-cd.bin,	 limine-
 	    uefi-cd.bin and BOOTX64.EFI. Use the matching host limine tool.
 
      OUTPUT
 	    New output directory. Existing directories are refused.
 
-     Host tools include unshare with user namespaces,  a  C  toolchain,	 dracut,
-     xorriso,  Limine,	GNU  file  tools,  gzip,  cpio, Python 3 and QEMU.  DRA-
-     CUT_BASE selects dracut's helper directory; the default is	 /usr/lib64/dra-
-     cut.  Compilation	and  installation run as mapped root in a user namespace
+     Host  tools  include  unshare  with user namespaces, a C toolchain, dracut,
+     xorriso, Limine, GNU file tools, gzip,  cpio,  Python  3  and  QEMU.   DRA-
+     CUT_BASE  selects dracut's helper directory; the default is /usr/lib64/dra-
+     cut. Compilation and installation run as mapped root in  a	 user  namespace
      owned by the ordinary caller. Host root invocation is refused.
 
 INPUTS AND ROOT
      The builder snapshots the selected native packages, normalizes numeric own-
-     ership to root and directory  modes  to  0755,  regenerates  manifests  and
-     records  the  parent  hashes and normalization in origin. These are new un-
-     signed local artifacts. The original archives remain in inputs/.	For  the
+     ership  to	 root  and  directory  modes  to 0755, regenerates manifests and
+     records the parent hashes and normalization in origin. These  are	new  un-
+     signed  local  artifacts. The original archives remain in inputs/.	 For the
      older  BusyBox  bootstrap	package,  its  embedded-musl  license  moves  to
-     usr/share/licenses/busybox/musl.COPYRIGHT, with  the  mapping  recorded  in
+     usr/share/licenses/busybox/musl.COPYRIGHT,	 with  the  mapping  recorded in
      origin.  The dynamic musl package owns its own license file.
 
      The static core binary, selected kernel, Limine data and Holy boot configu-
-     ration  also become native packages. The holy-base metapackage requires the
-     resulting seven packages. The dual-libc profile adds the two runtime  pack-
-     ages  and	two  C probe packages. holypkg resolves the selected set, prints
-     its plan and applies its reviewed digest with one writer lock and one  gen-
-     eration  change into root/. install.plan retains the selected artifacts and
-     requirement edges.	 The builder prepares the profile's  directories  first.
-     It	 does  not extract foreign distro roots or modify the host package data-
+     ration also become native packages. The holy-base metapackage requires  the
+     resulting	seven packages. The dual-libc profile adds the two runtime pack-
+     ages and two C probe packages. holypkg resolves the  selected  set,  prints
+     its  plan and applies its reviewed digest with one writer lock and one gen-
+     eration change into root/. install.plan retains the selected artifacts  and
+     requirement  edges.   The builder prepares the profile's directories first.
+     It does not extract foreign distro roots or modify the host  package  data-
      base.
 
-     For ROOT_STORAGE=ext4, mke2fs copies that prepared root into a 512 MiB  raw
+     For  ROOT_STORAGE=ext4, mke2fs copies that prepared root into a 512 MiB raw
      root.ext4 without mounting it on the host. Limine passes holy.root=/dev/vda
-     and  holy.rootfstype=ext4.	 holy-init mounts the disk, moves runtime mounts
-     and executes BusyBox switch_root followed by dinit. The ISO still	provides
-     kernel  and  initramfs; this is not yet an independently installed bootable
+     and holy.rootfstype=ext4. holy-init mounts the disk, moves	 runtime  mounts
+     and  executes BusyBox switch_root followed by dinit. The ISO still provides
+     kernel and initramfs; this is not yet an independently  installed	bootable
      disk.
+
+     ROOT_STORAGE=gpt-ext4  creates  a new 768 MiB regular disk.raw. The builder
+     prints disk.plan before writing the image and includes its hash in the boot
+     plan. The GPT contains a 1 MiB BIOS Boot partition, a 128 MiB FAT32 ESP and
+     a 512 MiB ext4 root. It verifies the partition layout, copies  the	 kernel,
+     initramfs	and  Limine configuration to the ESP, reads those files back and
+     compares their bytes. Limine BIOS stages use partition 1; the  UEFI  loader
+     uses  EFI/BOOT/BOOTX64.EFI.  The  kernel mounts /dev/vda3. Host filesystems
+     are not mounted and physical disks are not accepted as output.
 
      The profile installs merged-/usr links, a locked root account and the dinit
      services boot, console, mdevd, coldplug and holy-test. mdevd reports readi-
@@ -240,23 +199,33 @@ QEMU
      lisher. Preserve each run directory alongside the summary for revalidation.
 
 COVERAGE
-     The bootstrap glibc package currently contains  libc.so.6	and  its  loader
-     with  licenses, not the complete SDK, locale archive, NSS modules or auxil-
-     iary glibc libraries. The reference image still needs networking,	the  in-
-     staller  and i686. The ext4 fixture tests recovery followed by reboot using
-     an ISO kernel and a persistent root overlay.  Those gates	remain	separate
-     from  this boot result. Recovery tests missing payloads with retained pack-
-     age records, not forced removal of	 referenced  packages.	 The  repository
-     documentation  bundle  currently  contains	 Holy pages; the installed dinit
-     pages accompany its package but are not yet merged into that  bundle.  QEMU
-     virtual devices do not establish physical GPU support.
+     BOOT_MEDIA=disk selects standalone disk boot in the  QEMU	runner	and  re-
+     quires  ROOT_DISK.	 ISO  must be empty; the runner attaches no CD-ROM. Each
+     run uses its own qcow2 overlay and records boot_media, two	 boot  contracts
+     and  the  unchanged  raw base. gpt-ext4 produces disk.raw, disk.plan, disk-
+     layout.json and limine.conf instead of an ISO. BIOS and UEFI  remain  sepa-
+     rate test runs.
+
+     The  bootstrap  glibc  package  currently contains libc.so.6 and its loader
+     with licenses, not the complete SDK, locale archive, NSS modules or  auxil-
+     iary  glibc  libraries. The reference image still needs networking, the in-
+     staller and i686. The ext4 fixture uses an ISO kernel; gpt-ext4  loads  its
+     kernel  and  initramfs  from the disk's ESP. Both test recovery followed by
+     reboot on a persistent root overlay. The GPT builder is not the interactive
+     installer. It does not yet mount the ESP in the installed root or integrate
+     kernel updates with ESP contents.	Those gates remain  separate  from  this
+     boot result. Recovery tests missing payloads with retained package records,
+     not  forced  removal  of referenced packages.  The repository documentation
+     bundle currently contains Holy pages; the installed dinit	pages  accompany
+     its  package  but are not yet merged into that bundle. QEMU virtual devices
+     do not establish physical GPU support.
 
 SOURCES
-     Limine   configuration   and  ISO	layout:	 https://github.com/limine-boot-
-     loader/limine/blob/v12.x/CONFIG.md	  and	 https://github.com/limine-boot-
+     Limine  configuration  and	 ISO   layout:	 https://github.com/limine-boot-
+     loader/limine/blob/v12.x/CONFIG.md	   and	 https://github.com/limine-boot-
      loader/limine/blob/v12.x/USAGE.md.	      dracut	  module      interface:
      https://github.com/dracut-ng/dracut-ng/blob/main/man/dracut.modules.7.adoc.
-     QEMU block device and backing-file options:  https://www.qemu.org/docs/mas-
+     QEMU  block device and backing-file options: https://www.qemu.org/docs/mas-
      ter/system/invocation.html.
 
 SEE ALSO
@@ -393,6 +362,59 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
+holy.conf.5 source=holy version=development sha256=2b55062677cdd7da0de1b2d2049b90e865a526830400b71035a22e27217bed11
+HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
+
+NAME
+     holy.conf - Holy source configuration format
+
+STATUS
+     This page describes the implemented syntax checker. Configured source acti-
+     vation,  general  multi-source  resolution and general installation are not
+     implemented; the restricted local data/static-ELF transaction uses separate
+     commands.
+
+SYNOPSIS
+     holypkg config check FILE
+
+DESCRIPTION
+     Input must be UTF-8. Each record contains a  key  and  whitespace-separated
+     arguments. Double quotes retain spaces. A hash sign at the start of a token
+     begins  a comment outside quotes. Escapes are backslash-quote, double-back-
+     slash, backslash-n, backslash-t, backslash-r and  backslash-x  followed  by
+     two hexadecimal digits. NUL is rejected.  The parser does not run shell ex-
+     pansion.
+
+     Sections are [general], [resolver], [source NAME] and [rule NAME].	 Include
+     takes one path relative to the containing file. Repeated scalar keys within
+     a	section	 are  errors with both source locations. The source repo and re-
+     solver prefer keys are lists and can repeat.  Recursive  includes	are  re-
+     jected.   The  checker validates lexical and structural syntax; it does not
+     yet validate rule references. It checks that source parents  exist	 and  do
+     not  form	cycles.	  It rejects userinfo in URL authorities without echoing
+     credentials in diagnostics. It validates key names,  argument  counts,  and
+     the  scripts,  trust, ask-sources and prefer values. The alias local is re-
+     served and cannot name a source.
+
+     Each populated source section requires type and at least one url  or  repo.
+     Repository	 names	within	one source must be distinct. Each populated rule
+     requires consumer, require and provider. Empty values are	rejected.  These
+     checks  do not prove that a repository is reachable or its packages can re-
+     solve.
+
+EXAMPLE
+     [general]
+     arch x86_64
+     scripts ask
+     [source arch]
+     type pacman
+     repo core "https://mirror.example/arch/$repo/os/$arch"
+
+FILES
+     /etc/holy.conf is the proposed system path. The checker takes  an	explicit
+     file.
+
+Holy				 September 2026			    HOLY.CONF(5)
 holypkg.8 source=holy version=development sha256=a91081f69246c7ce1960cd21b07dbf42fc8054fa585226a15e2ae713f13983e5
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
