@@ -376,8 +376,14 @@
 - [x] Run `make check-install` against plan/apply/disk fixtures and a separate
   installed-disk VM gate in BIOS and UEFI. The VM gate covers disk preparation,
   installation, boot and account login.
-- [ ] Add a real `check-hardware` target; extend the QEMU runner to qcow2 trial
-  overlays and per-probe timeouts/result channels.
+- [x] Add `make check-hardware` for a physical NVIDIA GPU bound to Nouveau:
+  identify Mesa NVK, present Vulkan frames and measure accelerated OpenGL
+  frames. Save commands, output and timings in a JSON report. A host-only
+  diagnostic pass is labeled as such; the default Holy gate returns 6 without
+  an installed Holy database. The present host probe passed on Slackware;
+  no Holy hardware result is claimed.
+- [ ] Extend the QEMU runner to qcow2 trial overlays and per-probe
+  timeouts/result channels. Run the physical hardware gate on Holy.
 - [ ] Boot both target architectures in QEMU and prove PID 1, shell, package
   install/removal and recovery after removing either or both dynamic libc runtimes.
 - [ ] Run compiler/SDK, language, GUI, graphics, gaming, workstation and foreign

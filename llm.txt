@@ -1,4 +1,4 @@
-holy-image.7 source=holy version=development sha256=78784a0507bc39aa2020c1becd3bbfb702215653b01b7294ff42ea8fdcbe3488
+holy-image.7 source=holy version=development sha256=9f59e78ff59e384fa7870daf0412fb2e6cf51a64f4a38014f81cb8841ca5ae0f
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
 NAME
@@ -339,12 +339,29 @@ COVERAGE
      ture requires debugfs and the QEMU tools; it never edits the original image
      or mounts a host disk.
 
+HARDWARE
+     make  check-hardware  runs outside QEMU against a physical NVIDIA GPU using
+     Nouveau and Mesa NVK. It checks the kernel driver and DRM render node,  se-
+     lects  the	 NVK Vulkan device, presents 30 frames with vkcube, and measures
+     OpenGL frames with glxgears. glxinfo must report an accelerated NVIDIA ren-
+     derer. lspci, vulkaninfo, vkcube, glxinfo,	 glxgears,  timeout,  a	 display
+     session and a writable render node are required.
+
+     The default HARDWARE_SCOPE=holy requires a valid installed Holy database on
+     the  running  system. Missing inputs return 6. REPORT defaults to out/hard-
+     ware.json; the holy-hardware-1 JSON records probe commands, output, elapsed
+     times, driver selection and frame	counts.	 A  failure  returns  1.   HARD-
+     WARE_SCOPE=host  permits  a  diagnostic  probe  on another distribution and
+     marks release_gate=false. A host result cannot certify Holy's  packages  or
+     boot  image.  The frame probes establish presentation and an FPS count, not
+     pixel-correct rendering or broader game compatibility.
+
 SOURCES
-     Limine   configuration   and  ISO	layout:	 https://github.com/limine-boot-
-     loader/limine/blob/v12.x/CONFIG.md	  and	 https://github.com/limine-boot-
+     Limine  configuration  and	 ISO   layout:	 https://github.com/limine-boot-
+     loader/limine/blob/v12.x/CONFIG.md	   and	 https://github.com/limine-boot-
      loader/limine/blob/v12.x/USAGE.md.	      dracut	  module      interface:
      https://github.com/dracut-ng/dracut-ng/blob/main/man/dracut.modules.7.adoc.
-     QEMU block device and backing-file options:  https://www.qemu.org/docs/mas-
+     QEMU  block device and backing-file options: https://www.qemu.org/docs/mas-
      ter/system/invocation.html.
 
 SEE ALSO

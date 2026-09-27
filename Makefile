@@ -23,7 +23,7 @@ SOLV_LIBS ?= $(shell pkg-config --libs libsolv 2>/dev/null) -lz
 
 .DEFAULT_GOAL := all
 
-.PHONY: all check check-fixtures check-root check-qemu check-qemu-gate check-https check-solver check-install-payload check-install bootstrap-busybox check-bootstrap-busybox check-static-core man
+.PHONY: all check check-fixtures check-root check-qemu check-qemu-gate check-hardware check-https check-solver check-install-payload check-install bootstrap-busybox check-bootstrap-busybox check-static-core man
 all: holypkg holy-init holyinstall
 
 holyinstall: src/installer.o src/disk.o src/config.o
@@ -203,6 +203,9 @@ check-qemu:
 
 check-qemu-gate:
 	sh tests/qemu-gate.sh
+
+check-hardware:
+	HARDWARE_SCOPE="$(or $(HARDWARE_SCOPE),holy)" REPORT="$(or $(REPORT),out/hardware.json)" python3 tests/hardware.py
 
 .PHONY: check-recovery-matrix
 .PHONY: check-image-docs

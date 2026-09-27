@@ -320,6 +320,22 @@ the other, then boots each through the original ISO under BIOS/TCG. Both
 guests must stop the boot contract at the documentation stage. The original
 root image's hash must remain unchanged. The fixture requires debugfs and
 the QEMU tools; it never edits the original image or mounts a host disk.
+.SH HARDWARE
+make check-hardware runs outside QEMU against a physical NVIDIA GPU using
+Nouveau and Mesa NVK. It checks the kernel driver and DRM render node,
+selects the NVK Vulkan device, presents 30 frames with vkcube, and measures
+OpenGL frames with glxgears. glxinfo must report an accelerated NVIDIA
+renderer. lspci, vulkaninfo, vkcube, glxinfo, glxgears, timeout, a display
+session and a writable render node are required.
+.PP
+The default HARDWARE_SCOPE=holy requires a valid installed Holy database on
+the running system. Missing inputs return 6. REPORT defaults to
+out/hardware.json; the holy-hardware-1 JSON records probe commands, output,
+elapsed times, driver selection and frame counts. A failure returns 1.
+HARDWARE_SCOPE=host permits a diagnostic probe on another distribution and
+marks release_gate=false. A host result cannot certify Holy's packages or
+boot image. The frame probes establish presentation and an FPS count, not
+pixel-correct rendering or broader game compatibility.
 .SH SOURCES
 Limine configuration and ISO layout:
 https://github.com/limine-bootloader/limine/blob/v12.x/CONFIG.md
