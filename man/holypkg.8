@@ -137,6 +137,29 @@ doas must be available. The chroot has no dynamic libc directories. This
 tests the static shell; host holypkg still runs outside the chroot. Boot,
 static holypkg and full libc recovery require separate acceptance tests.
 .SS Static core build
+make bootstrap-mdevd INPUTS=DIRECTORY OUTPUT=DIRECTORY builds an x86_64
+musl-static mdevd 0.1.8.2 package with skalibs 2.15.1.0. INPUTS contains
+mdevd-0.1.8.2.tar.gz and skalibs-2.15.1.0.tar.gz from the upstream GitHub
+tag archives, plus x86_64-linux-musl-cross.tgz from musl.cc. The script
+checks pinned hashes of private copies, builds with upstream configure/make,
+and records compiler version, both configurations, ELF facts and artifact hash.
+OUTPUT must be new and use ASCII letters, digits, underscore, dot, slash or
+hyphen. JOBS defaults to 2. Upstream licenses and HTML documentation accompany
+the package; docs.record reports missing man pages. No service or mdev.conf
+is enabled by this bootstrap build. Execline directives and external command
+helpers require additional packages and configuration.
+.PP
+make check-bootstrap-mdevd MDEVD_PACKAGE=FILE installs the artifact into a
+disposable root through the reviewed database plan. In a libc-free chroot,
+mdevd parses a valid configuration with symbolic root user/group names and
+rejects an invalid regular expression with status 2. Host doas, unshare,
+chroot and timeout provide a private network namespace and a ten-second
+limit. The command runs with the caller's UID/GID; host /dev and /sys are
+absent. The fixture then checks and removes the installed package.
+This covers installation, static configuration parsing and removal. Uevent
+handling, coldplug, dinit integration and client libudev compatibility remain
+separate acceptance cases.
+.PP
 make bootstrap-dinit INPUTS=DIRECTORY OUTPUT=DIRECTORY builds dinit 0.22.1
 as an x86_64 musl-static native package, including its C++ runtime. Inputs are
 dinit-0.22.1.tar.gz from the upstream GitHub tag and the pinned

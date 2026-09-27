@@ -73,6 +73,10 @@ it does not mean a bootable distribution or general package support.
   service start/status/shutdown and stop-command effects with dinitctl in a
   libc-free chroot as an ordinary user. PID 1 boot remains open, as does
   installing the package's man-page symlinks through the transaction engine.
+- [x] Build pinned x86_64 musl-static mdevd/skalibs with licenses and upstream
+  HTML docs. Install, check and remove the package; parse valid symbolic-owner
+  configuration and reject invalid regex inside a libc-free chroot with a
+  private network namespace. Uevents, coldplug and dinit integration remain open.
 - [ ] Package Limine, dracut, kernel, firmware, SDK/sysroots and the default
   ConnMan+iwd network profile; test static local and HTTPS libc recovery.
 - [ ] Implement C99 `holyinstall` with reviewed disk/boot/account/network plans

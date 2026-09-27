@@ -26,6 +26,13 @@ SOLV_LIBS ?= $(shell pkg-config --libs libsolv 2>/dev/null) -lz
 all: holypkg
 
 .PHONY: bootstrap-dinit check-bootstrap-dinit
+.PHONY: bootstrap-mdevd check-bootstrap-mdevd
+bootstrap-mdevd: holypkg
+	sh tools/bootstrap-mdevd.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/mdevd-bootstrap)"
+
+check-bootstrap-mdevd: holypkg
+	sh tests/bootstrap-mdevd.sh ./holypkg "$(or $(MDEVD_PACKAGE),out/mdevd-bootstrap/mdevd.holy)"
+
 bootstrap-dinit: holypkg
 	sh tools/bootstrap-dinit.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/dinit-bootstrap)"
 
