@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 
-COVERAGE = ['static-dns', 'static-https', 'certificate-rejection',
+COVERAGE = ['static-network-setup', 'static-dns', 'static-https', 'certificate-rejection',
             'digest-rejection', 'native-archive-verification']
 
 
@@ -30,8 +30,8 @@ def digest(path):
 def namespace(work, uid, gid, host_namespace):
     assert os.geteuid() == 0
     assert os.stat('/proc/self/ns/net').st_ino != host_namespace
-    subprocess.run(['ip', 'link', 'set', 'lo', 'up'], check=True)
     root = work / 'root'
+    subprocess.run(['chroot', str(root), '/usr/bin/busybox', 'ip', 'link', 'set', 'lo', 'up'], check=True)
     queries = []
     disconnects = []
     stopped = threading.Event()
@@ -111,6 +111,7 @@ def namespace(work, uid, gid, host_namespace):
         facts = client(['elf', '/usr/bin/holypkg'], 0)
         assert 'runtime nolibc\n' in facts and 'e_type 2\n' in facts
         result['libc'] = 'nolibc'
+        result['coverage'].append('static-network-setup')
         expected = digest(work / 'serve/fixture.holy')
         url = f'https://fixture.holy.test:{server.server_port}/fixture.holy'
         base = ['fetch', url, '--sha256', expected]
@@ -177,6 +178,11 @@ def main():
         (work / 'serve').mkdir()
         shutil.copyfile(binary, root / 'usr/bin/holypkg')
         (root / 'usr/bin/holypkg').chmod(0o755)
+        extracted = work / 'extracted'
+        subprocess.run([str(binary), 'fetch', 'local:' + str(package), '--extract',
+                        '--output', str(extracted)], check=True, capture_output=True)
+        shutil.copyfile(extracted / 'DATA/usr/bin/busybox', root / 'usr/bin/busybox')
+        (root / 'usr/bin/busybox').chmod(0o755)
         shutil.copyfile(package, work / 'serve/fixture.holy')
         report['holypkg_sha256'] = digest(root / 'usr/bin/holypkg')
         report['artifact_sha256'] = digest(work / 'serve/fixture.holy')

@@ -542,7 +542,7 @@ SOURCE IDENTITIES
      during package selection remain unimplemented.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=fb904e0808062fd528be4ce51ea44f176c78587c90a543c7787be44b921be42f
+holypkg.8 source=holy version=development sha256=2ffcb0b6b0a68a2d9597b6ee584a4ae582c42602119c12086fad0df58a69374b
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -775,14 +775,17 @@ DESCRIPTION
      TORY OUTPUT=DIRECTORY builds a small BusyBox package with static musl link-
      age.  The default is x86_64; i686 requires multilib GCC and records package
      architecture  x86.	 INPUTS	 must  contain	 musl-1.2.5.tar.gz   and   busy-
-     box-1.37.0.tar.bz2	 from  their  upstream	release	 URLs.	The build checks
-     pinned SHA-256 digests before unpacking, uses GCC and upstream make builds,
-     and installs the build toolchain only in  a  temporary  directory.	  OUTPUT
-     must  not	exist.	Its absolute path must use ASCII letters, digits, under-
-     score, dot, slash or hyphen. JOBS controls build  parallelism,  default  2.
-     The  optional GCC flag -fno-link-libatomic disables the host compiler's au-
-     tomatic libatomic linkage when that flag is available; the musl link other-
-     wise uses only the selected static libraries.
+     box-1.37.0.tar.bz2	 from  their upstream release URLs.  KERNEL_HEADERS must
+     name installed Linux UAPI headers with linux and  asm  subdirectories.  The
+     builder  records a digest of those headers and searches them after the musl
+     headers when compiling network applets.  The build	 checks	 pinned	 SHA-256
+     digests  before  unpacking, uses GCC and upstream make builds, and installs
+     the build toolchain only in a temporary directory.	 OUTPUT must not  exist.
+     Its absolute path must use ASCII letters, digits, underscore, dot, slash or
+     hyphen.  JOBS controls build parallelism, default 2.  The optional GCC flag
+     -fno-link-libatomic disables the host compiler's automatic libatomic  link-
+     age  when that flag is available; the musl link otherwise uses only the se-
+     lected static libraries.
 
      Outputs include busybox.holy, build.log, build.record,  busybox.config,  an
      applet  list,  ELF	 inspection and shell probe records. Source URLs, source
@@ -790,137 +793,139 @@ DESCRIPTION
      elapsed seconds are recorded. Upstream BusyBox and musl copyright files ac-
      company the payload.  The package contains /usr/bin/busybox; invoke applets
      as busybox APPLET.	 The configuration is profiles/busybox-bootstrap.config.
-     It	 includes  ash,	 basic file utilities and mount tools; it has no network
-     recovery profile.	LFS is enabled for musl's 64-bit file offsets on i686 as
-     well as x86_64.  The manifest records the builder's numeric  UID/GID.  This
-     is	 a  local  bootstrap experiment, not an official base image or a general
-     recipe engine.
+     It	 includes  ash,	 basic	file  utilities,  mount	 tools,	 ip,  udhcpc and
+     nslookup. The separate static-network fixture verifies interface setup, DNS
+     and HTTPS with a local CA; the default boot image still has networking dis-
+     abled.  LFS is enabled for musl's 64-bit file offsets on i686  as	well  as
+     x86_64.   The manifest records the builder's numeric UID/GID. This is a lo-
+     cal bootstrap experiment, not an official base image or  a	 general  recipe
+     engine.
 
      make check-bootstrap-busybox BUSYBOX_PACKAGE=FILE installs the package in a
-     disposable root with prepared directories, runs its shell there  with  doas
+     disposable	 root  with prepared directories, runs its shell there with doas
      and chroot --userspec, checks files and removes the package. Noninteractive
-     doas  must	 be  available. The chroot has no dynamic libc directories. This
+     doas must be available. The chroot has no dynamic	libc  directories.  This
      fixture approves non-native placement by exact artifact hash. For x86 pack-
-     ages it also requires qemu-i386 and runs the shell with  its  pentium2  CPU
+     ages  it  also  requires qemu-i386 and runs the shell with its pentium2 CPU
      model. This tests the static shell; host holypkg still runs outside the ch-
-     root.  Boot,  static holypkg and full libc recovery require separate accep-
+     root. Boot, static holypkg and full libc recovery require	separate  accep-
      tance tests.
 
    Static core build
      make  bootstrap-mdevd  ARCH=i686|x86_64  INPUTS=DIRECTORY	OUTPUT=DIRECTORY
-     builds  a	musl-static mdevd 0.1.8.2 package with skalibs 2.15.1.0. The de-
-     fault is x86_64.  STATIC_PREFIX may select	 a  completed  make  static-deps
+     builds a musl-static mdevd 0.1.8.2 package with skalibs 2.15.1.0.	The  de-
+     fault  is	x86_64.	  STATIC_PREFIX	 may select a completed make static-deps
      toolchain for the same architecture; i686 requires it. The build copies and
-     hashes  its build.record and records the compiler wrapper hash. INPUTS con-
-     tains mdevd-0.1.8.2.tar.gz and skalibs-2.15.1.0.tar.gz  from  the	upstream
-     GitHub  tag  archives,  plus  x86_64-linux-musl-cross.tgz from musl.cc when
-     STATIC_PREFIX is omitted.	The  script  checks  pinned  hashes  of	 private
-     copies,  builds with upstream configure/make, and records compiler version,
-     both configurations, ELF facts and artifact hash.	OUTPUT must be	new  and
-     use  ASCII letters, digits, underscore, dot, slash or hyphen. JOBS defaults
-     to 2. Upstream licenses  and  HTML	 documentation	accompany  the	package;
-     docs.record  reports  missing man pages. No service or mdev.conf is enabled
-     by this bootstrap build. Execline directives and external	command	 helpers
+     hashes its build.record and records the compiler wrapper hash. INPUTS  con-
+     tains  mdevd-0.1.8.2.tar.gz  and  skalibs-2.15.1.0.tar.gz from the upstream
+     GitHub tag archives, plus	x86_64-linux-musl-cross.tgz  from  musl.cc  when
+     STATIC_PREFIX  is	omitted.  The  script  checks  pinned  hashes of private
+     copies, builds with upstream configure/make, and records compiler	version,
+     both  configurations,  ELF facts and artifact hash.  OUTPUT must be new and
+     use ASCII letters, digits, underscore, dot, slash or hyphen. JOBS	defaults
+     to	 2.  Upstream  licenses	 and  HTML  documentation accompany the package;
+     docs.record reports missing man pages. No service or mdev.conf  is	 enabled
+     by	 this  bootstrap build. Execline directives and external command helpers
      require additional packages and configuration.
 
-     make  check-bootstrap-mdevd MDEVD_PACKAGE=FILE installs the artifact into a
-     disposable root through the reviewed database plan. In a libc-free	 chroot,
-     mdevd  parses a valid configuration with symbolic root user/group names and
-     rejects an invalid regular expression with status 2.  Host	 doas,	unshare,
-     chroot  and  timeout  provide  a private network namespace and a ten-second
-     limit. The command runs with the caller's UID/GID; host /dev and  /sys  are
-     absent.  The  fixture  then checks and removes the installed package.  This
-     covers installation, static configuration parsing and removal. Uevent  han-
-     dling,  coldplug, dinit integration and client libudev compatibility remain
+     make check-bootstrap-mdevd MDEVD_PACKAGE=FILE installs the artifact into  a
+     disposable	 root through the reviewed database plan. In a libc-free chroot,
+     mdevd parses a valid configuration with symbolic root user/group names  and
+     rejects  an  invalid  regular expression with status 2. Host doas, unshare,
+     chroot and timeout provide a private network  namespace  and  a  ten-second
+     limit.  The  command runs with the caller's UID/GID; host /dev and /sys are
+     absent. The fixture then checks and removes the  installed	 package.   This
+     covers  installation, static configuration parsing and removal. Uevent han-
+     dling, coldplug, dinit integration and client libudev compatibility  remain
      separate acceptance cases.
 
      make  bootstrap-dinit  ARCH=i686|x86_64  INPUTS=DIRECTORY	OUTPUT=DIRECTORY
      builds dinit 0.22.1 as a musl-static native package, including its C++ run-
      time. The default target is x86_64. Inputs are dinit-0.22.1.tar.gz from the
-     upstream	GitHub	 tag   and   the   pinned  i686-linux-musl-cross.tgz  or
+     upstream  GitHub  tag   and   the	 pinned	  i686-linux-musl-cross.tgz   or
      x86_64-linux-musl-cross.tgz from musl.cc. The script copies and hashes both
-     archives before use; an updated archive at the same URL  is  rejected.   It
-     runs  upstream  make  check,  includes  upstream man pages and license, and
-     records compiler version, configuration, ELF facts and package hash.  Capa-
-     bilities  support is disabled in this bootstrap profile. This package build
-     does not establish PID 1 boot acceptance; that  requires  the  image  test.
+     archives  before  use;  an updated archive at the same URL is rejected.  It
+     runs upstream make check, includes upstream  man  pages  and  license,  and
+     records  compiler version, configuration, ELF facts and package hash. Capa-
+     bilities support is disabled in this bootstrap profile. This package  build
+     does  not	establish  PID	1 boot acceptance; that requires the image test.
      OUTPUT must be new.
 
-     make  check-bootstrap-dinit  DINIT_PACKAGE=FILE BUSYBOX_PACKAGE=FILE stages
+     make check-bootstrap-dinit DINIT_PACKAGE=FILE  BUSYBOX_PACKAGE=FILE  stages
      both packages and installs them through approved database plans into a dis-
      posable chroot without dynamic libc directories. It checks command and man-
-     page links, static ELF classification, starts a scripted  service,	 queries
-     its  STARTED state through the control socket, requests shutdown and checks
-     the stop-command effect.	The  service  manager  runs  with  the	caller's
-     UID/GID  in  user	mode. Host doas, chroot, mknod and timeout are required;
-     the fixture supplies only /dev/null and enforces a	 20-second  timeout.  It
-     prints  the  tested package hashes.  For i686 it verifies dinit under qemu-
-     i386 with the pentium2 CPU model.	After service shutdown	it  checks  both
-     installed	manifests  and	removes both packages through the database. This
-     covers package installation, service control and the  static  C++	runtime.
+     page  links,  static ELF classification, starts a scripted service, queries
+     its STARTED state through the control socket, requests shutdown and  checks
+     the  stop-command	effect.	  The  service	manager	 runs  with the caller's
+     UID/GID in user mode. Host doas, chroot, mknod and	 timeout  are  required;
+     the  fixture  supplies  only /dev/null and enforces a 20-second timeout. It
+     prints the tested package hashes.	For i686 it verifies dinit  under  qemu-
+     i386  with	 the  pentium2 CPU model.  After service shutdown it checks both
+     installed manifests and removes both packages through  the	 database.  This
+     covers  package  installation,  service control and the static C++ runtime.
      PID 1 boot remains a separate test.
 
-     make  static-deps	ARCH=x86_64|i686  INPUTS=DIRECTORY OUTPUT=DIRECTORY KER-
+     make static-deps ARCH=x86_64|i686	INPUTS=DIRECTORY  OUTPUT=DIRECTORY  KER-
      NEL_HEADERS=DIRECTORY builds musl dependencies for the selected target from
-     the pinned archives listed with URLs and SHA-256 digests  in  profiles/sta-
-     tic-sources.  It  copies  and  verifies inputs before unpacking. The caller
-     supplies Linux userspace headers with linux, asm and asm-generic  subdirec-
-     tories.  Their installed copies receive a hash inventory. GCC, make, CMake,
+     the  pinned  archives listed with URLs and SHA-256 digests in profiles/sta-
+     tic-sources. It copies and verifies inputs	 before	 unpacking.  The  caller
+     supplies  Linux userspace headers with linux, asm and asm-generic subdirec-
+     tories. Their installed copies receive a hash inventory. GCC, make,  CMake,
      autotools, libtool, Perl and archive tools are host build requirements. The
-     multilib GCC installation must supply libgcc for the selected target.  JOBS
+     multilib  GCC installation must supply libgcc for the selected target. JOBS
      controls parallelism, default 2. ARCH defaults to x86_64; i686 uses the x86
-     package  architecture,  not  the x32 ABI.	The compiler wrapper selects the
+     package architecture, not the x32 ABI.  The compiler  wrapper  selects  the
      target machine and linker emulation. The bootstrap compiles and runs a sta-
-     tic probe, checking ELF class, machine and pointer	 width	before	building
+     tic  probe,  checking  ELF class, machine and pointer width before building
      dependencies. The builder must execute the target for these configure/probe
      steps. Compiler flags and probe evidence are retained.
 
-     The  output is a new private prefix containing static libarchive/LZ4, zlib,
+     The output is a new private prefix containing static libarchive/LZ4,  zlib,
      XZ, Zstandard, bzip2, libelf, libsolv, curl and OpenSSL, plus build compat-
-     ibility libraries.	 Its musl toolchain includes a	private	 dynamic  loader
+     ibility  libraries.   Its	musl toolchain includes a private dynamic loader
      for upstream configure probes; the final holypkg link uses -static. No host
-     libc  is replaced.	 Source manifests, build logs, library hashes, exit sta-
-     tus and elapsed seconds remain in the  prefix.  Archive  decoding	includes
-     gzip,  LZ4, XZ, Zstandard and bzip2; the native writer still emits only LZ4
+     libc is replaced.	Source manifests, build logs, library hashes, exit  sta-
+     tus  and  elapsed	seconds	 remain in the prefix. Archive decoding includes
+     gzip, LZ4, XZ, Zstandard and bzip2; the native writer still emits only  LZ4
      frames.
 
-     make static STATIC_DEPS=DIRECTORY checks the completed  dependency	 prefix,
-     cleans  existing  object  files  and builds holypkg with its musl compiler.
-     make check-static-target ARCH=i686|x86_64 STATIC_HOLYPKG=FILE  MUSL_CC=FILE
-     checks  the  static client's ELF class and machine, then runs it under QEMU
+     make  static  STATIC_DEPS=DIRECTORY checks the completed dependency prefix,
+     cleans existing object files and builds holypkg  with  its	 musl  compiler.
+     make  check-static-target ARCH=i686|x86_64 STATIC_HOLYPKG=FILE MUSL_CC=FILE
+     checks the static client's ELF class and machine, then runs it  under  QEMU
      user emulation. The selected CPU is pentium2 for i686 or qemu64 for x86_64.
-     The test builds a static C payload with that compiler and exercises  native
-     packing,  installation, check, execution and removal. Its JSON report binds
-     client and package hashes and records coverage. This  is  a  userspace  ISA
-     test;  kernel boot, dynamic libc and physical hardware have separate accep-
+     The  test builds a static C payload with that compiler and exercises native
+     packing, installation, check, execution and removal. Its JSON report  binds
+     client  and  package  hashes  and records coverage. This is a userspace ISA
+     test; kernel boot, dynamic libc and physical hardware have separate  accep-
      tance gates.
 
      make check-static-core STATIC_HOLYPKG=FILE BUSYBOX_PACKAGE=FILE copies that
-     binary into a disposable root without dynamic libc directories. Inside  the
+     binary  into a disposable root without dynamic libc directories. Inside the
      chroot, holypkg verifies and caches the supplied BusyBox package, installs,
      checks and removes it twice using the cached artifact. The original package
-     is	 removed  after	 caching. A BusyBox shell probe runs after each install.
-     doas creates the chroot and drops to the caller's	numeric	 UID/GID.   Both
-     artifact  hashes  are  printed  on	 success. This verifies the local static
-     package path; removal and restoration of real dynamic libc	 packages,  net-
+     is removed after caching. A BusyBox shell probe runs  after  each	install.
+     doas  creates  the	 chroot and drops to the caller's numeric UID/GID.  Both
+     artifact hashes are printed on success.  This  verifies  the  local  static
+     package  path;  removal and restoration of real dynamic libc packages, net-
      work recovery and dinit boot still require their own tests.
 
-     Passing  DINIT_PACKAGE=FILE  to check-static-core also installs, checks and
-     removes the complete dinit package, including its	symlinks,  with	 holypkg
-     running  inside  that libc-free chroot. The fixture removes the input after
+     Passing DINIT_PACKAGE=FILE to check-static-core also installs,  checks  and
+     removes  the  complete  dinit package, including its symlinks, with holypkg
+     running inside that libc-free chroot. The fixture removes the  input  after
      caching and reports the tested artifact hash. Service control is covered by
      check-bootstrap-dinit.
 
-     make  check-static-network	 STATIC_HOLYPKG=FILE  BUSYBOX_PACKAGE=FILE   RE-
-     PORT=FILE	tests that static client in a libc-free chroot with private net-
-     work namespace, local DNS and HTTPS fixtures, and a generated test	 CA.  It
-     verifies  real  DNS queries, certificate rejection, digest rejection, down-
-     loading and native archive verification. The client drops to  the	caller's
-     UID/GID.  The  fixture creates no external route and supplies no proxy cre-
-     dentials. Python, OpenSSL, ip, unshare, chroot and noninteractive doas  are
-     host  test	 tools, not guest recovery helpers.  Host ip configures the fix-
-     ture's loopback interface; static interface setup and physical network  re-
-     covery remain separate tests.
+     make   check-static-network  STATIC_HOLYPKG=FILE  BUSYBOX_PACKAGE=FILE  RE-
+     PORT=FILE tests that static client in a libc-free chroot with private  net-
+     work  namespace,  local DNS and HTTPS fixtures, and a generated test CA. It
+     verifies real DNS queries, certificate rejection, digest  rejection,  down-
+     loading  and  native archive verification. The client drops to the caller's
+     UID/GID. The fixture creates no external route and supplies no  proxy  cre-
+     dentials. Python, OpenSSL, unshare, chroot and noninteractive doas are host
+     test  tools. The packaged static BusyBox ip applet raises the fixture loop-
+     back from inside the libc-free chroot. Physical network recovery remains  a
+     separate test.
 
      The  holy-static-network-test-1 JSON report records architecture, host ker-
      nel, input and fixture hashes, CA hash, per-command  argv/status/time/logs,

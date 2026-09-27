@@ -278,6 +278,9 @@ The repository target make bootstrap-busybox ARCH=i686|x86_64 INPUTS=DIRECTORY O
 builds a small BusyBox package with static musl linkage. The default is x86_64;
 i686 requires multilib GCC and records package architecture x86. INPUTS must contain
 musl-1.2.5.tar.gz and busybox-1.37.0.tar.bz2 from their upstream release URLs.
+KERNEL_HEADERS must name installed Linux UAPI headers with linux and asm
+subdirectories. The builder records a digest of those headers and searches them
+after the musl headers when compiling network applets.
 The build checks pinned SHA-256 digests before unpacking, uses GCC and upstream
 make builds, and installs the build toolchain only in a temporary directory.
 OUTPUT must not exist. Its absolute path must use ASCII letters, digits,
@@ -292,7 +295,9 @@ compiler version, config hash, artifact hash, exit status and elapsed seconds
 are recorded. Upstream BusyBox and musl copyright files accompany the payload.
 The package contains /usr/bin/busybox; invoke applets as busybox APPLET.
 The configuration is profiles/busybox-bootstrap.config. It includes ash,
-basic file utilities and mount tools; it has no network recovery profile.
+basic file utilities, mount tools, ip, udhcpc and nslookup. The separate
+static-network fixture verifies interface setup, DNS and HTTPS with a local CA;
+the default boot image still has networking disabled.
 LFS is enabled for musl's 64-bit file offsets on i686 as well as x86_64.
 The manifest records the builder's numeric UID/GID. This is a local bootstrap
 experiment, not an official base image or a general recipe engine.
@@ -410,10 +415,10 @@ tests that static client in a libc-free chroot with private network namespace,
 local DNS and HTTPS fixtures, and a generated test CA. It verifies real DNS
 queries, certificate rejection, digest rejection, downloading and native archive
 verification. The client drops to the caller's UID/GID. The fixture creates no
-external route and supplies no proxy credentials. Python, OpenSSL, ip, unshare,
-chroot and noninteractive doas are host test tools, not guest recovery helpers.
-Host ip configures the fixture's loopback interface; static interface setup and
-physical network recovery remain separate tests.
+external route and supplies no proxy credentials. Python, OpenSSL, unshare,
+chroot and noninteractive doas are host test tools. The packaged static BusyBox
+ip applet raises the fixture loopback from inside the libc-free chroot. Physical
+network recovery remains a separate test.
 .PP
 The holy-static-network-test-1 JSON report records architecture, host kernel,
 input and fixture hashes, CA hash, per-command argv/status/time/logs, observed

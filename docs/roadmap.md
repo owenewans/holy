@@ -206,8 +206,10 @@
   The separate dual-libc chroot gate now restores actual runtime payloads;
   i686 BIOS recovery is covered by the dual-libc image gate below.
 - [x] Test the static client's DNS and HTTPS path in a private-network libc-free
-  chroot, including wrong CA/digest refusals and a hashed JSON report. Network
-  interface setup still uses a host fixture tool, not a finished recovery profile.
+  chroot, including wrong CA/digest refusals and a hashed JSON report. Pinned
+  static BusyBox packages for i686 and x86_64 now include ip, udhcpc and
+  nslookup; the fixture raises loopback with that packaged ip applet inside the
+  libc-free chroot. QEMU network recovery remains a separate gate.
 - [x] Package statically linked BusyBox, dinit, mdevd and the local recovery
   chain, plus both dynamic libc runtimes for i686 and x86_64. Network setup
   inside the recovery image and independent HTTPS recovery remain unfinished.

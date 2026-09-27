@@ -29,6 +29,8 @@ test "${#plan}" -eq 64
 "$bin" elf "$tmp/root/usr/bin/busybox" > "$tmp/out"
 grep -qx 'runtime nolibc' "$tmp/out"
 grep -qx "machine $arch" "$tmp/out"
+"$tmp/root/usr/bin/busybox" --list > "$tmp/applets"
+for applet in ip nslookup udhcpc; do grep -qx "$applet" "$tmp/applets"; done
 if [ "$arch" = x86 ]; then
     command -v qemu-i386 >/dev/null || exit 6
     qemu-i386 -cpu pentium2 "$tmp/root/usr/bin/busybox" ash -c 'printf "i686 shell\n"' > "$tmp/emulator"
@@ -38,6 +40,7 @@ doas -n chroot --userspec="$(id -u):$(id -g)" "$tmp/root" /usr/bin/busybox ash -
     test ! -e /lib && test ! -e /lib64 && test ! -e /usr/lib || exit 1
     /usr/bin/busybox test -s /usr/share/licenses/busybox/LICENSE || exit 1
     /usr/bin/busybox test -s /usr/share/licenses/musl/COPYRIGHT || exit 1
+    test -n "$(/usr/bin/busybox ip link show lo)" || exit 1
     /usr/bin/busybox printf "static shell without dynamic libc\n"
 ' > "$tmp/shell"
 grep -qx 'static shell without dynamic libc' "$tmp/shell"

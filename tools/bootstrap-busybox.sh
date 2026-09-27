@@ -8,6 +8,8 @@ fi
 bin=$(realpath "$1")
 inputs=$(realpath "$2")
 profile=$(realpath "$(dirname "$0")/../profiles/busybox-bootstrap.config")
+headers=$(realpath "${KERNEL_HEADERS:?KERNEL_HEADERS must name installed Linux UAPI headers}")
+test -f "$headers/linux/filter.h" && test -f "$headers/asm/types.h" || exit 6
 test "$(id -u)" != 0 || exit 6
 case $(uname -m) in x86_64|i?86) ;; *) exit 6 ;; esac
 case "${ARCH:-x86_64}" in
@@ -29,6 +31,9 @@ out=$(realpath "$3")
 case "$out" in
     *[!a-zA-Z0-9_./-]*) printf 'build prefix requires an ASCII path without spaces\n' >&2; exit 2 ;;
 esac
+case "$headers" in
+    *[!a-zA-Z0-9_./-]*) printf 'kernel headers path requires ASCII without spaces\n' >&2; exit 2 ;;
+esac
 work=$(mktemp -d "$out/work.XXXXXX")
 started=$(date +%s)
 cleanup() {
@@ -45,6 +50,8 @@ unset CFLAGS CPPFLAGS LDFLAGS LDLIBS
 printf 'musl-url https://musl.libc.org/releases/musl-1.2.5.tar.gz\nmusl-sha256 %s\nbusybox-url https://busybox.net/downloads/busybox-1.37.0.tar.bz2\nbusybox-sha256 %s\narch %s\n' \
     "$musl" "$busybox" "$arch" > "$out/build.record"
 printf 'target %s\ncflags "%s"\nlinker-emulation %s\n' "$target" "$flags" "$emulation" >> "$out/build.record"
+(cd "$headers" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum) > "$out/kernel-headers.sha256"
+printf 'kernel-headers-path %s\nkernel-headers-tree-sha256 %s\n' "$headers" "$(cut -d' ' -f1 "$out/kernel-headers.sha256")" >> "$out/build.record"
 gcc --version >> "$out/build.record"
 tar -xzf "$inputs/musl-1.2.5.tar.gz" -C "$work"
 tar -xjf "$inputs/busybox-1.37.0.tar.bz2" -C "$work"
@@ -54,7 +61,7 @@ tar -xjf "$inputs/busybox-1.37.0.tar.bz2" -C "$work"
     make -j"${JOBS:-2}"
     make install
 )
-cc="$work/musl-prefix/bin/musl-gcc $flags -Wl,-m,$emulation"
+cc="$work/musl-prefix/bin/musl-gcc $flags -Wl,-m,$emulation -idirafter $headers"
 if gcc -fno-link-libatomic -x c -c /dev/null -o "$work/flag.o" 2>/dev/null; then
     cc="$cc -fno-link-libatomic"
 fi
@@ -104,6 +111,7 @@ config_hash=${config_hash%% *}
 printf 'source-url https://busybox.net/downloads/busybox-1.37.0.tar.bz2\nsource-sha256 %s\nlibc-source-sha256 %s\nbuild-config-sha256 %s\n' \
     "$busybox" "$musl" "$config_hash" > "$tree/HOLY/origin"
 printf 'target %s\ncflags "%s"\n' "$target" "$flags" >> "$tree/HOLY/origin"
+printf 'kernel-headers-tree-sha256 %s\n' "$(cut -d' ' -f1 "$out/kernel-headers.sha256")" >> "$tree/HOLY/origin"
 "$bin" manifest generate "$tree" --output "$work/files"
 cp "$work/files" "$tree/HOLY/files"
 "$bin" pack "$tree" --output "$out/busybox.holy"
