@@ -102,6 +102,24 @@ edges = [x for x in events if x['type'] == 'elf-edge']
 assert edges and not any(x['target'] == 'optional' for x in edges)
 assert any(x['kind'] == 'soname' and x['target'] == 'libholyfixture.so.1' and x['providers'] == [sys.argv[2]] for x in edges)
 PY
+if test "$#" -ge 2; then
+    "$2" - "$tmp/consumer.holy" "$tmp/good.holy" "$tmp/runtime.holy" > "$tmp/record"
+    "$2" - "$tmp/consumer.holy" "$tmp/runtime.holy" "$tmp/good.holy" > "$tmp/reordered"
+    cmp "$tmp/record" "$tmp/reordered"
+    python3 - "$tmp/record" "$tmp/out" <<'PYTEST'
+import json, pathlib, shlex, sys
+rows = [shlex.split(x) for x in pathlib.Path(sys.argv[1]).read_text().splitlines()]
+events = [json.loads(x) for x in pathlib.Path(sys.argv[2]).read_text().splitlines()]
+assert rows[:2] == [['format', 'holy-resolution-1'], ['scope', 'artifact-candidates']]
+assert {r[1] for r in rows if r[0] == 'artifact'} == {x['sha256'] for x in events if x['type'] == 'selected'}
+edges = [r for r in rows if r[0] == 'edge']
+assert edges and all(len(r) == 7 for r in edges)
+for x in events:
+    if x['type'] == 'elf-edge':
+        r = next(r for r in edges if r[2] == x['id'])
+        assert r[3] == x['providers'][0] and r[5:] == [x['kind'], x['target']]
+PYTEST
+fi
 for bad in wrong-symbol wrong-version wrong-arch wrong-pie; do
     if "$bin" solve "local:$tmp/consumer.holy" "local:$tmp/$bad.holy" \
         "local:$tmp/runtime.holy" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi

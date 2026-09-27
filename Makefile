@@ -70,7 +70,9 @@ static:
 	$(MAKE) clean
 	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lssl -lcrypto -llz4 -lz -leu -Wl,--end-group -lpthread -ldl" all
 
-holypkg: src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o
+HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o
+
+holypkg: $(HOLY_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(SOLV_LIBS)
 
 src/solve.o: src/solve.c $(wildcard src/*.h) .build-config
@@ -83,15 +85,16 @@ src/%.o: src/%.c $(wildcard src/*.h) .build-config
 check-init: holy-init
 	@./holy-init >/dev/null 2>&1; test $$? -eq 2
 
-check: holypkg check-init check-solver check-install-payload check-https
+check: holypkg tests/resolution check-init check-solver check-install-payload check-https
+	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/package.sh ./holypkg
 	sh tests/docs.sh
 	CC="$(CC)" sh tests/elf.sh ./holypkg
 	sh tests/repo.sh ./holypkg
 	sh tests/state.sh ./holypkg
-	sh tests/resolve.sh ./holypkg
-	sh tests/elf-resolve.sh ./holypkg
+	sh tests/resolve.sh ./holypkg ./tests/resolution
+	sh tests/elf-resolve.sh ./holypkg ./tests/resolution
 	sh tests/static.sh ./holypkg
 
 check-fixtures: check
@@ -132,7 +135,10 @@ install: all llm.txt
 	@for page in $(MANPAGES); do install -m 644 "$$page" "$(DESTDIR)$(PREFIX)/share/man/man$${page##*.}/" || exit; done
 	install -m 644 llm.txt "$(DESTDIR)$(PREFIX)/share/holy/llm.txt"
 
+tests/resolution: tests/resolution.c $(filter-out src/main.o,$(HOLY_OBJECTS)) holypkg
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o $@ $< $(filter-out src/main.o,$(HOLY_OBJECTS)) $(LDLIBS) $(SOLV_LIBS)
+
 clean:
 	rm -f holy-init
 	rm -f .build-config .build-config.tmp
-	rm -f holypkg tests/solver tests/install-helper src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o
+	rm -f holypkg tests/resolution tests/solver tests/install-helper src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o

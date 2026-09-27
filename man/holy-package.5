@@ -60,6 +60,19 @@ The verifier does not verify dependencies,
 signatures, symbolic owner names or the installed filesystem. A full format
 implementation must verify file ownership, links, xattrs, hooks, origin and
 transaction semantics before accepting an artifact for installation.
+.SH INSTALLED GRAPH
+New local installations use holy-instance-2 state. The state includes a graph
+SHA-256; the graph file uses holy-resolution-1 with scope artifact-candidates,
+a root artifact, sorted selected artifact hashes and selected requirement edges.
+Each edge records consumer hash, requirement ID, provider hash, path, kind and
+target using the holy.conf lexer. The plan hash includes these canonical bytes.
+.PP
+Database operations reject a missing, modified, writable or symlink graph.
+Legacy holy-instance-1 entries remain readable without a graph. Their absence
+of recorded provider choices does not establish dependency correctness.
+The current installation subset still admits only dependency-free data or
+native static packages; dynamic-package placement and multi-package apply
+remain unimplemented.
 .SH SEE ALSO
 .BR holypkg (8),
 .BR holy.conf (5)

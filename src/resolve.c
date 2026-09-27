@@ -28,6 +28,7 @@ struct local_item {
     struct holy_package_identity identity;
     struct holy_solver_requirement *requirements;
     char **requirement_ids;
+    char **original_requirements;
     size_t requirement_count;
     char *capability;
     struct holy_scan_result scan;
@@ -54,6 +55,7 @@ static int add_requirement(struct local_item *item, const char *id, const char *
     char **ids;
     char *capability;
     char *identifier;
+    char *original;
     size_t i;
     if (item->requirement_count >= 65536) return 0;
     for (i = 0; i < item->requirement_count; ++i)
@@ -62,14 +64,20 @@ static int add_requirement(struct local_item *item, const char *id, const char *
     if (!capability) return 0;
     identifier = strdup(id);
     if (!identifier) { free(capability); return 0; }
+    original = strdup(cap);
+    if (!original) { free(capability); free(identifier); return 0; }
     next = realloc(item->requirements,
                    (item->requirement_count + 1) * sizeof *next);
-    if (!next) { free(identifier); free(capability); return 0; }
+    if (!next) { free(identifier); free(capability); free(original); return 0; }
     item->requirements = next;
     ids = realloc(item->requirement_ids,
                   (item->requirement_count + 1) * sizeof *ids);
-    if (!ids) { free(identifier); free(capability); return 0; }
+    if (!ids) { free(identifier); free(capability); free(original); return 0; }
     item->requirement_ids = ids;
+    ids = realloc(item->original_requirements, (item->requirement_count + 1) * sizeof *ids);
+    if (!ids) { free(identifier); free(capability); free(original); return 0; }
+    item->original_requirements = ids;
+    ids[item->requirement_count] = original;
     item->requirements[item->requirement_count].first = capability;
     item->requirements[item->requirement_count].alternative = NULL;
     item->requirement_ids[item->requirement_count] = identifier;
@@ -411,8 +419,68 @@ static char *choice_requirement(const char *choice, const char **digest)
     return id;
 }
 
-int holy_resolve_local(const char *const *paths, size_t count, int json,
-                       const char *generation, const char *choice)
+static int artifact_order(const void *a, const void *b)
+{
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+static int edge_order(const void *a, const void *b)
+{
+    const struct holy_resolved_edge *x = a, *y = b;
+    int c = strcmp(x->consumer, y->consumer);
+    return c ? c : strcmp(x->id, y->id);
+}
+
+static int collect_result(const struct local_item *local, const struct holy_solver_item *items,
+                            size_t count, const int *selected, struct holy_resolution *out)
+{
+    size_t i, j, k;
+    memcpy(out->root, local[0].identity.digest, sizeof out->root);
+    out->artifacts = calloc(count, sizeof *out->artifacts);
+    if (!out->artifacts) return 0;
+    for (i = 0; i < count; ++i) if (selected[i]) {
+        out->artifacts[out->artifact_count] = strdup(local[i].identity.digest);
+        if (!out->artifacts[out->artifact_count]) return 0;
+        ++out->artifact_count;
+        for (j = 0; j < local[i].requirement_count; ++j) {
+            struct holy_resolved_edge *next, *edge;
+            const char *path = "-", *kind = "package", *target = NULL;
+            for (k = 0; k < local[i].edge_count; ++k) {
+                const struct elf_edge *e = &local[i].edges[k];
+                if (e->requirement == j) { path = e->path; kind = e->kind; target = e->target; break; }
+            }
+            if (!target) {
+                if (strncmp(local[i].original_requirements[j], "package:", 8)) return 0;
+                target = local[i].original_requirements[j] + 8;
+            }
+            if (out->edge_count >= 65536) return 0;
+            next = realloc(out->edges, (out->edge_count + 1) * sizeof *next);
+            if (!next) return 0;
+            out->edges = next;
+            edge = &next[out->edge_count++];
+            memset(edge, 0, sizeof *edge);
+            edge->consumer = strdup(local[i].identity.digest);
+            edge->id = strdup(local[i].requirement_ids[j]);
+            edge->path = strdup(path);
+            edge->kind = strdup(kind);
+            edge->target = strdup(target);
+            for (k = 0; k < count; ++k)
+                if (selected[k] && provides(&items[k], local[i].requirements[j].first)) {
+                    edge->provider = strdup(local[k].identity.digest);
+                    break;
+                }
+            if (!edge->consumer || !edge->id || !edge->path || !edge->kind ||
+                !edge->target || !edge->provider) return 0;
+        }
+    }
+    qsort(out->artifacts, out->artifact_count, sizeof *out->artifacts, artifact_order);
+    if (out->edge_count) qsort(out->edges, out->edge_count, sizeof *out->edges, edge_order);
+    return 1;
+}
+
+static int resolve(const char *const *paths, size_t count, int json,
+                    const char *generation, const char *choice,
+                    struct holy_resolution *output)
 {
     struct local_item *local = NULL;
     struct holy_solver_item *items = NULL;
@@ -512,19 +580,20 @@ int holy_resolve_local(const char *const *paths, size_t count, int json,
     }
     if (solved == 1) {
         size_t selected_count = 0;
-        report_edges(local, items, count, selected, json);
+        if (output && !collect_result(local, items, count, selected, output)) { result = 1; goto done; }
+        if (json >= 0) report_edges(local, items, count, selected, json);
         for (i = 0; i < count; ++i) if (selected[i]) {
-            if (json)
+            if (json > 0)
                 printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"selected\",\"sha256\":\"%s\"}\n",
                        local[i].identity.digest);
-            else printf("selected %s\n", local[i].identity.digest);
+            else if (!json) printf("selected %s\n", local[i].identity.digest);
             ++selected_count;
         }
-        if (json) {
+        if (json > 0) {
             printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"summary\",\"count\":%zu", selected_count);
             if (generation) printf(",\"generation\":\"%s\"", generation);
             puts("}");
-        } else if (generation) printf("generation %s\n", generation);
+        } else if (!json && generation) printf("generation %s\n", generation);
         result = 0;
     } else if (solved == 3) result = 3;
     else if (solved == 2) {
@@ -540,7 +609,8 @@ int holy_resolve_local(const char *const *paths, size_t count, int json,
             }
     }
 done:
-    if ((result == 3 || result == 4) && prepared == count && local && items)
+    if (result && output) holy_resolution_free(output);
+    if (json >= 0 && (result == 3 || result == 4) && prepared == count && local && items)
         report_edges(local, items, count, NULL, json);
     if (result) fprintf(stderr, "holypkg: local resolution %s\n",
                         result == 2 ? "has an invalid choice" :
@@ -548,7 +618,7 @@ done:
                         result == 4 ? "has a dependency conflict" :
                         "requires unsupported data or failed");
     if (unresolved) fprintf(stderr, "holypkg: unresolved requirement %s\n", unresolved);
-    if (result && json) {
+    if (result && json > 0) {
         if (unresolved)
             printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"%s\",\"requirement\":\"%s\"}\n",
                    unknown_context ? unknown_context : "dependency-conflict", unresolved);
@@ -563,8 +633,11 @@ done:
             free((char *)local[i].requirements[j].first);
         for (j = 0; j < local[i].requirement_count; ++j)
             free(local[i].requirement_ids[j]);
+        for (j = 0; j < local[i].requirement_count; ++j)
+            free(local[i].original_requirements[j]);
         free(local[i].requirements);
         free(local[i].requirement_ids);
+        free(local[i].original_requirements);
         free(local[i].capability);
         free(local[i].edges);
         holy_scan_free(&local[i].scan);
@@ -577,4 +650,79 @@ done:
     free(items); free(local); free(selected);
     free(chosen_id); free(choice_capability);
     return result;
+}
+
+int holy_resolve_local(const char *const *paths, size_t count, int json,
+                       const char *generation, const char *choice)
+{
+    return resolve(paths, count, json, generation, choice, NULL);
+}
+
+int holy_resolve_collect(const char *const *paths, size_t count,
+                          const char *choice, struct holy_resolution *result)
+{
+    memset(result, 0, sizeof *result);
+    return resolve(paths, count, -1, NULL, choice, result);
+}
+
+void holy_resolution_free(struct holy_resolution *result)
+{
+    size_t i;
+    for (i = 0; i < result->artifact_count; ++i) free(result->artifacts[i]);
+    for (i = 0; i < result->edge_count; ++i) {
+        struct holy_resolved_edge *e = &result->edges[i];
+        free(e->consumer); free(e->id); free(e->provider);
+        free(e->path); free(e->kind); free(e->target);
+    }
+    free(result->artifacts); free(result->edges);
+    memset(result, 0, sizeof *result);
+}
+
+static int record_token(FILE *stream, const char *value)
+{
+    const unsigned char *p = (const unsigned char *)value;
+    size_t encoded = 2;
+    long offset = ftell(stream);
+    if (!value || offset < 0 || offset > 16 * 1024 * 1024 - 2) return 0;
+    for (; *p; ++p) {
+        encoded += (*p < 32 || *p >= 127) ? 4 : (*p == '"' || *p == '\\') ? 2 : 1;
+        if (encoded > 16 * 1024 * 1024 - (size_t)offset) return 0;
+    }
+    if (fputc('"', stream) == EOF) return 0;
+    for (p = (const unsigned char *)value; *p; ++p) {
+        if (*p == '"' || *p == '\\') {
+            if (fputc('\\', stream) == EOF || fputc(*p, stream) == EOF) return 0;
+        } else if (*p < 32 || *p >= 127) {
+            if (fprintf(stream, "\\x%02x", *p) < 0) return 0;
+        } else if (fputc(*p, stream) == EOF) return 0;
+    }
+    return fputc('"', stream) != EOF;
+}
+
+int holy_resolution_record(const struct holy_resolution *result, char **record, size_t *length)
+{
+    FILE *stream;
+    size_t i, j;
+    int ok = 0;
+    *record = NULL; *length = 0;
+    if (!result->artifact_count || strlen(result->root) != 64) return 0;
+    stream = open_memstream(record, length);
+    if (!stream) return 0;
+    if (fprintf(stream, "format holy-resolution-1\nscope artifact-candidates\nroot %s\n", result->root) < 0) goto done;
+    for (i = 0; i < result->artifact_count; ++i)
+        if (fprintf(stream, "artifact %s\n", result->artifacts[i]) < 0) goto done;
+    for (i = 0; i < result->edge_count; ++i) {
+        const struct holy_resolved_edge *e = &result->edges[i];
+        const char *fields[] = {e->consumer, e->id, e->provider, e->path, e->kind, e->target};
+        if (fputs("edge", stream) == EOF) goto done;
+        for (j = 0; j < sizeof fields / sizeof *fields; ++j)
+            if (fputc(' ', stream) == EOF || !record_token(stream, fields[j])) goto done;
+        if (fputc('\n', stream) == EOF) goto done;
+    }
+    ok = 1;
+done:
+    if (fclose(stream)) ok = 0;
+    if (*length > 16 * 1024 * 1024) ok = 0;
+    if (!ok) { free(*record); *record = NULL; *length = 0; }
+    return ok;
 }

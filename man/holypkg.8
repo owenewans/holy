@@ -292,7 +292,10 @@ files and relative symlinks owned by the current UID/GID. Hardlinks, privileged 
 and writes inside holypkg state or cache trees are excluded. Output includes
 target-root device/inode, generation, artifact SHA-256, path count and a
 SHA-256 over those identities and ordered manifest entries, including symlink
-types and targets. Symlinks must have mode 0777. The narrow local
+types and targets, and the canonical resolver record. That record identifies
+artifact candidates, not physical loader bindings. Apply stores the approved
+record as installed graph with a SHA-256 in instance state.
+Symlinks must have mode 0777. The narrow local
 planner rejects a second installed package with the same name, even when its
 payload paths differ; general source-ID and ABI slot management is pending.
 This command does not persist a plan,

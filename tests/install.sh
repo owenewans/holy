@@ -172,6 +172,29 @@ cmp "$tmp/system/usr/bin/data" "$tmp/payload/DATA/usr/bin/data"
 db="$tmp/system/var/lib/holypkg"
 for file in meta files deps origin state; do test -f "$db/installed/$digest/$file"; done
 grep -qx "artifact $digest" "$db/installed/$digest/state"
+grep -qx 'format holy-instance-2' "$db/installed/$digest/state"
+graph_hash=$(sha256sum "$db/installed/$digest/graph")
+graph_hash=${graph_hash%% *}
+grep -qx "graph $graph_hash" "$db/installed/$digest/state"
+grep -qx "root $digest" "$db/installed/$digest/graph"
+cp "$db/installed/$digest/graph" "$tmp/saved-graph"
+cp "$db/installed/$digest/state" "$tmp/graph-state"
+printf 'corrupt\n' >> "$db/installed/$digest/graph"
+if "$bin" db status --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+test ! -s "$tmp/out"
+rm "$db/installed/$digest/graph"
+if "$bin" db status --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+ln -s "$tmp/saved-graph" "$db/installed/$digest/graph"
+if "$bin" db status --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+rm "$db/installed/$digest/graph"
+sed '/^graph /d; s/holy-instance-2/holy-instance-1/' "$tmp/graph-state" > "$db/installed/$digest/state"
+"$bin" db status --root "$tmp/system" > "$tmp/out"
+cp "$tmp/saved-graph" "$db/installed/$digest/graph"
+if "$bin" db status --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+cp "$tmp/graph-state" "$db/installed/$digest/state"
+chmod 666 "$db/installed/$digest/graph"
+if "$bin" db status --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+chmod 600 "$db/installed/$digest/graph"
 "$bin" db status --root "$tmp/system" > "$tmp/out"
 grep -qx 'generation 1' "$tmp/out"
 printf 'format holy-journal-1\nstage applying\ngeneration 0\nartifact %s\nplan %s\n' \

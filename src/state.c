@@ -8,6 +8,7 @@
 #include "package.h"
 #include "install.h"
 #include "config.h"
+#include "resolve.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -151,27 +152,68 @@ static int empty_child(int dir, const char *name)
     return empty;
 }
 
+static int graph_digest(int item, char output[65])
+{
+    unsigned char buffer[8192], digest[32];
+    unsigned int length;
+    size_t total = 0, i;
+    ssize_t got;
+    struct stat st;
+    EVP_MD_CTX *hash = EVP_MD_CTX_new();
+    int fd = openat(item, "graph", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    int ok = 0;
+    if (fd < 0 || !hash || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        (st.st_mode & 0022) || (st.st_uid != 0 && st.st_uid != geteuid()) ||
+        st.st_size < 1 || st.st_size > 16 * 1024 * 1024 ||
+        EVP_DigestInit_ex(hash, EVP_sha256(), NULL) != 1) goto done;
+    while ((got = read(fd, buffer, sizeof buffer)) != 0) {
+        if (got < 0) { if (errno == EINTR) continue; goto done; }
+        total += (size_t)got;
+        if (total > 16 * 1024 * 1024 ||
+            EVP_DigestUpdate(hash, buffer, (size_t)got) != 1) goto done;
+    }
+    if (total != (size_t)st.st_size ||
+        EVP_DigestFinal_ex(hash, digest, &length) != 1 || length != 32) goto done;
+    for (i = 0; i < 32; ++i) snprintf(output + i * 2, 3, "%02x", digest[i]);
+    ok = 1;
+done:
+    if (fd >= 0) close(fd);
+    EVP_MD_CTX_free(hash);
+    return ok;
+}
+
 static int instance_state_generation(int item, const char *digest,
                                      unsigned long long *recorded)
 {
-    char buffer[256], prefix[160], *end;
+    char buffer[384], prefix[256], graph[65], *end;
     struct stat st;
     unsigned long long generation;
     ssize_t got;
     size_t length;
-    int fd = openat(item, "state", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    int version, fd = openat(item, "state", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0) return 0;
-    length = (size_t)snprintf(prefix, sizeof prefix,
-        "format holy-instance-1\nsource-id -\ndelivery local\nreason explicit\nartifact %s\ngeneration ", digest);
-    if (length >= sizeof prefix || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
-        st.st_size <= (off_t)(length + 1) || st.st_size >= (off_t)sizeof buffer) {
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size < 24 || st.st_size >= (off_t)sizeof buffer) {
         close(fd);
         return 0;
     }
     got = read(fd, buffer, sizeof buffer - 1);
     close(fd);
-    if (got != st.st_size || memcmp(buffer, prefix, length) ||
-        buffer[got - 1] != '\n') return 0;
+    if (got != st.st_size || buffer[got - 1] != '\n') return 0;
+    buffer[got] = '\0';
+    version = !strncmp(buffer, "format holy-instance-2\n", 23) ? 2 : 1;
+    if (version == 2) {
+        if (!graph_digest(item, graph)) return 0;
+        length = (size_t)snprintf(prefix, sizeof prefix,
+            "format holy-instance-2\nsource-id -\ndelivery local\nreason explicit\nartifact %s\ngraph %s\ngeneration ",
+            digest, graph);
+    } else {
+        if (!fstatat(item, "graph", &st, AT_SYMLINK_NOFOLLOW) || errno != ENOENT) return 0;
+        length = (size_t)snprintf(prefix, sizeof prefix,
+            "format holy-instance-1\nsource-id -\ndelivery local\nreason explicit\nartifact %s\ngeneration ", digest);
+    }
+    if (length >= sizeof prefix || (size_t)got <= length + 1 ||
+        memcmp(buffer, prefix, length)) return 0;
     buffer[got - 1] = '\0';
     if (buffer[length] < '0' || buffer[length] > '9') return 0;
     errno = 0;
@@ -183,7 +225,7 @@ static int instance_state_generation(int item, const char *digest,
 
 static int installed_valid(int dir)
 {
-    static const char *const required[] = { "meta", "files", "deps", "origin", "state" };
+    static const char *const required[] = { "meta", "files", "deps", "origin", "state", "graph" };
     int installed = child_dir(dir, "installed", 0), ok = 1;
     DIR *list;
     struct dirent *entry;
@@ -198,7 +240,7 @@ static int installed_valid(int dir)
         if (!valid_digest(entry->d_name)) { ok = 0; break; }
         item = child_dir(installed, entry->d_name, 0);
         if (item < 0) { ok = 0; break; }
-        for (i = 0; i < sizeof required / sizeof *required; ++i) {
+        for (i = 0; i < 5; ++i) {
             struct stat st;
             if (fstatat(item, required[i], &st, AT_SYMLINK_NOFOLLOW) ||
                 !S_ISREG(st.st_mode) || (st.st_mode & 0022) ||
@@ -223,7 +265,7 @@ static int installed_valid(int dir)
                     errno = 0;
                 }
                 if (!member && errno) ok = 0;
-                if (seen != (1u << 5) - 1u) ok = 0;
+                if (seen != (1u << 5) - 1u && seen != (1u << 6) - 1u) ok = 0;
                 closedir(members);
             }
         }
@@ -802,10 +844,13 @@ done:
 
 static int inspect_plan(const char *root_path, int root, int dir,
                         unsigned long long generation, const char *digest,
-                        char output[65], size_t *paths)
+                        char output[65], size_t *paths, char **graph_output, size_t *graph_length)
 {
     struct holy_package_identity identity = {0};
     struct plan_hash plan = {0};
+    struct holy_resolution resolution = {0};
+    char *graph = NULL;
+    size_t graph_size = 0;
     char generation_text[32], root_id[128];
     unsigned char checksum[32];
     unsigned int checksum_size;
@@ -831,6 +876,13 @@ static int inspect_plan(const char *root_path, int root, int dir,
         fprintf(stderr, "holypkg: plan requires native host architecture for static executables\n");
         goto done;
     }
+    {
+        const char *inputs[] = {snapshot};
+        result = holy_resolve_collect(inputs, 1, NULL, &resolution);
+        if (result) goto done;
+        result = 1;
+        if (!holy_resolution_record(&resolution, &graph, &graph_size)) goto done;
+    }
     plan.hash = EVP_MD_CTX_new();
     plan.dir = dir;
     if (!plan.hash) { result = 1; goto done; }
@@ -838,10 +890,12 @@ static int inspect_plan(const char *root_path, int root, int dir,
     if (snprintf(root_id, sizeof root_id, "%ju:%ju",
                  (uintmax_t)root_st.st_dev, (uintmax_t)root_st.st_ino) >=
         (int)sizeof root_id) { result = 1; goto done; }
+    result = 6;
     if (EVP_DigestInit_ex(plan.hash, EVP_sha256(), NULL) != 1 ||
-        !hash_text(plan.hash, "holy-readonly-plan-1") ||
+        !hash_text(plan.hash, "holy-readonly-plan-2") ||
         !hash_text(plan.hash, root_id) ||
         !hash_text(plan.hash, generation_text) || !hash_text(plan.hash, digest) ||
+        !hash_text(plan.hash, graph) ||
         !holy_verify_visit(snapshot, plan_entry, &plan)) {
         if (plan.claim_error) result = plan.claim_error;
         goto done;
@@ -860,9 +914,16 @@ static int inspect_plan(const char *root_path, int root, int dir,
         snprintf(output + i * 2, 3, "%02x", checksum[i]);
     output[64] = '\0';
     *paths = plan.count;
+    if (graph_output) {
+        *graph_output = graph;
+        *graph_length = graph_size;
+        graph = NULL;
+    }
     result = 0;
 done:
     if (result) fprintf(stderr, "holypkg: cannot form install plan (status %d)\n", result);
+    free(graph);
+    holy_resolution_free(&resolution);
     EVP_MD_CTX_free(plan.hash);
     holy_package_identity_free(&identity);
     if (snapshot) { unlink(snapshot); free(snapshot); }
@@ -883,7 +944,7 @@ int holy_state_plan(const char *root_path)
     pending = pending_child(dir, generation, digest, approved);
     if (pending < 0) goto done;
     if (!pending) { result = 6; goto done; }
-    result = inspect_plan(root_path, root, dir, generation, digest, hash, &paths);
+    result = inspect_plan(root_path, root, dir, generation, digest, hash, &paths, NULL, NULL);
     if (result) goto done;
     if (fstat(root, &root_st)) { result = 1; goto done; }
     printf("plan root %ju:%ju generation %llu artifact %s paths %zu sha256 %s read-only\n",
@@ -913,7 +974,7 @@ int holy_state_approve(const char *hash, const char *root_path)
     if (result < 0) { result = 1; goto done; }
     if (!result) { result = 6; goto done; }
     if (approved[0]) { result = 5; goto done; }
-    result = inspect_plan(root_path, root, dir, generation, digest, actual, &paths);
+    result = inspect_plan(root_path, root, dir, generation, digest, actual, &paths, NULL, NULL);
     if (result) goto done;
     if (strcmp(hash, actual)) { result = 3; goto done; }
     result = 1;
@@ -955,7 +1016,7 @@ int holy_state_recheck(const char *root_path)
     pending = pending_child(dir, generation, digest, approved);
     if (pending < 0) goto done;
     if (!pending || !approved[0]) { result = 5; goto done; }
-    result = inspect_plan(root_path, root, dir, generation, digest, actual, &paths);
+    result = inspect_plan(root_path, root, dir, generation, digest, actual, &paths, NULL, NULL);
     if (result) goto done;
     if (strcmp(approved, actual)) { result = 3; goto done; }
     printf("rechecked %s generation %llu artifact %s paths %zu\n",
@@ -1023,12 +1084,12 @@ done:
 }
 
 static int save_instance(int installed, const char *digest, const char *snapshot,
-                         unsigned long long generation)
+                         unsigned long long generation, const char *graph, size_t graph_length)
 {
     static const char *const names[] = { "meta", "files", "deps", "origin" };
     struct archive *archive = NULL;
     struct archive_entry *entry;
-    char buffer[65536], state[256];
+    char buffer[65536], state[384], graph_hash[65];
     int item = -1, status, ok = 0;
     unsigned seen = 0;
     size_t i;
@@ -1069,9 +1130,11 @@ static int save_instance(int installed, const char *digest, const char *snapshot
         seen |= 1u << i;
     }
     if (status != ARCHIVE_EOF || seen != (1u << 4) - 1u) goto done;
+    if (!record_file(item, "graph", graph, graph_length) ||
+        !graph_digest(item, graph_hash)) goto done;
     i = (size_t)snprintf(state, sizeof state,
-        "format holy-instance-1\nsource-id -\ndelivery local\nreason explicit\nartifact %s\ngeneration %llu\n",
-        digest, generation + 1);
+        "format holy-instance-2\nsource-id -\ndelivery local\nreason explicit\nartifact %s\ngraph %s\ngeneration %llu\n",
+        digest, graph_hash, generation + 1);
     if (i >= sizeof state || !record_file(item, "state", state, i) || fsync(item)) goto done;
     ok = 1;
 done:
@@ -1084,7 +1147,8 @@ int holy_state_apply(const char *root_path)
 {
     char digest[65], approved[65], actual[65], journal[256], generation_record[32];
     char temp_name[43] = {0};
-    char *snapshot = NULL;
+    char *snapshot = NULL, *graph = NULL;
+    size_t graph_length = 0;
     unsigned long long generation;
     struct stat st;
     size_t paths, length;
@@ -1097,7 +1161,7 @@ int holy_state_apply(const char *root_path)
     result = pending_child(dir, generation, digest, approved);
     if (result < 0) { result = 1; goto done; }
     if (!result || !approved[0]) { result = 5; goto done; }
-    result = inspect_plan(root_path, root, dir, generation, digest, actual, &paths);
+    result = inspect_plan(root_path, root, dir, generation, digest, actual, &paths, &graph, &graph_length);
     if (result) goto done;
     if (strcmp(actual, approved)) { result = 3; goto done; }
     snapshot = holy_cache_snapshot(digest, root_path);
@@ -1119,7 +1183,7 @@ int holy_state_apply(const char *root_path)
     journaled = 1;
     result = 5;
     if (!holy_install_payload(snapshot, root) ||
-        !save_instance(installed, digest, snapshot, generation)) goto done;
+        !save_instance(installed, digest, snapshot, generation, graph, graph_length)) goto done;
     length = (size_t)snprintf(generation_record, sizeof generation_record,
                               "%llu\n", generation + 1);
     if (length >= sizeof generation_record) goto done;
@@ -1133,6 +1197,7 @@ int holy_state_apply(const char *root_path)
     printf("installed %s generation %llu paths %zu\n", digest, generation + 1, paths);
     result = 0;
 done:
+    free(graph);
     if (result) fprintf(stderr, "holypkg: apply failed (status %d)%s\n", result,
                         journaled ? "; inspect incomplete transaction" : "");
     if (temp >= 0) close(temp);
@@ -1379,6 +1444,7 @@ static int finish_remove_record(int dir, int installed, int item, int transactio
     int temp = -1, ok = 0;
     for (i = 0; i < sizeof names / sizeof *names; ++i)
         if (unlinkat(item, names[i], 0)) goto done;
+    if (unlinkat(item, "graph", 0) && errno != ENOENT) goto done;
     if (fsync(item) || unlinkat(installed, digest, AT_REMOVEDIR) ||
         fsync(installed)) goto done;
     length = (size_t)snprintf(generation_record, sizeof generation_record,

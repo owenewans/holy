@@ -25,6 +25,9 @@
   reject candidate class/ABI/version/symbol mismatches and expose stable IDs for
   root provider choices. Unresolved launch scopes report unknown. File placement,
   complete loader contexts and integration with dynamic-package transactions remain open.
+- [x] Export canonical selected artifact/edge records from the resolver; bind the
+  supported install subset to its graph in the plan hash and installed state.
+  Graph integrity checks preserve legacy state compatibility.
 - [x] Journal installation, check and removal of `linux/nolibc` data and native static ELF
   artifacts into existing directories. Recovery covers empty aborted installs,
   completed installs and interrupted removals under documented conditions.

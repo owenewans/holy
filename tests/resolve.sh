@@ -63,6 +63,20 @@ choice_generation=$(sha256sum "$tmp/repo-choice/index")
 choice_generation=${choice_generation%% *}
 b2_hash=$(sha256sum "$tmp/b-2.holy")
 b2_hash=${b2_hash%% *}
+if test "$#" -ge 2; then
+    api=$2
+    "$api" - "$tmp/root-1.holy" "$tmp/b-1.holy" "$tmp/unused-1.holy" > "$tmp/record"
+    "$api" - "$tmp/root-1.holy" "$tmp/unused-1.holy" "$tmp/b-1.holy" > "$tmp/reordered"
+    cmp "$tmp/record" "$tmp/reordered"
+    grep -qx 'format holy-resolution-1' "$tmp/record"
+    grep -qx 'scope artifact-candidates' "$tmp/record"
+    grep -Fqx "edge \"$root_hash\" \"b-1\" \"$b_hash\" \"-\" \"package\" \"b\"" "$tmp/record"
+    test "$(wc -l < "$tmp/record")" -eq 6
+    "$api" "b-1=$b2_hash" "$tmp/root-1.holy" "$tmp/b-1.holy" "$tmp/b-2.holy" > "$tmp/chosen"
+    grep -Fqx "edge \"$root_hash\" \"b-1\" \"$b2_hash\" \"-\" \"package\" \"b\"" "$tmp/chosen"
+    if "$api" - "$tmp/root-1.holy" > "$tmp/record" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+    test ! -s "$tmp/record"
+fi
 if "$bin" repo solve "$tmp/repo-choice" root --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"decision-required"}' "$tmp/out"
 "$bin" repo solve "$tmp/repo-choice" root --choose "b-1=$b2_hash" --json > "$tmp/out"
