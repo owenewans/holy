@@ -306,6 +306,22 @@ done:
     return rc;
 }
 
+static int disk_show(const char *plan_path)
+{
+    struct disk_plan p = {0};
+    int rc = read_plan(plan_path, &p);
+    if (!rc)
+        printf("disk image %s\nidentity %" PRIuMAX ":%" PRIuMAX
+               " size %" PRIuMAX "\nGPT: BIOS 2048+2048; ESP %d+%d FAT32; "
+               "root %d+%" PRIuMAX " ext4\nhead-sha256 %s\n"
+               "tail-sha256 %s\nall existing data in this image "
+               "will be destroyed\n",
+               p.image, p.device, p.inode, p.size, esp_start, esp_sectors,
+               root_start, p.root_sectors, p.head, p.tail);
+    free(p.image);
+    return rc;
+}
+
 static int disk_apply(const char *plan_path, const char *confirm)
 {
     struct disk_plan p = {0}, actual = {0};
@@ -672,6 +688,8 @@ done:
 
 int holy_disk_main(int argc, char **argv)
 {
+    if (argc == 3 && !strcmp(argv[0], "show") && !strcmp(argv[1], "--plan"))
+        return disk_show(argv[2]);
     if (argc == 9 && !strcmp(argv[0], "finalize-plan") &&
         !strcmp(argv[1], "--disk-plan") && !strcmp(argv[3], "--esp") &&
         !strcmp(argv[5], "--root-image") && !strcmp(argv[7], "--output"))
@@ -685,7 +703,8 @@ int holy_disk_main(int argc, char **argv)
     if (argc == 5 && !strcmp(argv[0], "apply") &&
         !strcmp(argv[1], "--plan") && !strcmp(argv[3], "--confirm"))
         return disk_apply(argv[2], argv[4]);
-    fputs("usage: holyinstall disk plan --config FILE --output NEW_PLAN | "
+    fputs("usage: holyinstall disk show --plan PLAN | "
+          "holyinstall disk plan --config FILE --output NEW_PLAN | "
           "holyinstall disk apply --plan PLAN --confirm IMAGE | "
           "holyinstall disk finalize-plan --disk-plan PLAN --esp FILE "
           "--root-image FILE --output NEW_PLAN | "

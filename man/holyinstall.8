@@ -10,6 +10,8 @@ holyinstall \- prepare a disk image and install packages to an existing Holy roo
 .br
 .B holyinstall disk plan --config FILE --output NEW_PLAN
 .br
+.B holyinstall disk show --plan PLAN
+.br
 .B holyinstall disk apply --plan PLAN --confirm IMAGE
 .br
 .B holyinstall disk finalize-plan --disk-plan PLAN --esp FILE --root-image FILE --output NEW_PLAN
@@ -28,15 +30,23 @@ holypkg does not implement this transaction interface.
 The caller must already have permission to modify the target; this stage does
 not invoke doas.
 .PP
---menu opens a numbered text menu on a terminal. It shows the current root
-and package count, edits the root in a form, and opens a package list with
-add, delete and back actions. Preview calls the same holypkg planner as
-config-driven mode. Save writes a normalized [install] config atomically.
+--menu opens a numbered text menu on a terminal. It shows the current root,
+package count and selected disk image. It edits the root and disk image, and
+opens a package list with add, delete and back actions. Preview calls the
+same holypkg planner as config-driven mode. Save writes a normalized config
+atomically.
 Prepare plan writes the same frozen plan as noninteractive mode. Install shows
 the root, set hash and artifact count, then requires the literal answer yes.
 Abort and end-of-input leave the target unchanged before apply. Without a TTY,
---menu exits with status 3. The text menu can edit only [install] configs;
-other sections are rejected to avoid silently discarding them on save.
+--menu exits with status 3. The text menu accepts [install] and [disk]; it
+rejects other sections to avoid silently discarding them on save.
+.PP
+The menu saves [disk] in the same config as [install]. It creates a separate
+disk plan at PACKAGE_PLAN.disk, shows the exact image path, GPT geometry and
+the plan's first and last MiB hashes. It asks for that full path before
+formatting. Disk selection may be left
+unset while working on packages. Disk planning and package installation remain
+separate steps; selecting an image does not mount it as the package target.
 .PP
 Planning runs holypkg db plan-set read-only. It prints the selected providers
 and requirements, then creates a new plan file with mode 0600. The plan binds
@@ -93,6 +103,7 @@ hashes the first and last MiB and writes a new mode-0600 plan. Apply requires
 --confirm to equal the canonical image path in that plan. It checks the
 identity and both hashes again, then records prepared, partitioning and
 formatting stages in PLAN.journal. An existing journal blocks another apply.
+The show command prints the saved geometry without changing the image.
 After an interrupted stage, inspect the image and journal before starting a
 new plan. The command does not silently repeat a format operation.
 .PP
@@ -107,8 +118,7 @@ copies the two images into their partitions, verifies the written bytes,
 installs the Limine BIOS stage and verifies GPT. The adjacent journal records
 each stage. A changed input requires a new plan; an existing finalize journal
 requires inspection before recovery. The command does not configure UEFI,
-mount the partitions or prove the image can boot. The text menu currently
-edits only [install] configs. Disk, boot and account menus and the
+mount the partitions or prove the image can boot. Boot and account menus and the
 live-ISO-to-installed-disk QEMU test remain pending.
 .SH EXIT STATUS
 0 means the requested step completed. 1 means an operational error. 2 means

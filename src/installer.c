@@ -255,7 +255,7 @@ static int quote(FILE *stream, const char *s)
         if (*p == '"' || *p == '\\') {
             if (fputc('\\', stream) == EOF) return 0;
             if (fputc(*p, stream) == EOF) return 0;
-        } else if (*p == '\n' || *p == '\r' || *p == '\t') {
+        } else if (*p < 32 || *p == 127) {
             if (fprintf(stream, "\\x%02x", *p) < 0) return 0;
         } else if (fputc(*p, stream) == EOF) return 0;
     }
@@ -426,6 +426,7 @@ done:
 
 struct menu_state {
     char *root;
+    char *disk_image;
     char **artifacts;
     size_t count;
     char **accepted_arch;
@@ -451,6 +452,7 @@ static void free_menu(struct menu_state *menu)
     for (i = 0; i < menu->accept_count; ++i) free(menu->accepted_arch[i]);
     free(menu->accepted_arch);
     free(menu->root);
+    free(menu->disk_image);
 }
 
 static int menu_load(const char *path, struct menu_state *menu)
@@ -466,9 +468,18 @@ static int menu_load(const char *path, struct menu_state *menu)
     for (i = 0; i < config.count; ++i) {
         const struct holy_entry *e = &config.entries[i];
         char **next;
-        if (strcmp(e->section, "install")) {
-            fputs("holyinstall: text menu can edit only [install] configs\n", stderr);
+        if (strcmp(e->section, "install") && strcmp(e->section, "disk")) {
+            fputs("holyinstall: text menu accepts [install] and [disk] only\n", stderr);
             holy_config_free(&config); return 2;
+        }
+        if (!strcmp(e->section, "disk")) {
+            if (!strcmp(e->key, "image")) {
+                menu->disk_image = strdup(e->values[0]);
+                if (!menu->disk_image) { holy_config_free(&config); return 1; }
+            } else if (strcmp(e->key, "layout") || strcmp(e->values[0], "gpt-ext4")) {
+                holy_config_free(&config); return 2;
+            }
+            continue;
         }
         if (!strcmp(e->key, "root")) {
             menu->root = strdup(e->values[0]);
@@ -481,6 +492,14 @@ static int menu_load(const char *path, struct menu_state *menu)
             if (!menu->artifacts[menu->count]) { holy_config_free(&config); return 1; }
             ++menu->count;
         }
+    }
+    if (menu->disk_image && !field(&config, "disk", "layout")) {
+        fputs("holyinstall: [disk] layout is required\n", stderr);
+        holy_config_free(&config); return 2;
+    }
+    if (!menu->disk_image && field(&config, "disk", "layout")) {
+        fputs("holyinstall: [disk] image is required\n", stderr);
+        holy_config_free(&config); return 2;
     }
     for (i = 0; i < config.count; ++i) {
         const struct holy_entry *e = &config.entries[i];
@@ -523,6 +542,9 @@ static int menu_write(FILE *stream, const struct menu_state *menu)
         if (fprintf(stream, "artifact %s\n", menu->artifacts[i]) < 0) return 0;
     for (i = 0; i < menu->accept_count; ++i)
         if (fprintf(stream, "accept-arch %s\n", menu->accepted_arch[i]) < 0) return 0;
+    if (menu->disk_image && (fputs("[disk]\nimage ", stream) == EOF ||
+                             !quote(stream, menu->disk_image) ||
+                             fputs("\nlayout gpt-ext4\n", stream) == EOF)) return 0;
     return 1;
 }
 
@@ -682,24 +704,77 @@ done:
     return rc;
 }
 
+static int menu_disk_plan(const char *plan_path, const struct menu_state *menu)
+{
+    char temporary[] = "/tmp/holyinstall-disk-menu-XXXXXX";
+    char *args[] = {"plan", "--config", temporary, "--output", (char *)plan_path};
+    FILE *stream;
+    int fd, ok, rc;
+    if (!menu->disk_image) { puts("Select a disk image first"); return 3; }
+    fd = mkstemp(temporary);
+    if (fd < 0) return 1;
+    stream = fdopen(fd, "w");
+    if (!stream) { close(fd); unlink(temporary); return 1; }
+    ok = menu_write(stream, menu);
+    if (fflush(stream) || fsync(fd)) ok = 0;
+    if (fclose(stream)) ok = 0;
+    if (!ok) { unlink(temporary); return 1; }
+    rc = holy_disk_main(5, args);
+    unlink(temporary);
+    return rc;
+}
+
+static int menu_disk_apply(const char *plan_path, const struct menu_state *menu)
+{
+    char *show[] = {"show", "--plan", (char *)plan_path};
+    char *apply[] = {"apply", "--plan", (char *)plan_path, "--confirm", NULL};
+    char *answer = NULL, *canonical = NULL;
+    int rc;
+    if (!menu->disk_image) { puts("Select a disk image first"); return 3; }
+    rc = holy_disk_main(3, show);
+    if (rc) return rc;
+    canonical = realpath(menu->disk_image, NULL);
+    if (!canonical) return 6;
+    if (!menu_line("Type the exact disk image path to erase > ", &answer)) {
+        free(canonical); free(answer); return 3;
+    }
+    if (strcmp(answer, canonical)) {
+        puts("Confirmation does not match the selected image");
+        free(canonical); free(answer); return 3;
+    }
+    apply[4] = answer;
+    rc = holy_disk_main(5, apply);
+    free(canonical); free(answer);
+    return rc;
+}
+
 static int menu_run(const char *config_path, const char *plan_path,
                     const char *binary)
 {
     struct menu_state menu = {0};
+    char *disk_plan_path;
     int rc, prepared = 0, dirty = access(config_path, F_OK) != 0;
     if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
         fputs("holyinstall: menu requires a terminal\n", stderr);
         return 3;
     }
+    if (strlen(plan_path) > (size_t)-1 - 6) return 2;
+    disk_plan_path = malloc(strlen(plan_path) + 6);
+    if (!disk_plan_path) return 1;
+    sprintf(disk_plan_path, "%s.disk", plan_path);
     rc = menu_load(config_path, &menu);
     if (rc) goto done;
     for (;;) {
         char *answer = NULL;
         fputs("\nHoly installer: prepared root package stage\n1 Target root: ", stdout);
         menu_path(menu.root ? menu.root : "unset");
-        printf("\n2 Packages: %zu\nConfig: %s\n"
-               "3 Preview\n4 Save config\n5 Prepare plan\n6 Install prepared plan\n7 Abort\n",
-               menu.count, dirty ? "modified" : "saved");
+        printf("\n2 Packages: %zu\nDisk image: ", menu.count);
+        menu_path(menu.disk_image ? menu.disk_image : "unset");
+        printf("\nConfig: %s\n"
+               "3 Preview packages\n4 Save config\n5 Prepare package plan\n"
+               "6 Install prepared packages\n7 Abort\n"
+               "8 Select disk image\n9 Prepare disk plan\n10 Apply disk plan\n",
+               dirty ? "modified" : "saved");
         if (!menu_line("Choice > ", &answer)) { free(answer); rc = 0; break; }
         if (!strcmp(answer, "1")) {
             char *root = NULL;
@@ -761,11 +836,39 @@ static int menu_run(const char *config_path, const char *plan_path,
             continue;
         }
         if (!strcmp(answer, "7")) { free(answer); rc = 0; break; }
-        puts("Choose 1 through 7");
+        if (!strcmp(answer, "8")) {
+            char *image = NULL;
+            free(answer);
+            if (!menu_line("Disk image (blank clears selection) > ", &image)) {
+                free(image); rc = 0; break;
+            }
+            free(menu.disk_image);
+            menu.disk_image = *image ? image : NULL;
+            if (!*image) free(image);
+            dirty = 1;
+            prepared = 0;
+            continue;
+        }
+        if (!strcmp(answer, "9")) {
+            free(answer);
+            rc = menu_disk_plan(disk_plan_path, &menu);
+            if (rc) printf("Disk plan failed (status %d)\n", rc);
+            else printf("Disk plan %s ready for review\n", disk_plan_path);
+            continue;
+        }
+        if (!strcmp(answer, "10")) {
+            free(answer);
+            rc = menu_disk_apply(disk_plan_path, &menu);
+            if (rc) printf("Disk apply failed (status %d)\n", rc);
+            else puts("Disk image prepared");
+            continue;
+        }
+        puts("Choose 1 through 10, or 7 to abort");
         free(answer);
     }
 done:
     free_menu(&menu);
+    free(disk_plan_path);
     return rc;
 }
 

@@ -49,6 +49,11 @@ def main(binary):
             stream.write(f'[disk]\nimage "{image}"\nlayout gpt-ext4\n')
         before = sample_hash(image)
         run(binary, "disk", "plan", "--config", config, "--output", plan)
+        shown = run(binary, "disk", "show", "--plan", plan)
+        assert f"disk image {image}\n" in shown
+        assert "ESP 4096+524288 FAT32" in shown
+        assert f"head-sha256 {before[0]}\n" in shown
+        assert f"tail-sha256 {before[1]}\n" in shown
         assert sample_hash(image) == before
         assert os.stat(plan).st_mode & 0o777 == 0o600
         run(binary, "disk", "apply", "--plan", plan, "--confirm", image + "x", code=3)
@@ -57,6 +62,7 @@ def main(binary):
         link = os.path.join(directory, "plan-link")
         os.symlink(plan, link)
         run(binary, "disk", "apply", "--plan", link, "--confirm", image, code=2)
+        run(binary, "disk", "show", "--plan", link, code=2)
         fifo = os.path.join(directory, "plan-fifo")
         os.mkfifo(fifo)
         run(binary, "disk", "apply", "--plan", fifo, "--confirm", image, code=2)

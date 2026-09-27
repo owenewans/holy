@@ -1,10 +1,13 @@
 import errno
 import fcntl
+import hashlib
+import json
 import os
 import pty
 import select
 import signal
 import struct
+import subprocess
 import sys
 import termios
 import time
@@ -12,6 +15,17 @@ from pathlib import Path
 
 
 def run_menu(installer, holypkg, root, digest, config, plan):
+    image = Path(config + '.img')
+    with image.open('wb') as stream:
+        stream.truncate(1 << 30)
+
+    def disk_sample():
+        with image.open('rb') as stream:
+            head = hashlib.sha256(stream.read(1048576)).digest()
+            stream.seek(-1048576, os.SEEK_END)
+            tail = hashlib.sha256(stream.read(1048576)).digest()
+        return head, tail
+
     pid, master = pty.fork()
     if pid == 0:
         os.execv(installer, [installer, '--menu', '--config', config,
@@ -73,6 +87,10 @@ def run_menu(installer, holypkg, root, digest, config, plan):
         send('b\n')
         expect('Packages: 1')
         expect('Choice > ')
+        send('8\n')
+        expect('Disk image (blank clears selection) > ')
+        send(str(image) + '\n')
+        expect('Choice > ')
         fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack('HHHH', 30, 90, 0, 0))
         os.kill(pid, signal.SIGWINCH)
         send('3\n')
@@ -94,11 +112,33 @@ def run_menu(installer, holypkg, root, digest, config, plan):
         send('yes\n')
         expect('Package transaction complete')
         expect('Choice > ')
+        before = disk_sample()
+        send('9\n')
+        expect('Disk plan ')
+        expect('Choice > ')
+        assert disk_sample() == before
+        send('10\n')
+        expect('Type the exact disk image path to erase > ')
+        send(str(image) + '-wrong\n')
+        expect('Disk apply failed (status 3)')
+        expect('Choice > ')
+        assert disk_sample() == before
+        send('10\n')
+        expect('Type the exact disk image path to erase > ')
+        send(str(image) + '\n')
+        expect('Disk image prepared')
+        expect('Choice > ')
         send('7\n')
         _, status = os.waitpid(pid, 0)
         assert os.waitstatus_to_exitcode(status) == 0, output[-3000:]
         assert Path(root, 'usr/share/installer-fixture').read_text() == 'installed\n'
         assert Path(config).exists() and Path(plan).exists()
+        disk_plan = Path(plan + '.disk')
+        assert disk_plan.exists()
+        assert Path(str(disk_plan) + '.journal').read_text().splitlines()[-1] == 'committed'
+        table = json.loads(subprocess.check_output(['/usr/sbin/sfdisk', '--json', str(image)]))
+        assert [(part['start'], part['size']) for part in table['partitiontable']['partitions']] == [
+            (2048, 2048), (4096, 524288), (528384, 1566720)]
     finally:
         os.close(master)
 
@@ -113,7 +153,7 @@ def run_menu(installer, holypkg, root, digest, config, plan):
         ready, _, _ = select.select([master], [], [], 1)
         if ready:
             output.extend(os.read(master, 4096))
-    assert b'Packages: 1' in output and root.encode() in output, output[-3000:]
+    assert b'Packages: 1' in output and root.encode() in output and str(image).encode() in output, output[-3000:]
     os.write(master, b'7\n')
     _, status = os.waitpid(pid, 0)
     os.close(master)

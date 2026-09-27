@@ -15,8 +15,8 @@ backslash-r and backslash-x followed by two hexadecimal digits. NUL is rejected.
 The parser does not run shell expansion.
 .PP
 Sections are [general], [resolver], [source NAME], [rule NAME], [install] and
-[disk]. [install-plan] and [disk-plan] are emitted by holyinstall and are not
-user config sections.
+[disk]. [install-plan], [disk-plan] and [disk-finalize-plan] are emitted by
+holyinstall and are not user config sections.
 Include takes one path relative to the containing file. Repeated scalar keys
 within a section are errors with both source locations. The source repo and
 resolver prefer and install artifact keys are lists and can repeat. Recursive
@@ -42,7 +42,8 @@ with a different target architecture. The frozen plan retains each approval.
 .PP
 [disk] accepts one image path and layout gpt-ext4. The disk plan accepts
 regular image files, not block devices. Its fixed plan schema forbids include.
-See holyinstall(8).
+The installer's text menu can save [disk] alongside [install] and prepare the
+disk plan independently of package selection. See holyinstall(8).
 .SH EXAMPLE
 .nf
 [general]

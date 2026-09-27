@@ -110,7 +110,10 @@ uses holyinstall disk plan/apply and includes the reviewed plan hash in the
 boot plan. The GPT contains a 1 MiB BIOS Boot partition, a 256 MiB FAT32 ESP and
 a 765 MiB ext4 root. It verifies the partition layout, copies the kernel,
 initramfs and Limine configuration to the ESP, reads those files back and
-compares their bytes. Limine BIOS stages use partition 1; on x86_64 the UEFI loader
+compares their bytes. It then uses holyinstall disk finalize-plan/apply to
+bind the ESP, root and disk images by SHA-256 before copying their bytes into
+the partitions. The finalize journal records the write stages. Limine BIOS
+stages use partition 1; on x86_64 the UEFI loader
 uses EFI/BOOT/BOOTX64.EFI. The kernel mounts /dev/vda3. Host filesystems are
 not mounted and physical disks are not accepted as output.
 .PP
