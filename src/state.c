@@ -1,3 +1,4 @@
+#define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include "state.h"
 #include "stage.h"
@@ -28,9 +29,12 @@
 #include <sys/utsname.h>
 #include <sys/file.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 static int set_journal_present(int dir);
+static int update_pending(int dir);
+static int completed_update(int transactions, const char *name);
 
 static int safe_directory(int fd)
 {
@@ -146,6 +150,9 @@ static int empty_child(int dir, const char *name)
     if (!entries) { close(fd); return 0; }
     errno = 0;
     while ((entry = readdir(entries)) != NULL) {
+        if (!strcmp(name, "transactions") && completed_update(fd, entry->d_name)) {
+            errno = 0; continue;
+        }
         if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..")) {
             empty = 0;
             break;
@@ -368,7 +375,9 @@ done:
 
 static int transaction_pending(int dir, unsigned long long generation)
 {
-    int result = set_journal_present(dir);
+    int result = update_pending(dir);
+    if (result) return result;
+    result = set_journal_present(dir);
     return result ? result : journal_valid(dir, generation, NULL, NULL, NULL, NULL);
 }
 
@@ -434,6 +443,7 @@ static int pending_child(int dir, unsigned long long generation, char digest[65]
     while ((entry = readdir(listing))) {
         if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
             continue;
+        if (completed_update(child, entry->d_name)) { errno = 0; continue; }
         if (strcmp(entry->d_name, "pending") || ++count > 1) break;
         errno = 0;
     }
@@ -617,6 +627,9 @@ int holy_state_reserve(const char *digest, const char *root_path)
     if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
         !installed_valid(dir) || !empty_child(dir, "index") ||
         !read_generation(dir, &generation)) goto done;
+    result = update_pending(dir);
+    if (result) { result = result > 0 ? 5 : 1; goto done; }
+    result = 1;
     result = pending_child(dir, generation, existing, approved);
     if (result < 0) { result = 1; goto done; }
     if (result) { result = 5; goto done; }
@@ -650,8 +663,11 @@ int holy_state_cancel(const char *root_path)
     int dir = state_dir(root_path, 0), transactions = -1, result = 1;
     if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
         !installed_valid(dir) || !empty_child(dir, "index") ||
-        !read_generation(dir, &generation) ||
-        pending_child(dir, generation, digest, approved) != 1) goto done;
+        !read_generation(dir, &generation)) goto done;
+    result = update_pending(dir);
+    if (result) { result = result > 0 ? 5 : 1; goto done; }
+    result = 1;
+    if (pending_child(dir, generation, digest, approved) != 1) goto done;
     transactions = child_dir(dir, "transactions", 0);
     if (transactions < 0 || unlinkat(transactions, "pending", 0) ||
         fsync(transactions)) goto done;
@@ -703,6 +719,7 @@ int holy_state_recover(const char *root_path)
     while ((entry = readdir(listing))) {
         if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
             continue;
+        if (completed_update(transactions, entry->d_name)) { errno = 0; continue; }
         if (!strcmp(entry->d_name, "pending")) {
             if (has_pending++) goto done;
         } else if (temporary_name(entry->d_name) && !temp_name[0]) {
@@ -744,6 +761,9 @@ int holy_state_preflight(const char *root_path, int json)
     if (dir < 0 || flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
         !installed_valid(dir) || !empty_child(dir, "index") ||
         !read_generation(dir, &generation)) goto done;
+    result = update_pending(dir);
+    if (result) { code = "incomplete-transaction"; result = result > 0 ? 5 : 1; goto done; }
+    result = 1;
     pending = pending_child(dir, generation, digest, approved);
     if (pending < 0) goto done;
     if (!pending) { result = 6; code = "unavailable-reservation"; goto done; }
@@ -1096,6 +1116,9 @@ int holy_state_plan(const char *root_path)
     if (root < 0 || dir < 0 || flock(dir, LOCK_SH) ||
         !state_layout(dir, 0) || !installed_valid(dir) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation)) goto done;
+    result = update_pending(dir);
+    if (result) { result = result > 0 ? 5 : 1; goto done; }
+    result = 1;
     pending = pending_child(dir, generation, digest, approved);
     if (pending < 0) goto done;
     if (!pending) { result = 6; goto done; }
@@ -1125,6 +1148,9 @@ int holy_state_approve(const char *hash, const char *root_path)
     if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
         !installed_valid(dir) || !empty_child(dir, "index") ||
         !read_generation(dir, &generation)) goto done;
+    result = update_pending(dir);
+    if (result) { result = result > 0 ? 5 : 1; goto done; }
+    result = 1;
     result = pending_child(dir, generation, digest, approved);
     if (result < 0) { result = 1; goto done; }
     if (!result) { result = 6; goto done; }
@@ -1168,6 +1194,9 @@ int holy_state_recheck(const char *root_path)
     if (dir < 0 || flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
         !installed_valid(dir) || !empty_child(dir, "index") ||
         !read_generation(dir, &generation)) goto done;
+    result = update_pending(dir);
+    if (result) { result = result > 0 ? 5 : 1; goto done; }
+    result = 1;
     pending = pending_child(dir, generation, digest, approved);
     if (pending < 0) goto done;
     if (!pending || !approved[0]) { result = 5; goto done; }
@@ -1320,6 +1349,9 @@ int holy_state_apply(const char *root_path)
     if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
         !installed_valid(dir) || !empty_child(dir, "index") ||
         !read_generation(dir, &generation) || generation == ULLONG_MAX) goto done;
+    result = update_pending(dir);
+    if (result) { result = result > 0 ? 5 : 1; goto done; }
+    result = 1;
     result = pending_child(dir, generation, digest, approved);
     if (result < 0) { result = 1; goto done; }
     if (!result || !approved[0]) { result = 5; goto done; }
@@ -2499,6 +2531,7 @@ static int read_set_journal(int dir, struct set_journal *journal)
         errno = 0;
         while ((entry = readdir(list))) {
             if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+            if (completed_update(transactions, entry->d_name)) { errno = 0; continue; }
             if (strcmp(entry->d_name, "set-journal")) { valid = 0; break; }
             errno = 0;
         }
@@ -2925,16 +2958,17 @@ int holy_state_repair(const char *digest, const char *approved, const char *root
             int valid = 1, journal_dir = child_dir(dir, "transactions", 0);
             if (journal_dir < 0) goto done;
             list = directory_stream(journal_dir);
-            close(journal_dir);
-            if (!list) goto done;
+            if (!list) { close(journal_dir); goto done; }
             errno = 0;
             while ((entry = readdir(list))) {
                 if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+                if (completed_update(journal_dir, entry->d_name)) { errno = 0; continue; }
                 if (strcmp(entry->d_name, "journal")) { valid = 0; break; }
                 errno = 0;
             }
             if (!entry && errno) valid = 0;
             closedir(list);
+            close(journal_dir);
             if (!valid) goto done;
         }
         journaled = 1;
@@ -2999,16 +3033,343 @@ done:
     return result;
 }
 
-int holy_state_update_plan(const char *old_digest, const char *new_digest,
-                           const char *root_path)
+struct update_journal {
+    unsigned long long generation;
+    char old[65], next[65], plan[65];
+};
+
+static char *update_record(int dir, const char *name)
+{
+    struct stat st;
+    int fd = openat(dir, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    char *bytes = NULL;
+    size_t used = 0;
+    if (fd < 0) return NULL;
+    errno = 0;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+        st.st_size > 64 * 1024 * 1024 || (st.st_mode & 0022) ||
+        (st.st_uid != 0 && st.st_uid != geteuid())) goto done;
+    bytes = malloc((size_t)st.st_size + 1);
+    if (!bytes) goto done;
+    while (used < (size_t)st.st_size) {
+        ssize_t got = read(fd, bytes + used, (size_t)st.st_size - used);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) { free(bytes); bytes = NULL; goto done; }
+        used += (size_t)got;
+    }
+    if (memchr(bytes, 0, used)) { free(bytes); bytes = NULL; goto done; }
+    bytes[used] = 0;
+done:
+    close(fd);
+    return bytes;
+}
+
+static int completed_update(int transactions, const char *name)
+{
+    int child, ok;
+    char *record;
+    if (!valid_digest(name)) return 0;
+    child = child_dir(transactions, name, 0);
+    if (child < 0) return 0;
+    record = update_record(child, "committed");
+    ok = record && strlen(record) == 65 && !memcmp(record, name, 64) && record[64] == '\n';
+    free(record); close(child);
+    return ok;
+}
+
+static int update_pending(int dir)
+{
+    struct stat st;
+    int transactions = child_dir(dir, "transactions", 0), result = -1;
+    if (transactions < 0) return -1;
+    if (fstatat(transactions, "update", &st, AT_SYMLINK_NOFOLLOW)) {
+        if (errno == ENOENT) result = 0;
+    } else if (S_ISDIR(st.st_mode) && !(st.st_mode & 0022) &&
+               (st.st_uid == 0 || st.st_uid == geteuid())) result = 1;
+    close(transactions);
+    return result;
+}
+
+static int update_replace(int dir, const char *name, const char *record)
+{
+    char temporary[43] = {0};
+    int fd = holy_temporary_at(dir, temporary), ok = 0;
+    if (fd < 0) return 0;
+    if (!write_all(fd, record, strlen(record)) || fsync(fd)) goto done;
+    if (renameat(dir, temporary, dir, name) || fsync(dir)) goto done;
+    ok = 1;
+done:
+    close(fd);
+    if (!ok) unlinkat(dir, temporary, 0);
+    return ok;
+}
+
+static int read_update_journal(int work, unsigned long long current, struct update_journal *journal)
+{
+    char *record = update_record(work, "journal"), prefix[128];
+    size_t length;
+    int attempt, ok = 0;
+    if (!record) return 0;
+    for (attempt = 0; attempt < 2; ++attempt) {
+        const char *p;
+        if (attempt && !current) break;
+        journal->generation = current - (unsigned)attempt;
+        length = (size_t)snprintf(prefix, sizeof prefix,
+            "format holy-update-journal-1\ngeneration %llu\nold ", journal->generation);
+        if (strlen(record) != length + 204 || memcmp(record, prefix, length)) continue;
+        p = record + length;
+        if (p[64] != '\n' || memcmp(p + 65, "new ", 4) || p[133] != '\n' ||
+            memcmp(p + 134, "plan ", 5) || p[203] != '\n') continue;
+        memcpy(journal->old, p, 64); journal->old[64] = 0;
+        memcpy(journal->next, p + 69, 64); journal->next[64] = 0;
+        memcpy(journal->plan, p + 139, 64); journal->plan[64] = 0;
+        ok = valid_digest(journal->old) && valid_digest(journal->next) &&
+             valid_digest(journal->plan) && strcmp(journal->old, journal->next) &&
+             journal->generation != ULLONG_MAX;
+        if (ok) break;
+    }
+    free(record);
+    return ok;
+}
+
+static int instance_graph(const struct holy_resolution *full, const char *digest,
+                           char **record, size_t *length)
+{
+    struct holy_resolution part = {0};
+    size_t i, j, count = 1;
+    int ok = 0;
+    memcpy(part.root, digest, 65);
+    part.artifacts = calloc(full->artifact_count, sizeof *part.artifacts);
+    part.edges = calloc(full->edge_count ? full->edge_count : 1, sizeof *part.edges);
+    if (!part.artifacts || !part.edges) goto done;
+    part.artifacts[0] = (char *)digest;
+    for (i = 0; i < full->edge_count; ++i) if (!strcmp(full->edges[i].consumer, digest)) {
+        part.edges[part.edge_count++] = full->edges[i];
+        for (j = 0; j < count; ++j)
+            if (!strcmp(part.artifacts[j], full->edges[i].provider)) break;
+        if (j == count) {
+            if (count == full->artifact_count) goto done;
+            part.artifacts[count++] = full->edges[i].provider;
+        }
+    }
+    part.artifact_count = count;
+    qsort(part.artifacts, count, sizeof *part.artifacts, compare_instance_names);
+    ok = holy_resolution_record(&part, record, length);
+done:
+    free(part.artifacts); free(part.edges);
+    return ok;
+}
+
+static int clear_update_installed(int parent, const struct holy_resolution *resolution)
+{
+    static const char *const files[] = {"meta", "files", "deps", "origin", "graph", "state", "source"};
+    int installed = child_dir(parent, "installed", 1), item = -1, ok = 0;
+    DIR *list = NULL, *members = NULL;
+    struct dirent *entry;
+    size_t i;
+    if (installed < 0 || !(list = directory_stream(installed))) goto done;
+    errno = 0;
+    while ((entry = readdir(list))) {
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        for (i = 0; i < resolution->artifact_count; ++i)
+            if (!strcmp(entry->d_name, resolution->artifacts[i])) break;
+        if (i == resolution->artifact_count || (item = child_dir(installed, entry->d_name, 0)) < 0 ||
+            !(members = directory_stream(item))) goto done;
+        errno = 0;
+        for (;;) {
+            struct stat st;
+            struct dirent *member = readdir(members);
+            if (!member) { if (errno) goto done; break; }
+            if (!strcmp(member->d_name, ".") || !strcmp(member->d_name, "..")) continue;
+            for (i = 0; i < sizeof files / sizeof *files; ++i)
+                if (!strcmp(member->d_name, files[i])) break;
+            if (i == sizeof files / sizeof *files || fstatat(item, member->d_name, &st, AT_SYMLINK_NOFOLLOW) ||
+                !S_ISREG(st.st_mode) || st.st_uid != geteuid() || (st.st_mode & 0022)) goto done;
+            errno = 0;
+        }
+        closedir(members); members = NULL;
+        for (i = 0; i < sizeof files / sizeof *files; ++i)
+            if (unlinkat(item, files[i], 0) && errno != ENOENT) goto done;
+        if (fsync(item)) goto done;
+        close(item); item = -1;
+        if (unlinkat(installed, entry->d_name, AT_REMOVEDIR) || fsync(installed)) goto done;
+        errno = 0;
+    }
+    ok = errno == 0;
+done:
+    if (members) closedir(members);
+    if (list) closedir(list);
+    if (item >= 0) close(item);
+    if (installed >= 0) close(installed);
+    return ok;
+}
+
+static int update_instances(int next_db, int before, char **names, char **snapshots,
+                             size_t count, size_t replaced, const char *new_digest,
+                             const char *new_source, unsigned long long generation,
+                             const struct holy_resolution *resolution, int create)
+{
+    int installed = -1, item = -1, proposed = -1, ok = 0;
+    char *source = NULL, *graph = NULL;
+    size_t i, length = 0;
+    if (create && !clear_update_installed(next_db, resolution)) return 0;
+    installed = child_dir(next_db, "installed", 0);
+    if (installed < 0) goto done;
+    for (i = 0; i < count; ++i) {
+        const char *digest = i == replaced ? new_digest : names[i], *reason;
+        unsigned long long recorded;
+        char expected[65], actual[65];
+        unsigned char hash[32];
+        unsigned hash_size;
+        size_t j;
+        item = child_dir(before, names[i], 0);
+        if (item < 0) goto done;
+        reason = instance_reason_matches(item, "dependency") ? "dependency" : "explicit";
+        if (i == replaced && new_source) source = strdup(new_source);
+        else source = update_record(item, "source");
+        if (!source && ((i == replaced && new_source) || errno != ENOENT)) goto done;
+        if (!instance_graph(resolution, digest, &graph, &length)) goto done;
+        if (create && !save_instance(installed, digest, snapshots[i], generation, graph, length, reason, source)) goto done;
+        proposed = child_dir(installed, digest, 0);
+        if (proposed < 0 || !instance_state_generation(proposed, digest, &recorded) || recorded != generation + 1 ||
+            !instance_reason_matches(proposed, reason) || !instance_source_matches(proposed, source) ||
+            !instance_matches_snapshot(proposed, snapshots[i]) || !graph_digest(proposed, actual) ||
+            EVP_Digest(graph, length, hash, &hash_size, EVP_sha256(), NULL) != 1 || hash_size != 32) goto done;
+        for (j = 0; j < 32; ++j) snprintf(expected + j * 2, 3, "%02x", hash[j]);
+        if (strcmp(expected, actual)) goto done;
+        free(source); source = NULL; free(graph); graph = NULL;
+        close(item); item = -1; close(proposed); proposed = -1;
+    }
+    {
+        DIR *list = directory_stream(installed);
+        struct dirent *entry;
+        size_t found = 0;
+        if (!list) goto done;
+        errno = 0;
+        while ((entry = readdir(list))) {
+            if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+            for (i = 0; i < resolution->artifact_count; ++i)
+                if (!strcmp(entry->d_name, resolution->artifacts[i])) break;
+            if (i == resolution->artifact_count) break;
+            ++found; errno = 0;
+        }
+        ok = !entry && !errno && found == count;
+        closedir(list);
+    }
+    ok = ok && installed_valid(next_db) && !fsync(installed);
+done:
+    free(source); free(graph);
+    if (item >= 0) close(item);
+    if (proposed >= 0) close(proposed);
+    if (installed >= 0) close(installed);
+    return ok;
+}
+
+struct update_progress {
+    int work;
+    const struct holy_file_plan *files;
+};
+
+static int update_exchange_available(int work)
+{
+    int a = child_dir(work, "exchange-a", 1), b = child_dir(work, "exchange-b", 1), ok = 0;
+    if (a < 0 || b < 0) goto done;
+#ifdef SYS_renameat2
+    if (syscall(SYS_renameat2, work, "exchange-a", work, "exchange-b", 2u)) {
+        fputs("holypkg: renameat2(RENAME_EXCHANGE) unavailable for installed database\n", stderr);
+        goto done;
+    }
+    ok = !fsync(work) && !unlinkat(work, "exchange-a", AT_REMOVEDIR) &&
+         !unlinkat(work, "exchange-b", AT_REMOVEDIR) && !fsync(work);
+#else
+    fputs("holypkg: renameat2(RENAME_EXCHANGE) unavailable\n", stderr);
+#endif
+done:
+    if (a >= 0) close(a);
+    if (b >= 0) close(b);
+    return ok;
+}
+
+static int update_progress(void *context, size_t index, int completed)
+{
+    struct update_progress *p = context;
+    char record[160];
+    snprintf(record, sizeof record, "stage applying\nchange %s\nresult %s\n",
+             p->files->changes[index].id, completed ? "done" : "intent");
+    return update_replace(p->work, "progress", record);
+}
+
+static int finish_update(int root, int db, int transactions, int work, int before,
+                         char **names, char **snapshots, size_t count, size_t replaced,
+                         const struct update_journal *journal, const char *source,
+                         const struct holy_resolution *resolution, const struct holy_file_plan *files,
+                         int resume, int swapped, unsigned long long current)
+{
+    int next_db = -1, result = 5;
+    size_t failed = 0;
+    char committed[66];
+    struct update_progress progress = {work, files};
+    struct stat expected, observed;
+    next_db = child_dir(work, "next-db", !swapped);
+    if (next_db < 0) goto done;
+    if (!swapped) {
+        if (current != journal->generation || !update_exchange_available(work) ||
+            !update_instances(next_db, before, names, snapshots, count, replaced,
+                              journal->next, source, journal->generation, resolution, 1) ||
+            !update_replace(work, "progress", "stage prepared\n")) goto done;
+        if (holy_file_plan_stage(files, snapshots[replaced], root, resume, &failed) ||
+            holy_file_plan_apply(files, root, update_progress, &progress, &failed)) {
+            fprintf(stderr, "holypkg: incomplete update at file change %zu; inspect reserved staging objects\n", failed);
+            goto done;
+        }
+        if (fstat(before, &expected) || fstatat(db, "installed", &observed, AT_SYMLINK_NOFOLLOW) ||
+            expected.st_dev != observed.st_dev || expected.st_ino != observed.st_ino ||
+            !update_replace(work, "progress", "stage publishing\n")) goto done;
+#ifdef SYS_renameat2
+        if (syscall(SYS_renameat2, db, "installed", next_db, "installed", 2u)) {
+            if (errno == ENOSYS || errno == EINVAL || errno == EOPNOTSUPP)
+                fputs("holypkg: renameat2(RENAME_EXCHANGE) unavailable; update remains incomplete\n", stderr);
+            goto done;
+        }
+#else
+        fputs("holypkg: renameat2(RENAME_EXCHANGE) unavailable; update remains incomplete\n", stderr);
+        goto done;
+#endif
+    }
+    if (fsync(next_db) || fsync(db)) goto done;
+    if (holy_file_plan_finished(files, root) ||
+        !update_instances(db, before, names, snapshots, count, replaced,
+                          journal->next, source, journal->generation, resolution, 0) ||
+        (current == journal->generation && !set_generation(db, journal->generation + 1)) || fsync(db)) goto done;
+    snprintf(committed, sizeof committed, "%s\n", journal->plan);
+    if (!update_replace(work, "progress", "stage committed\n") ||
+        !update_replace(work, "committed", committed)) goto done;
+#ifdef SYS_renameat2
+    if (syscall(SYS_renameat2, transactions, "update", transactions, journal->plan, 1u) || fsync(transactions)) goto done;
+#else
+    goto done;
+#endif
+    printf("updated %s to %s generation %llu plan %s\n", journal->old, journal->next,
+           journal->generation + 1, journal->plan);
+    result = 0;
+done:
+    if (next_db >= 0) close(next_db);
+    return result;
+}
+
+static int state_update(const char *old_digest, const char *new_digest,
+                         const char *expected, const char *root_path, int resume)
 {
     int root = -1, dir = -1, installed = -1, item = -1, files = -1, result = 1, pending;
+    int transactions = -1, work = -1, old_db = -1, reference_db = -1, swapped = 0, journaled = 0;
+    struct update_journal journal = {0};
+    char *saved = NULL;
     char **names = NULL, **snapshots = NULL, **states = NULL;
     char source[65], registry[65], existing[65], approved[65], checksum[65];
     char *old_snapshot = NULL, *new_snapshot = NULL, *source_record = NULL;
     char *file_record = NULL, *graph_record = NULL, *record = NULL;
     size_t count = 0, i, old_index = 0, file_size = 0, graph_size = 0, record_size = 0, failed;
-    unsigned long long generation, recorded;
+    unsigned long long generation, recorded, current_generation;
     struct stat root_st, db_st;
     struct holy_package_identity old = {0}, next = {0};
     struct holy_file_plan changes = {0};
@@ -3020,19 +3381,50 @@ int holy_state_update_plan(const char *old_digest, const char *new_digest,
     FILE *out = NULL;
     unsigned char bytes[32];
     unsigned length;
-    if (!valid_digest(old_digest) || !valid_digest(new_digest)) return 2;
-    if (!strcmp(old_digest, new_digest)) return 3;
+    if (!resume && (!valid_digest(old_digest) || !valid_digest(new_digest) ||
+                    (expected && !valid_digest(expected)))) return 2;
+    if (!resume && !strcmp(old_digest, new_digest)) return 3;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0 || fstat(root, &root_st) || (dir = state_dir_at(root, 0)) < 0 ||
-        flock(dir, LOCK_SH) || fstat(dir, &db_st) || !state_layout(dir, 0) ||
+        flock(dir, expected || resume ? LOCK_EX : LOCK_SH) || fstat(dir, &db_st) || !state_layout(dir, 0) ||
         !read_generation(dir, &generation)) goto done;
-    pending = transaction_pending(dir, generation);
-    if (pending < 0) goto done;
-    if (pending) { result = 5; goto done; }
-    pending = pending_child(dir, generation, existing, approved);
-    if (pending < 0) goto done;
-    if (pending) { result = 5; goto done; }
-    if (!installed_valid(dir) || (installed = child_dir(dir, "installed", 0)) < 0 ||
+    current_generation = generation;
+    reference_db = dir;
+    if (resume) {
+        struct stat a, b;
+        int old_present, new_present, live;
+        result = 6;
+        transactions = child_dir(dir, "transactions", 0);
+        work = transactions < 0 ? -1 : child_dir(transactions, "update", 0);
+        if (work < 0) goto done;
+        journaled = 1; result = 5;
+        if (!read_update_journal(work, generation, &journal)) goto done;
+        old_digest = journal.old; new_digest = journal.next; expected = journal.plan;
+        generation = journal.generation;
+        saved = update_record(work, "plan");
+        if (!saved && errno != ENOENT) goto done;
+        live = child_dir(dir, "installed", 0);
+        if (live < 0) goto done;
+        old_present = !fstatat(live, old_digest, &a, AT_SYMLINK_NOFOLLOW);
+        new_present = !fstatat(live, new_digest, &b, AT_SYMLINK_NOFOLLOW);
+        close(live);
+        if (old_present == new_present) goto done;
+        swapped = new_present;
+        if (swapped) {
+            old_db = child_dir(work, "next-db", 0);
+            if (old_db < 0) goto done;
+            reference_db = old_db;
+        } else if (current_generation != generation) goto done;
+    } else {
+        pending = transaction_pending(dir, generation);
+        if (pending < 0) goto done;
+        if (pending) { result = 5; goto done; }
+        pending = pending_child(dir, generation, existing, approved);
+        if (pending < 0) goto done;
+        if (pending) { result = 5; goto done; }
+    }
+    result = 1;
+    if (!installed_valid(reference_db) || (installed = child_dir(reference_db, "installed", 0)) < 0 ||
         !(list = directory_stream(installed))) goto done;
     names = calloc(10000, sizeof *names);
     snapshots = calloc(10000, sizeof *snapshots);
@@ -3067,8 +3459,8 @@ int holy_state_update_plan(const char *old_digest, const char *new_digest,
         states[i] = strdup(state);
         if (!states[i]) goto done;
         if (exclusive_claims(installed, names[i], files) != 1 ||
-            holy_install_check_manifest(files, root) != 1 ||
-            check_graph(installed, root, names[i], NULL) != 1) { result = 4; goto done; }
+            ((!resume || i != old_index) && holy_install_check_manifest(files, root) != 1) ||
+            (!resume && check_graph(installed, root, names[i], NULL) != 1)) { result = 4; goto done; }
         if (i == old_index && !installed_source_id(item, source)) goto done;
         close(files); files = -1;
         close(item); item = -1;
@@ -3084,7 +3476,7 @@ int holy_state_update_plan(const char *old_digest, const char *new_digest,
         !holy_package_identity(new_snapshot, &next) ||
         !empty_transform(new_snapshot) || !instance_preflight(new_snapshot)) goto done;
     if (!same_slot(&old, source, &next, source)) { result = 4; goto done; }
-    pending = slot_available_except(dir, &next, source, old_digest);
+    pending = slot_available_except(reference_db, &next, source, old_digest);
     if (pending != 1) { result = pending < 0 ? 1 : 4; goto done; }
     result = holy_preview_resolved(new_snapshot, root_path, 1);
     if (result) goto done;
@@ -3097,7 +3489,7 @@ int holy_state_update_plan(const char *old_digest, const char *new_digest,
         !holy_verify_visit(new_snapshot, plan_entry, &validation) ||
         !holy_file_plan_collect(snapshots[old_index], new_snapshot, &changes) ||
         !holy_file_plan_record(&changes, &file_record, &file_size)) goto done;
-    result = holy_file_plan_check(&changes, root, 0, &failed);
+    result = holy_file_plan_check(&changes, root, resume, &failed);
     if (result) {
         fprintf(stderr, "holypkg: update file preflight failed at change %zu\n", failed);
         goto done;
@@ -3133,16 +3525,48 @@ int holy_state_update_plan(const char *old_digest, const char *new_digest,
         EVP_Digest(record, record_size, bytes, &length, EVP_sha256(), NULL) != 1 || length != 32)
         goto done;
     for (i = 0; i < 32; ++i) snprintf(checksum + i * 2, 3, "%02x", bytes[i]);
-    if (printf("plan-update sha256 %s read-only\n", checksum) < 0 ||
-        fwrite(record, 1, record_size, stdout) != record_size) goto done;
-    result = 0;
+    if (!expected) {
+        if (printf("plan-update sha256 %s read-only\n", checksum) < 0 ||
+            fwrite(record, 1, record_size, stdout) != record_size) goto done;
+        result = 0;
+        goto done;
+    }
+    if (strcmp(expected, checksum) || (saved && strcmp(saved, record))) { result = 3; goto done; }
+    if (generation == ULLONG_MAX || record_size > 64 * 1024 * 1024) { result = 6; goto done; }
+    if (!resume) {
+        char header[384];
+        result = holy_file_plan_reservations(&changes, root);
+        if (result) goto done;
+        result = 1;
+        transactions = child_dir(dir, "transactions", 0);
+        if (transactions < 0 || mkdirat(transactions, "update", 0700)) goto done;
+        journaled = 1;
+        if (fsync(transactions) || (work = child_dir(transactions, "update", 0)) < 0) goto done;
+        journal.generation = generation;
+        memcpy(journal.old, old_digest, 65); memcpy(journal.next, new_digest, 65); memcpy(journal.plan, checksum, 65);
+        snprintf(header, sizeof header,
+            "format holy-update-journal-1\ngeneration %llu\nold %s\nnew %s\nplan %s\n",
+            generation, old_digest, new_digest, checksum);
+        if (!update_replace(work, "journal", header)) goto done;
+    }
+    if (!saved && !update_replace(work, "plan", record)) goto done;
+    result = finish_update(root, dir, transactions, work, installed, names, snapshots,
+                           count, old_index, &journal, source_record, &resolution,
+                           &changes, resume, swapped, current_generation);
 done:
-    if (result) fprintf(stderr, "holypkg: cannot form update plan (status %d)\n", result);
+    if (result) {
+        fprintf(stderr, "holypkg: update failed (status %d)%s\n", result, journaled ? "; update journal retained" : "");
+        if (journaled) result = 5;
+    }
     if (out) fclose(out);
     if (list) closedir(list);
     if (files >= 0) close(files);
     if (item >= 0) close(item);
     if (installed >= 0) close(installed);
+    if (old_db >= 0) close(old_db);
+    if (work >= 0) close(work);
+    if (transactions >= 0) close(transactions);
+    free(saved);
     if (dir >= 0) close(dir);
     if (root >= 0) close(root);
     if (old_snapshot) { unlink(old_snapshot); free(old_snapshot); }
@@ -3158,4 +3582,20 @@ done:
     holy_file_plan_free(&changes); holy_resolution_free(&resolution); free_set(&claims);
     EVP_MD_CTX_free(validation.hash);
     return result;
+}
+
+int holy_state_update_plan(const char *old_digest, const char *new_digest, const char *root_path)
+{
+    return state_update(old_digest, new_digest, NULL, root_path, 0);
+}
+
+int holy_state_apply_update(const char *plan, const char *old_digest,
+                            const char *new_digest, const char *root_path)
+{
+    return state_update(old_digest, new_digest, plan, root_path, 0);
+}
+
+int holy_state_recover_update(const char *root_path)
+{
+    return state_update(NULL, NULL, NULL, root_path, 1);
 }

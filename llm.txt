@@ -492,7 +492,7 @@ SOURCE IDENTITIES
      during package selection remain unimplemented.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=c6417a25cfecc5f61a83d1cab74604f08d86b3de76d69ec93b1b8f2e3a6ffaee
+holypkg.8 source=holy version=development sha256=6de990f33147929c832e17ec19e0d2f33161ccd455049c8fe016f593c37592a0
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -554,6 +554,8 @@ SYNOPSIS
      holypkg db recover --finish-set|--continue-set --root DIRECTORY
      holypkg db repair-plan SHA256 --root DIRECTORY
      holypkg db plan-update OLD_SHA256 NEW_SHA256 --root DIRECTORY
+     holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 --root DIRECTORY
+     holypkg db recover --update --root DIRECTORY
      holypkg db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY
      holypkg db recover --repair --root DIRECTORY
      holypkg db check SHA256 --root DIRECTORY
@@ -1025,15 +1027,42 @@ DESCRIPTION
      This preview writes no installed state or payload and executes  no	 package
      code.   Missing  or  modified  installed  files  conflict;	 modified-config
      preservation, directory creation, hooks, new provider selection and  multi-
-     package  replacement  are not implemented. There is no apply-update command
-     yet. The printed record is not accepted by db apply or db	apply-set.  JSON
-     output is not implemented.
+     package replacement are not implemented. The printed record is not accepted
+     by db apply or db apply-set. JSON output is not implemented.
 
      The  internal  file  planner  records retained, added, replaced and removed
      paths with stable IDs and archive hashes. Unsupported entries remain in the
      record and prevent application. Recovery checking accepts exact old or  new
-     objects  and  rejects  unrelated changes. Durable update journaling remains
-     unimplemented.
+     objects and rejects unrelated changes.
+
+     db	 apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 --root DIRECTORY applies
+     that cached replacement after reconstructing  and	comparing  the	approved
+     plan  under  the  writer lock. It preserves explicit/dependency reasons and
+     source identity, rewrites each installed consumer's own provider edges, and
+     increments the database generation once. A changed root, registry,	 genera-
+     tion, artifact or installed state requires a new preview.
+
+     Before  changing  target  files,  apply checks reserved sibling names, pub-
+     lishes an immutable journal and plan  under  transactions/update,	prepares
+     the  next	installed database, and stages all changed payload. The progress
+     record tracks the latest file transition ID and  its  intent/result.  Files
+     become  visible  individually; the operation does not atomically switch the
+     whole rootfs.  Database  publication  requires  renameat2(RENAME_EXCHANGE),
+     tested  on	 that  filesystem before payload mutation.  After validating the
+     new payload, database and generation, apply retains the  old  database  and
+     journal  under  transactions/PLAN_SHA256.	It  retains cached old archives.
+     These records are not a general rollback command.
+
+     db recover --update revalidates  the  immutable  plan,  cached  inputs  and
+     old/new  file states before continuing the interrupted operation. It recog-
+     nizes a completed database exchange or generation publication and does  not
+     repeat them. Other state operations refuse the active update with status 5.
+     Recovery  preserves  unexpected  or partly written reserved staging objects
+     and returns 5 for inspection; it does not delete them automatically.  Miss-
+     ing  cached inputs must be restored. Interruption before publishing the im-
+     mutable journal requires manual  inspection.  Unchanged  files  must  still
+     match  their recorded state. Recovery does not execute hooks or merge modi-
+     fied configs.
 
      The internal resolver can also validate a complete proposed  artifact  set.
      It	 requires  every supplied artifact, including disconnected consumers and
@@ -1586,11 +1615,11 @@ SOURCE REGISTRATION
 
      An ID identifies a configured origin; it is  not  signature  evidence.  The
      current registry retains inactive origins and supports explicit local-arti-
-     fact associations in set installation. Slot replacement, configured catalog
-     synchronization  and  source-aware update application remain unimplemented.
-     Cached replacement preview is available through db plan-update. These  com-
-     mands do not yet implement JSON output. See holy.conf(5) for identity rules
-     and endpoint restrictions.
+     fact  associations in set installation and cached slot replacement. Config-
+     ured catalog synchronization and automatic update candidate  selection  re-
+     main  unimplemented. Explicit cached replacement uses db plan-update and db
+     apply-update.  These  commands  do	 not  yet  implement  JSON  output.  See
+     holy.conf(5) for identity rules and endpoint restrictions.
 
 ORPHAN PACKAGES
      orphan  reads  a  consistent  installed-state snapshot under the database's

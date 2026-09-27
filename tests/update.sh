@@ -20,7 +20,11 @@ package() {
     if test -n "$dependency"; then
         printf 'require dep-1 %s package %s any any any - %s metadata\n' "$name" "$dependency" "$dependency" > "$tree/$label/HOLY/deps"
     fi
-    printf '%s\n' "$label" > "$tree/$label/DATA/usr/share/$path"
+    if test "${5:-file}" = link; then
+        ln -s app "$tree/$label/DATA/usr/share/$path"
+    else
+        printf '%s\n' "$label" > "$tree/$label/DATA/usr/share/$path"
+    fi
     "$bin" manifest generate "$tree/$label" --output "$tmp/files" > "$tmp/out"
     mv "$tmp/files" "$tree/$label/HOLY/files"
     "$bin" pack "$tree/$label" --output "$tmp/$label.holy" > "$tmp/out"
@@ -47,11 +51,19 @@ package extra extra extra ''
 package missing base payload absent
 package collision base extra ''
 package rename other payload ''
+package moved base relocated ''
+package linked base payload '' link
 old=$(hash base1) new=$(hash base2) app=$(hash app) extra=$(hash extra)
 install "$app" "$old"
 install "$extra"
 expect 0 "$bin" db plan-update "$old" "$new" --root "$root"
 cp "$tmp/out" "$tmp/plan"
+reserved=$(awk '$1 == "change" && $3 == "replace" {print $2; exit}' "$tmp/plan")
+printf 'unowned\n' > "$root/usr/share/.holy-update-$reserved"
+expect 4 "$bin" db apply-update "$(sed -n 's/^plan-update sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/plan")" "$old" "$new" --root "$root"
+grep -qx unowned "$root/usr/share/.holy-update-$reserved"
+test ! -e "$root/var/lib/holypkg/transactions/update"
+rm "$root/usr/share/.holy-update-$reserved"
 expect 0 "$bin" db plan-update "$old" "$new" --root "$root"
 cmp "$tmp/plan" "$tmp/out"
 python3 - "$tmp/plan" "$old" "$new" "$app" "$extra" <<'PY'
@@ -96,6 +108,86 @@ mkdir -p "$tmp/second/usr/share"
 cp -a "$root/." "$tmp/second/"
 expect 0 "$bin" db plan-update "$old" "$new" --root "$tmp/second"
 if cmp -s "$tmp/plan" "$tmp/out"; then exit 1; fi
+copy_root="$tmp/second"
+update_hash() { sed -n 's/^plan-update sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out"; }
+approved=$(sed -n 's/^plan-update sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/plan")
+expect 3 "$bin" db apply-update "$approved" "$old" "$new" --root "$copy_root"
+replace() {
+    expect 0 "$bin" db plan-update "$1" "$2" --root "$copy_root"
+    approved=$(update_hash)
+    expect 0 "$bin" db apply-update "$approved" "$1" "$2" --root "$copy_root"
+    expect 0 "$bin" db status --root "$copy_root"
+    expect 0 "$bin" db check --all --root "$copy_root"
+    test ! -d "$copy_root/var/lib/holypkg/installed/$1"
+    test -d "$copy_root/var/lib/holypkg/installed/$2"
+    grep -qx "$approved" "$copy_root/var/lib/holypkg/transactions/$approved/committed"
+    grep -qx 'reason dependency' "$copy_root/var/lib/holypkg/installed/$2/state"
+    expect 0 "$bin" orphan --root "$copy_root" --json
+}
+replace "$old" "$new"
+grep -qx base2 "$copy_root/usr/share/payload"
+grep -q "\"$new\"" "$copy_root/var/lib/holypkg/installed/$app/graph"
+if grep -q "\"$old\"" "$copy_root/var/lib/holypkg/installed/$app/graph"; then exit 1; fi
+expect 3 "$bin" db rm "$new" --root "$copy_root"
+replace "$new" "$(hash moved)"
+test ! -e "$copy_root/usr/share/payload"
+grep -qx moved "$copy_root/usr/share/relocated"
+replace "$(hash moved)" "$(hash linked)"
+test ! -e "$copy_root/usr/share/relocated"
+test "$(readlink "$copy_root/usr/share/payload")" = app
+replace "$(hash linked)" "$old"
+grep -qx base1 "$copy_root/usr/share/payload"
+expect 0 "$bin" db rm "$extra" --root "$copy_root"
+expect 0 "$bin" db check --all --root "$copy_root"
+if "$bin" elf "$bin" | grep -q '^interpreter /'; then
+    gcc -shared -fPIC -o "$tmp/update-fault.so" "$(dirname "$0")/update-fault.c" -ldl
+    fault_client=dynamic
+elif test "${HOLY_TEST_STATIC_UPDATE_FAULT:-0}" = 1; then
+    fault_client=static
+else
+    fault_client=skip
+    printf 'update fault injection skipped for uninstrumented static client\n'
+fi
+if test "$fault_client" != skip; then
+    for phase in intent-after payload-before payload-after database-before database-after generation-after committed no-space staging-partial; do
+        copy_root="$tmp/fault-$phase"
+        mkdir "$copy_root"
+        cp -a "$root/." "$copy_root/"
+        expect 0 "$bin" db plan-update "$old" "$new" --root "$copy_root"
+        approved=$(update_hash)
+        if test "$fault_client" = dynamic; then
+            if env LD_PRELOAD="$tmp/update-fault.so" HOLY_UPDATE_FAULT="$phase" HOLY_UPDATE_NEW="$new" \
+                "$bin" db apply-update "$approved" "$old" "$new" --root "$copy_root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else code=$?; fi
+        else
+            if env HOLY_UPDATE_FAULT="$phase" HOLY_UPDATE_NEW="$new" \
+                "$bin" db apply-update "$approved" "$old" "$new" --root "$copy_root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else code=$?; fi
+        fi
+        if test "$phase" = no-space; then test "$code" -eq 5; else test "$code" -eq 137; fi
+        expect 5 "$bin" db status --root "$copy_root"
+        expect 5 "$bin" db reserve "$extra" --root "$copy_root"
+        for blocked in cancel preflight plan recheck apply; do
+            expect 5 "$bin" db "$blocked" --root "$copy_root"
+        done
+        expect 5 "$bin" db approve "$approved" --root "$copy_root"
+        expect 5 "$bin" db check --all --root "$copy_root"
+        expect 5 "$bin" db plan-set "$extra" --root "$copy_root"
+        if test "$phase" = staging-partial; then
+            grep -qx base1 "$copy_root/usr/share/payload"
+            expect 5 "$bin" db recover --update --root "$copy_root"
+            grep -q 'reserved update object requires inspection' "$tmp/err"
+            test "$(find "$copy_root/usr/share" -name '.holy-update-*' | wc -l)" -eq 1
+            find "$copy_root/usr/share" -name '.holy-update-*' -type f -delete
+        fi
+        expect 0 "$bin" db recover --update --root "$copy_root"
+        expect 0 "$bin" db status --root "$copy_root"
+        expect 0 "$bin" db check --all --root "$copy_root"
+        expect 0 "$bin" orphan --root "$copy_root" --json
+        grep -qx base2 "$copy_root/usr/share/payload"
+        test ! -d "$copy_root/var/lib/holypkg/installed/$old"
+        grep -qx "$approved" "$copy_root/var/lib/holypkg/transactions/$approved/committed"
+        test "$(find "$copy_root/usr/share" -name '.holy-update-*' | wc -l)" -eq 0
+    done
+fi
 cat > "$tmp/config" <<'EOF'
 [source official]
 type holy-http
@@ -121,4 +213,20 @@ if cmp -s "$tmp/sourced-plan" "$tmp/out"; then exit 1; fi
 register
 expect 6 "$bin" db plan-update "$first" "$second" --root "$root"
 expect 0 "$bin" db check --all --root "$root"
-printf 'update plan fixtures passed\n'
+cat > "$tmp/config" <<'EOF'
+[source renamed]
+type holy-http
+url https://source.example/holy
+EOF
+register
+expect 0 "$bin" db plan-update "$first" "$second" --root "$root"
+approved=$(update_hash)
+expect 0 "$bin" db apply-update "$approved" "$first" "$second" --root "$root"
+grep -qx "source-id $source" "$root/var/lib/holypkg/installed/$second/state"
+grep -qx "source $source \"renamed\"" "$root/var/lib/holypkg/installed/$second/source"
+grep -qx 'reason explicit' "$root/var/lib/holypkg/installed/$second/state"
+expect 0 "$bin" db check --all --root "$root"
+: > "$tmp/config"
+register
+expect 0 "$bin" db check --all --root "$root"
+printf 'update transaction fixtures passed\n'

@@ -32,5 +32,17 @@ int holy_file_plan_record(const struct holy_file_plan *plan, char **record, size
    the change index. ownership, dependency and source checks belong to the caller. */
 int holy_file_plan_check(const struct holy_file_plan *plan, int root, int recovering,
                          size_t *failed);
+/* caller journals reservations first. stage verifies the immutable new archive's
+   changed payload before any target replacement; partial siblings require review. */
+int holy_file_plan_stage(const struct holy_file_plan *plan, const char *snapshot,
+                         int root, int recovering, size_t *failed);
+/* no mutation; new transactions require every reserved sibling to be absent. */
+int holy_file_plan_reservations(const struct holy_file_plan *plan, int root);
+/* callback persists each intent/result; zero stops before the next mutation. */
+typedef int (*holy_change_progress)(void *, size_t, int);
+int holy_file_plan_apply(const struct holy_file_plan *plan, int root,
+                         holy_change_progress progress, void *context, size_t *failed);
+/* requires the completed payload; removed shared directories remain present. */
+int holy_file_plan_finished(const struct holy_file_plan *plan, int root);
 
 #endif

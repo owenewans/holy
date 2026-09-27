@@ -93,6 +93,16 @@ for variant in compatible broken; do
         expect 0 "$bin" db plan-update "$provider" "$(hash update-compatible)" --root "$root"
         grep -q 'needed-path' "$tmp/out"
         grep -q "\"$probe\" .* \"$(hash update-compatible)\"" "$tmp/out"
+        update_plan=$(sed -n 's/^plan-update sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+        expect 0 "$bin" db apply-update "$update_plan" "$provider" "$(hash update-compatible)" --root "$root"
+        expect 0 "$bin" db check --all --root "$root"
+        if test "${HOLY_TEST_DYNAMIC_CHROOT:-0}" = 1; then
+            doas -n chroot --userspec="$(id -u):$(id -g)" "$root" /usr/bin/probe > "$tmp/update-run"
+            grep -qx updated-probe "$tmp/update-run"
+        fi
+        expect 0 "$bin" db plan-update "$(hash update-compatible)" "$provider" --root "$root"
+        update_plan=$(sed -n 's/^plan-update sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+        expect 0 "$bin" db apply-update "$update_plan" "$(hash update-compatible)" "$provider" --root "$root"
     else
         expect 4 "$bin" db plan-update "$provider" "$(hash update-broken)" --root "$root"
         test ! -s "$tmp/out"

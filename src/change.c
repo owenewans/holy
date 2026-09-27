@@ -3,6 +3,9 @@
 #include "install.h"
 #include "package.h"
 
+#include <archive.h>
+#include <archive_entry.h>
+#include <errno.h>
 #include <openssl/evp.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -202,4 +205,162 @@ int holy_file_plan_check(const struct holy_file_plan *plan, int root, int recove
     }
     if (failed) *failed = plan->count;
     return 0;
+}
+
+static void temporary_name(const struct holy_file_change *change, char name[78])
+{
+    snprintf(name, 78, ".holy-update-%s", change->id);
+}
+
+int holy_file_plan_reservations(const struct holy_file_plan *plan, int root)
+{
+    size_t i;
+    for (i = 0; i < plan->count; ++i) {
+        const struct holy_file_change *c = &plan->changes[i];
+        char name[78];
+        if (!c->after || c->after->directory || c->kind == HOLY_RETAIN) continue;
+        temporary_name(c, name);
+        if (holy_install_temporary_state(root, c->after, name) != 2) return 4;
+    }
+    return 0;
+}
+
+static size_t find_change(const struct holy_file_plan *plan, const char *path)
+{
+    size_t low = 0, high = plan->count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        const struct holy_file_change *c = &plan->changes[middle];
+        const char *name = c->after ? c->after->path : c->before->path;
+        int order = strcmp(name, path);
+        if (!order) return middle;
+        if (order < 0) low = middle + 1;
+        else high = middle;
+    }
+    return plan->count;
+}
+
+int holy_file_plan_stage(const struct holy_file_plan *plan, const char *snapshot,
+                         int root, int recovering, size_t *failed)
+{
+    struct archive *archive = NULL;
+    struct archive_entry *entry;
+    struct holy_package_identity identity = {0};
+    FILE *content = NULL;
+    unsigned char *seen = NULL;
+    int result = 1, status;
+    size_t i;
+    result = holy_file_plan_check(plan, root, recovering, failed);
+    if (result) return result;
+    if (!recovering && (result = holy_file_plan_reservations(plan, root))) return result;
+    result = 6;
+    if (!holy_package_identity(snapshot, &identity) || strcmp(identity.digest, plan->new_artifact)) goto done;
+    result = 1;
+    seen = calloc(plan->count ? plan->count : 1, 1);
+    archive = archive_read_new();
+    if (!seen || !archive || archive_read_support_filter_lz4(archive) != ARCHIVE_OK ||
+        archive_read_support_format_tar(archive) != ARCHIVE_OK ||
+        archive_read_open_filename(archive, snapshot, 65536) != ARCHIVE_OK) goto done;
+    while ((status = archive_read_next_header(archive, &entry)) == ARCHIVE_OK) {
+        const char *path = archive_entry_pathname(entry);
+        const struct holy_file_change *c;
+        char name[78];
+        int prepared;
+        if (!path || strncmp(path, "DATA/", 5)) {
+            if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
+            continue;
+        }
+        i = find_change(plan, path + 5);
+        if (i == plan->count || !(c = &plan->changes[i])->after ||
+            c->after->directory || c->kind == HOLY_RETAIN) {
+            if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
+            continue;
+        }
+        if (failed) *failed = i;
+        if (seen[i]++) goto done;
+        temporary_name(c, name);
+        prepared = holy_install_temporary_state(root, c->after, name);
+        if (prepared == 0 || (prepared == 1 && !recovering)) {
+            fputs("holypkg: reserved update object requires inspection: ", stderr);
+            quote(stderr, c->after->path);
+            fprintf(stderr, " (%s)\n", name);
+            result = 4; goto done;
+        }
+        if (prepared == 1 || (recovering && holy_install_check_entry(root, c->after) == 1)) {
+            if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
+            continue;
+        }
+        if (!c->after->link) {
+            char buffer[65536];
+            la_ssize_t got;
+            long long total = 0;
+            content = tmpfile();
+            if (!content) goto done;
+            while ((got = archive_read_data(archive, buffer, sizeof buffer)) > 0) {
+                if (got > c->after->size - total || fwrite(buffer, 1, (size_t)got, content) != (size_t)got) goto done;
+                total += got;
+            }
+            if (got < 0 || total != c->after->size || fflush(content) || fsync(fileno(content))) goto done;
+        }
+        if (!holy_install_prepare_file(root, c->after, content ? fileno(content) : -1, name)) goto done;
+        if (content) { fclose(content); content = NULL; }
+    }
+    if (status != ARCHIVE_EOF) goto done;
+    for (i = 0; i < plan->count; ++i) {
+        const struct holy_file_change *c = &plan->changes[i];
+        if (c->after && !c->after->directory && c->kind != HOLY_RETAIN && !seen[i]) goto done;
+    }
+    if (failed) *failed = plan->count;
+    result = 0;
+done:
+    if (content) fclose(content);
+    if (archive) archive_read_free(archive);
+    holy_package_identity_free(&identity);
+    free(seen);
+    return result;
+}
+
+int holy_file_plan_finished(const struct holy_file_plan *plan, int root)
+{
+    size_t i;
+    for (i = 0; i < plan->count; ++i) {
+        const struct holy_file_change *c = &plan->changes[i];
+        const struct holy_manifest_entry *e = c->after ? c->after : c->before;
+        int expected = c->after || e->directory ? 1 : 2;
+        if (holy_install_check_entry(root, e) != expected) return 4;
+    }
+    return 0;
+}
+
+int holy_file_plan_apply(const struct holy_file_plan *plan, int root,
+                         holy_change_progress progress, void *context, size_t *failed)
+{
+    size_t i;
+    int result = holy_file_plan_check(plan, root, 1, failed);
+    if (result) return result;
+    for (i = 0; i < plan->count; ++i) {
+        const struct holy_file_change *c = &plan->changes[i];
+        char name[78];
+        int staged;
+        if (!c->after || c->after->directory || c->kind == HOLY_RETAIN) continue;
+        temporary_name(c, name);
+        staged = holy_install_temporary_state(root, c->after, name);
+        if (staged == 0 || (staged == 2 && holy_install_check_entry(root, c->after) != 1)) {
+            if (failed) *failed = i;
+            return 4;
+        }
+    }
+    for (i = 0; i < plan->count; ++i) {
+        const struct holy_file_change *c = &plan->changes[i];
+        char name[78];
+        if (failed) *failed = i;
+        if (c->kind == HOLY_RETAIN || (c->after && c->after->directory) ||
+            (c->before && c->before->directory)) continue;
+        temporary_name(c, name);
+        if (progress && !progress(context, i, 0)) return 1;
+        if (!holy_install_transition(root, c->before, c->after, name)) return 4;
+        if (progress && !progress(context, i, 1)) return 1;
+    }
+    if (failed) *failed = plan->count;
+    return holy_file_plan_finished(plan, root);
 }

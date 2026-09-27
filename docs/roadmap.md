@@ -7,13 +7,12 @@
 - [x] Plan and atomically apply a source identity registry under the database
   writer lock. Preserve IDs across alias changes and retain inactive origin
   history; reject stale, wrong-root and history-dropping plans. Apply consumes
-  the reviewed plan without rereading user includes. Slot replacement,
-  source-aware updates, configured sync and trust enforcement remain open.
+  the reviewed plan without rereading user includes. Configured sync, automatic source-aware update selection and trust enforcement remain open.
 - [x] Bind explicitly associated local artifacts to active registered source IDs
   in set plans and installed state. Retain the alias at installation, preserve
   origin through source deactivation and provider reuse, and validate associations
   during interrupted-set recovery. Signature evidence, automatic retrieval-origin
-  binding, slot replacement and updates remain open.
+  binding and automatic update selection remain open.
 - [x] Verify local LZ4-frame `.holy` archives, file manifests, hashes and basic ELF facts.
 - [x] Read dynamic symbols, binding/visibility and per-symbol GNU versions through
   libelf, including ELF32/ELF64 without section headers when the hash tables give
@@ -58,8 +57,8 @@
   report installed directory drift in check without removing shared directories.
 - [x] Compare installed slots by source-id, name, os, arch and libc. Permit distinct
   slots with compatible ownership and reject a second active version of one slot.
-  Same-name glibc/musl executables run in the dual-libc chroot fixture. Slot
-  replacement and multiple installed instances of the same artifact remain open.
+  Same-name glibc/musl executables run in the dual-libc chroot fixture. Multiple
+  installed instances of the same artifact remain open.
 - [x] Install a resolved cached static/data set with one writer lock, plan hash
   and generation change; persist reasons/edges, reject referenced-provider removal,
   and recover completed sets or resume untouched remaining packages after failure.
@@ -92,20 +91,26 @@
   verify bytes and metadata before publication, and retry individual add/replace/
   remove transitions after interruption. Reject drift and preserve complete old
   or new files across injected rename failure and process termination. These
-  internal primitives still require the update planner, ownership decisions and
-  durable transaction journal before a package-update command can use them.
+  primitives now support the journaled cached-update command below.
 - [x] Compare verified old/new archive manifests into a canonical file plan with
   stable change IDs and both artifact hashes. Check the entire payload delta
   without writing files, accepting exact before/after states during recovery.
   Preserve unsupported entries in the record and reject their application.
   The cached update preview binds source, graph and ownership checks;
-  directory creation and update journaling remain open.
+  directory creation remains open.
 - [x] Preview one cached slot replacement with `db plan-update`. Bind the
   generation, root/database identities, every installed state, source registry,
   file delta and proposed complete dependency graph. Reject changed payloads,
   conflicting owners, disabled origins and unavailable old archives. Preserve
-  source identity across alias changes. Applying the update, fetching candidates,
-  new dependency selection and grouped replacements remain open.
+  source identity across alias changes. Fetching candidates, new dependency
+  selection and grouped replacements remain open.
+- [x] Apply the reviewed cached replacement with one writer lock and generation
+  change. Stage changed payload, journal individual transitions, publish the next
+  installed database and retain the old records. Rewrite consumer edges while
+  preserving reasons/source identity. Recover interrupted publication after
+  injected SIGKILL and ENOSPC; preserve partial staging for explicit inspection.
+  Test file addition/removal, regular/symlink transitions and a compatible ELF
+  provider update. Hooks, config merging and general rollback remain open.
 - [ ] Implement native HTTPS/Git source synchronization, signed generations and
   cache retention with provenance.
 - [x] Mirror an explicitly pinned HTTPS native catalog into a new sealed local

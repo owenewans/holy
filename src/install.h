@@ -33,6 +33,9 @@ int holy_install_check_entry(int root, const struct holy_manifest_entry *entry);
    prepare verifies content before publishing it; fd is borrowed, read at offset 0. */
 int holy_install_prepare_file(int root, const struct holy_manifest_entry *next,
                               int content_fd, const char *temporary);
+/* checks the reserved sibling: 1 exact staged object, 2 absent, 0 drift. */
+int holy_install_temporary_state(int root, const struct holy_manifest_entry *next,
+                                 const char *temporary);
 /* read-only: require before, or allow the completed after state during recovery. */
 int holy_install_transition_check(int root, const struct holy_manifest_entry *before,
                                   const struct holy_manifest_entry *after, int recovering);

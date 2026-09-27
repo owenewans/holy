@@ -633,6 +633,19 @@ done:
     return ok;
 }
 
+int holy_install_temporary_state(int root, const struct holy_manifest_entry *next,
+                                 const char *temporary)
+{
+    struct holy_manifest_entry staged;
+    char *path;
+    int result;
+    if (!transition_entry_valid(next) || !(path = transition_temporary(next->path, temporary))) return 0;
+    staged = *next; staged.path = path;
+    result = transition_matches(root, &staged, NULL);
+    free(path);
+    return result < 0 ? 0 : result;
+}
+
 
 int holy_install_transition(int root, const struct holy_manifest_entry *before,
                             const struct holy_manifest_entry *after, const char *temporary)
@@ -663,8 +676,11 @@ int holy_install_transition(int root, const struct holy_manifest_entry *before,
     if (ready_state != 1 || (before && transition_matches(root, before, &original) != 1)) goto done;
     if (fstatat(parent, temporary, &current, AT_SYMLINK_NOFOLLOW) || !same_object(&ready, &current)) goto done;
     if (before) {
-        if (fstatat(parent, base, &current, AT_SYMLINK_NOFOLLOW) || !same_object(&original, &current) ||
-            renameat(parent, temporary, parent, base)) goto done;
+        if (fstatat(parent, base, &current, AT_SYMLINK_NOFOLLOW) || !same_object(&original, &current)) goto done;
+        if (renameat(parent, temporary, parent, base)) {
+            perror("holypkg: replace update payload");
+            goto done;
+        }
     } else {
 #ifdef SYS_renameat2
         /* rename_noreplace also works on filesystems without hard links. */
