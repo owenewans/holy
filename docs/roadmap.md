@@ -59,6 +59,10 @@
   instances without changing their state, reason, graph or payload. Bind reused
   state into plans and validate it during interrupted-set recovery. Named loader
   search, automatic preference ranking and cache-independent discovery remain open.
+- [x] Report orphan dependency instances by traversing saved edges from explicit
+  roots. Ignore stale edges belonging to removed consumers; detect unreachable
+  cycles and preserve shared providers. The read-only command works without cache
+  artifacts and refuses incomplete, missing-provider or unknown-graph snapshots.
 - [ ] Define stable source IDs and version families; extend transactions to
   replacements, complete dynamic-library contexts and grouped removal.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,

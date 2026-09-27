@@ -87,7 +87,7 @@ static:
 	$(MAKE) clean
 	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lssl -lcrypto -llz4 -lz -leu -Wl,--end-group -lpthread -ldl" all
 
-HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o
+HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o
 
 holypkg: $(HOLY_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(SOLV_LIBS)
@@ -112,6 +112,7 @@ check: holypkg tests/resolution check-init check-solver check-install-payload ch
 	sh tests/repo.sh ./holypkg
 	sh tests/state.sh ./holypkg
 	sh tests/sets.sh ./holypkg
+	sh tests/orphan.sh ./holypkg
 	sh tests/dynamic.sh ./holypkg
 	sh tests/resolve.sh ./holypkg ./tests/resolution
 	sh tests/elf-resolve.sh ./holypkg ./tests/resolution
@@ -122,6 +123,7 @@ check-fixtures: check
 check-root: check-install-payload
 	sh tests/state.sh ./holypkg
 	sh tests/sets.sh ./holypkg
+	sh tests/orphan.sh ./holypkg
 	sh tests/dynamic.sh ./holypkg
 	sh tests/static.sh ./holypkg
 

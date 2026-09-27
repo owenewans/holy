@@ -15,6 +15,7 @@
 #include "resolve.h"
 #include "pack.h"
 #include "docs.h"
+#include "graph.h"
 
 #include <stdio.h>
 #include <locale.h>
@@ -29,6 +30,18 @@ int main(int argc, char **argv)
     int ok;
 
     setlocale(LC_CTYPE, "");
+
+    if (argc > 1 && !strcmp(argv[1], "orphan")) {
+        const char *root = "/";
+        int i, json = 0, root_seen = 0;
+        for (i = 2; i < argc; ++i) {
+            if (!strcmp(argv[i], "--json") && !json) json = 1;
+            else if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < argc) {
+                root = argv[++i]; root_seen = 1;
+            } else { fputs("usage: holypkg orphan [--root DIRECTORY] [--json]\n", stderr); return 2; }
+        }
+        return holy_orphan(root, json);
+    }
 
     if (argc > 1 && !strcmp(argv[1], "docs")) {
         if (argc == 6 && !strcmp(argv[2], "--root") && !strcmp(argv[4], "--output"))
