@@ -1,6 +1,10 @@
 #!/bin/sh
 set -eu
 
+no_proxy=localhost,127.0.0.1
+NO_PROXY=$no_proxy
+export no_proxy NO_PROXY
+
 bin=$1
 tmp=$(mktemp -d)
 server=
