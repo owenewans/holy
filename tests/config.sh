@@ -89,4 +89,14 @@ url "https://mirror.example/holy"
 EOF
 "$bin" config check "$tmp/split-source" > "$tmp/out"
 grep -q '2 entries' "$tmp/out"
+for key in url repo; do
+    if [ "$key" = repo ]; then args='main '; else args=; fi
+    printf '[source native]\ntype holy-http\n%s %s"https://user:secret@example.org/packages"\n' \
+        "$key" "$args" > "$tmp/credentials"
+    if "$bin" config check "$tmp/credentials" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+    grep -q "credentials in $key URL" "$tmp/err"
+    if grep -q secret "$tmp/err"; then exit 1; fi
+done
+printf '[source native]\ntype holy-http\nurl "https://example.org/path@revision"\n' > "$tmp/url-at"
+"$bin" config check "$tmp/url-at" > "$tmp/out"
 printf 'config fixtures passed\n'

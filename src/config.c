@@ -224,6 +224,15 @@ static int known_value(const char *section, const char *key, const char *v)
     return 1;
 }
 
+static int url_has_userinfo(const char *url)
+{
+    const char *scheme = strstr(url, "://"), *authority, *end;
+    if (!scheme) return 0;
+    authority = scheme + 3;
+    end = authority + strcspn(authority, "/?#");
+    return memchr(authority, '@', (size_t)(end - authority)) != NULL;
+}
+
 static int parse(const char *path, struct holy_config *config,
                  struct frame *parent, char **error)
 {
@@ -351,6 +360,9 @@ static int validate(struct holy_config *config, char **error)
         int type = 0, endpoint = 0, consumer = 0, require = 0, provider = 0;
         if (!e->values[0][0] || (e->count == 2 && !e->values[1][0]))
             return fail(error, e->file, e->line, "empty %s value", e->key);
+        if ((!strcmp(e->key, "url") || !strcmp(e->key, "repo")) &&
+            url_has_userinfo(e->values[e->count - 1]))
+            return fail(error, e->file, e->line, "credentials in %s URL", e->key);
         if (!strcmp(e->key, "repo")) {
             for (j = 0; j < i; ++j) {
                 const struct holy_entry *other = &config->entries[j];

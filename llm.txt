@@ -1,4 +1,4 @@
-holy.conf.5 source=holy version=development sha256=60abb3a5714c2bbaf1a1fca5533c0053976f52ed25080bcb39547267aff6c9f5
+holy.conf.5 source=holy version=development sha256=5dc74d6fe6331e79c7e969d6fe15bd2c9971debc04b144bf43fd6795e447a76d
 HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
 
 NAME
@@ -26,14 +26,15 @@ DESCRIPTION
      a section are errors with both source locations. The source  repo	and  re-
      solver  prefer  keys  are	lists and can repeat. Recursive includes are re-
      jected.  The checker validates lexical and structural syntax; it  does  not
-     yet  validate URL credentials, source relationships or references. It vali-
-     dates key names, argument counts, and the scripts, trust,	ask-sources  and
-     prefer values. The alias local is reserved and cannot name a source.
+     yet validate source relationships or references. It rejects userinfo in URL
+     authorities  without  echoing  credentials in diagnostics. It validates key
+     names, argument counts, and the scripts, trust, ask-sources and prefer val-
+     ues. The alias local is reserved and cannot name a source.
 
-     Each  populated  source section requires type and at least one url or repo.
-     Repository names within one source must be distinct.  Each	 populated  rule
-     requires  consumer,  require and provider. Empty values are rejected. These
-     checks do not prove that a repository is reachable or its packages can  re-
+     Each populated source section requires type and at least one url  or  repo.
+     Repository	 names	within	one source must be distinct. Each populated rule
+     requires consumer, require and provider. Empty values are	rejected.  These
+     checks  do not prove that a repository is reachable or its packages can re-
      solve.
 
 EXAMPLE
@@ -45,7 +46,7 @@ EXAMPLE
      repo core "https://mirror.example/arch/$repo/os/$arch"
 
 FILES
-     /etc/holy.conf  is	 the proposed system path. The checker takes an explicit
+     /etc/holy.conf is the proposed system path. The checker takes  an	explicit
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)

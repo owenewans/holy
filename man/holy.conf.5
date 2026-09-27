@@ -19,7 +19,8 @@ Include takes one path relative to the containing file. Repeated scalar keys
 within a section are errors with both source locations. The source repo and
 resolver prefer keys are lists and can repeat. Recursive includes are rejected.
 The checker validates lexical and structural syntax; it does not yet validate
-URL credentials, source relationships or references. It validates key names,
+source relationships or references. It rejects userinfo in URL authorities
+without echoing credentials in diagnostics. It validates key names,
 argument counts, and the scripts, trust, ask-sources and prefer values. The
 alias local is reserved and cannot name a source.
 .PP
