@@ -23,8 +23,11 @@ SOLV_LIBS ?= $(shell pkg-config --libs libsolv 2>/dev/null) -lz
 
 .DEFAULT_GOAL := all
 
-.PHONY: all check check-fixtures check-root check-qemu check-qemu-gate check-https check-solver check-install-payload bootstrap-busybox check-bootstrap-busybox check-static-core man
-all: holypkg holy-init
+.PHONY: all check check-fixtures check-root check-qemu check-qemu-gate check-https check-solver check-install-payload check-install bootstrap-busybox check-bootstrap-busybox check-static-core man
+all: holypkg holy-init holyinstall
+
+holyinstall: src/installer.o src/config.o
+	$(CC) $(LDFLAGS) -o $@ $^ -lcrypto
 
 holy-init: src/early-init.c .build-config
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o $@ $<
@@ -120,7 +123,7 @@ src/%.o: src/%.c $(wildcard src/*.h) $(wildcard backends/*.h) .build-config
 check-init: holy-init
 	@./holy-init >/dev/null 2>&1; test $$? -eq 2
 
-check: check-pacman holypkg tests/resolution check-init check-solver check-install-payload check-https
+check: check-pacman holypkg tests/resolution check-init check-solver check-install-payload check-install check-https
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg
@@ -162,6 +165,9 @@ check-root: check-install-payload
 	sh tests/dynamic.sh ./holypkg
 	sh tests/static.sh ./holypkg
 
+check-install: holyinstall holypkg
+	sh tests/installer.sh ./holyinstall ./holypkg
+
 check-qemu:
 	ARCH="$(ARCH)" ISO="$(or $(ISO),out/holy-$(ARCH).iso)" BOOT_PLAN="$(BOOT_PLAN)" QEMU_TIMEOUT="$(or $(QEMU_TIMEOUT),120)" sh tests/qemu.sh
 
@@ -200,7 +206,7 @@ llm.txt: $(MANPAGES) tools/docs.sh
 
 install: all llm.txt
 	install -d "$(DESTDIR)$(PREFIX)/bin" "$(DESTDIR)$(PREFIX)/share/man/man5" "$(DESTDIR)$(PREFIX)/share/man/man7" "$(DESTDIR)$(PREFIX)/share/man/man8" "$(DESTDIR)$(PREFIX)/share/holy"
-	install -m 755 holypkg holy-init "$(DESTDIR)$(PREFIX)/bin/"
+	install -m 755 holypkg holy-init holyinstall "$(DESTDIR)$(PREFIX)/bin/"
 	@for page in $(MANPAGES); do install -m 644 "$$page" "$(DESTDIR)$(PREFIX)/share/man/man$${page##*.}/" || exit; done
 	install -m 644 llm.txt "$(DESTDIR)$(PREFIX)/share/holy/llm.txt"
 
@@ -209,5 +215,6 @@ tests/resolution: tests/resolution.c $(filter-out src/main.o,$(HOLY_OBJECTS)) ho
 
 clean:
 	rm -f holy-init
+	rm -f holyinstall
 	rm -f .build-config .build-config.tmp
 	rm -f holypkg tests/resolution tests/solver tests/install-helper tests/pacman-helper $(HOLY_OBJECTS)

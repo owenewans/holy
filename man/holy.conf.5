@@ -3,7 +3,7 @@
 holy.conf \- Holy source configuration format
 .SH STATUS
 This page describes the syntax checker and source identity registration. Configured source fetching,
-general multi-source resolution and general installation are not implemented;
+general multi-source resolution and disk installation are not implemented;
 the restricted local data/static-ELF transaction uses separate commands.
 .SH SYNOPSIS
 .B holypkg config check FILE
@@ -14,10 +14,13 @@ quotes. Escapes are backslash-quote, double-backslash, backslash-n, backslash-t,
 backslash-r and backslash-x followed by two hexadecimal digits. NUL is rejected.
 The parser does not run shell expansion.
 .PP
-Sections are [general], [resolver], [source NAME] and [rule NAME].
+Sections are [general], [resolver], [source NAME], [rule NAME], [install] and
+[install-plan]. The last section is emitted by holyinstall and is not a user
+config section.
 Include takes one path relative to the containing file. Repeated scalar keys
 within a section are errors with both source locations. The source repo and
-resolver prefer keys are lists and can repeat. Recursive includes are rejected.
+resolver prefer and install artifact keys are lists and can repeat. Recursive
+includes are rejected.
 The checker validates lexical and structural syntax; it does not yet validate
 rule references. It checks that source parents exist and do not form cycles.
 It rejects userinfo in URL authorities
@@ -29,6 +32,11 @@ Each populated source section requires type and at least one url or repo.
 Repository names within one source must be distinct. Each populated rule
 requires consumer, require and provider. Empty values are rejected. These
 checks do not prove that a repository is reachable or its packages can resolve.
+.PP
+[install] accepts one root directory and ordered artifact SHA-256 entries for
+holyinstall's pre-mounted-root package transaction. The first artifact is the
+explicit package. The installer checks required fields, digest syntax and
+duplicate artifacts before planning. See holyinstall(8).
 .SH EXAMPLE
 .nf
 [general]

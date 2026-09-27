@@ -1,5 +1,6 @@
 /holypkg
 /holy-init
+/holyinstall
 /src/*.o
 /tests/solver
 /tests/install-helper
