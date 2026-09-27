@@ -306,10 +306,14 @@ it also requires qemu-i386 and runs the shell with its pentium2 CPU model. This
 tests the static shell; host holypkg still runs outside the chroot. Boot,
 static holypkg and full libc recovery require separate acceptance tests.
 .SS Static core build
-make bootstrap-mdevd INPUTS=DIRECTORY OUTPUT=DIRECTORY builds an x86_64
-musl-static mdevd 0.1.8.2 package with skalibs 2.15.1.0. INPUTS contains
+make bootstrap-mdevd ARCH=i686|x86_64 INPUTS=DIRECTORY OUTPUT=DIRECTORY builds a
+musl-static mdevd 0.1.8.2 package with skalibs 2.15.1.0. The default is x86_64.
+STATIC_PREFIX may select a completed make static-deps toolchain for the same
+architecture; i686 requires it. The build copies and hashes its build.record
+and records the compiler wrapper hash. INPUTS contains
 mdevd-0.1.8.2.tar.gz and skalibs-2.15.1.0.tar.gz from the upstream GitHub
-tag archives, plus x86_64-linux-musl-cross.tgz from musl.cc. The script
+tag archives, plus x86_64-linux-musl-cross.tgz from musl.cc when STATIC_PREFIX
+is omitted. The script
 checks pinned hashes of private copies, builds with upstream configure/make,
 and records compiler version, both configurations, ELF facts and artifact hash.
 OUTPUT must be new and use ASCII letters, digits, underscore, dot, slash or

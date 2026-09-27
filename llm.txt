@@ -533,7 +533,7 @@ SOURCE IDENTITIES
      during package selection remain unimplemented.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=14667ab9c1522f8cddb747f29791d55b808da7c9c733af01e1fd00eca98568ea
+holypkg.8 source=holy version=development sha256=33882b2af13b1005a2906cdfa2222c7f47481443cdaab428774f7271b99ff843
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -798,18 +798,21 @@ DESCRIPTION
      tance tests.
 
    Static core build
-     make bootstrap-mdevd INPUTS=DIRECTORY  OUTPUT=DIRECTORY  builds  an  x86_64
-     musl-static  mdevd	 0.1.8.2  package with skalibs 2.15.1.0. INPUTS contains
-     mdevd-0.1.8.2.tar.gz and skalibs-2.15.1.0.tar.gz from the	upstream  GitHub
-     tag  archives,  plus  x86_64-linux-musl-cross.tgz	from musl.cc. The script
-     checks pinned hashes  of  private	copies,	 builds	 with  upstream	 config-
-     ure/make,	and records compiler version, both configurations, ELF facts and
-     artifact hash.  OUTPUT must be new and use ASCII  letters,	 digits,  under-
-     score, dot, slash or hyphen. JOBS defaults to 2. Upstream licenses and HTML
-     documentation accompany the package; docs.record reports missing man pages.
-     No service or mdev.conf is enabled by this bootstrap build. Execline direc-
-     tives and external command helpers require additional packages and configu-
-     ration.
+     make  bootstrap-mdevd  ARCH=i686|x86_64  INPUTS=DIRECTORY	OUTPUT=DIRECTORY
+     builds  a	musl-static mdevd 0.1.8.2 package with skalibs 2.15.1.0. The de-
+     fault is x86_64.  STATIC_PREFIX may select	 a  completed  make  static-deps
+     toolchain for the same architecture; i686 requires it. The build copies and
+     hashes  its build.record and records the compiler wrapper hash. INPUTS con-
+     tains mdevd-0.1.8.2.tar.gz and skalibs-2.15.1.0.tar.gz  from  the	upstream
+     GitHub  tag  archives,  plus  x86_64-linux-musl-cross.tgz from musl.cc when
+     STATIC_PREFIX is omitted.	The  script  checks  pinned  hashes  of	 private
+     copies,  builds with upstream configure/make, and records compiler version,
+     both configurations, ELF facts and artifact hash.	OUTPUT must be	new  and
+     use  ASCII letters, digits, underscore, dot, slash or hyphen. JOBS defaults
+     to 2. Upstream licenses  and  HTML	 documentation	accompany  the	package;
+     docs.record  reports  missing man pages. No service or mdev.conf is enabled
+     by this bootstrap build. Execline directives and external	command	 helpers
+     require additional packages and configuration.
 
      make  check-bootstrap-mdevd MDEVD_PACKAGE=FILE installs the artifact into a
      disposable root through the reviewed database plan. In a libc-free	 chroot,

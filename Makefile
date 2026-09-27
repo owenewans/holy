@@ -54,7 +54,7 @@ bootstrap-image: holypkg llm.txt
 .PHONY: bootstrap-dinit check-bootstrap-dinit
 .PHONY: bootstrap-mdevd check-bootstrap-mdevd
 bootstrap-mdevd: holypkg
-	sh tools/bootstrap-mdevd.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/mdevd-bootstrap)"
+	ARCH="$(or $(ARCH),x86_64)" STATIC_PREFIX="$(STATIC_PREFIX)" sh tools/bootstrap-mdevd.sh ./holypkg "$(INPUTS)" "$(or $(OUTPUT),out/mdevd-bootstrap)"
 
 check-bootstrap-mdevd: holypkg
 	sh tests/bootstrap-mdevd.sh ./holypkg "$(or $(MDEVD_PACKAGE),out/mdevd-bootstrap/mdevd.holy)"

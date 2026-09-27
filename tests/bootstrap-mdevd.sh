@@ -17,12 +17,17 @@ mkdir -p "$root/usr/bin" "$root/usr/include/mdevd" "$root/usr/share/doc/mdevd" \
 "$bin" cache stage "local:$package" --root "$root" > "$tmp/out"
 digest=$(sha256sum "$package")
 digest=${digest%% *}
-"$bin" db reserve "$digest" --root "$root" > "$tmp/out"
-"$bin" db plan --root "$root" > "$tmp/out"
+"$bin" info "local:$package" > "$tmp/info"
+arch=$(sed -n 's/^arch //p' "$tmp/info")
+set --
+case "$arch:$(uname -m)" in
+    x86_64:x86_64|x86:i686) ;;
+    *) set -- --accept-arch "$digest" ;;
+esac
+"$bin" db plan-set "$digest" "$@" --root "$root" > "$tmp/out"
 plan=$(sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
 test "${#plan}" -eq 64
-"$bin" db approve "$plan" --root "$root" > "$tmp/out"
-"$bin" db apply --root "$root" > "$tmp/out"
+"$bin" db apply-set "$plan" "$digest" "$@" --root "$root" > "$tmp/out"
 test ! -e "$root/lib" && test ! -e "$root/lib64" && test ! -e "$root/usr/lib"
 printf 'root:x:0:0:root:/:/usr/bin/false\n' > "$root/etc/passwd"
 printf 'root:x:0:\n' > "$root/etc/group"

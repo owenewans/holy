@@ -233,7 +233,7 @@
   libc-free chroot as an ordinary user. Install/check/remove the complete package,
   including command and man-page symlinks, through the transaction engine.
   The static-core image also exercises dinit as PID 1.
-- [x] Build pinned x86_64 musl-static mdevd/skalibs with licenses and upstream
+- [x] Build pinned i686 and x86_64 musl-static mdevd/skalibs with licenses and upstream
   HTML docs. Install, check and remove the package; parse valid symbolic-owner
   configuration and reject invalid regex inside a libc-free chroot with a
   private network namespace. The static-core image exercises readiness, coldplug
