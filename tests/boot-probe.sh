@@ -13,8 +13,9 @@ if test -f /etc/holy/installed-from-live; then
     echo 'HOLY-BOOT-1 installed-disk ext4'
     stage=login
     /usr/lib/holy/login-probe > /run/login-probe
-    $bb grep -qx 'login rejected wrong password and authenticated uid=10001' /run/login-probe
+    $bb grep -qx 'login rejected wrong password and authenticated uid=10001; doas authenticated uid=0' /run/login-probe
     echo 'HOLY-BOOT-1 user-login authenticated'
+    echo 'HOLY-BOOT-1 doas password-and-root-uid'
 fi
 profile=$($bb cat /etc/holy/image-profile)
 storage=$($bb cat /etc/holy/root-storage)

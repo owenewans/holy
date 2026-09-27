@@ -16,7 +16,7 @@ static int attempt(const char *password, int expect_success)
     char output[16384] = {0};
     size_t used = 0;
     const char *slave;
-    int master, status = 0, sent = 0, found = 0;
+    int master, status = 0, sent = 0, doas_sent = 0, found = 0, root_found = 0;
     pid_t child;
     time_t deadline;
     master = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
@@ -67,7 +67,15 @@ static int attempt(const char *password, int expect_success)
             return 0;
         }
         if (strstr(output, "HOLY-LOGIN-UID 10001")) found = 1;
-        if (found && waitpid(child, &status, WNOHANG) == child) goto finished;
+        if (expect_success && found && !doas_sent && strstr(output, "doas (") &&
+            strstr(output, "password: ")) {
+            static const char response[] = "holytestpass\n";
+            if (write(master, response, sizeof response - 1) != sizeof response - 1)
+                break;
+            doas_sent = 1;
+        }
+        if (strstr(output, "HOLY-DOAS-UID 0")) root_found = 1;
+        if (found && root_found && waitpid(child, &status, WNOHANG) == child) goto finished;
     }
     kill(-child, SIGKILL);
     waitpid(child, &status, 0);
@@ -76,8 +84,10 @@ static int attempt(const char *password, int expect_success)
     return 1;
 finished:
     close(master);
-    if (!expect_success || !sent || !found || !WIFEXITED(status) || WEXITSTATUS(status)) {
+    if (!expect_success || !sent || !doas_sent || !found || !root_found ||
+        !WIFEXITED(status) || WEXITSTATUS(status)) {
         fputs("login authentication or uid check failed\n", stderr);
+        fputs(output, stderr);
         return 1;
     }
     return 0;
@@ -87,6 +97,6 @@ int main(void)
 {
     if (attempt("wrong-fixture-password\n", 0) ||
         attempt("holytestpass\n", 1)) return 1;
-    puts("login rejected wrong password and authenticated uid=10001");
+    puts("login rejected wrong password and authenticated uid=10001; doas authenticated uid=0");
     return 0;
 }

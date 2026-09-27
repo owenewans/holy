@@ -1,4 +1,4 @@
-holy-image.7 source=holy version=development sha256=f9f8d069cee515b1ce462999beb4cf664362bb01732664f11083c5d58c2b002b
+holy-image.7 source=holy version=development sha256=a764f0ed06ab1c40b6fd71a17f88b8f6fc85b3d2b126d82233a677a8c4b338a5
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
 NAME
@@ -55,6 +55,12 @@ BUILD
 	    builds it from pinned util-linux, dosfstools, e2fsprogs  and  Limine
 	    inputs.
 
+     DOAS_PACKAGE
+	    Native  musl-static	 OpenDoas  package with a root-owned setuid exe-
+	    cutable, required by INSTALL_TEST=1. The guest stages  it  from  the
+	    live  cache and installs it through a separate holypkg set plan with
+	    approval bound to the artifact SHA-256.
+
      STATIC_CC
 	    Path to the musl C compiler driver for the early init helper.
 
@@ -62,20 +68,20 @@ BUILD
 	    Native .holy outputs of the matching bootstrap targets.
 
      GLIBC_PACKAGE, MUSL_PACKAGE
-	    For	 dual-libc, the native bootstrap libc packages with private lit-
-	    eral loader paths. bootstrap-glibc and  bootstrap-musl  produce  the
+	    For dual-libc, the native bootstrap libc packages with private  lit-
+	    eral  loader  paths.  bootstrap-glibc and bootstrap-musl produce the
 	    tested input layouts.
 
      GLIBC_CC, MUSL_CC
-	    Compilers  for the two dynamic C fixtures. GLIBC_CC defaults to gcc;
-	    MUSL_CC must name a musl compiler. The image build checks their  ac-
-	    tual  runtime requirements against the selected libc payloads before
+	    Compilers for the two dynamic C fixtures. GLIBC_CC defaults to  gcc;
+	    MUSL_CC  must name a musl compiler. The image build checks their ac-
+	    tual runtime requirements against the selected libc payloads  before
 	    installation.
 
      KERNEL_IMAGE, KERNEL_VERSION
-	    Local Linux kernel image and its expected  uname  release.	The  se-
-	    lected  kernel  must  include initramfs/gzip, devtmpfs, proc, sysfs,
-	    tmpfs, devpts and serial console support. No kernel modules are  in-
+	    Local  Linux  kernel  image	 and its expected uname release. The se-
+	    lected kernel must include initramfs/gzip,	devtmpfs,  proc,  sysfs,
+	    tmpfs,  devpts and serial console support. No kernel modules are in-
 	    cluded by this profile.
 
      LIMINE_DIR
@@ -86,121 +92,123 @@ BUILD
      OUTPUT
 	    New output directory. Existing directories are refused.
 
-     Host  tools  include  unshare  with user namespaces, a C toolchain, dracut,
-     xorriso, Limine, GNU file tools, gzip,  cpio,  Python  3  and  QEMU.   DRA-
-     CUT_BASE  selects dracut's helper directory; the default is /usr/lib64/dra-
-     cut. Compilation and installation run as mapped root in  a	 user  namespace
+     Host tools include unshare with user namespaces,  a  C  toolchain,	 dracut,
+     xorriso,  Limine,	GNU  file  tools,  gzip,  cpio, Python 3 and QEMU.  DRA-
+     CUT_BASE selects dracut's helper directory; the default is	 /usr/lib64/dra-
+     cut.  Compilation	and  installation run as mapped root in a user namespace
      owned by the ordinary caller. Host root invocation is refused.
 
 INPUTS AND ROOT
      The builder snapshots the selected native packages, normalizes numeric own-
-     ership  to	 root  and  directory  modes  to 0755, regenerates manifests and
-     records the parent hashes and normalization in origin. These  are	new  un-
-     signed  local  artifacts. The original archives remain in inputs/.	 For the
+     ership to root and directory  modes  to  0755,  regenerates  manifests  and
+     records  the  parent  hashes and normalization in origin. These are new un-
+     signed local artifacts. The original archives remain in inputs/.	For  the
      older  BusyBox  bootstrap	package,  its  embedded-musl  license  moves  to
-     usr/share/licenses/busybox/musl.COPYRIGHT,	 with  the  mapping  recorded in
+     usr/share/licenses/busybox/musl.COPYRIGHT, with  the  mapping  recorded  in
      origin.  The dynamic musl package owns its own license file.
 
      The static core binary, selected kernel, Limine data and Holy boot configu-
-     ration also become native packages. The holy-base metapackage requires  the
+     ration  also become native packages. The holy-base metapackage requires the
      resulting eight packages, including holyinstall. The dual-libc profile adds
      the two runtime packages and two C probe packages. holyinstall asks holypkg
-     to	 resolve  the  selected	 set,  writes  install.preview	and a frozen in-
-     stall.plan, then applies that plan with one writer lock and one  generation
+     to resolve the selected  set,  writes  install.preview  and  a  frozen  in-
+     stall.plan,  then applies that plan with one writer lock and one generation
      change into root/. The preview records selected providers and requirements;
-     the  plan	records	 artifacts and architecture approvals.	The builder pre-
-     pares the profile's directories first. It does not extract	 foreign  distro
+     the plan records artifacts and architecture approvals.   The  builder  pre-
+     pares  the	 profile's directories first. It does not extract foreign distro
      roots or modify the host package database.
 
-     For  ROOT_STORAGE=ext4, mke2fs copies that prepared root into a 512 MiB raw
+     For ROOT_STORAGE=ext4, mke2fs copies that prepared root into a 512 MiB  raw
      root.ext4 without mounting it on the host. Limine passes holy.root=/dev/vda
-     and holy.rootfstype=ext4. holy-init mounts the disk, moves	 runtime  mounts
-     and  executes BusyBox switch_root followed by dinit. The ISO still provides
-     kernel and initramfs; this is not yet an independently  installed	bootable
+     and  holy.rootfstype=ext4.	 holy-init mounts the disk, moves runtime mounts
+     and executes BusyBox switch_root followed by dinit. The ISO still	provides
+     kernel  and  initramfs; this is not yet an independently installed bootable
      disk.
 
-     ROOT_STORAGE=gpt-ext4  creates  a	new  1 GiB regular disk.raw. The builder
+     ROOT_STORAGE=gpt-ext4 creates a new 1 GiB	regular	 disk.raw.  The	 builder
      uses holyinstall disk plan/apply and includes the reviewed plan hash in the
-     boot plan. The GPT contains a 1 MiB BIOS Boot partition, a	 256  MiB  FAT32
-     ESP  and  a 765 MiB ext4 root. It verifies the partition layout, copies the
-     kernel, initramfs and Limine configuration to the ESP,  reads  those  files
-     back  and	compares  their	 bytes.	 It then uses holyinstall disk finalize-
-     plan/apply to bind the ESP, root and disk images by SHA-256 before	 copying
-     their  bytes  into	 the  partitions. The finalize journal records the write
-     stages. Limine BIOS stages use partition 1; on x86_64 the UEFI loader  uses
+     boot  plan.  The  GPT contains a 1 MiB BIOS Boot partition, a 256 MiB FAT32
+     ESP and a 765 MiB ext4 root. It verifies the partition layout,  copies  the
+     kernel,  initramfs	 and  Limine configuration to the ESP, reads those files
+     back and compares their bytes. It	then  uses  holyinstall	 disk  finalize-
+     plan/apply	 to bind the ESP, root and disk images by SHA-256 before copying
+     their bytes into the partitions. The finalize  journal  records  the  write
+     stages.  Limine BIOS stages use partition 1; on x86_64 the UEFI loader uses
      EFI/BOOT/BOOTX64.EFI. The kernel mounts /dev/vda3. Host filesystems are not
      mounted and physical disks are not accepted as output.
 
      The GPT profile passes holy.esp=/dev/vda2. holy-init mounts that FAT parti-
-     tion  at  /boot  before starting dinit, using nosuid,nodev,noexec and masks
+     tion at /boot before starting dinit, using	 nosuid,nodev,noexec  and  masks
      matching the kernel package's file and directory modes. The kernel must in-
      clude vfat, the default FAT codepage and NLS charset. The boot probe checks
-     the mount, kernel/initramfs/config presence and  a	 plan-bound  write  that
-     survives  reboot.	 Installed package checking validates the mounted kernel
-     payload against its recorded manifest. This exposes the actual  boot  files
-     to	 subsequent operations; coordinated kernel/initramfs update transactions
+     the  mount,  kernel/initramfs/config  presence  and a plan-bound write that
+     survives reboot.  Installed package checking validates the	 mounted  kernel
+     payload  against  its recorded manifest. This exposes the actual boot files
+     to subsequent operations; coordinated kernel/initramfs update  transactions
      remain to be implemented.
 
      The profile installs merged-/usr links, a locked root account and the dinit
      services boot, console, mdevd, coldplug and holy-test. mdevd reports readi-
-     ness through a pipe before synchronous coldplug starts. The fixture  checks
+     ness  through a pipe before synchronous coldplug starts. The fixture checks
      that coldplug applied the /dev/null permission rule. This is device-manager
      coverage, not client libudev compatibility.
 
 INITRAMFS AND ISO
-     The  private  dracut module copies the installed root with preserved owner-
+     The private dracut module copies the installed root with  preserved  owner-
      ship and file contents. dracut includes only the Holy module, with no host-
      only configuration, host runtime dependencies, microcode or kernel modules.
-     The builder points dracut's sysroot at the installed root. It extracts  the
-     finished  initramfs,  compares  payload bytes, modes and symlinks with that
-     root, and checks each ELF with holypkg. Only dracut's  module  list,  build
-     parameters	 and  generated loader caches may be additional files. The audit
-     rejects unexpected loader aliases. dracut uses ldconfig -X so package  sym-
-     links  remain  unchanged. The audit also rejects non-static ELF outside the
-     five declared libc and probe paths in dual-libc;  static-core  rejects  all
-     non-static	 ELF.  The prior package-set scan validates the libc/probe graph
+     The  builder points dracut's sysroot at the installed root. It extracts the
+     finished initramfs, compares payload bytes, modes and  symlinks  with  that
+     root,  and	 checks	 each ELF with holypkg. Only dracut's module list, build
+     parameters and generated loader caches may be additional files.  The  audit
+     rejects  unexpected loader aliases. dracut uses ldconfig -X so package sym-
+     links remain unchanged. The audit also rejects non-static ELF  outside  the
+     five  declared  libc  and probe paths in dual-libc; static-core rejects all
+     non-static ELF. The prior package-set scan validates the  libc/probe  graph
      and payload manifests. Omitted files are listed in the build record and re-
      main absent from the image until guest recovery.  holy-init mounts the live
-     runtime filesystems and  executes	dinit.	 Limine	 loads	the  kernel  and
-     initramfs	from  the  ISO. The default entry selects the guest test service
-     with holy.test=1. Remove that argument in Limine's entry  editor  to  reach
+     runtime  filesystems  and	executes  dinit.   Limine  loads  the kernel and
+     initramfs from the ISO. The default entry selects the  guest  test	 service
+     with  holy.test=1.	 Remove	 that argument in Limine's entry editor to reach
      the BusyBox console service.
 
-     The   output  includes  packages/,	 inputs/,  root/,  initramfs.img,  holy-
+     The  output  includes  packages/,	inputs/,  root/,  initramfs.img,   holy-
      ARCH.iso, build.log, build.record, root-check.record, a frozen plan and its
-     boot-plan SHA-256. The record lists artifact hashes and the  build	 result.
-     Input  retention  permits repeating an experiment; bit-identical ISO repro-
+     boot-plan	SHA-256.  The record lists artifact hashes and the build result.
+     Input retention permits repeating an experiment; bit-identical  ISO  repro-
      duction is not established.
 
 INSTALLER VM FIXTURE
-     INSTALL_TEST=1 selects an x86_64 static-core RAM ISO whose default	 service
-     installs  the  selected  base  artifacts on a separate QEMU guest disk. The
-     runner creates a blank, read-only 1 GiB raw disk and  attaches  a	writable
-     qcow2  overlay  to	 the guest. The live guest uses holyinstall to partition
-     that disk, create FAT32 and ext4 filesystems,  and	 install  Limine's  BIOS
-     stage.  Its static storage tools come from STORAGE_TOOLS_PACKAGE, which the
-     builder installs into the live image but excludes from the installed  base.
-     The  guest mounts the target root, stages its local .holy archives, reviews
-     and applies one holyinstall package plan, generates the installed man  bun-
-     dle, and copies kernel, initramfs and Limine files from the ISO to the ESP.
-     The  runner  shuts down that guest after serial success markers, then forks
-     the installed overlay for separate BIOS and UEFI disk  boots.  Both  guests
-     check dinit, BusyBox, holypkg, package state, documentation and the mounted
-     ESP.  The	install-test image contains a disposable local user and a static
-     login probe. Each installed boot checks rejection of an incorrect	password
-     and  an  authenticated  shell  with  UID 10001. The fixture account is only
-     present when INSTALL_TEST=1. The UEFI boot	 uses  fresh  writable	firmware
-     variables.
+     INSTALL_TEST=1  selects an x86_64 static-core RAM ISO whose default service
+     installs the selected base artifacts on a separate	 QEMU  guest  disk.  The
+     runner  creates  a	 blank, read-only 1 GiB raw disk and attaches a writable
+     qcow2 overlay to the guest. The live guest uses  holyinstall  to  partition
+     that  disk,  create  FAT32	 and ext4 filesystems, and install Limine's BIOS
+     stage. Its static storage tools come from STORAGE_TOOLS_PACKAGE, which  the
+     builder  installs into the live image but excludes from the installed base.
+     The guest mounts the target root, stages its local .holy archives,	 reviews
+     and  applies  one holyinstall base package plan, then reviews and applies a
+     separate holypkg doas plan. It generates  the  installed  man  bundle,  and
+     copies kernel, initramfs and Limine files from the ISO to the ESP. The run-
+     ner  shuts down that guest after serial success markers, then forks the in-
+     stalled overlay for separate BIOS and UEFI disk boots.  Both  guests  check
+     dinit,  BusyBox, holypkg, package state, documentation and the mounted ESP.
+     The install-test image contains a disposable local user and a static  login
+     probe. Each installed boot checks rejection of an incorrect password and an
+     authenticated  shell with UID 10001. The same PTY probe enters the password
+     requested by doas and checks UID 0 from the policy's selected BusyBox  com-
+     mand.  The	 fixture  account and scoped doas.conf are only present when IN-
+     STALL_TEST=1. The UEFI boot uses fresh writable firmware variables.
 
-     The  holy-install-vm-4 report records each QEMU command, serial hashes, ISO
+     The holy-install-vm-5 report records each QEMU command, serial hashes,  ISO
      and disk hashes, the guest disk-plan hash, base-image integrity and missing
-     markers. It lists i686 installed boot, the account menu, doas, PAM/NSS  and
-     network  as untested. INSTALL_FIRMWARE=bios runs only BIOS and records UEFI
-     as untested; the default both mode requires UEFI_CODE and UEFI_VARS,  which
-     default  to  the  local QEMU edk2 images. This fixture verifies package in-
-     stallation and boot from a separate disk; it does not claim the  whole  in-
-     teractive	installer  acceptance  matrix.	Run an existing fixture ISO with
-     make check-install-vm ISO=FILE BOOT_PLAN=SHA256.
+     markers.  It  lists i686 installed boot, the account menu, PAM/NSS and net-
+     work as untested. INSTALL_FIRMWARE=bios runs only BIOS and records UEFI  as
+     untested; the default both mode requires UEFI_CODE and UEFI_VARS, which de-
+     fault  to the local QEMU edk2 images. This fixture verifies package instal-
+     lation and boot from a separate disk; it does not claim the whole	interac-
+     tive  installer  acceptance  matrix.  Run an existing fixture ISO with make
+     check-install-vm ISO=FILE BOOT_PLAN=SHA256.
 
 QEMU
      make check-qemu ARCH=x86_64 ISO=FILE BOOT_PLAN=SHA256 runs the  test  sepa-

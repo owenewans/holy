@@ -65,6 +65,8 @@ case "$install_test:$storage:$profile:$boot_state:$arch" in
 esac
 if test "$install_test" = 1; then
     case "$install_firmware" in bios|both) ;; *) echo 'INSTALL_FIRMWARE must be bios or both' >&2; exit 2 ;; esac
+    doas_package=$(realpath "${DOAS_PACKAGE:?DOAS_PACKAGE required}")
+    test -f "$doas_package" || exit 6
 fi
 case "$network_recovery" in
     off) ;;
@@ -231,6 +233,16 @@ cp "$out/inputs/holyinstall" "$tree/DATA/usr/bin/holyinstall"
 cp "$project/man/holyinstall.8" "$tree/DATA/usr/share/man/man8/holyinstall.8"
 sha256sum "$out/inputs/holyinstall" "$project/man/holyinstall.8" > "$tree/HOLY/origin"
 pack holyinstall
+if test "$install_test" = 1; then
+    "$bin" info "local:$doas_package" > "$work/doas-info"
+    grep -qx 'name doas' "$work/doas-info"
+    grep -qx 'arch x86_64' "$work/doas-info"
+    grep -qx 'libc nolibc' "$work/doas-info"
+    cp "$doas_package" "$out/packages/doas.holy"
+    doas_digest=$(sha256sum "$out/packages/doas.holy")
+    doas_digest=${doas_digest%% *}
+    printf 'guest-package doas %s\n' "$doas_digest" >> "$record"
+fi
 metadata linux "$version" "$package_arch"
 mkdir -p "$tree/DATA/boot"
 cp "$kernel" "$out/inputs/kernel"
@@ -303,6 +315,9 @@ if test "$install_test" = 1; then
     cat >> "$tree/DATA/etc/shadow" <<'EOF'
 holytest:$6$holyfixture$dWRvmlTx76Ezgh55faR0FP7brdbDJrBSlGfNEW5bbcQDRvj4uwCOeDgUSHkXHQEedvoyZH55dtVIl9Aie1eMh.:0:0:99999:7:::
 EOF
+    printf 'permit holytest as root cmd /usr/bin/busybox args id -u\n' > "$tree/DATA/etc/doas.conf"
+    chmod 0400 "$tree/DATA/etc/doas.conf"
+    printf '%s\n' "$doas_digest" > "$tree/DATA/etc/holy/doas.sha256"
     "$cc" -O2 -std=c99 -Wall -Wextra -Werror -pedantic -static \
         "$project/tests/login-probe.c" -o "$tree/DATA/usr/lib/holy/login-probe"
     "$bin" elf "$tree/DATA/usr/lib/holy/login-probe" > "$out/login-probe.elf"
@@ -409,6 +424,8 @@ if test "$install_test" = 1; then
         --holypkg "$bin" > "$out/storage.preview"
     "$installer" --apply "$out/storage.plan" --holypkg "$bin" > "$out/storage.apply"
     "$bin" db check --all --root "$root" > "$out/root-check.record"
+    "$bin" cache stage "local:$out/packages/doas.holy" --root "$root"
+    test -f "$root/var/cache/holypkg/objects/sha256/$doas_digest.holy"
 fi
 "$bin" docs --root "$root" --output "$root/usr/share/holy/llm.txt"
 chmod 0644 "$root/usr/share/holy/llm.txt"

@@ -7,9 +7,11 @@
   under QEMU/TCG. The installed guest checks dinit, holypkg, package repair
   and local password login; a wrong password is rejected. The two VM reports
   use the same fixture image and do not establish i686 installer support.
-- [ ] Add doas to the installed guest and verify a scoped command from the
-  unprivileged account. A static OpenDoas package and local setuid transaction
-  fixture exist in the working tree; installed-guest verification is pending.
+- [x] Install a static OpenDoas package through a separate artifact-approved
+  set transaction on the guest disk. BIOS and UEFI boots authenticate the
+  local account and then run the scoped BusyBox UID command through doas;
+  the PTY probe supplies its password and checks UID 0. The fixture uses a
+  local shadow account and does not cover PAM/NSS or an account menu.
 
 
 ## Package manager
