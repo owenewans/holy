@@ -181,7 +181,9 @@ writer-locked validation required by apply.
 Database apply installs only an approved linux/noarch/nolibc data package
 with empty hooks, transform and requirements. Its payload may contain
 ordinary non-executable regular files and directory entries; every directory
-must already exist in the target root. No symlink, hardlink, privileged mode
+must already exist in the target root with the manifest's mode and numeric
+owner/group. A changed directory is rejected before writing a journal.
+No symlink, hardlink, privileged mode
 or file collision is accepted. The caller must review the db plan digest and
 invoke db approve first. Apply holds the database writer lock, recomputes the
 approved plan and rechecks every path against opened directory descriptors.
@@ -208,7 +210,8 @@ arbitrary .holy packages.
 .PP
 Database check reads one installed data manifest and compares its regular
 files against the target root by path, type, size, mode, numeric ownership
-and SHA-256. It checks that listed directories remain safe and rejects
+and SHA-256. It checks listed directories against their manifest mode and
+numeric owner/group and rejects
 symlinked parent paths. It returns 4 for changed or missing files, 6 when
 the instance is absent, and 5 while a file transaction is incomplete. The
 command neither downloads an archive nor repairs a file. This restricted

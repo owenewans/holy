@@ -49,7 +49,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=5d6e9a4ad36fff9c334003a9bd8496ce6940d1db19a8bd9aa2b3f9da2c56a199
+holypkg.8 source=holy version=development sha256=c5ed28f2487b26244ae528f759e88359db9f5cf12a886d26b12b68e3f3431371
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -190,45 +190,47 @@ DESCRIPTION
      Database  apply  installs only an approved linux/noarch/nolibc data package
      with empty hooks, transform and requirements. Its payload may contain ordi-
      nary non-executable regular files and directory  entries;	every  directory
-     must  already  exist  in  the target root. No symlink, hardlink, privileged
-     mode or file collision is accepted. The caller must review the db plan  di-
-     gest and invoke db approve first. Apply holds the database writer lock, re-
-     computes the approved plan and rechecks every path against opened directory
-     descriptors.   It	creates	 each file with O_EXCL, then synchronizes it and
-     its parent. It records a journal before changing the rootfs  and  publishes
-     installed	metadata  and the next database generation after copying payload
-     files. The installed record contains meta, files, deps, origin  and  state;
-     local  delivery  has no trusted source-id. Apply does not run package hooks
-     or configure services.  An I/O failure after journal publication leaves  an
-     incomplete	 transaction  for inspection; db status returns 5 and db recover
-     does not retry file mutations. db recover --abort-empty can clear an incom-
-     plete journal only at its original generation, with the same approved arti-
-     fact and no installed instance or payload files. It retains approval for  a
-     later  apply or cancel.  Otherwise the operator must inspect the rootfs and
-     journal manually.	A crash after publishing the next generation  can  leave
-     the journal and approved reservation behind. db recover --finish-apply ver-
-     ifies  the installed instance, its generation, all listed payload files and
-     any remaining approval before clearing those records. It refuses an  incom-
-     plete  payload  and  does not resume file extraction.  A regular successful
-     return requires both the installed record and generation publication.  Gen-
-     eral  ownership replacement and automatic rollback are not implemented. The
-     command is not an installer for arbitrary .holy packages.
+     must  already exist in the target root with the manifest's mode and numeric
+     owner/group. A changed directory is rejected before writing a journal.   No
+     symlink,  hardlink,  privileged  mode  or	file  collision is accepted. The
+     caller must review the db plan digest and invoke db  approve  first.  Apply
+     holds  the	 database writer lock, recomputes the approved plan and rechecks
+     every path against opened directory descriptors.  It creates each file with
+     O_EXCL, then synchronizes it and its parent. It records  a	 journal  before
+     changing  the rootfs and publishes installed metadata and the next database
+     generation after copying payload files. The installed record contains meta,
+     files, deps, origin and state; local delivery has no trusted source-id. Ap-
+     ply does not run package hooks or configure services.  An I/O failure after
+     journal publication leaves an incomplete  transaction  for	 inspection;  db
+     status  returns  5 and db recover does not retry file mutations. db recover
+     --abort-empty can clear an incomplete journal only at its original	 genera-
+     tion,  with the same approved artifact and no installed instance or payload
+     files. It retains approval for a later apply or cancel.  Otherwise the  op-
+     erator  must  inspect  the rootfs and journal manually.  A crash after pub-
+     lishing the next generation can leave the journal and approved  reservation
+     behind. db recover --finish-apply verifies the installed instance, its gen-
+     eration,  all listed payload files and any remaining approval before clear-
+     ing those records. It refuses an incomplete payload  and  does  not  resume
+     file  extraction.	 A regular successful return requires both the installed
+     record and generation publication. General ownership replacement and  auto-
+     matic rollback are not implemented. The command is not an installer for ar-
+     bitrary .holy packages.
 
-     Database check reads one installed data manifest and compares  its	 regular
-     files  against the target root by path, type, size, mode, numeric ownership
-     and SHA-256. It checks that listed directories remain safe and rejects sym-
-     linked parent paths. It returns 4 for changed or missing files, 6 when  the
-     instance  is absent, and 5 while a file transaction is incomplete. The com-
-     mand neither downloads an archive nor repairs a file. This restricted check
-     does not model dynamic linking, scripts or runtime	 behavior.  --all  walks
-     every  installed  data manifest under the same shared lock and reports each
-     artifact as intact or changed in digest order. It returns 4 if any artifact
-     has changed. An empty installed set reports zero checked  packages.  --json
-     emits  one holy-installed-check-1 JSON line per artifact followed by a sum-
-     mary of passes and failures, or one error	line  on  an  invalid  database,
-     missing instance or incomplete transaction. This reports only data-manifest
-     coverage;	changed-file  does  not	 identify which path changed in the JSON
-     schema.
+     Database  check  reads one installed data manifest and compares its regular
+     files against the target root by path, type, size, mode, numeric  ownership
+     and  SHA-256.  It checks listed directories against their manifest mode and
+     numeric owner/group and rejects symlinked parent paths. It	 returns  4  for
+     changed or missing files, 6 when the instance is absent, and 5 while a file
+     transaction is incomplete. The command neither downloads an archive nor re-
+     pairs a file. This restricted check does not model dynamic linking, scripts
+     or	 runtime  behavior.  --all walks every installed data manifest under the
+     same shared lock and reports each artifact as intact or changed  in  digest
+     order. It returns 4 if any artifact has changed. An empty installed set re-
+     ports  zero  checked packages. --json emits one holy-installed-check-1 JSON
+     line per artifact followed by a summary of passes and failures, or one  er-
+     ror  line	on  an invalid database, missing instance or incomplete transac-
+     tion. This reports only data-manifest coverage; changed-file does not iden-
+     tify which path changed in the JSON schema.
 
      Database owner reads installed data manifests and lists the artifact digest
      and kind for an exact relative or root-absolute path. Multiple packages may

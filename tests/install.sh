@@ -169,6 +169,13 @@ grep -qx "recovered install $digest generation 1" "$tmp/out"
 test ! -e "$db/transactions/journal"
 "$bin" db check "$digest" --root "$tmp/system" > "$tmp/out"
 grep -qx "intact $digest generation 1" "$tmp/out"
+chmod 700 "$tmp/system/usr/bin"
+if "$bin" db check "$digest" --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+grep -qx 'holypkg: changed-file usr/bin' "$tmp/err"
+if "$bin" db check "$digest" --root "$tmp/system" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+grep -q '"code":"changed-file"' "$tmp/out"
+chmod 755 "$tmp/system/usr/bin"
+"$bin" db check "$digest" --root "$tmp/system" > "$tmp/out"
 "$bin" db check "$digest" --root "$tmp/system" --json > "$tmp/out"
 python3 - "$tmp/out" "$digest" <<'PY'
 import json, sys
@@ -319,8 +326,10 @@ grep -qx keep "$tmp/failure/usr/bin/data"
 test ! -e "$tmp/failure/var/lib/holypkg/transactions/journal"
 rm "$tmp/failure/usr/bin/data"
 chmod 0555 "$tmp/failure/usr/bin"
-if "$bin" db apply --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
-test -f "$tmp/failure/var/lib/holypkg/transactions/journal"
+if "$bin" db apply --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+test ! -e "$tmp/failure/var/lib/holypkg/transactions/journal"
+printf 'format holy-journal-1\nstage applying\ngeneration 0\nartifact %s\nplan %s\n' \
+    "$digest" "$failure_plan" > "$tmp/failure/var/lib/holypkg/transactions/journal"
 if "$bin" db status --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
 grep -qx 'incomplete transaction; inspect journal' "$tmp/out"
 if "$bin" db check --all --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
@@ -340,7 +349,10 @@ test ! -e "$tmp/failure/var/lib/holypkg/transactions/journal"
 "$bin" db apply --root "$tmp/failure" > "$tmp/out"
 grep -qx "installed $digest generation 1 paths 3" "$tmp/out"
 chmod 0555 "$tmp/failure/usr/bin"
-if "$bin" db rm "$digest" --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
+if "$bin" db rm "$digest" --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+test ! -e "$tmp/failure/var/lib/holypkg/transactions/journal"
+printf 'format holy-journal-1\nstage removing\ngeneration 1\nartifact %s\nplan %064d\n' \
+    "$digest" 0 > "$tmp/failure/var/lib/holypkg/transactions/journal"
 if "$bin" db status --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
 if "$bin" db recover --abort-empty --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
 test -f "$tmp/failure/usr/bin/data"

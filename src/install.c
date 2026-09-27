@@ -70,6 +70,9 @@ static int check_entry(void *context, const struct holy_manifest_entry *entry)
     if (parent < 0) return 0;
     if (!fstatat(parent, base, &st, AT_SYMLINK_NOFOLLOW))
         ok = entry->directory && S_ISDIR(st.st_mode) &&
+             (st.st_mode & 07777) == entry->mode &&
+             (long long)st.st_uid == entry->uid &&
+             (long long)st.st_gid == entry->gid &&
              (st.st_uid == 0 || st.st_uid == geteuid()) && !(st.st_mode & 0022);
     else ok = errno == ENOENT && !entry->directory;
     close(parent);
@@ -183,6 +186,9 @@ static int check_file(int root, char **v, struct stat *observed)
     if (!strcmp(v[0], "dir")) {
         result = !fstatat(parent, base, &st, AT_SYMLINK_NOFOLLOW) &&
                  S_ISDIR(st.st_mode) &&
+                 (st.st_mode & 07777) == mode &&
+                 (unsigned long long)st.st_uid == uid &&
+                 (unsigned long long)st.st_gid == gid &&
                  (st.st_uid == 0 || st.st_uid == geteuid()) && !(st.st_mode & 0022);
         goto done;
     }
