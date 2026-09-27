@@ -51,7 +51,7 @@ FILES
      file.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holypkg.8 source=holy version=development sha256=553b61ca7dd1980e69239730acf6eea144a707b17cd050b921236f72491f21d9
+holypkg.8 source=holy version=development sha256=d9a16ab1baf819076c7ea3e2b7a569d533c3238c3bc35412d1dde45e7074df6e
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -199,6 +199,12 @@ DESCRIPTION
      processes	can  change  rootfs  paths  after recheck; it cannot replace the
      writer-locked validation required by apply.
 
+     Plan construction checks each payload path against installed  manifests  as
+     well  as  rootfs. An absent file remains owned until its installed claim is
+     removed; another package cannot acquire that path by recreating it.  Shared
+     directory	claims	remain	permitted. These checks read manifests directly;
+     generated ownership indexes are not required for correctness.
+
      Database apply installs only an approved linux/noarch/nolibc  data	 package
      with empty hooks, transform and requirements. Its payload may contain ordi-
      nary  non-executable  regular  files and directory entries; every directory
@@ -259,16 +265,21 @@ DESCRIPTION
 
      Database rm removes one intact data-only  installed  instance  by	artifact
      SHA-256.  It  verifies  all  listed  files before mutation, refuses changed
-     files and pending reservations, then writes a removing journal. It	 unlinks
-     only  listed  regular files and the instance record; shared directories and
-     the cached artifact remain. The database generation advances after removal.
-     If an I/O failure interrupts deletion,  db	 status	 reports  an  incomplete
-     journal.	db recover --continue accepts a removing journal at its original
-     generation with an intact installed record, treats absent listed  files  as
-     removed, verifies every remaining file and completes removal. Changed files
-     or	 partial  installed records require manual inspection. --abort-empty ap-
-     plies only to an installing journal, never to removal.  This  command  does
-     not resolve reverse dependencies or remove general packages.
+     files and pending reservations, then  writes  a  removing	journal.  Before
+     journaling,  it  also  checks the other installed manifests for conflicting
+     ownership claims; shared directories are  allowed.	 A  conflict  returns  4
+     without  deleting	files.	Recovery repeats this ownership check before re-
+     suming an interrupted removal; conflicts retain the journal and  return  5.
+     It unlinks only listed regular files and the instance record; shared direc-
+     tories and the cached artifact remain. The database generation advances af-
+     ter  removal.  If	an I/O failure interrupts deletion, db status reports an
+     incomplete journal.  db recover --continue accepts a  removing  journal  at
+     its  original  generation	with  an  intact installed record, treats absent
+     listed files as removed, verifies every remaining file  and  completes  re-
+     moval.  Changed  files  or partial installed records require manual inspec-
+     tion. --abort-empty applies only to an installing	journal,  never	 to  re-
+     moval. This command does not resolve reverse dependencies or remove general
+     packages.
 
      The  info	command reads an LZ4-frame-compressed tar archive and prints the
      seven required fields from HOLY/meta. It reads  archive  data  without  ex-

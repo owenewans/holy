@@ -618,7 +618,43 @@ done:
 struct plan_hash {
     EVP_MD_CTX *hash;
     size_t count;
+    int dir;
+    int claim_error;
 };
+
+static int path_available(int dir, const char *path, int directory)
+{
+    int installed = child_dir(dir, "installed", 0), result = -1;
+    DIR *list;
+    struct dirent *entry;
+    if (installed < 0) return -1;
+    list = directory_stream(installed);
+    if (!list) { close(installed); return -1; }
+    errno = 0;
+    while ((entry = readdir(list))) {
+        int item, files, kind;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        item = child_dir(installed, entry->d_name, 0);
+        if (item < 0) goto done;
+        files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+        close(item);
+        if (files < 0) goto done;
+        kind = holy_install_manifest_owns(files, path);
+        close(files);
+        if (kind < 0) goto done;
+        if (kind && (kind == 1 || !directory)) {
+            fprintf(stderr, "holypkg: path already claimed by %s\n", entry->d_name);
+            result = 0;
+            goto done;
+        }
+        errno = 0;
+    }
+    if (!errno) result = 1;
+done:
+    closedir(list);
+    close(installed);
+    return result;
+}
 
 static int hash_text(EVP_MD_CTX *hash, const char *text)
 {
@@ -634,7 +670,7 @@ static int plan_entry(void *context, const struct holy_manifest_entry *entry)
 {
     struct plan_hash *plan = context;
     char attributes[128];
-    int written;
+    int written, available;
     if (entry->link || entry->hardlink || entry->group ||
         !entry->path[0] || entry->path[0] == '/' ||
         !strcmp(entry->path, "var/lib/holypkg") ||
@@ -647,6 +683,11 @@ static int plan_entry(void *context, const struct holy_manifest_entry *entry)
         entry->gid != (long long)getegid()) {
         fprintf(stderr, "holypkg: plan requires ordinary files and local ownership; unsupported path: %s\n",
                 entry->path);
+        return 0;
+    }
+    available = path_available(plan->dir, entry->path, entry->directory);
+    if (available != 1) {
+        plan->claim_error = available == 0 ? 4 : 1;
         return 0;
     }
     written = snprintf(attributes, sizeof attributes, "%c:%o:%lld:%lld:%lld:",
@@ -781,6 +822,7 @@ static int inspect_plan(const char *root_path, int root, int dir,
         strcmp(identity.os, "linux") || strcmp(identity.arch, "noarch") ||
         strcmp(identity.libc, "nolibc") || strcmp(identity.digest, digest)) goto done;
     plan.hash = EVP_MD_CTX_new();
+    plan.dir = dir;
     if (!plan.hash) { result = 1; goto done; }
     snprintf(generation_text, sizeof generation_text, "%llu", generation);
     if (snprintf(root_id, sizeof root_id, "%ju:%ju",
@@ -790,7 +832,10 @@ static int inspect_plan(const char *root_path, int root, int dir,
         !hash_text(plan.hash, "holy-readonly-plan-1") ||
         !hash_text(plan.hash, root_id) ||
         !hash_text(plan.hash, generation_text) || !hash_text(plan.hash, digest) ||
-        !holy_verify_visit(snapshot, plan_entry, &plan)) goto done;
+        !holy_verify_visit(snapshot, plan_entry, &plan)) {
+        if (plan.claim_error) result = plan.claim_error;
+        goto done;
+    }
     result = name_available(dir, identity.name);
     if (result < 0) { result = 1; goto done; }
     if (!result) {
@@ -1342,6 +1387,38 @@ done:
     return ok;
 }
 
+static int exclusive_claims(int installed, const char *digest, int files)
+{
+    DIR *list = directory_stream(installed);
+    struct dirent *entry;
+    int result = -1;
+    if (!list) return -1;
+    errno = 0;
+    while ((entry = readdir(list))) {
+        int item, other, conflict;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..") ||
+            !strcmp(entry->d_name, digest)) continue;
+        item = child_dir(installed, entry->d_name, 0);
+        if (item < 0) goto done;
+        other = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+        close(item);
+        if (other < 0) goto done;
+        conflict = holy_install_manifests_conflict(files, other);
+        close(other);
+        if (conflict < 0) goto done;
+        if (conflict) {
+            fprintf(stderr, "holypkg: conflicting installed ownership with %s\n", entry->d_name);
+            result = 0;
+            goto done;
+        }
+        errno = 0;
+    }
+    if (!errno) result = 1;
+done:
+    closedir(list);
+    return result;
+}
+
 int holy_state_remove(const char *digest, const char *root_path)
 {
     unsigned long long generation;
@@ -1372,6 +1449,8 @@ int holy_state_remove(const char *digest, const char *root_path)
     files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (files < 0) goto done;
     pending = holy_install_check_manifest(files, root);
+    if (pending != 1) { result = pending == 0 ? 4 : 1; goto done; }
+    pending = exclusive_claims(installed, digest, files);
     if (pending != 1) { result = pending == 0 ? 4 : 1; goto done; }
     length = (size_t)snprintf(journal, sizeof journal,
         "format holy-journal-1\nstage removing\ngeneration %llu\nartifact %s\nplan %064d\n",
@@ -1423,7 +1502,8 @@ int holy_state_continue_remove(const char *root_path)
     item = child_dir(installed, digest, 0);
     if (item < 0) goto done;
     files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
-    if (files < 0 || !holy_install_finish_remove_manifest(files, root) ||
+    if (files < 0 || exclusive_claims(installed, digest, files) != 1 ||
+        !holy_install_finish_remove_manifest(files, root) ||
         !finish_remove_record(dir, installed, item, transactions, digest, generation)) goto done;
     printf("recovered removal %s generation %llu\n", digest, generation + 1);
     result = 0;

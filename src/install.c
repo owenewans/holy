@@ -335,7 +335,7 @@ int holy_install_finish_remove_manifest(int files_fd, int root)
     return walk_manifest(files_fd, root, 2, NULL, NULL) == 1;
 }
 
-int holy_install_manifest_owns(int files_fd, const char *path)
+static int manifest_claims(int files_fd, const char *path, int other)
 {
     struct stat st;
     FILE *stream = NULL;
@@ -363,7 +363,11 @@ int holy_install_manifest_owns(int files_fd, const char *path)
         if (count) {
             if (count != 12 || (strcmp(v[0], "file") && strcmp(v[0], "dir")))
                 found = -1;
-            else if (!strcmp(v[1], path)) {
+            else if (other >= 0) {
+                int kind = holy_install_manifest_owns(other, v[1]);
+                if (kind < 0) found = -1;
+                else if (kind && (kind == 1 || !strcmp(v[0], "file"))) found = 1;
+            } else if (!strcmp(v[1], path)) {
                 if (found) found = -1;
                 else found = !strcmp(v[0], "file") ? 1 : 2;
             }
@@ -375,4 +379,14 @@ int holy_install_manifest_owns(int files_fd, const char *path)
     free(line);
     fclose(stream);
     return found;
+}
+
+int holy_install_manifest_owns(int files_fd, const char *path)
+{
+    return manifest_claims(files_fd, path, -1);
+}
+
+int holy_install_manifests_conflict(int left_fd, int right_fd)
+{
+    return manifest_claims(left_fd, NULL, right_fd);
 }

@@ -313,6 +313,23 @@ grep -qx 'generation 2' "$tmp/out"
 grep -qx "intact $digest generation 2" "$tmp/out"
 grep -qx "intact $digest2 generation 2" "$tmp/out"
 test "$(wc -l < "$tmp/out")" -eq 2
+cp -a "$tmp/payload" "$tmp/claimed"
+sed 's/name data2/name claimed/' "$tmp/payload/HOLY/meta" > "$tmp/claimed/HOLY/meta"
+mv "$tmp/claimed/DATA/usr/bin/data2" "$tmp/claimed/DATA/usr/bin/data"
+"$bin" manifest generate "$tmp/claimed" --output "$tmp/claimed-files" > "$tmp/out"
+cp "$tmp/claimed-files" "$tmp/claimed/HOLY/files"
+"$bin" pack "$tmp/claimed" --output "$tmp/claimed.holy" > "$tmp/out"
+"$bin" cache stage "local:$tmp/claimed.holy" --root "$tmp/system" > "$tmp/out"
+claimed=$(sha256sum "$tmp/claimed.holy")
+claimed=${claimed%% *}
+rm "$tmp/system/usr/bin/data"
+"$bin" db reserve "$claimed" --root "$tmp/system" > "$tmp/out"
+if "$bin" db plan --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+grep -qx "holypkg: path already claimed by $digest" "$tmp/err"
+test ! -e "$tmp/system/usr/bin/data"
+test ! -e "$db/transactions/journal"
+"$bin" db cancel --root "$tmp/system" > "$tmp/out"
+cp "$tmp/payload/DATA/usr/bin/data2" "$tmp/system/usr/bin/data"
 "$bin" db check --all --root "$tmp/system" --json > "$tmp/out"
 python3 - "$tmp/out" "$digest" "$digest2" <<'PY'
 import json, sys
@@ -355,6 +372,21 @@ sed "s/$digest/$other/" "$db/installed/$digest/state" > "$db/installed/$other/st
 if "$bin" db owner usr/bin/data --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 test ! -s "$tmp/out"
 grep -qx 'holypkg: conflicting installed owners for usr/bin/data' "$tmp/err"
+if "$bin" db rm "$digest" --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+grep -qx "holypkg: conflicting installed ownership with $other" "$tmp/err"
+test ! -e "$db/transactions/journal"
+test -f "$db/installed/$digest/state"
+test -f "$db/installed/$other/state"
+cmp "$tmp/system/usr/bin/data" "$tmp/payload/DATA/usr/bin/data2"
+printf 'format holy-journal-1\nstage removing\ngeneration 2\nartifact %s\nplan %064d\n' \
+    "$digest" 0 > "$db/transactions/journal"
+if "$bin" db recover --continue --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
+grep -qx "holypkg: conflicting installed ownership with $other" "$tmp/err"
+test -f "$db/transactions/journal"
+test -f "$db/installed/$digest/state"
+test -f "$db/installed/$other/state"
+cmp "$tmp/system/usr/bin/data" "$tmp/payload/DATA/usr/bin/data2"
+rm "$db/transactions/journal"
 rm -r "$db/installed/$other"
 printf 'changed\n' > "$tmp/system/usr/bin/data"
 if "$bin" db rm "$digest" --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi

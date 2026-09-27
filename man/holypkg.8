@@ -188,6 +188,12 @@ for a path conflict. The check changes neither database nor rootfs. Other
 processes can change rootfs paths after recheck; it cannot replace the
 writer-locked validation required by apply.
 .PP
+Plan construction checks each payload path against installed manifests as
+well as rootfs. An absent file remains owned until its installed claim is
+removed; another package cannot acquire that path by recreating it. Shared
+directory claims remain permitted. These checks read manifests directly;
+generated ownership indexes are not required for correctness.
+.PP
 Database apply installs only an approved linux/noarch/nolibc data package
 with empty hooks, transform and requirements. Its payload may contain
 ordinary non-executable regular files and directory entries; every directory
@@ -249,7 +255,11 @@ the path to exist in the live rootfs; db check compares actual contents.
 .PP
 Database rm removes one intact data-only installed instance by artifact
 SHA-256. It verifies all listed files before mutation, refuses changed files
-and pending reservations, then writes a removing journal. It unlinks only
+and pending reservations, then writes a removing journal. Before journaling,
+it also checks the other installed manifests for conflicting ownership claims;
+shared directories are allowed. A conflict returns 4 without deleting files.
+Recovery repeats this ownership check before resuming an interrupted removal;
+conflicts retain the journal and return 5. It unlinks only
 listed regular files and the instance record; shared directories and the
 cached artifact remain. The database generation advances after removal. If
 an I/O failure interrupts deletion, db status reports an incomplete journal.
