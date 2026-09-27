@@ -5,8 +5,16 @@ trap 'echo "HOLY-BOOT-1 failed $stage"; echo "HOLY-BOOT-1 result fail"' EXIT
 bb=/usr/bin/busybox
 pkg=/usr/bin/holypkg
 plan=$($bb cat /etc/holy/boot-plan)
+reported_storage=
+if test -f /etc/holy/installed-from-live; then
+    test "$($bb cat /etc/holy/installed-from-live)" = "$plan"
+    $bb grep -Eq '^[^ ]+ / ext4 ' /proc/mounts
+    reported_storage=ext4
+    echo 'HOLY-BOOT-1 installed-disk ext4'
+fi
 profile=$($bb cat /etc/holy/image-profile)
 storage=$($bb cat /etc/holy/root-storage)
+if test -z "$reported_storage"; then reported_storage=$storage; fi
 boot=1
 if test "$storage" = ext4; then
     $bb grep -Eq '^[^ ]+ / ext4 ' /proc/mounts
@@ -18,7 +26,7 @@ elif test "$storage" != ram; then
     exit 1
 fi
 echo "HOLY-BOOT-1 boot $boot"
-echo "HOLY-BOOT-1 root $storage"
+echo "HOLY-BOOT-1 root $reported_storage"
 echo "HOLY-BOOT-1 plan $plan"
 echo "HOLY-BOOT-1 profile $profile"
 if test -f /etc/holy/esp-device; then

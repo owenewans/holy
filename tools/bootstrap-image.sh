@@ -56,6 +56,12 @@ profile=${IMAGE_PROFILE:-dual-libc}
 boot_state=${LIBC_BOOT_STATE:-present}
 storage=${ROOT_STORAGE:-ram}
 network_recovery=${NETWORK_RECOVERY:-off}
+install_test=${INSTALL_TEST:-0}
+case "$install_test:$storage:$profile:$boot_state:$arch" in
+    0:*) ;;
+    1:ram:static-core:present:x86_64) ;;
+    *) echo 'INSTALL_TEST=1 requires x86_64 static-core RAM ISO' >&2; exit 2 ;;
+esac
 case "$network_recovery" in
     off) ;;
     fixture)
@@ -107,6 +113,7 @@ record="$out/build.record"
 printf 'format holy-bootstrap-image-1\narch %s\nprofile %s\nlibc-boot-state %s\nkernel-version %s\n' "$arch" "$profile" "$boot_state" "$version" > "$record"
 printf 'root-storage %s\n' "$storage" >> "$record"
 printf 'network-recovery %s\n' "$network_recovery" >> "$record"
+printf 'install-test %s\n' "$install_test" >> "$record"
 finish() {
     rc=$?
     trap - EXIT
@@ -250,7 +257,9 @@ mkdir -p "$tree/DATA/usr/bin" "$tree/DATA/usr/lib/holy" "$tree/DATA/etc/dinit.d"
 cp "$work/holy-init" "$tree/DATA/usr/bin/holy-init"
 cp "$project/profiles/dinit/"* "$tree/DATA/etc/dinit.d/"
 cp "$project/tests/boot-probe.sh" "$tree/DATA/usr/lib/holy/boot-probe.sh"
+cp "$project/tests/install-probe.sh" "$tree/DATA/usr/lib/holy/install-probe.sh"
 chmod 0644 "$tree/DATA/usr/lib/holy/boot-probe.sh"
+chmod 0644 "$tree/DATA/usr/lib/holy/install-probe.sh"
 cp "$out/packages/boot-fixture.holy" "$tree/DATA/usr/share/holy/fixture.holy"
 chmod 0644 "$tree/DATA/usr/share/holy/fixture.holy"
 cp "$out/packages/boot-fixture-root.holy" "$tree/DATA/usr/share/holy/fixture-root.holy"
@@ -291,6 +300,7 @@ ln -s dinit "$tree/DATA/usr/bin/init"
 ln -s busybox "$tree/DATA/usr/bin/sh"
 ln -s usr/bin/holy-init "$tree/DATA/init"
 sha256sum "$project/src/early-init.c" "$project/tests/boot-probe.sh" \
+    "$project/tests/install-probe.sh" \
     "$project/profiles/dinit/"* > "$tree/HOLY/origin"
 pack holy-boot
 metadata holy-base bootstrap noarch
@@ -363,6 +373,33 @@ docs_hash=$(sha256sum "$out/llm.txt")
 printf '%s\n' "${docs_hash%% *}" > "$root/etc/holy/docs.sha256"
 printf 'documentation-sha256 %s\n' "${docs_hash%% *}" >> "$record"
 tail -n 1 "$out/llm.txt" > "$out/docs.record"
+if test "$install_test" = 1; then
+    sed -n 's/^artifact //p' "$work/install.conf" > "$root/usr/share/holy/install-artifacts"
+    python3 - "$root" "$root/usr/share/holy/install-directories" <<'PY'
+import os
+import pathlib
+import stat
+import sys
+
+root = pathlib.Path(sys.argv[1])
+with open(sys.argv[2], 'w', encoding='utf-8') as output:
+    for parent, dirs, files in os.walk(root):
+        for name in sorted(dirs):
+            path = pathlib.Path(parent) / name
+            if path.is_symlink():
+                continue
+            relative = path.relative_to(root)
+            if relative.parts[:3] in (('var', 'lib', 'holypkg'),
+                                       ('var', 'cache', 'holypkg')):
+                continue
+            if any(char.isspace() for char in str(relative)):
+                raise SystemExit('unsupported installation directory name')
+            mode = stat.S_IMODE(path.stat().st_mode)
+            output.write(f'{mode:04o} {relative}\n')
+PY
+    sha256sum "$root/usr/share/holy/install-artifacts" \
+        "$root/usr/share/holy/install-directories" >> "$record"
+fi
 if test "$network_recovery" = fixture; then
     for abi in glibc musl; do
         digest=$(cat "$root/etc/holy/$abi.sha256")
@@ -509,6 +546,8 @@ cp "$root/boot/vmlinuz" "$work/iso/boot/vmlinuz"
 cp "$out/initramfs.img" "$work/iso/boot/initramfs.img"
 cp "$root/usr/share/limine/"*.bin "$root/usr/share/limine/limine-bios.sys" "$work/iso/boot/limine/"
 if test "$arch" = x86_64; then cp "$root/usr/share/limine/BOOTX64.EFI" "$work/iso/EFI/BOOT/"; fi
+boot_service=holy.test=1
+if test "$install_test" = 1; then boot_service=holy.install-test=1; fi
 cat > "$work/iso/boot/limine/limine.conf" <<EOF
 timeout: 0
 serial: yes
@@ -517,7 +556,7 @@ verbose: yes
     protocol: linux
     kernel_path: boot():/boot/vmlinuz
     module_path: boot():/boot/initramfs.img
-    cmdline: console=ttyS0,115200 rdinit=/init holy.test=1 panic=1 $root_cmdline
+    cmdline: console=ttyS0,115200 rdinit=/init $boot_service panic=1 $root_cmdline
 EOF
 boot_media=iso
 iso_image="$out/holy-$arch.iso"
@@ -581,12 +620,18 @@ else
     sha256sum "$iso_image" >> "$record"
 fi
 sha256sum "$out/initramfs.img" "$root/boot/vmlinuz" >> "$record"
-ARCH="$arch" BOOT_MEDIA="$boot_media" ISO="$iso_image" BOOT_PLAN="$plan" REPORT_DIR="$out/reports" \
-    IMAGE_PROFILE="$profile" LIBC_BOOT_STATE="$boot_state" \
-    NETWORK_RECOVERY="$network_recovery" NETWORK_DIR="$out/network" \
-    ROOT_DISK="$root_disk" \
-    KERNEL_IMAGE="$root/boot/vmlinuz" KERNEL_VERSION="$version" INITRAMFS="$out/initramfs.img" \
-    sh "$project/tests/qemu.sh"
+if test "$install_test" = 1; then
+    ARCH="$arch" ISO="$iso_image" BOOT_PLAN="$plan" REPORT_DIR="$out/reports" \
+        STATIC_HOLYINSTALL="$installer" \
+        python3 "$project/tests/install-vm.py"
+else
+    ARCH="$arch" BOOT_MEDIA="$boot_media" ISO="$iso_image" BOOT_PLAN="$plan" REPORT_DIR="$out/reports" \
+        IMAGE_PROFILE="$profile" LIBC_BOOT_STATE="$boot_state" \
+        NETWORK_RECOVERY="$network_recovery" NETWORK_DIR="$out/network" \
+        ROOT_DISK="$root_disk" \
+        KERNEL_IMAGE="$root/boot/vmlinuz" KERNEL_VERSION="$version" INITRAMFS="$out/initramfs.img" \
+        sh "$project/tests/qemu.sh"
+fi
 printf 'result boot-tested-%s\n' "$profile" >> "$record"
 if test "$storage" = ram; then printf 'not-tested libc-recovery-reboot\n' >> "$record"; fi
 if test "$network_recovery" = fixture; then

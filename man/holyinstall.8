@@ -118,8 +118,14 @@ copies the two images into their partitions, verifies the written bytes,
 installs the Limine BIOS stage and verifies GPT. The adjacent journal records
 each stage. A changed input requires a new plan; an existing finalize journal
 requires inspection before recovery. The command does not configure UEFI,
-mount the partitions or prove the image can boot. Boot and account menus and the
-live-ISO-to-installed-disk QEMU test remain pending.
+mount the partitions or prove the image can boot. Boot and account menus and
+the full interactive install acceptance matrix remain pending.
+.PP
+The optional install VM fixture described in holy-image(7) mounts a
+prepartitioned guest disk from the live ISO and applies a package plan to its
+root. It boots the installed disk in a second QEMU run. The fixture prepares
+GPT, filesystems and Limine BIOS stage on the host; holyinstall does not yet
+perform those operations on a guest block device.
 .SH EXIT STATUS
 0 means the requested step completed. 1 means an operational error. 2 means
 invalid arguments, config or plan. Disk apply returns 3 for a changed image

@@ -101,6 +101,7 @@ int main(void)
     fclose(input);
     for (word = strtok(line, " \t\r\n"); word; word = strtok(NULL, " \t\r\n")) {
         if (!strcmp(word, "holy.test=1")) service = "holy-test";
+        if (!strcmp(word, "holy.install-test=1")) service = "holy-install-test";
         if (!strncmp(word, "holy.root=", 10)) {
             if (device || !word[10]) { errno = EINVAL; fail("holy-init: duplicate or empty root"); }
             device = strdup(word + 10);
