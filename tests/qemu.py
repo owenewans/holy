@@ -65,6 +65,20 @@ def quit_qemu(path):
                         break
 
 
+def boot_frames(lines, disk):
+    if not disk:
+        return [set(lines)], True
+    frames = []
+    for line in lines:
+        if line.startswith('HOLY-BOOT-1 boot '):
+            if len(frames) == 2 or line != f'HOLY-BOOT-1 boot {len(frames) + 1}':
+                return frames, False
+            frames.append(set())
+        if frames:
+            frames[-1].add(line)
+    return frames, True
+
+
 def main():
     arch = os.environ.get('ARCH', '')
     if arch not in ('i686', 'x86_64'):
@@ -88,6 +102,10 @@ def main():
         error('unsupported image profile or libc boot state', 2)
     if profile == 'static-core' and state != 'present':
         error('libc boot state requires dual-libc profile', 2)
+    disk_path = os.environ.get('ROOT_DISK', '')
+    qemu_img = shutil.which('qemu-img')
+    if disk_path and (profile != 'dual-libc' or not Path(disk_path).is_file() or not qemu_img):
+        error('disk recovery requires dual-libc, a regular raw ROOT_DISK and qemu-img', 6)
     firmware_files = {}
     if firmware == 'uefi':
         for field in ('UEFI_CODE', 'UEFI_VARS'):
@@ -104,13 +122,26 @@ def main():
     shutil.copyfile(iso, run / 'input.iso')
     os.chmod(run / 'input.iso', 0o444)
     inputs['iso']['sha256'] = digest(run / 'input.iso')
+    if disk_path:
+        base = run / 'root.raw'
+        shutil.copyfile(disk_path, base)
+        os.chmod(base, 0o444)
+        inputs['root_disk'] = {'source': str(Path(disk_path).resolve()), 'sha256': digest(base), 'format': 'raw'}
+        subprocess.run([qemu_img, 'create', '-q', '-f', 'qcow2', '-F', 'raw', '-b',
+                        str(base), str(run / 'root.qcow2')], check=True)
     for field in ('KERNEL_IMAGE', 'INITRAMFS', 'ROOT_IMAGE'):
         if field in os.environ:
             path = Path(os.environ[field])
             inputs[field.lower()] = {'source': str(path.resolve()), 'sha256': digest(path)}
     args = [qemu, '-accel', accel, '-m', '1024', '-display', 'none', '-monitor', 'none',
-            '-net', 'none', '-no-reboot', '-boot', 'd', '-cdrom', str(run / 'input.iso'),
+            '-net', 'none', '-boot', 'd', '-cdrom', str(run / 'input.iso'),
             '-serial', 'file:' + str(run / 'serial.log')]
+    if disk_path:
+        args += ['-blockdev', json.dumps({'driver': 'qcow2', 'node-name': 'holy-root',
+                 'file': {'driver': 'file', 'filename': str(run / 'root.qcow2')}}),
+                 '-device', 'virtio-blk-pci,drive=holy-root']
+    else:
+        args += ['-no-reboot']
     for field, path in firmware_files.items():
         dest = run / (field.lower() + '.fd')
         shutil.copyfile(path, dest)
@@ -130,6 +161,17 @@ def main():
                 expected.update({f'HOLY-BOOT-1 missing-libc {abi}', f'HOLY-BOOT-1 restored-libc {abi}'})
     if 'KERNEL_VERSION' in os.environ:
         expected.add('HOLY-BOOT-1 kernel ' + os.environ['KERNEL_VERSION'])
+    expected_boots = [expected]
+    if disk_path:
+        first = expected - {'HOLY-BOOT-1 result pass'}
+        first.update({'HOLY-BOOT-1 boot 1', 'HOLY-BOOT-1 root ext4',
+                      'HOLY-BOOT-1 first-boot pass', 'HOLY-BOOT-1 reboot requested'})
+        second = {marker for marker in expected if not marker.startswith((
+            'HOLY-BOOT-1 libc-initial ', 'HOLY-BOOT-1 libc-recovery ',
+            'HOLY-BOOT-1 missing-libc ', 'HOLY-BOOT-1 restored-libc '))}
+        second.update({'HOLY-BOOT-1 boot 2', 'HOLY-BOOT-1 root ext4',
+                       'HOLY-BOOT-1 libc-initial restored', 'HOLY-BOOT-1 libc-recovery restored'})
+        expected_boots = [first, second]
     cancelled = []
 
     def request_stop(number, frame):
@@ -142,13 +184,16 @@ def main():
     reason = 'boot-timeout'
     result = 'fail'
     seen = set()
+    frames = []
+    first_completed = None
+    deadline = started + int(limit)
     with tempfile.TemporaryDirectory(prefix='holy-qmp-') as control:
         qmp = Path(control) / 'control'
         args += ['-qmp', 'unix:' + str(qmp) + ',server=on,wait=off']
         with open(run / 'qemu.stdout', 'wb') as stdout, open(run / 'qemu.stderr', 'wb') as stderr:
             process = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
             try:
-                while time.monotonic() - started < int(limit):
+                while time.monotonic() < deadline:
                     if cancelled:
                         reason = 'cancelled'
                         break
@@ -156,10 +201,19 @@ def main():
                     if serial.exists():
                         complete = serial.read_text(errors='replace').rsplit('\n', 1)[0]
                         seen = set(complete.splitlines())
+                        frames, valid = boot_frames(complete.splitlines(), bool(disk_path))
+                        if not valid:
+                            reason = 'invalid-boot-sequence'
+                            break
                     if 'HOLY-BOOT-1 result fail' in seen:
                         reason = 'guest-failure'
                         break
-                    if expected <= seen:
+                    if disk_path and first_completed is None and frames and expected_boots[0] <= frames[0]:
+                        first_completed = time.monotonic() - started
+                        deadline = time.monotonic() + int(limit)
+                        reason = 'reboot-timeout'
+                    if len(frames) == len(expected_boots) and all(
+                            wanted <= actual for wanted, actual in zip(expected_boots, frames)):
                         reason = 'probes-complete'
                         break
                     if process.poll() is not None:
@@ -184,6 +238,14 @@ def main():
                 if process.poll() is None:
                     process.kill()
                     process.wait()
+    base_unchanged = not disk_path or digest(run / 'root.raw') == inputs['root_disk']['sha256']
+    if not base_unchanged:
+        reason, result = 'changed-read-only-base', 'fail'
+    boots = []
+    for index, wanted in enumerate(expected_boots):
+        actual = frames[index] if index < len(frames) else set()
+        boots.append({'boot': index + 1, 'missing_markers': sorted(wanted - actual),
+                      'checks': {marker: 'pass' if marker in actual else 'unknown' for marker in sorted(wanted)}})
     report = {'schema': 'holy-qemu-report-2', 'arch': arch, 'accelerator': accel,
               'firmware': firmware, 'profile': profile, 'libc_boot_state': state,
               'network': 'disabled', 'plan': plan, 'inputs': inputs,
@@ -191,10 +253,18 @@ def main():
               'cancel_signal': cancelled[0] if cancelled else None,
               'elapsed_seconds': time.monotonic() - started,
               'boot_timeout_seconds': int(limit), 'shutdown_timeout_seconds': 5,
-              'reason': reason, 'result': result, 'missing_markers': sorted(expected - seen),
+              'root_storage': 'ext4-overlay' if disk_path else 'ram', 'boots': boots,
+              'first_boot_completed_seconds': first_completed,
+              'reason': reason, 'result': result,
+              'missing_markers': ([f'boot-{b["boot"]}: {marker}' for b in boots for marker in b['missing_markers']]
+                                  if disk_path else sorted(expected - seen)),
               'checks': {marker: 'pass' if marker in seen else 'unknown' for marker in sorted(expected)},
               'not_tested': (['libc-recovery'] if profile != 'dual-libc' or state == 'present' else []) +
-                            ['libc-recovery-reboot', 'i686-libc', 'installer', 'hardware', 'network', 'kernel-update']}
+                            ([] if disk_path else ['libc-recovery-reboot']) +
+                            ['i686-libc', 'installer', 'hardware', 'network', 'kernel-update']}
+    if disk_path:
+        report['overlay'] = {'path': str(run / 'root.qcow2'), 'sha256': digest(run / 'root.qcow2'),
+                             'base_unchanged': base_unchanged}
     (run / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     (run / 'report').write_text(
         f'format holy-qemu-report-2\narch {arch}\niso-sha256 {inputs["iso"]["sha256"]}\n'
@@ -207,5 +277,5 @@ def main():
 if __name__ == '__main__':
     try:
         sys.exit(main())
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         error(str(exc), 1)

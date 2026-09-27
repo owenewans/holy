@@ -6,6 +6,19 @@ bb=/usr/bin/busybox
 pkg=/usr/bin/holypkg
 plan=$($bb cat /etc/holy/boot-plan)
 profile=$($bb cat /etc/holy/image-profile)
+storage=$($bb cat /etc/holy/root-storage)
+boot=1
+if test "$storage" = ext4; then
+    $bb grep -Eq '^[^ ]+ / ext4 ' /proc/mounts
+    if test -f /var/lib/holy-boot-test/reboot; then
+        test "$($bb cat /var/lib/holy-boot-test/reboot)" = "$plan"
+        boot=2
+    fi
+elif test "$storage" != ram; then
+    exit 1
+fi
+echo "HOLY-BOOT-1 boot $boot"
+echo "HOLY-BOOT-1 root $storage"
 echo "HOLY-BOOT-1 plan $plan"
 echo "HOLY-BOOT-1 profile $profile"
 test "$($bb readlink /proc/1/exe)" = /usr/bin/dinit
@@ -37,6 +50,7 @@ if test "$profile" = dual-libc; then
     stage=libc-recovery
     state=$($bb cat /etc/holy/libc-boot-state)
     case "$state" in present|glibc|musl|both) ;; *) exit 1 ;; esac
+    if test "$boot" = 2; then state=restored; fi
     for abi in glibc musl; do
         case "$abi" in
             glibc) loader=/usr/lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2 ;;
@@ -110,6 +124,17 @@ $pkg db rm "$root_digest" --root / > /run/root-package-remove
 $pkg db rm "$digest" --root / > /run/package-remove
 test ! -e /usr/share/holy/fixture-installed
 echo 'HOLY-BOOT-1 transaction install-check-remove'
+if test "$storage" = ext4 && test "$boot" = 1; then
+    stage=reboot
+    $bb mkdir -p /var/lib/holy-boot-test
+    printf '%s\n' "$plan" > /var/lib/holy-boot-test/reboot
+    $bb sync
+    echo 'HOLY-BOOT-1 first-boot pass'
+    echo 'HOLY-BOOT-1 reboot requested'
+    $bb reboot -f
+    while :; do $bb sleep 3600; done
+fi
+$bb sync
 echo 'HOLY-BOOT-1 result pass'
 trap - EXIT
 while :; do $bb sleep 3600; done

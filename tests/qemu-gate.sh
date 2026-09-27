@@ -2,7 +2,22 @@
 set -eu
 export QEMU_ACCEL=tcg
 export FIRMWARE=bios
-unset KERNEL_IMAGE INITRAMFS ROOT_IMAGE KERNEL_VERSION
+unset KERNEL_IMAGE INITRAMFS ROOT_IMAGE ROOT_DISK KERNEL_VERSION
+
+python3 - <<'PY'
+import importlib.util
+spec = importlib.util.spec_from_file_location('holy_qemu', 'tests/qemu.py')
+runner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runner)
+frames, valid = runner.boot_frames([
+    'HOLY-BOOT-1 boot 1', 'identity', 'recovered',
+    'HOLY-BOOT-1 boot 2', 'recovered'], True)
+assert valid and {'identity', 'recovered'} <= frames[0]
+assert not {'identity', 'recovered'} <= frames[1]
+for lines in (['HOLY-BOOT-1 boot 2'], ['HOLY-BOOT-1 boot 1', 'HOLY-BOOT-1 boot 1'],
+              ['HOLY-BOOT-1 boot 1', 'HOLY-BOOT-1 boot 2', 'HOLY-BOOT-1 boot 3']):
+    assert not runner.boot_frames(lines, True)[1]
+PY
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp/opencode}/holy-qemu-fixture-XXXXXX")
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM

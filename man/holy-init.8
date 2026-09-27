@@ -15,8 +15,16 @@ holy.test=1 kernel argument selects holy-test instead. Other kernel words
 are not interpreted as shell code.
 .PP
 Calling holy-init outside PID 1 returns 2 before mounting anything.
-The current helper boots an in-memory live root. It does not yet unlock
-disks or switch from an initramfs to an installed disk root.
+Without holy.root it boots an in-memory live root. holy.root=/dev/DEVICE
+selects an ext4 disk root; holy.rootfstype=ext4 is the supported filesystem
+selector. Empty or repeated holy.root arguments are errors. The helper waits
+up to 30 seconds for the block device, mounts it at /newroot, verifies that
+the target init is executable and moves /dev, /proc, /sys, /run and /tmp there.
+It then executes the static BusyBox switch_root applet with the dinit argv.
+The process retains PID 1. Failure does not fall back to the RAM root.
+Device discovery must be available through built-in kernel drivers/devtmpfs.
+Encrypted roots, UUID discovery, modules and other filesystems are not yet
+implemented by this helper.
 .SH BUILD
 make builds holy-init with the configured C99 compiler. make static builds
 it with the selected musl toolchain. The image builder also compiles it

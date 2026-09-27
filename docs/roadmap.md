@@ -119,7 +119,15 @@
   cached .holy files inside the guest, verify broken-provider diagnostics,
   run allocation/thread/clock probes and pipe data between the two ABIs.
   The image audit rejects unexpected ldconfig aliases and undeclared dynamic
-  ELF. Persistent recovery across reboot and on-disk installation remain open.
+  ELF. Interactive on-disk installation remains open.
+- [x] Mount an ext4 root through static holy-init/BusyBox switch_root. Boot
+  present, glibc-missing, musl-missing and both-missing disk fixtures with
+  BIOS/TCG and UEFI/TCG. Restore libc, sync, reboot and repeat the full boot,
+  dynamic/IPC and package contracts on the same qcow2 overlay. Separate boot
+  marker sets prevent first-boot evidence from satisfying the second boot.
+  Verify the read-only raw base remains unchanged; a missing disk fails with
+  a device timeout instead of falling back to RAM. This is an ISO booting a
+  prepared ext4 image, not an installed disk with its own Limine/ESP.
 - [ ] Package Limine, dracut, kernel, firmware, SDK/sysroots and the default
   ConnMan+iwd network profile; test static local and HTTPS libc recovery.
 - [ ] Implement C99 `holyinstall` with reviewed disk/boot/account/network plans

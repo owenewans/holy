@@ -1,10 +1,12 @@
 #define _POSIX_C_SOURCE 200809L
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 static void fail(const char *what)
@@ -13,15 +15,48 @@ static void fail(const char *what)
     for (;;) pause();
 }
 
+static void mount_disk(const char *device)
+{
+    static const char *const mounts[] = { "/dev", "/proc", "/sys", "/run", "/tmp" };
+    const struct timespec delay = {0, 100000000};
+    struct stat st;
+    unsigned int attempt;
+    size_t i;
+    if (strncmp(device, "/dev/", 5) || !device[5]) {
+        errno = EINVAL;
+        fail("holy-init: root requires a /dev block device");
+    }
+    for (attempt = 0; attempt < 300; ++attempt) {
+        if (!stat(device, &st)) break;
+        if (errno != ENOENT) fail("holy-init: root device");
+        nanosleep(&delay, NULL);
+    }
+    if (attempt == 300) { errno = ETIMEDOUT; fail("holy-init: root device"); }
+    if (!S_ISBLK(st.st_mode)) { errno = ENOTBLK; fail("holy-init: root device"); }
+    if (mkdir("/newroot", 0755) || mount(device, "/newroot", "ext4", 0, NULL))
+        fail("holy-init: mount ext4 root");
+    if (access("/newroot/sbin/init", X_OK)) fail("holy-init: missing disk init");
+    for (i = 0; i < sizeof mounts / sizeof *mounts; ++i) {
+        char destination[32];
+        int size = snprintf(destination, sizeof destination, "/newroot%s", mounts[i]);
+        if (size < 0 || (size_t)size >= sizeof destination ||
+            mount(mounts[i], destination, NULL, MS_MOVE, NULL))
+            fail("holy-init: move runtime mount");
+    }
+}
+
 int main(void)
 {
     FILE *input;
-    char *line = NULL, *word;
+    char *line = NULL, *word, *device = NULL;
     size_t capacity = 0;
     int console, fd;
     char *service = "boot";
     char *args[] = { "/sbin/init", "--services-dir", "/etc/dinit.d",
                      "--socket-path", "/run/dinitctl", "--service", NULL, NULL };
+    char *disk_args[] = { "/usr/bin/busybox", "switch_root", "/newroot",
+                         "/sbin/init", "--services-dir", "/etc/dinit.d",
+                         "--socket-path", "/run/dinitctl", "--service", NULL, NULL };
     if (getpid() != 1) {
         fputs("holy-init: requires PID 1\n", stderr);
         return 2;
@@ -50,9 +85,26 @@ int main(void)
     if (!input || getline(&line, &capacity, input) < 0)
         fail("holy-init: kernel command line");
     fclose(input);
-    for (word = strtok(line, " \t\r\n"); word; word = strtok(NULL, " \t\r\n"))
+    for (word = strtok(line, " \t\r\n"); word; word = strtok(NULL, " \t\r\n")) {
         if (!strcmp(word, "holy.test=1")) service = "holy-test";
+        if (!strncmp(word, "holy.root=", 10)) {
+            if (device || !word[10]) { errno = EINVAL; fail("holy-init: duplicate or empty root"); }
+            device = strdup(word + 10);
+            if (!device) fail("holy-init: root allocation");
+        }
+        if (!strncmp(word, "holy.rootfstype=", 16) && strcmp(word + 16, "ext4")) {
+            errno = ENOTSUP;
+            fail("holy-init: only ext4 disk roots supported");
+        }
+    }
     free(line);
+    if (device) {
+        mount_disk(device);
+        free(device);
+        disk_args[9] = service;
+        execv(disk_args[0], disk_args);
+        fail("holy-init: switch_root");
+    }
     args[6] = service;
     execv(args[0], args);
     fail("holy-init: exec dinit");

@@ -31,6 +31,14 @@ done
 project=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 profile=${IMAGE_PROFILE:-dual-libc}
 boot_state=${LIBC_BOOT_STATE:-present}
+storage=${ROOT_STORAGE:-ram}
+case "$storage:$profile" in
+    ram:*) ;;
+    ext4:dual-libc)
+        for tool in mke2fs qemu-img; do command -v "$tool" >/dev/null || exit 6; done
+        ;;
+    *) echo 'ROOT_STORAGE must be ram, or ext4 with dual-libc' >&2; exit 2 ;;
+esac
 extra_packages=
 case "$profile:$boot_state" in
     static-core:present) ;;
@@ -54,6 +62,7 @@ mkdir "$work" "$root" "$out/packages" "$out/inputs" "$out/reports"
 started=$(date +%s)
 record="$out/build.record"
 printf 'format holy-bootstrap-image-1\narch x86_64\nprofile %s\nlibc-boot-state %s\nkernel-version %s\n' "$profile" "$boot_state" "$version" > "$record"
+printf 'root-storage %s\n' "$storage" >> "$record"
 finish() {
     rc=$?
     trap - EXIT
@@ -171,6 +180,7 @@ cp "$out/packages/boot-fixture-root.holy" "$tree/DATA/usr/share/holy/fixture-roo
 chmod 0644 "$tree/DATA/usr/share/holy/fixture-root.holy"
 printf '%s\n' "$version" > "$tree/DATA/etc/holy/kernel-version"
 printf '%s\n' "$profile" > "$tree/DATA/etc/holy/image-profile"
+printf '%s\n' "$storage" > "$tree/DATA/etc/holy/root-storage"
 printf '%s\n' "$boot_state" > "$tree/DATA/etc/holy/libc-boot-state"
 if test "$profile" = dual-libc; then
     for name in $extra_packages; do
@@ -250,6 +260,16 @@ plan=$(sha256sum "$out/plan")
 plan=${plan%% *}
 printf '%s\n' "$plan" > "$root/etc/holy/boot-plan"
 printf '%s\n' "$plan" > "$out/boot-plan"
+root_disk=
+root_cmdline=
+if test "$storage" = ext4; then
+    root_disk="$out/root.ext4"
+    truncate -s 512M "$root_disk"
+    mke2fs -q -t ext4 -F -d "$root" "$root_disk"
+    chmod 0444 "$root_disk"
+    sha256sum "$root_disk" >> "$record"
+    root_cmdline='holy.root=/dev/vda holy.rootfstype=ext4'
+fi
 mkdir -p "$work/dracut/modules.d/90holy" "$work/dracut/dracut.conf.d" "$work/empty-conf"
 dracut_base=${DRACUT_BASE:-/usr/lib64/dracut}
 for file in dracut-functions.sh dracut-logger.sh dracut-install dracut-util dracut-cpio; do
@@ -335,7 +355,7 @@ verbose: yes
     protocol: linux
     kernel_path: boot():/boot/vmlinuz
     module_path: boot():/boot/initramfs.img
-    cmdline: console=ttyS0,115200 rdinit=/init holy.test=1 panic=1
+    cmdline: console=ttyS0,115200 rdinit=/init holy.test=1 panic=1 $root_cmdline
 EOF
 xorriso -as mkisofs -R -r -J -b boot/limine/limine-bios-cd.bin \
     -no-emul-boot -boot-load-size 4 -boot-info-table \
@@ -345,7 +365,9 @@ limine bios-install "$out/holy-x86_64.iso"
 sha256sum "$out/holy-x86_64.iso" "$out/initramfs.img" "$root/boot/vmlinuz" >> "$record"
 ARCH=x86_64 ISO="$out/holy-x86_64.iso" BOOT_PLAN="$plan" REPORT_DIR="$out/reports" \
     IMAGE_PROFILE="$profile" LIBC_BOOT_STATE="$boot_state" \
+    ROOT_DISK="$root_disk" \
     KERNEL_IMAGE="$root/boot/vmlinuz" KERNEL_VERSION="$version" INITRAMFS="$out/initramfs.img" \
     sh "$project/tests/qemu.sh"
 printf 'result boot-tested-%s\n' "$profile" >> "$record"
-printf 'not-tested libc-recovery-reboot i686 installer network graphics\n' >> "$record"
+if test "$storage" = ram; then printf 'not-tested libc-recovery-reboot\n' >> "$record"; fi
+printf 'not-tested i686 installer network graphics\n' >> "$record"
