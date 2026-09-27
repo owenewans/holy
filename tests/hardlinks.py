@@ -21,6 +21,59 @@ with tempfile.TemporaryDirectory(prefix="holy-hardlinks-") as scratch:
         assert result.returncode == status, (args, result.returncode, result.stdout, result.stderr)
         return result.stdout
 
+    tree = tmp / "native"
+    (tree / "HOLY").mkdir(parents=True)
+    (tree / "DATA/a").mkdir(parents=True)
+    (tree / "HOLY/meta").write_text("format holy-package-1\nname native-links\nversion 1\nrelease 1\nos linux\narch noarch\nlibc nolibc\n")
+    for name in ("deps", "provides", "hooks", "origin", "transform"):
+        (tree / "HOLY" / name).write_text("")
+    (tree / "DATA/a/z").write_bytes(b"shared\n")
+    os.link(tree / "DATA/a/z", tree / "DATA/a-anchor")
+    os.link(tree / "DATA/a/z", tree / "DATA/line\nname")
+    (tree / "DATA/independent").write_bytes(b"shared\n")
+    os.link(tree / "DATA/independent", tmp / "outside")
+    generated = tmp / "native-files"
+    run("manifest", "generate", tree, "--output", generated)
+    rows = {row[1]: row for row in map(shlex.split, generated.read_text().splitlines())}
+    assert rows["a/z"][0] == rows[r"line\x0aname"][0] == "hardlink"
+    assert rows["a-anchor"][0] == rows["independent"][0] == "file"
+    assert rows["a/z"][-1] == rows[r"line\x0aname"][-1] == "a-anchor"
+    assert rows["independent"][11] == "-"
+    shutil.copyfile(generated, tree / "HOLY/files")
+    native = tmp / "native.holy"
+    run("pack", tree, "--output", native)
+    run("verify", "local:" + str(native))
+    extracted = tmp / "native-extracted"
+    run("fetch", "local:" + str(native), "--extract", "--output", extracted)
+    assert (extracted / "DATA/a/z").stat().st_ino == (extracted / "DATA/a-anchor").stat().st_ino
+    assert (extracted / "DATA/independent").stat().st_ino != (extracted / "DATA/a-anchor").stat().st_ino
+    second = tmp / "native-copy"
+    shutil.copytree(tree, second)
+    for path in ("a/z", "line\nname"):
+        (second / "DATA" / path).unlink()
+        os.link(second / "DATA/a-anchor", second / "DATA" / path)
+    run("manifest", "generate", second, "--output", tmp / "native-files-copy")
+    assert generated.read_bytes() == (tmp / "native-files-copy").read_bytes()
+    run("pack", second, "--output", tmp / "native-copy.holy")
+    assert native.read_bytes() == (tmp / "native-copy.holy").read_bytes()
+    native_root = tmp / "native-root"
+    native_root.mkdir()
+    run("db", "init", "--root", native_root)
+    run("cache", "stage", "local:" + str(native), "--root", native_root)
+    native_digest = hashlib.sha256(native.read_bytes()).hexdigest()
+    native_plan = run("db", "plan-set", native_digest, "--root", native_root).split(" sha256 ")[1].split()[0]
+    run("db", "apply-set", native_plan, native_digest, "--root", native_root)
+    run("db", "check", "--all", "--root", native_root)
+    assert (native_root / "a/z").stat().st_ino == (native_root / "line\nname").stat().st_ino
+    assert (native_root / "independent").stat().st_ino != (native_root / "a/z").stat().st_ino
+    run("db", "rm", native_digest, "--root", native_root)
+    assert not (native_root / "a/z").exists()
+    (second / "DATA/a/z").unlink()
+    (second / "DATA/a/z").write_bytes(b"shared\n")
+    run("pack", second, "--output", tmp / "native-stale.holy", status=1)
+    assert not (tmp / "native-stale.holy").exists()
+    print("native hardlink generation, forward targets, external links and deterministic packing passed")
+
     anchor = "opt/links/z-anchor"
     aliases = ["opt/links/a-first", "opt/other/last"]
     data = b"hardlink payload\n"

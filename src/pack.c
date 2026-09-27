@@ -21,10 +21,72 @@
 #include <sys/xattr.h>
 #include <unistd.h>
 
+struct tree_file {
+    char *path;
+    struct stat state;
+    size_t anchor, members;
+};
+
 struct writer {
     struct archive *archive;
     FILE *manifest;
+    struct tree_file *files;
+    size_t count, capacity, seen;
+    int collecting;
 };
+
+static int file_order(const void *left, const void *right)
+{
+    const struct tree_file *a = left, *b = right;
+    if (a->state.st_dev != b->state.st_dev) return a->state.st_dev < b->state.st_dev ? -1 : 1;
+    if (a->state.st_ino != b->state.st_ino) return a->state.st_ino < b->state.st_ino ? -1 : 1;
+    return strcmp(a->path, b->path);
+}
+
+static int unchanged(const struct stat *a, const struct stat *b)
+{
+    return a->st_dev == b->st_dev && a->st_ino == b->st_ino &&
+        a->st_mode == b->st_mode && a->st_uid == b->st_uid && a->st_gid == b->st_gid &&
+        a->st_size == b->st_size && a->st_nlink == b->st_nlink &&
+        a->st_mtim.tv_sec == b->st_mtim.tv_sec && a->st_mtim.tv_nsec == b->st_mtim.tv_nsec &&
+        a->st_ctim.tv_sec == b->st_ctim.tv_sec && a->st_ctim.tv_nsec == b->st_ctim.tv_nsec;
+}
+
+static int remember_file(struct writer *writer, const char *path, const struct stat *st)
+{
+    struct tree_file *file;
+    if (writer->count == writer->capacity) {
+        size_t capacity = writer->capacity ? writer->capacity * 2 : 32;
+        void *next;
+        if (capacity < writer->capacity || capacity > SIZE_MAX / sizeof *file) return 0;
+        next = realloc(writer->files, capacity * sizeof *file);
+        if (!next) return 0;
+        writer->files = next; writer->capacity = capacity;
+    }
+    file = &writer->files[writer->count];
+    memset(file, 0, sizeof *file);
+    file->path = strdup(path); file->state = *st;
+    if (!file->path) return 0;
+    ++writer->count;
+    return 1;
+}
+
+static void free_files(struct writer *writer)
+{
+    size_t i;
+    for (i = 0; i < writer->count; ++i) free(writer->files[i].path);
+    free(writer->files);
+}
+
+static int group_id(const char *path, char output[65])
+{
+    unsigned char hash[32];
+    unsigned size;
+    size_t i;
+    if (EVP_Digest(path, strlen(path), hash, &size, EVP_sha256(), NULL) != 1 || size != 32) return 0;
+    for (i = 0; i < 32; ++i) snprintf(output + i * 2, 3, "%02x", hash[i]);
+    return 1;
+}
 
 static int write_manifest_path(FILE *file, const char *path)
 {
@@ -50,14 +112,33 @@ static int write_entry(struct writer *writer, int parent, const char *name,
     unsigned char digest[32];
     unsigned int digest_size;
     int fd = -1, ok = 0;
+    const char *target = NULL;
+    char group[65] = "-";
     ssize_t got;
     fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC |
                 (directory ? O_DIRECTORY : O_NONBLOCK));
     if (fd < 0 || fstat(fd, &st) ||
         (directory ? !S_ISDIR(st.st_mode) : !S_ISREG(st.st_mode)) ||
-        (!directory && (st.st_nlink != 1 || st.st_size < 0)) ||
+        (!directory && (st.st_size < 0 || (strncmp(archive_path, "DATA/", 5) && st.st_nlink != 1))) ||
         flistxattr(fd, NULL, 0) != 0) goto done;
     original = st;
+    if (writer->collecting) {
+        ok = directory || remember_file(writer, archive_path, &st);
+        goto done;
+    }
+    if (!directory && !strncmp(archive_path, "DATA/", 5)) {
+        struct tree_file key, *file;
+        memset(&key, 0, sizeof key);
+        key.path = (char *)archive_path; key.state = st;
+        file = writer->count ? bsearch(&key, writer->files, writer->count, sizeof *file, file_order) : NULL;
+        if (!file || !unchanged(&file->state, &st)) goto done;
+        ++writer->seen;
+        if (file->members > 1) {
+            const char *anchor = writer->files[file->anchor].path;
+            if (!group_id(anchor, group)) goto done;
+            if (strcmp(anchor, archive_path)) target = anchor;
+        }
+    }
     if (writer->archive) {
         entry = archive_entry_new();
         if (!entry) goto done;
@@ -67,7 +148,8 @@ static int write_entry(struct writer *writer, int parent, const char *name,
         archive_entry_set_uid(entry, st.st_uid);
         archive_entry_set_gid(entry, st.st_gid);
         archive_entry_set_mtime(entry, 0, 0);
-        archive_entry_set_size(entry, directory ? 0 : st.st_size);
+        archive_entry_set_size(entry, directory || target ? 0 : st.st_size);
+        if (target) archive_entry_set_hardlink(entry, target);
         if (archive_write_header(writer->archive, entry) != ARCHIVE_OK) goto done;
     }
     if (writer->manifest && !directory) {
@@ -81,23 +163,18 @@ static int write_entry(struct writer *writer, int parent, const char *name,
                           (size_t)(st.st_size - offset) : sizeof buffer;
             got = read(fd, buffer, want);
             if (got < 0 && errno == EINTR) continue;
-            if (got <= 0 || (writer->archive &&
+            if (got <= 0 || (writer->archive && !target &&
                 archive_write_data(writer->archive, buffer, (size_t)got) != got) ||
                 (hash && EVP_DigestUpdate(hash, buffer, (size_t)got) != 1)) goto done;
             offset += got;
         }
-        if (fstat(fd, &st) || st.st_size != offset ||
-            st.st_dev != original.st_dev || st.st_ino != original.st_ino ||
-            st.st_mode != original.st_mode || st.st_uid != original.st_uid ||
-            st.st_gid != original.st_gid ||
-            st.st_mtim.tv_sec != original.st_mtim.tv_sec ||
-            st.st_mtim.tv_nsec != original.st_mtim.tv_nsec) goto done;
+        if (fstat(fd, &st) || st.st_size != offset || !unchanged(&original, &st)) goto done;
         if (hash && (EVP_DigestFinal_ex(hash, digest, &digest_size) != 1 ||
                      digest_size != sizeof digest)) goto done;
     }
     if (writer->manifest) {
         size_t i;
-        if (fprintf(writer->manifest, "%s ", directory ? "dir" : "file") < 0 ||
+        if (fprintf(writer->manifest, "%s ", directory ? "dir" : target ? "hardlink" : "file") < 0 ||
             !write_manifest_path(writer->manifest, archive_path + 5) ||
             fprintf(writer->manifest, " %o - - %lu %lu %lld ",
                     (unsigned)(st.st_mode & 07777), (unsigned long)st.st_uid,
@@ -107,7 +184,10 @@ static int write_entry(struct writer *writer, int parent, const char *name,
             if (fputs("-", writer->manifest) == EOF) goto done;
         } else for (i = 0; i < sizeof digest; ++i)
             if (fprintf(writer->manifest, "%02x", (unsigned)digest[i]) < 0) goto done;
-        if (fputs(" none - -\n", writer->manifest) == EOF) goto done;
+        if (fprintf(writer->manifest, " none - %s", group) < 0 ||
+            (target && (fputc(' ', writer->manifest) == EOF ||
+                        !write_manifest_path(writer->manifest, target + 5))) ||
+            fputc('\n', writer->manifest) == EOF) goto done;
     }
     ok = 1;
 done:
@@ -334,6 +414,25 @@ done:
     return ok;
 }
 
+static int collect_files(struct writer *writer, int root)
+{
+    size_t i, j, end;
+    writer->collecting = 1;
+    if (!walk_data(writer, root, "DATA", "DATA", 0)) return 0;
+    writer->collecting = 0;
+    if (writer->count) qsort(writer->files, writer->count, sizeof *writer->files, file_order);
+    for (i = 0; i < writer->count; i = end) {
+        end = i + 1;
+        while (end < writer->count && writer->files[i].state.st_dev == writer->files[end].state.st_dev &&
+               writer->files[i].state.st_ino == writer->files[end].state.st_ino) ++end;
+        for (j = i; j < end; ++j) {
+            if (!unchanged(&writer->files[i].state, &writer->files[j].state)) return 0;
+            writer->files[j].anchor = i; writer->files[j].members = end - i;
+        }
+    }
+    return 1;
+}
+
 int holy_pack(const char *tree, const char *output)
 {
     static const char *const meta[] = {
@@ -355,7 +454,7 @@ int holy_pack(const char *tree, const char *output)
     if (holy < 0 || data < 0 || flistxattr(holy, NULL, 0) != 0 ||
         flistxattr(data, NULL, 0) != 0 ||
         !exact_members(root, roots, 2) ||
-        !exact_members(holy, meta, sizeof meta / sizeof *meta)) goto done;
+        !exact_members(holy, meta, sizeof meta / sizeof *meta) || !collect_files(&writer, root)) goto done;
     fd = mkstemp(temporary);
     if (fd < 0) goto done;
     archive_fd = dup(fd);
@@ -372,7 +471,7 @@ int holy_pack(const char *tree, const char *output)
         if (!write_entry(&writer, holy, meta[i], path, 0)) goto done;
     }
     if (!write_entry(&writer, root, "DATA", "DATA", 1) ||
-        !walk_data(&writer, root, "DATA", "DATA", 0)) goto done;
+        !walk_data(&writer, root, "DATA", "DATA", 0) || writer.seen != writer.count) goto done;
     if (archive_write_close(writer.archive) != ARCHIVE_OK) goto done;
     archive_write_free(writer.archive);
     writer.archive = NULL;
@@ -394,6 +493,7 @@ int holy_pack(const char *tree, const char *output)
 done:
     if (!ok) fprintf(stderr, "holypkg: pack failed\n");
     if (writer.archive) archive_write_free(writer.archive);
+    free_files(&writer);
     if (archive_fd >= 0 && fcntl(archive_fd, F_GETFD) >= 0) close(archive_fd);
     if (fd >= 0) close(fd);
     if (temporary) { unlink(temporary); free(temporary); }
@@ -414,13 +514,13 @@ int holy_generate_files(const char *tree, const char *output)
     if (!temporary) return 0;
     snprintf(temporary, length + 20, "%s.holy-tmp-XXXXXX", output);
     root = open(tree, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    if (root < 0 || !outside_tree(root, output)) goto done;
+    if (root < 0 || !outside_tree(root, output) || !collect_files(&writer, root)) goto done;
     fd = mkstemp(temporary);
     if (fd < 0) goto done;
     writer.manifest = fdopen(fd, "w");
     if (!writer.manifest) goto done;
     fd = -1;
-    if (!walk_data(&writer, root, "DATA", "DATA", 0) ||
+    if (!walk_data(&writer, root, "DATA", "DATA", 0) || writer.seen != writer.count ||
         fflush(writer.manifest) || fsync(fileno(writer.manifest))) goto done;
     if (fclose(writer.manifest)) { writer.manifest = NULL; goto done; }
     writer.manifest = NULL;
@@ -434,6 +534,7 @@ int holy_generate_files(const char *tree, const char *output)
 done:
     if (!ok) fprintf(stderr, "holypkg: manifest generation failed\n");
     if (writer.manifest) fclose(writer.manifest);
+    free_files(&writer);
     if (fd >= 0) close(fd);
     if (temporary) { unlink(temporary); free(temporary); }
     if (root >= 0) close(root);

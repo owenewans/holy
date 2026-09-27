@@ -98,8 +98,8 @@ mv "$tmp/handwritten-files" "$tmp/payload/HOLY/files"
 rm "$tmp/payload/DATA/usr/bin/a b"
 rm "$tmp/payload/DATA/usr/bin/é"
 ln "$tmp/payload/DATA/usr/bin/data" "$tmp/payload/DATA/usr/bin/extra"
-if "$bin" manifest generate "$tmp/payload" --output "$tmp/refused-files" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
-test ! -e "$tmp/refused-files"
+"$bin" manifest generate "$tmp/payload" --output "$tmp/hardlink-files" > "$tmp/out"
+grep -q '^hardlink "usr/bin/extra" .* "usr/bin/data"$' "$tmp/hardlink-files"
 if "$bin" pack "$tmp/payload" --output "$tmp/refused.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
 test ! -e "$tmp/refused.holy"
 rm "$tmp/payload/DATA/usr/bin/extra"

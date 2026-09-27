@@ -6,8 +6,9 @@
 - [x] Install direct hardlinks after their regular payload, validate inode groups,
   restore missing anchors from surviving members, and recover interrupted link
   creation/removal. Scan ELF facts at every hardlink path and retain hardlinked
-  manual names in documentation bundles. Native tree writer hardlink detection
-  remains open.
+  manual names in documentation bundles. Native pack and manifest generation
+  detect shared inodes, select deterministic anchors and preserve direct links,
+  including forward archive references. External aliases stay outside packages.
 
 - [x] Update cached hardlink groups with shared staging inodes, preserve retained
   anchors, and support content/mode changes, membership changes, anchor moves and
@@ -55,9 +56,9 @@
   Symbol lookup order and dependency-provider validation remain open.
 - [x] Classify static ET_EXEC without dynamic linkage as nolibc; reject
   unclassified ELF in native package scan rather than trusting a libc label.
-- [x] Pack a prepared regular-file/dir/symlink tree into a verified native `.holy`;
+- [x] Pack a prepared regular-file/dir/symlink/hardlink tree into a verified native `.holy`;
   reject unlisted inputs and unsupported file types before publication.
-- [x] Generate a prepared DATA tree's regular-file/dir/symlink HOLY/files manifest
+- [x] Generate a prepared DATA tree's regular-file/dir/symlink/hardlink HOLY/files manifest
   with numeric ownership and SHA-256; reject unsupported objects.
 - [x] Stage verified objects in a target-root cache; preview collisions.
 - [x] Fetch a pinned native `.holy` over HTTPS with certificate checks and a

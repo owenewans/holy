@@ -70,7 +70,9 @@ content and mode changes, member additions/removals, anchor moves and group
 splits/merges. The file plan names a reserved staging link for each new group;
 recovery validates both content and inode relationships.
 The pack command writes and verifies
-this archive format from a prepared tree of regular files, directories and symlinks.
+this archive format from a prepared tree of regular files, directories, symlinks
+and hardlinks. It selects a deterministic regular anchor for each inode group;
+manifest generate uses the same selection.
 The verifier does not verify dependencies,
 signatures, symbolic owner names or the installed filesystem. A full format
 implementation must verify file ownership, links, xattrs, hooks, origin and
