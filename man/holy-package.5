@@ -88,7 +88,10 @@ current solver reports unsupported semantics instead of dropping that requiremen
 Foreign hooks and split transforms require their own installation support;
 archive verification does not authorize execution or claim that support exists.
 .SH INSTALLED GRAPH
-New local installations use holy-instance-4 state. The state includes a graph
+New local installations use holy-instance-4 state, or holy-instance-5 when an
+explicit non-native architecture placement decision was accepted. Version 5 adds
+an architecture record with the reviewed host and unchanged target. The decision
+is scoped to that artifact hash and does not certify execution. The state includes a graph
 SHA-256; the graph file uses holy-resolution-1 with scope artifact-candidates,
 a root artifact, sorted selected artifact hashes and selected requirement edges.
 Each edge records consumer hash, requirement ID, provider hash, path, kind and

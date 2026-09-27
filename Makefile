@@ -130,6 +130,7 @@ check: check-pacman holypkg tests/resolution check-init check-solver check-insta
 	sh tests/directories.sh ./holypkg
 	python3 tests/hardlinks.py ./holypkg ./tests/install-helper
 	python3 tests/hardlink-updates.py ./holypkg
+	python3 tests/architecture.py ./holypkg
 	sh tests/orphan.sh ./holypkg
 	sh tests/dynamic.sh ./holypkg
 	sh tests/resolve.sh ./holypkg ./tests/resolution
@@ -148,6 +149,7 @@ check-fixtures: check
 check-root: check-install-payload
 	python3 tests/hardlinks.py ./holypkg ./tests/install-helper
 	python3 tests/hardlink-updates.py ./holypkg
+	python3 tests/architecture.py ./holypkg
 	sh tests/state.sh ./holypkg
 	sh tests/sets.sh ./holypkg
 	sh tests/orphan.sh ./holypkg

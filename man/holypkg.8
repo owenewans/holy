@@ -485,6 +485,27 @@ one generation increment. Installed state records the explicit root and
 dependency reasons; each instance retains the selected graph. Package hooks,
 upgrades and grouped removal are not implemented by this interface.
 .PP
+Repeated --accept-arch SHA256 confirms placement of selected new artifacts whose
+architecture differs from the native host mapping. Each exact hash needs its
+own decision. Without it, plan-set returns 3 and reports artifact, host and
+target. This includes x86 on an x86_64 host when execution support has not been
+established. The manager does not infer IA32 support from uname alone.
+The flag does not execute payloads, change target metadata, waive dependency ABI
+checks or confirm that the kernel can run the result. Native/noarch artifacts,
+duplicate decisions and malformed hashes are invalid flag uses; unselected or
+already installed artifacts require a separate decision.
+.PP
+The plan displays accepted-unverified with artifact scope and hashes the
+host/target decision. Apply must receive the same flags. A version-3 set journal
+preserves them and the host for recovery, including when only part of the set
+was installed. Installed holy-instance-5 state retains the decision; check
+reports accepted-arch-mismatch in text or an optional architecture object in
+JSON, with execution unverified. This annotation does not turn intact files
+into a failure. Reused providers retain their existing decision on that host.
+It does not authorize a new artifact hash: cached replacement of an instance
+carrying this decision currently returns 3. Update-specific architecture
+approval and automatic execution-capability probing remain unimplemented.
+.PP
 Repeated --source ARTIFACT=SOURCE_ID explicitly associates selected new artifacts
 with active registered sources. It is a user-confirmed origin association for
 local delivery, not proof of retrieval or signature verification. Payload

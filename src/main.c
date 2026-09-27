@@ -234,13 +234,14 @@ int main(int argc, char **argv)
         int start = !strcmp(argv[2], "apply-set") ? 4 : 3;
         int end = argc - 2;
         const char *choice = NULL;
-        const char **digests, **bindings;
-        size_t count = 0, binding_count = 0;
+        const char **digests, **bindings, **accepted_arch;
+        size_t count = 0, binding_count = 0, accepted_count = 0;
         int i, result = 2;
         if (strcmp(argv[argc - 2], "--root")) return 2;
         digests = calloc((size_t)argc, sizeof *digests);
         bindings = calloc((size_t)argc, sizeof *bindings);
-        if (!digests || !bindings) { free(digests); free(bindings); return 1; }
+        accepted_arch = calloc((size_t)argc, sizeof *accepted_arch);
+        if (!digests || !bindings || !accepted_arch) { free(digests); free(bindings); free(accepted_arch); return 1; }
         for (i = start; i < end; ++i) {
             if (!strcmp(argv[i], "--choose")) {
                 if (choice || ++i >= end) goto set_done;
@@ -248,14 +249,17 @@ int main(int argc, char **argv)
             } else if (!strcmp(argv[i], "--source")) {
                 if (++i >= end) goto set_done;
                 bindings[binding_count++] = argv[i];
+            } else if (!strcmp(argv[i], "--accept-arch")) {
+                if (++i >= end) goto set_done;
+                accepted_arch[accepted_count++] = argv[i];
             } else if (argv[i][0] == '-') goto set_done;
             else digests[count++] = argv[i];
         }
         if (count) result = holy_state_set(digests, count, choice,
                                           start == 4 ? argv[3] : NULL, argv[argc - 1],
-                                          bindings, binding_count);
+                                          bindings, binding_count, accepted_arch, accepted_count);
 set_done:
-        free(digests); free(bindings);
+        free(digests); free(bindings); free(accepted_arch);
         return result;
     }
     if (argc == 6 && !strcmp(argv[1], "db") &&
@@ -350,7 +354,7 @@ set_done:
         !strcmp(argv[3], "--root") && !strcmp(argv[5], "--json"))
         return holy_check_local(argv[2] + 6, argv[4], 1);
     if (argc != 4 || strcmp(argv[1], "config") || strcmp(argv[2], "check")) {
-        fprintf(stderr, "usage: holypkg config check FILE | holypkg info|verify|manifest|scan local:FILE | holypkg manifest generate DIRECTORY --output FILE | holypkg requirements|provides local:FILE [--json] | holypkg solve local:ROOT [local:CANDIDATE...] [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE] | holypkg pack DIRECTORY --output FILE.holy | holypkg check|preview local:FILE --root DIRECTORY [--json] | holypkg cache stage local:FILE --root DIRECTORY | holypkg cache verify SHA256 --root DIRECTORY | holypkg db init|status|cancel|recover|preflight|plan|recheck|apply --root DIRECTORY | holypkg db recover --abort-empty|--continue|--finish-apply --root DIRECTORY | holypkg db check SHA256|--all --root DIRECTORY [--json] | holypkg db rm SHA256 --root DIRECTORY | holypkg db owner PATH --root DIRECTORY | holypkg db status|preflight --root DIRECTORY --json | holypkg db reserve SHA256 --root DIRECTORY | holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID...] --root DIRECTORY | holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID...] --root DIRECTORY | holypkg db recover --finish-set|--continue-set|--repair --root DIRECTORY | holypkg db plan-update OLD_SHA256 NEW_SHA256 --root DIRECTORY | holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 --root DIRECTORY | holypkg db recover --update --root DIRECTORY | holypkg db repair-plan SHA256 --root DIRECTORY | holypkg db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY | holypkg db approve PLAN_SHA256 --root DIRECTORY | holypkg elf FILE | holypkg repo index|list|seal DIRECTORY | holypkg repo search DIRECTORY NAME | holypkg repo solve DIRECTORY NAME [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg repo providers DIRECTORY KIND NAME [--json] | holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY\n");
+        fprintf(stderr, "usage: holypkg config check FILE | holypkg info|verify|manifest|scan local:FILE | holypkg manifest generate DIRECTORY --output FILE | holypkg requirements|provides local:FILE [--json] | holypkg solve local:ROOT [local:CANDIDATE...] [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE] | holypkg pack DIRECTORY --output FILE.holy | holypkg check|preview local:FILE --root DIRECTORY [--json] | holypkg cache stage local:FILE --root DIRECTORY | holypkg cache verify SHA256 --root DIRECTORY | holypkg db init|status|cancel|recover|preflight|plan|recheck|apply --root DIRECTORY | holypkg db recover --abort-empty|--continue|--finish-apply --root DIRECTORY | holypkg db check SHA256|--all --root DIRECTORY [--json] | holypkg db rm SHA256 --root DIRECTORY | holypkg db owner PATH --root DIRECTORY | holypkg db status|preflight --root DIRECTORY --json | holypkg db reserve SHA256 --root DIRECTORY | holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID...] [--accept-arch SHA256...] --root DIRECTORY | holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID...] [--accept-arch SHA256...] --root DIRECTORY | holypkg db recover --finish-set|--continue-set|--repair --root DIRECTORY | holypkg db plan-update OLD_SHA256 NEW_SHA256 --root DIRECTORY | holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 --root DIRECTORY | holypkg db recover --update --root DIRECTORY | holypkg db repair-plan SHA256 --root DIRECTORY | holypkg db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY | holypkg db approve PLAN_SHA256 --root DIRECTORY | holypkg elf FILE | holypkg repo index|list|seal DIRECTORY | holypkg repo search DIRECTORY NAME | holypkg repo solve DIRECTORY NAME [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg repo providers DIRECTORY KIND NAME [--json] | holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY\n");
         return 2;
     }
     path = argv[3];

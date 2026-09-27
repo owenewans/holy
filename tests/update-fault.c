@@ -113,6 +113,9 @@ int fsync(int fd)
 #endif
     result = next_fsync(fd);
     if (result || !getenv("HOLY_UPDATE_FAULT") || !fd_path(fd, path)) return result;
+    if (fault("set-journal") && !fstatat(fd, "set-journal", &st, AT_SYMLINK_NOFOLLOW)) stop();
+    if (fault("set-instance") && digest && strstr(path, "/installed/") && strstr(path, digest) &&
+        !fstatat(fd, "state", &st, AT_SYMLINK_NOFOLLOW)) stop();
     if (fault("directory-ready") && strstr(path, "/.holy-dir-")) stop();
     if (fault("payload-written") && strstr(path, "/opt/apps/deep/data")) stop();
     if (getenv("HOLY_DIRECTORY_PARENT") && !strcmp(path, getenv("HOLY_DIRECTORY_PARENT"))) {

@@ -3,6 +3,12 @@
 
 ## Package manager
 
+- [x] Bind explicit non-native architecture placement decisions to individual
+  selected artifact hashes, the plan and the recovery journal. Preserve host and
+  target in installed state and check output, retain decisions for reused
+  providers, and reject inheritance by new update artifacts. Automatic runtime
+  capability detection and update-specific architecture decisions remain open.
+
 - [x] Install direct hardlinks after their regular payload, validate inode groups,
   restore missing anchors from surviving members, and recover interrupted link
   creation/removal. Scan ELF facts at every hardlink path and retain hardlinked
