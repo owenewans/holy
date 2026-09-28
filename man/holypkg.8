@@ -650,12 +650,14 @@ require --choose; automatic installed/source preference ranking remains open.
 .PP
 Dynamic sets require literal absolute PT_INTERP paths. Absolute DT_NEEDED paths
 must name exact provider payload paths. For a bare SONAME, the consumer must
-have one literal absolute RUNPATH or RPATH directory, and the selected provider
-must own a matching ELF file at DIRECTORY/SONAME or own a symlink chain from that
-path to the ELF file. The planner checks architecture, runtime, symbols and
-version needs and rejects tokenized or ambiguous search paths. It rechecks
-these conditions for cached replacements. General loader search and aliases
-crossing package ownership remain unresolved.
+have a nonempty list of literal absolute RUNPATH or RPATH directories. The
+selected provider must own a matching ELF file at the first existing
+DIRECTORY/SONAME, or own its symlink chain. The planner checks architecture,
+runtime, symbols and version needs, and rejects tokenized or empty path entries.
+It rejects a later provider when an earlier directory contains a file at the
+same SONAME. Installed check repeats this path-order check against the target
+root. Cached replacements use the same validation. Loader defaults, tokenized
+paths and aliases crossing package ownership remain unresolved.
 Parent directories must exist or be declared in that package manifest;
 installation does not traverse symlinked parents. This interface
 does not automatically rewrite ELF files or resolve loader aliases.

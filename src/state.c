@@ -52,7 +52,9 @@ static char *update_record(int dir, const char *name);
 static int installed_fields(int item, const char *const *keys,
                              const char *const *values, size_t fields);
 static int valid_owner_path(const char *path);
-static const char *literal_loader_dir(const struct holy_elf_info *elf);
+static int loader_directories(const struct holy_elf_info *elf,
+                              char ***directories, size_t *count);
+static void free_loader_directories(char **directories, size_t count);
 static int loader_file_match(const char *directory, const char *path,
                              const char *name);
 
@@ -1794,11 +1796,35 @@ static int graph_provider_elf(void *context, const char *path, int fd)
         if (j == info.defined_version_count) { versions = 0; break; }
     }
     if (versions) {
-        const char *directory = literal_loader_dir(match->consumer);
+        char **directories = NULL;
+        size_t count = 0, directory;
         match->versions = 1;
-        if (directory && (loader_file_match(directory, path, match->name) ||
-            graph_alias_match(match->root, match->files, directory, match->name, fd)))
-            match->path_ok = 1;
+        if (loader_directories(match->consumer, &directories, &count)) {
+            for (directory = 0; directory < count; ++directory) {
+                struct open_how how = {0};
+                char *alias;
+                int opened;
+                size_t a = strlen(directories[directory] + 1), b = strlen(match->name);
+                if (a > SIZE_MAX - b - 2) break;
+                alias = malloc(a + b + 2);
+                if (!alias) break;
+                memcpy(alias, directories[directory] + 1, a);
+                alias[a] = '/';
+                memcpy(alias + a + 1, match->name, b + 1);
+                how.flags = O_PATH | O_CLOEXEC;
+                how.resolve = RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS;
+                opened = (int)syscall(SYS_openat2, match->root, alias, &how, sizeof how);
+                free(alias);
+                if (opened < 0) continue;
+                close(opened);
+                if (loader_file_match(directories[directory], path, match->name) ||
+                    graph_alias_match(match->root, match->files,
+                                      directories[directory], match->name, fd))
+                    match->path_ok = 1;
+                break;
+            }
+        }
+        free_loader_directories(directories, count);
     }
 done:
     holy_elf_free(&info);
@@ -2687,14 +2713,49 @@ static int set_claims_valid(struct install_set *set)
     return 1;
 }
 
-static const char *literal_loader_dir(const struct holy_elf_info *elf)
+static int loader_directories(const struct holy_elf_info *elf,
+                              char ***directories, size_t *count)
 {
     const char *path = elf->runpath ? elf->runpath : elf->rpath;
-    size_t length;
-    if (!path || path[0] != '/' || strchr(path, ':') || strchr(path, '$') ||
-        (length = strlen(path)) < 2 || path[length - 1] == '/' ||
-        !valid_owner_path(path + 1)) return NULL;
-    return path;
+    const char *start, *end;
+    char **list = NULL;
+    size_t length, used = 0, capacity = 0;
+    *directories = NULL;
+    *count = 0;
+    if (!path || !*path) return 0;
+    for (start = path; ; start = end + 1) {
+        char *directory;
+        end = strchr(start, ':');
+        length = end ? (size_t)(end - start) : strlen(start);
+        if (length < 2 || start[0] != '/' || start[length - 1] == '/' ||
+            memchr(start, '$', length)) goto fail;
+        directory = strndup(start, length);
+        if (!directory) goto fail;
+        if (!valid_owner_path(directory + 1)) { free(directory); goto fail; }
+        if (used == capacity) {
+            size_t next = capacity ? capacity * 2 : 4;
+            char **grown;
+            if (next < capacity || next > 1024) { free(directory); goto fail; }
+            grown = realloc(list, next * sizeof *list);
+            if (!grown) { free(directory); goto fail; }
+            list = grown; capacity = next;
+        }
+        list[used++] = directory;
+        if (!end) break;
+    }
+    *directories = list;
+    *count = used;
+    return 1;
+fail:
+    while (used) free(list[--used]);
+    free(list);
+    return 0;
+}
+
+static void free_loader_directories(char **directories, size_t count)
+{
+    while (count) free(directories[--count]);
+    free(directories);
 }
 
 static int loader_file_match(const char *directory, const char *path,
@@ -2745,14 +2806,19 @@ static int explicit_elf_paths(const char *snapshot, int allow_soname)
     for (i = 0; i < scan.count; ++i) {
         const struct holy_scanned_file *file = &scan.files[i];
         if (file->elf.interpreter && file->elf.interpreter[0] != '/') { result = 3; break; }
-        for (j = 0; j < file->elf.needed_count; ++j)
-            if (file->elf.needed[j][0] != '/' &&
-                (!allow_soname || !literal_loader_dir(&file->elf))) {
+        for (j = 0; j < file->elf.needed_count; ++j) {
+            char **directories = NULL;
+            size_t directory_count = 0;
+            int known = allow_soname && loader_directories(&file->elf,
+                                                            &directories, &directory_count);
+            free_loader_directories(directories, directory_count);
+            if (file->elf.needed[j][0] != '/' && !known) {
                 fprintf(stderr, "holypkg: unknown-loader-search consumer=%s requirement=%s\n",
                         file->path, file->elf.needed[j]);
                 result = 3;
                 break;
             }
+        }
         if (result) break;
     }
     for (i = 0; !result && i < scan.script_count; ++i)
@@ -2767,14 +2833,16 @@ static int explicit_elf_paths(const char *snapshot, int allow_soname)
 
 static int selected_soname_paths(const struct holy_resolution *resolution,
                                   const char *const *digests,
-                                  const char *const *snapshots, size_t count)
+                                  const char *const *snapshots, size_t count, int root,
+                                  const struct set_claim *claims, size_t claim_count)
 {
     size_t i, j, k;
     for (i = 0; i < resolution->edge_count; ++i) {
         const struct holy_resolved_edge *edge = &resolution->edges[i];
         struct holy_scan_result consumer = {0}, provider = {0};
         const struct holy_scanned_file *file = NULL;
-        const char *directory = NULL;
+        char **directories = NULL;
+        size_t directory_count = 0, d;
         int found = 0, ok = 0;
         if (strcmp(edge->kind, "soname") || !strcmp(edge->path, "-")) continue;
         for (j = 0; j < count; ++j)
@@ -2784,24 +2852,52 @@ static int selected_soname_paths(const struct holy_resolution *resolution,
             if (!strcmp(consumer.files[k].path, edge->path)) {
                 file = &consumer.files[k]; break;
             }
-        if (!file || !(directory = literal_loader_dir(&file->elf))) goto edge_done;
+        if (!file || !loader_directories(&file->elf,
+                                         &directories, &directory_count)) goto edge_done;
         for (j = 0; j < count; ++j)
             if (!strcmp(digests[j], edge->provider)) break;
         if (j == count || !holy_scan_collect(snapshots[j], &provider)) goto edge_done;
-        for (k = 0; k < provider.count; ++k) {
-            const struct holy_scanned_file *candidate = &provider.files[k];
-            if (candidate->elf.type == ET_DYN && !(candidate->elf.flags1 & DF_1_PIE) &&
-                candidate->elf.soname && !strcmp(candidate->elf.soname, edge->target) &&
-                candidate->elf.elf_class == file->elf.elf_class &&
-                candidate->elf.machine == file->elf.machine &&
-                !strcmp(candidate->runtime, file->runtime) &&
-                scan_loader_alias(&provider, directory, edge->target,
-                                  candidate->path)) {
-                found = 1; break;
+        for (d = 0; d < directory_count; ++d) {
+            struct open_how how = {0};
+            char *alias;
+            size_t a = strlen(directories[d] + 1), b = strlen(edge->target);
+            int opened, occupied = 0;
+            if (a > SIZE_MAX - b - 2) break;
+            alias = malloc(a + b + 2);
+            if (!alias) break;
+            memcpy(alias, directories[d] + 1, a);
+            alias[a] = '/';
+            memcpy(alias + a + 1, edge->target, b + 1);
+            for (k = 0; k < provider.count; ++k) {
+                const struct holy_scanned_file *candidate = &provider.files[k];
+                if (candidate->elf.type == ET_DYN && !(candidate->elf.flags1 & DF_1_PIE) &&
+                    candidate->elf.soname && !strcmp(candidate->elf.soname, edge->target) &&
+                    candidate->elf.elf_class == file->elf.elf_class &&
+                    candidate->elf.machine == file->elf.machine &&
+                    !strcmp(candidate->runtime, file->runtime) &&
+                    scan_loader_alias(&provider, directories[d], edge->target,
+                                      candidate->path)) { found = 1; break; }
             }
+            if (found) { free(alias); break; }
+            {
+                struct set_claim key = {0};
+                key.path = alias;
+                occupied = bsearch(&key, claims, claim_count,
+                                   sizeof *claims, claim_order) != NULL;
+            }
+            how.flags = O_PATH | O_CLOEXEC;
+            how.resolve = RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS;
+            if (!occupied) {
+                opened = (int)syscall(SYS_openat2, root, alias, &how, sizeof how);
+                if (opened >= 0) { occupied = 1; close(opened); }
+                else if (errno != ENOENT) occupied = 1;
+            }
+            free(alias);
+            if (occupied) break;
         }
         ok = found;
 edge_done:
+        free_loader_directories(directories, directory_count);
         holy_scan_free(&consumer);
         holy_scan_free(&provider);
         if (!ok) {
@@ -2813,7 +2909,7 @@ edge_done:
     return 1;
 }
 
-static int set_soname_paths(const struct install_set *set)
+static int set_soname_paths(const struct install_set *set, int root)
 {
     const char **digests = calloc(set->count, sizeof *digests);
     const char **snapshots = calloc(set->count, sizeof *snapshots);
@@ -2824,7 +2920,8 @@ static int set_soname_paths(const struct install_set *set)
         digests[i] = set->items[i].identity.digest;
         snapshots[i] = set->items[i].snapshot;
     }
-    ok = selected_soname_paths(&set->resolution, digests, snapshots, set->count);
+    ok = selected_soname_paths(&set->resolution, digests, snapshots, set->count,
+                               root, set->claims, set->claim_count);
 done:
     free(digests); free(snapshots);
     return ok;
@@ -3477,7 +3574,7 @@ static int build_set(const char *root_path, int root, int dir,
         if (!holy_verify_visit(item->snapshot, set_claim, set)) goto done;
     }
     if (!set_claims_valid(set)) { result = 4; goto done; }
-    if (!set_soname_paths(set)) { result = 3; goto done; }
+    if (!set_soname_paths(set, root)) { result = 3; goto done; }
     if (!same_root(root_path, &st)) { result = 4; goto done; }
     set->bindings = calloc(set->count, sizeof *set->bindings);
     if (!set->bindings) goto done;
@@ -4850,7 +4947,8 @@ static int state_update(const char *old_digest, const char *new_digest,
     for (i = 0; i < count; ++i)
         selected_ids[i] = i == old_index ? new_digest : names[i];
     if (!selected_soname_paths(&resolution, selected_ids,
-                               (const char *const *)snapshots, count)) {
+                               (const char *const *)snapshots, count, root,
+                               claims.claims, claims.claim_count)) {
         result = 3; goto done;
     }
     result = 1;
