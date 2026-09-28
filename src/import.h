@@ -12,6 +12,7 @@ int holy_import_xbps(const char *input, const char *source, const char *output);
 /* called only after the fetcher checks the pinned archive and optional signature. */
 int holy_import_xbps_verified(const char *input, const char *source, const char *output,
                               const char *expected_hash, const char *verification,
-                              const char *key_hash, const char *signature_hash);
+                              const char *key_hash, const char *signature_hash,
+                              const char *index_hash, const char *source_url);
 
 #endif

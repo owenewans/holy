@@ -1271,7 +1271,8 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
                          const struct apk_metadata *apk, const struct xbps_metadata *xbps,
                          const char *source, const char *hash, const char *output, int output_fd,
                          FILE *receipt, int group, const char *verification,
-                         const char *key_hash, const char *signature_hash)
+                         const char *key_hash, const char *signature_hash,
+                         const char *index_hash, const char *source_url)
 {
     static const char *const names[] = {
         "HOLY/meta", "HOLY/files", "HOLY/deps", "HOLY/provides", "HOLY/hooks", "HOLY/origin", "HOLY/transform"
@@ -1303,6 +1304,11 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
     token(files[5], version); fputc('\n', files[5]);
     if (key_hash && fprintf(files[5], "public-key-sha256 %s\n", key_hash) < 0) goto done;
     if (signature_hash && fprintf(files[5], "signature-sha256 %s\n", signature_hash) < 0) goto done;
+    if (index_hash && fprintf(files[5], "index-sha256 %s\n", index_hash) < 0) goto done;
+    if (source_url) {
+        fputs("source-url ", files[5]); token(files[5], source_url);
+        fputc('\n', files[5]);
+    }
     if (input->group_count > 1) {
         fprintf(files[6], "split %s %s %s %s\n", family, hash, arch, libc);
         for (i = 0; i < input->group_count; ++i) {
@@ -1595,7 +1601,7 @@ int holy_import_pacman(const char *input_path, const char *source, const char *o
     token(receipt, source); fputs("\nverification unverified\n", receipt);
     for (i = 0; i < input.group_count; ++i)
         if (!write_output(&input, &metadata, NULL, NULL, NULL, NULL, source, hash, output, output_fd,
-                          receipt, (int)i, NULL, NULL, NULL)) goto done;
+                          receipt, (int)i, NULL, NULL, NULL, NULL, NULL)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
     if (fclose(receipt)) { receipt = NULL; goto done; }
@@ -1671,7 +1677,7 @@ int holy_import_deb(const char *input_path, const char *source, const char *outp
     token(receipt, source); fputs("\nverification unverified\n", receipt);
     for (i = 0; i < input.group_count; ++i)
         if (!write_output(&input, NULL, &metadata, NULL, NULL, NULL, source, hash, output, output_fd,
-                          receipt, (int)i, NULL, NULL, NULL)) goto done;
+                          receipt, (int)i, NULL, NULL, NULL, NULL, NULL)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
     if (fclose(receipt)) { receipt = NULL; goto done; }
@@ -1755,7 +1761,7 @@ int holy_import_slackware(const char *input_path, const char *source, const char
     token(receipt, source); fputs("\nverification unverified\n", receipt);
     for (i = 0; i < input.group_count; ++i)
         if (!write_output(&input, NULL, NULL, &metadata, NULL, NULL, source, hash,
-                          output, output_fd, receipt, (int)i, NULL, NULL, NULL)) goto done;
+                          output, output_fd, receipt, (int)i, NULL, NULL, NULL, NULL, NULL)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
     if (fclose(receipt)) { receipt = NULL; goto done; }
@@ -1876,7 +1882,7 @@ int holy_import_apk(const char *input_path, const char *source, const char *outp
     for (i = 0; i < input.group_count; ++i)
         if (!write_output(&input, NULL, NULL, NULL, &metadata, NULL, source, hash,
                           output, output_fd, receipt, (int)i, verification,
-                          key_hash[0] ? key_hash : NULL, NULL)) goto done;
+                          key_hash[0] ? key_hash : NULL, NULL, NULL, NULL)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
     if (fclose(receipt)) { receipt = NULL; goto done; }
@@ -1903,7 +1909,8 @@ static int lower_digest(const char *value)
 
 int holy_import_xbps_verified(const char *input_path, const char *source, const char *output,
                               const char *expected_hash, const char *verification,
-                              const char *key_hash, const char *signature_hash)
+                              const char *key_hash, const char *signature_hash,
+                              const char *index_hash, const char *source_url)
 {
     struct foreign_input input = {0};
     struct xbps_metadata metadata = {0};
@@ -1918,6 +1925,10 @@ int holy_import_xbps_verified(const char *input_path, const char *source, const 
          strcmp(verification, "rsa-sha256")) ||
         (strcmp(verification, "unverified") && !lower_digest(expected_hash)) ||
         (expected_hash && !lower_digest(expected_hash)) ||
+        (index_hash && !lower_digest(index_hash)) ||
+        (!!index_hash != !!source_url) ||
+        (strcmp(verification, "unverified") && !index_hash) ||
+        (!strcmp(verification, "unverified") && index_hash) ||
         (!strcmp(verification, "rsa-sha256") ?
          !lower_digest(key_hash) || !lower_digest(signature_hash) :
          key_hash || signature_hash)) return 2;
@@ -1974,10 +1985,15 @@ int holy_import_xbps_verified(const char *input_path, const char *source, const 
     token(receipt, source); fprintf(receipt, "\nverification %s\n", verification);
     if (key_hash) fprintf(receipt, "public-key-sha256 %s\n", key_hash);
     if (signature_hash) fprintf(receipt, "signature-sha256 %s\n", signature_hash);
+    if (index_hash) fprintf(receipt, "index-sha256 %s\n", index_hash);
+    if (source_url) {
+        fputs("source-url ", receipt); token(receipt, source_url);
+        fputc('\n', receipt);
+    }
     for (i = 0; i < input.group_count; ++i)
         if (!write_output(&input, NULL, NULL, NULL, NULL, &metadata, source, hash,
                           output, output_fd, receipt, (int)i, verification,
-                          key_hash, signature_hash)) goto done;
+                          key_hash, signature_hash, index_hash, source_url)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
     if (fclose(receipt)) { receipt = NULL; goto done; }
@@ -1998,5 +2014,5 @@ done:
 int holy_import_xbps(const char *input_path, const char *source, const char *output)
 {
     return holy_import_xbps_verified(input_path, source, output, NULL,
-                                     "unverified", NULL, NULL);
+                                     "unverified", NULL, NULL, NULL, NULL);
 }

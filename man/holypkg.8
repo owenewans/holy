@@ -459,7 +459,9 @@ hash-pinned from rsa-sha256. With --import, fetch converts the verified
 archive into .holy outputs under NEW_DIRECTORY/converted and checks their
 identity. The converter checks the archive hash again after staging and records
 hash-pinned or rsa-sha256 in each output origin. A signed output also records
-the public key and signature SHA-256; a direct import remains unverified.
+the public key and signature SHA-256. Fetched outputs retain the selected
+repodata SHA-256 and credential-free source URL. A direct import remains
+unverified and has no asserted repository generation.
 --require-soname requires --import and checks exact SONAME claims
 from the converted ELF payload; an index hint alone does not satisfy it.
 The complete fetch receipt records source-id for a checked source binding,

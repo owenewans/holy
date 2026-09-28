@@ -134,6 +134,8 @@ def main():
             assert len(list((imported / "converted").glob("*.holy"))) == 1
             assert "verification hash-pinned\n" in origin(
                 next((imported / "converted").glob("*.holy")))
+            assert f"index-sha256 {index_hash}\n" in origin(
+                next((imported / "converted").glob("*.holy")))
             library = root / "libfixture.so.1"
             subprocess.run(["cc", "-shared", "-fPIC", "-x", "c", "-",
                             "-Wl,-soname,libfixture.so.1", "-o", str(library)],
@@ -163,7 +165,9 @@ def main():
             run("import", fetched / package_hash, "--source", "fixture", "--format", "xbps",
                 "--output", converted)
             assert len(list(converted.glob("*.holy"))) == 1
-            assert "verification unverified\n" in origin(next(converted.glob("*.holy")))
+            direct_origin = origin(next(converted.glob("*.holy")))
+            assert "verification unverified\n" in direct_origin
+            assert "index-sha256 " not in direct_origin
             private_key = root / "repo-private.pem"
             public_key = root / "repo-public.pem"
             subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt",
@@ -223,6 +227,8 @@ def main():
             assert "verification rsa-sha256\n" in signed_origin
             assert "public-key-sha256 " in signed_origin
             assert "signature-sha256 " in signed_origin
+            assert f"index-sha256 {signed_hash}\n" in signed_origin
+            assert f'source-url "{base}"\n' in signed_origin
             for field in ("public-key-sha256", "signature-sha256"):
                 assert next(line for line in signed_origin.splitlines()
                             if line.startswith(field + " ")) in signed_receipt

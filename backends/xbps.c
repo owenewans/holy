@@ -1053,7 +1053,8 @@ int holy_xbps_fetch(const char *directory, const char *name, const char *version
         result = holy_import_xbps_verified(download, state.source, converted, digest,
                                            key ? "rsa-sha256" : "hash-pinned",
                                            key ? key_hash : NULL,
-                                           key ? signature_digest : NULL);
+                                           key ? signature_digest : NULL,
+                                           state.original, state.base);
         if (result) goto done;
         if (!imported_claim(converted, name, version, arch, required_soname)) {
             if (required_soname)

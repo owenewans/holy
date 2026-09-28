@@ -1024,7 +1024,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=638840d2061191fe86495ceb7bb4fdf7d3c3df66cf1b8e4db3d8303ce961bac0
+holypkg.8 source=holy version=development sha256=b0d05e2ad25cc3aaea046058b3b0d635156c72ac2c9ad6da2b8684123136e6a3
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1417,19 +1417,20 @@ DESCRIPTION
      archive into .holy outputs under NEW_DIRECTORY/converted and  checks  their
      identity.	The  converter	checks	the archive hash again after staging and
      records hash-pinned or rsa-sha256 in each output origin.  A  signed  output
-     also  records the public key and signature SHA-256; a direct import remains
-     unverified.  --require-soname requires --import  and  checks  exact  SONAME
-     claims from the converted ELF payload; an index hint alone does not satisfy
-     it.   The	complete  fetch	 receipt  records source-id for a checked source
-     binding, whether import ran, and any verified SONAME. Import failure leaves
-     the archive and incomplete output without a complete fetch	 receipt.  Fetch
-     does  not	install or execute the package. The current transport limits one
-     archive to 1 GiB; larger indexed objects return status 6.	An explicit  im-
-     port  of  the fetched digest-named file creates .holy outputs.  make check-
-     xbps-index	 covers	 index	parsing,  HTTPS	 sync/fetch,  registered  source
-     checks, RSA signature verification, conversion and failure cases on a local
-     fixture  server.  Key  enrollment	and  automatic provider discovery remain
-     open.
+     also  records  the public key and signature SHA-256. Fetched outputs retain
+     the selected repodata SHA-256 and credential-free source URL. A direct  im-
+     port  remains  unverified and has no asserted repository generation.  --re-
+     quire-soname requires --import and checks exact SONAME claims from the con-
+     verted ELF payload; an index hint alone does not satisfy it.  The	complete
+     fetch  receipt  records source-id for a checked source binding, whether im-
+     port ran, and any verified SONAME. Import failure leaves  the  archive  and
+     incomplete	 output without a complete fetch receipt. Fetch does not install
+     or execute the package. The current transport limits one archive to 1  GiB;
+     larger  indexed objects return status 6.  An explicit import of the fetched
+     digest-named file creates .holy outputs.  make check-xbps-index covers  in-
+     dex parsing, HTTPS sync/fetch, registered source checks, RSA signature ver-
+     ification,	 conversion and failure cases on a local fixture server. Key en-
+     rollment and automatic provider discovery remain open.
 
      The apk index command snapshots a local APKINDEX.tar.gz, separates its gzip
      signature and data members, and publishes a sorted local catalog  with  the
