@@ -18,6 +18,7 @@
 #include "graph.h"
 #include "source.h"
 #include "import.h"
+#include "up.h"
 
 #include <stdio.h>
 #include <locale.h>
@@ -305,6 +306,8 @@ int main(int argc, char **argv)
             return add_source(argc, argv);
         return add_local(argc, argv);
     }
+    if (argc > 1 && !strcmp(argv[1], "up")) return holy_up_command(argc, argv);
+    if (argc > 1 && !strcmp(argv[1], "apply")) return holy_apply_command(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "search") && argc > 2)
         return query_source(argc, argv, 1);
     if (argc > 2 && !strcmp(argv[1], "info") &&

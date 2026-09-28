@@ -41,6 +41,9 @@ int holy_repo_catalog_index(const char *directory, char digest[65]);
 /* stages all verified catalog candidates, root first, into the target cache. */
 int holy_repo_stage_set(const char *directory, const char *name,
                         const char *root, struct holy_repo_set *set);
+/* stages every indexed artifact for source-aware candidate selection. */
+int holy_repo_stage_catalog(const char *directory, const char *root,
+                             struct holy_repo_set *set);
 void holy_repo_set_free(struct holy_repo_set *set);
 
 #endif

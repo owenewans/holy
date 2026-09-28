@@ -61,11 +61,19 @@ int holy_state_repair(const char *digest, const char *approved, const char *root
 int holy_state_update_plan(const char *old_digest, const char *new_digest,
                            const char *accepted_arch, const char *accepted_privileged,
                            const char *root_path);
+/* returns owned canonical plan text and its digest without printing it. */
+int holy_state_update_prepare(const char *old_digest, const char *new_digest,
+                              const char *accepted_arch, const char *accepted_privileged,
+                              const char *root_path, char hash[65], char **record);
 int holy_state_apply_update(const char *plan, const char *old_digest,
                             const char *new_digest, const char *accepted_arch,
                             const char *accepted_privileged,
                             const char *root_path);
 int holy_state_recover_update(const char *root_path);
+/* finds one installed slot by immutable source ID and package identity. */
+int holy_state_find_slot(const char *root_path, const char *source_id,
+                         const char *name, const char *arch, const char *libc,
+                         char digest[65]);
 
 /* borrows root/instance fds under a shared lock, in artifact order; 0 succeeds. */
 typedef int (*holy_instance_visit)(void *, int, int, const char *);

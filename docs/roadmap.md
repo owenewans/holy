@@ -76,8 +76,8 @@
 - [x] Plan and atomically apply a source identity registry under the database
   writer lock. Preserve IDs across alias changes and retain inactive origin
   history; reject stale, wrong-root and history-dropping plans. Apply consumes
-  the reviewed plan without rereading user includes. Automatic source-aware
-  update selection and trust enforcement remain open.
+  the reviewed plan without rereading user includes. Automatic trust enforcement
+  remains open.
 - [x] Bind explicitly associated local artifacts to active registered source IDs
   in set plans and installed state. Retain the alias at installation, preserve
   origin through source deactivation and provider reuse, and validate associations
@@ -191,8 +191,8 @@
   generation, root/database identities, every installed state, source registry,
   file delta and proposed complete dependency graph. Reject changed payloads,
   conflicting owners, disabled origins and unavailable old archives. Preserve
-  source identity across alias changes. Fetching candidates, new dependency
-  selection and grouped replacements remain open.
+  source identity across alias changes. The single-slot catalog path below
+  fetches candidates; new dependency selection and grouped replacements remain open.
 - [x] Apply the reviewed cached replacement with one writer lock and generation
   change. Stage changed payload, journal individual transitions, publish the next
   installed database and retain the old records. Rewrite consumer edges while
@@ -200,6 +200,12 @@
   injected SIGKILL and ENOSPC; preserve partial staging for explicit inspection.
   Test file addition/removal, regular/symlink transitions and a compatible ELF
   provider update. Hooks, config merging and general rollback remain open.
+- [x] Prepare one source-aware slot update from a bound native catalog. Select
+  the highest newer pacman/deb version or require an exact choice when version
+  ordering is unknown, save the catalog digest and complete update plan, then
+  apply only after whole-file hash approval and source/DB revalidation. A fixture
+  covers upgrade, explicit downgrade and stale/tampered plans. Grouped updates,
+  native version ordering and trial execution remain open.
 - [x] Require a fresh artifact-hash approval when a cached replacement contains
   a setuid executable. The plan, journal, installed state and recovery retain
   the decision; a previous package's approval is not inherited. Fixtures
@@ -254,7 +260,7 @@
   Gentoo and Pacstall recipe conversion with helper environments and split outputs.
 - [ ] Implement Nix closure, Flatpak, Snap, AppImage, Scoop and WinGet imports
   without silently discarding runtime requirements.
-- [ ] Implement `holypkg run`, context-specific provider paths, `up --prepare`,
+- [ ] Implement `holypkg run`, context-specific provider paths, grouped `up --prepare`,
   isolated root/VM trials and full `check` reports.
 
 ## Base system and images

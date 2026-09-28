@@ -6,6 +6,10 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
+.B holypkg up SOURCE:PACKAGE --prepare --output NEW_FILE [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--root DIRECTORY]
+.br
+.B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
+.br
 .B holypkg import INPUT --source NAME --format pacman|deb --output NEW_DIRECTORY
 .br
 .B holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--ca-file FILE]
@@ -691,6 +695,27 @@ The mirror record is unsigned local provenance, not publisher authentication.
 The current implementation scans every object in the selected mirror and does
 not combine candidates from multiple sources. Hooks and transforms remain
 outside the supported installation subset.
+.PP
+up SOURCE:PACKAGE --prepare finds one installed slot by its immutable source-id,
+name and optional arch/libc. It checks the old artifact in the target cache,
+stages the complete bound or explicitly selected catalog, and compares
+candidates in the same slot. Known pacman and deb comparator families select
+the highest newer version; unknown or mixed comparator families require
+--choose SHA256. The chosen digest can explicitly select a rebuild or older
+version. No newer candidate leaves the system unchanged and writes no plan.
+An absent old artifact, missing source slot or changed catalog is reported.
+.PP
+Preparation writes a new mode-0600 plan file with the source-id, catalog path
+and index digest, old/new artifact hashes, exact version decisions and the
+complete update plan. It changes only the target cache. Review the file, then
+run apply PLAN --sha256 PLAN_SHA256 with its whole-file SHA-256. Apply snapshots
+and verifies the file, checks its embedded update-plan digest, active source
+and unchanged catalog generation, then rebuilds the database plan under the
+writer lock. A changed database, source or payload needs a new plan. Successful
+apply uses the existing journaled cached-update engine; its recovery command
+is db recover --update. This subset prepares one slot at a time. Grouped
+updates, automatic native version ordering, signed catalogs and root/VM trials
+remain open.
 .PP
 The db plan command reads the prepared reservation at the current database
 generation. It verifies a private snapshot of the cached artifact, checks

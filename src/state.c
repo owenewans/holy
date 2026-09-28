@@ -1060,6 +1060,59 @@ static int installed_source_id(int item, char source[65])
     return 1;
 }
 
+int holy_state_find_slot(const char *root_path, const char *source_id,
+                         const char *name, const char *arch, const char *libc,
+                         char digest[65])
+{
+    unsigned long long generation;
+    int database = -1, installed = -1, result = 1;
+    DIR *list = NULL;
+    struct dirent *entry;
+    size_t found = 0;
+    digest[0] = 0;
+    if (!valid_digest(source_id) || !name || !*name ||
+        (arch && !*arch) || (libc && !*libc)) return 2;
+    database = holy_state_lock(root_path, 0, &generation, &result);
+    if (database < 0) return result;
+    result = 1;
+    installed = child_dir(database, "installed", 0);
+    list = installed < 0 ? NULL : directory_stream(installed);
+    if (!list) goto done;
+    errno = 0;
+    while ((entry = readdir(list))) {
+        const char *arch_key[] = {"arch"}, *libc_key[] = {"libc"};
+        const char *arch_value[] = {arch}, *libc_value[] = {libc};
+        char actual[65];
+        int item, match;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        item = child_dir(installed, entry->d_name, 0);
+        if (item < 0) goto done;
+        match = installed_name(item, name);
+        if (match > 0 && arch) match = installed_fields(item, arch_key, arch_value, 1);
+        if (match > 0 && libc) match = installed_fields(item, libc_key, libc_value, 1);
+        if (match > 0) match = installed_source_id(item, actual) ?
+            !strcmp(actual, source_id) : -1;
+        close(item);
+        if (match < 0) goto done;
+        if (match) {
+            if (!valid_digest(entry->d_name)) goto done;
+            ++found;
+            if (found == 1) strcpy(digest, entry->d_name);
+        }
+        errno = 0;
+    }
+    if (errno) goto done;
+    result = found > 1 ? 3 : found ? 0 : 6;
+done:
+    if (result) fprintf(stderr, "holypkg: installed source slot %s for %s\n",
+                        result == 3 ? "requires arch/libc choice" : "unavailable", name);
+    if (list) closedir(list);
+    if (installed >= 0) close(installed);
+    if (database >= 0) close(database);
+    if (result) digest[0] = 0;
+    return result;
+}
+
 static int same_slot(const struct holy_package_identity *a, const char *a_source,
                      const struct holy_package_identity *b, const char *b_source)
 {
@@ -4168,7 +4221,8 @@ done:
 static int state_update(const char *old_digest, const char *new_digest,
                          const char *expected, const char *accepted_arch,
                          const char *accepted_privileged,
-                         const char *root_path, int resume)
+                         const char *root_path, int resume,
+                         char prepared_hash[65], char **prepared_record)
 {
     int root = -1, dir = -1, installed = -1, item = -1, files = -1, result = 1, pending;
     int old_privileged = 0, new_privileged = 0;
@@ -4193,6 +4247,8 @@ static int state_update(const char *old_digest, const char *new_digest,
     FILE *out = NULL;
     unsigned char bytes[32];
     unsigned length;
+    if (prepared_record) *prepared_record = NULL;
+    if (prepared_hash) prepared_hash[0] = 0;
     if (!resume && (!valid_digest(old_digest) || !valid_digest(new_digest) ||
                     (expected && !valid_digest(expected)) ||
                     (accepted_arch && (!valid_digest(accepted_arch) ||
@@ -4389,6 +4445,13 @@ static int state_update(const char *old_digest, const char *new_digest,
         goto done;
     for (i = 0; i < 32; ++i) snprintf(checksum + i * 2, 3, "%02x", bytes[i]);
     if (!expected) {
+        if (prepared_record) {
+            if (prepared_hash) memcpy(prepared_hash, checksum, 65);
+            *prepared_record = record;
+            record = NULL;
+            result = 0;
+            goto done;
+        }
         if (printf("plan-update sha256 %s read-only\n", checksum) < 0 ||
             fwrite(record, 1, record_size, stdout) != record_size) goto done;
         result = 0;
@@ -4462,7 +4525,16 @@ int holy_state_update_plan(const char *old_digest, const char *new_digest,
                            const char *root_path)
 {
     return state_update(old_digest, new_digest, NULL, accepted_arch,
-                        accepted_privileged, root_path, 0);
+                        accepted_privileged, root_path, 0, NULL, NULL);
+}
+
+int holy_state_update_prepare(const char *old_digest, const char *new_digest,
+                              const char *accepted_arch, const char *accepted_privileged,
+                              const char *root_path, char hash[65], char **record)
+{
+    if (!hash || !record) return 2;
+    return state_update(old_digest, new_digest, NULL, accepted_arch,
+                        accepted_privileged, root_path, 0, hash, record);
 }
 
 int holy_state_apply_update(const char *plan, const char *old_digest,
@@ -4471,10 +4543,10 @@ int holy_state_apply_update(const char *plan, const char *old_digest,
                             const char *root_path)
 {
     return state_update(old_digest, new_digest, plan, accepted_arch,
-                        accepted_privileged, root_path, 0);
+                        accepted_privileged, root_path, 0, NULL, NULL);
 }
 
 int holy_state_recover_update(const char *root_path)
 {
-    return state_update(NULL, NULL, NULL, NULL, NULL, root_path, 1);
+    return state_update(NULL, NULL, NULL, NULL, NULL, root_path, 1, NULL, NULL);
 }
