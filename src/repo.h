@@ -42,6 +42,9 @@ int holy_repo_seal_signed(const char *directory, const char *private_key);
 int holy_repo_verify_signature(const char *directory, const char *public_key);
 int holy_repo_providers(const char *directory, const char *kind,
                         const char *name, int json);
+/* checks exact indexed provider coverage without staging package artifacts. */
+int holy_repo_has_provider(const char *directory, const char *kind,
+                           const char *name);
 /* returns shell-style status; validates a sealed local catalog before solve. */
 int holy_repo_solve(const char *directory, const char *name,
                     const char *choice, int json);

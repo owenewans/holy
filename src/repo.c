@@ -1227,6 +1227,14 @@ static int list(const char *directory, const char *query,
         (dependency_index && number < 3) ||
         (soname_index && number < 4) ||
         (version_index && number < 5)) goto done;
+    if (emit == 8 && (((!strcmp(provider_kind, "file") ||
+                        !strcmp(provider_kind, "command")) && !file_index) ||
+                      (!strcmp(provider_kind, "soname") && !soname_index) ||
+                      !strcmp(provider_kind, "symbol-version"))) {
+        *solve_rc = 6;
+        ok = 1;
+        goto done;
+    }
     if (mirror) {
         for (i = 0; i < count; ++i)
             if (!mirror_object(mirror, dir, &objects[i])) goto done;
@@ -1290,10 +1298,14 @@ static int list(const char *directory, const char *query,
         }
         if (indexed && provider_kind && !(stage && stage->provider)) {
             size_t k;
-            objects[i].provider_match =
+            objects[i].provider_match = emit == 8 ?
+                indexed_provider(&objects[i], provider_kind, provider_name,
+                                 file_index, soname_index) :
                 !strcmp(provider_kind, "package") &&
                 !strcmp(provider_name, objects[i].identity.name);
-            if (soname_index && !strcmp(provider_kind, "soname")) {
+            if (emit == 8) {
+                if (!objects[i].provider_match) continue;
+            } else if (soname_index && !strcmp(provider_kind, "soname")) {
                 for (k = 0; k < objects[i].soname_count; ++k)
                     if (!strcmp(objects[i].sonames[k].name, provider_name))
                         objects[i].provider_match = 1;
@@ -1303,7 +1315,7 @@ static int list(const char *directory, const char *query,
                     objects[i].provider_match = 1;
             if (!objects[i].provider_match) continue;
         }
-        if (emit == 7) continue;
+        if (emit == 7 || (emit == 8 && indexed)) continue;
         input = openat(dir, objects[i].filename,
                             O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
         if (input < 0) goto done;
@@ -1537,6 +1549,7 @@ static int list(const char *directory, const char *query,
                 fprintf(stderr, "holypkg: repository package %s\n",
                         matches ? "requires an architecture/ABI choice" : "not found");
         }
+        if (emit == 8 && solve_rc) *solve_rc = matches ? 0 : 4;
         if (emit == 4) {
             printf("coverage files %s index %s time %lld\n",
                    file_index ? "complete" : "unavailable", expected,
@@ -1671,6 +1684,16 @@ int holy_repo_providers(const char *directory, const char *kind,
     }
     return list(directory, NULL, NULL, 1, json ? 2 : 1,
                 NULL, NULL, kind, name, NULL, NULL, 0, NULL, NULL, 0, NULL, NULL);
+}
+
+int holy_repo_has_provider(const char *directory, const char *kind,
+                           const char *name)
+{
+    int result = 6;
+    if (!holy_provides_kind(kind) || !name || !*name) return 2;
+    if (!list(directory, NULL, NULL, 1, 8, NULL, NULL, kind, name,
+              NULL, NULL, 0, &result, NULL, 0, NULL, NULL)) return 6;
+    return result;
 }
 
 int holy_repo_solve(const char *directory, const char *name,

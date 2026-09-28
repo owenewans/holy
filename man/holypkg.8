@@ -885,15 +885,19 @@ an unavailable index returns status 6 and a complete index without a match
 returns status 4. Multiple matching packages remain
 candidates for the reviewed provider choice.
 When a set has an unsatisfied exact package, file, command or SONAME edge,
-add searches active bound native catalogs for that edge. It stages matching
-providers and their in-source closures, then resolves again. The loop stops
+add probes active bound native catalogs for that edge before staging foreign
+artifacts. One matching source with complete coverage supplies its providers
+and in-source closure. Multiple matching sources, or a match alongside an
+unavailable catalog, return decision-required and list the source aliases;
+--candidate-provider names the reviewed choice. The loop stops
 when the set is complete or no new artifact is found. It checks installed
 providers first; an inactive origin can still satisfy a new consumer. An
 edge without a catalog match does not hide another missing edge in the same
 consumer; a required SONAME can still be found after an interpreter or libc
 path already satisfied by an installed package. An
 unavailable catalog leaves coverage incomplete and returns 6 when no provider
-can be found. Selected packages retain their source IDs, and candidate
+can be found. Older indexes without file or SONAME facts report unavailable
+coverage for those requirements. Selected packages retain their source IDs, and candidate
 catalogs are checked again before apply. Source preference ranking, fuzzy
 suggestions and runtime plugin discovery remain open. Hooks and
 transforms remain outside the supported installation subset.

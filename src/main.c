@@ -425,7 +425,8 @@ static int add_source(int argc, char **argv)
     for (k = 0; k < 10000; ++k) {
         struct holy_missing_requirement missing = {0};
         char **aliases = NULL;
-        size_t alias_count = 0, a;
+        size_t alias_count = 0, a, offered = 0;
+        const char *winner = NULL;
         int missing_status;
         int progressed = 0, unavailable = 0;
         result = holy_state_probe_source_bindings(digests, digest_count,
@@ -447,8 +448,37 @@ static int add_source(int argc, char **argv)
         result = holy_source_active_aliases(root, &aliases, &alias_count);
         if (result) { holy_missing_requirement_free(&missing); goto done; }
         for (a = 0; a < alias_count; ++a) {
-            struct source_candidate *item;
+            char *path = NULL;
+            char candidate_id[65];
+            int probe;
             if (!strcmp(aliases[a], alias)) continue;
+            probe = holy_source_catalog_path_fast(root, aliases[a], &path);
+            if (!probe) probe = holy_source_catalog(root, aliases[a], path, candidate_id);
+            if (!probe) probe = holy_repo_has_provider(path, missing.kind, missing.name);
+            free(path);
+            if (!probe) {
+                ++offered;
+                winner = aliases[a];
+                fprintf(stderr, "holypkg: provider %s:%s available from %s\n",
+                        missing.kind, missing.name, aliases[a]);
+            } else if (probe == 6) ++unavailable;
+            else if (probe != 4) { result = probe; break; }
+        }
+        if (result || offered > 1 || (offered && unavailable)) {
+            if (!result) {
+                fprintf(stderr, "holypkg: decision-required for %s:%s (%zu sources offered, %d unavailable); pass --candidate-provider SOURCE:%s:%s\n",
+                        missing.kind, missing.name, offered, unavailable,
+                        missing.kind, missing.name);
+                result = 3;
+            }
+            for (a = 0; a < alias_count; ++a) free(aliases[a]);
+            free(aliases);
+            holy_missing_requirement_free(&missing);
+            goto done;
+        }
+        for (a = 0; a < alias_count; ++a) {
+            struct source_candidate *item;
+            if (aliases[a] != winner) continue;
             if (extra_count == 10000) { result = 2; break; }
             item = &extras[extra_count];
             item->alias = copy_text(aliases[a]);

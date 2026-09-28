@@ -149,6 +149,33 @@ test -f "$tmp/root/usr/share/foreign-dep"
 test ! -e "$tmp/root/usr/share/foreign-unused"
 grep -q "$other_id" "$tmp/root/var/lib/holypkg/installed/$foreign_hash/source"
 "$bin" db check --all --root "$tmp/root" > "$tmp/out"
+mkdir -p "$tmp/third-repo"
+cp "$tmp/other-repo/auto-child.holy" "$tmp/third-repo/auto-child.holy"
+"$bin" repo index "$tmp/third-repo" > "$tmp/out"
+"$bin" repo seal "$tmp/third-repo" > "$tmp/out"
+third_index=$(sed -n 's/^sha256 //p' "$tmp/third-repo/current")
+printf '[source fixture]\ntype holy-http\nurl https://fixture.example/holy/\n[source other]\ntype holy-http\nurl https://other.example/holy/\n[source third]\ntype holy-http\nurl https://third.example/holy/\n' > "$tmp/three-sources"
+"$bin" source plan --config "$tmp/three-sources" --root "$tmp/root" > "$tmp/plan"
+plan=$(sha256sum "$tmp/plan" | cut -d ' ' -f 1)
+"$bin" source apply "$tmp/plan" --sha256 "$plan" --root "$tmp/root" > "$tmp/out"
+"$bin" source list --root "$tmp/root" > "$tmp/out"
+third_id=$(sed -n 's/^source \([0-9a-f]*\) "third" active$/\1/p' "$tmp/out")
+test -n "$third_id"
+printf 'format holy-mirror-1\nurl "https://third.example/holy/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$third_index" "$third_id" > "$tmp/third-repo/mirror-origin"
+"$bin" source catalog bind third "$tmp/third-repo" --root "$tmp/root" > "$tmp/out"
+if "$bin" add fixture:auto-root --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"; then
+    exit 1
+else
+    test "$?" -eq 3
+fi
+grep -q 'provider package:auto-child available from other' "$tmp/err"
+grep -q 'provider package:auto-child available from third' "$tmp/err"
+grep -q 'decision-required' "$tmp/err"
+test ! -e "$tmp/root/usr/share/auto-root"
+"$bin" source plan --config "$tmp/config" --root "$tmp/root" > "$tmp/plan"
+plan=$(sha256sum "$tmp/plan" | cut -d ' ' -f 1)
+"$bin" source apply "$tmp/plan" --sha256 "$plan" --root "$tmp/root" > "$tmp/out"
 if "$bin" add fixture:auto-root --root "$tmp/root" \
     > "$tmp/out" 2> "$tmp/err" < /dev/null; then
     exit 1
