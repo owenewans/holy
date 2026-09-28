@@ -7,6 +7,7 @@
 int holy_source_plan(const char *config, const char *root);
 int holy_source_apply(const char *plan, const char *digest, const char *root);
 int holy_source_list(const char *root);
+int holy_source_show(const char *root, const char *alias);
 /* returns owned active aliases sorted by name; caller frees each and the array. */
 int holy_source_active_aliases(const char *root, char ***aliases, size_t *count);
 /* resolves one active alias under a shared database lock; shell-style status. */

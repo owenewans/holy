@@ -375,7 +375,22 @@ static void describe_changes(const struct registry *before, const struct registr
         const struct source *next = &after->items[i];
         if (!next->active) continue;
         for (j = 0; j < before->count; ++j) if (!strcmp(next->id, before->items[j].id)) break;
-        if (j < before->count && before->items[j].active && !strcmp(next->alias, before->items[j].alias)) continue;
+        if (j < before->count && before->items[j].active) {
+            const struct source *old = &before->items[j];
+            if (strcmp(old->trust, next->trust) || strcmp(old->key, next->key) ||
+                strcmp(old->parent, next->parent) ||
+                strcmp(old->family ? old->family : "", next->family ? next->family : "") ||
+                old->priority != next->priority) {
+                fprintf(stderr, "policy-change %s ", next->id);
+                quote(stderr, next->alias);
+                fprintf(stderr, " trust=%s parent=%s family=", next->trust,
+                        next->parent[0] ? next->parent : "-");
+                quote(stderr, next->family ? next->family : "-");
+                fprintf(stderr, " priority=%d key=%s\n", next->priority,
+                        next->key[0] ? next->key : "-");
+            }
+            if (!strcmp(next->alias, old->alias)) continue;
+        }
         for (k = 0; k < before->count; ++k)
             if (before->items[k].active && !strcmp(next->alias, before->items[k].alias) && strcmp(next->id, before->items[k].id)) break;
         if (k < before->count) {
@@ -637,6 +652,37 @@ int holy_source_list(const char *root)
     }
     if (result) fprintf(stderr, "holypkg: source registry unavailable (status %d)\n", result);
     close(dir); free(data); clear_registry(&r);
+    return result;
+}
+
+int holy_source_show(const char *root, const char *alias)
+{
+    struct registry r = {0};
+    unsigned long long generation;
+    char *data = NULL;
+    size_t i;
+    int dir, result = 1;
+    if (!root || !alias || !*alias) return 2;
+    dir = holy_state_lock(root, 0, &generation, &result);
+    if (dir < 0) return result;
+    data = load_registry(dir, &r);
+    if (!data) goto done;
+    result = 6;
+    for (i = 0; i < r.count; ++i) if (r.items[i].active && !strcmp(r.items[i].alias, alias)) {
+        const struct source *s = &r.items[i];
+        printf("source-id %s\nalias ", s->id); quote(stdout, s->alias);
+        fputs("\ndefinition\n", stdout);
+        fputs(s->definition, stdout);
+        printf("trust %s\npublic-key-sha256 %s\nparent-id %s\nfamily ",
+               s->trust, s->key[0] ? s->key : "-", s->parent[0] ? s->parent : "-");
+        quote(stdout, s->family ? s->family : "-");
+        printf("\npriority %d\nrevision %llu\n", s->priority, r.revision);
+        result = ferror(stdout) ? 1 : 0;
+        break;
+    }
+done:
+    if (result) fprintf(stderr, "holypkg: source %s unavailable (status %d)\n", alias, result);
+    free(data); clear_registry(&r); close(dir);
     return result;
 }
 

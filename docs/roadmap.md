@@ -522,7 +522,9 @@
   It probes installed providers first, including inactive origins. Same-source
   registered-parent and source-family preference now choose among exact native
   offers by source-id and policy; source priority breaks ties within a rank.
-  Explicit answers override them. Complete coverage diagnostics and plugin
+  Explicit answers override them. Source plan now reports changes to trust,
+  key, parent, family and priority; source show displays the applied policy.
+  Complete coverage diagnostics and plugin
   discovery remain open. A
   three-catalog ELF fixture verifies SONAME discovery after installed libc and
   interpreter paths, selected source identity, and installed check. The source

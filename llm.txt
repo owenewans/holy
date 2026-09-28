@@ -633,7 +633,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holy.conf.5 source=holy version=development sha256=e6982c0e544d319a0a5e73af4ea2ee55e10f80ab4cbcafa09a2228a6ca7f3134
+holy.conf.5 source=holy version=development sha256=66fba140c728bff19ce511193b0e6af15891517c33eb2977fcbc2e8d9316f3c0
 HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
 
 NAME
@@ -747,7 +747,7 @@ SOURCE IDENTITIES
      priority  SIGNED_INTEGER ranks candidates within the same preference group;
      a larger number wins. The default priority is zero. Family and priority are
      policy, not part of source identity. A changed policy is recorded by source
-     apply.
+     apply.  holypkg source show ALIAS displays the policy after apply.
 
      A registered APK source uses type apk and one or more repo NAME HTTPS_BASE/
      entries. holypkg apk sync names the repo, obtains its  APKINDEX.tar.gz  and
@@ -1116,7 +1116,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=0ca6ce1dd23cfff680988aef7397b3d06d496a996dbd1b17eb7d5cdf1b0b7fb0
+holypkg.8 source=holy version=development sha256=378b766d688ec13f5e7d9925bf40b952da8a02efe63d16332c3d48bb7e5edaea
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1213,6 +1213,7 @@ SYNOPSIS
      holypkg source plan --config FILE --root DIRECTORY
      holypkg source apply PLAN --sha256 HASH --root DIRECTORY
      holypkg source list --root DIRECTORY
+     holypkg source show ALIAS --root DIRECTORY
      holypkg source catalog bind ALIAS MIRROR [--root DIRECTORY]
      holypkg  sync  SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256
      INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--commit GIT_COMMIT] [--ca-
@@ -3363,21 +3364,25 @@ DESCRIPTION
 SOURCE REGISTRATION
      source plan reads the explicit configuration and writes a complete proposed
      registry to stdout. It reports alias changes, origin changes, additions and
-     deactivations  on stderr. Review and save the plan, then supply its SHA-256
-     to source apply. An existing initialized database is  required.  No  source
-     command downloads packages or runs package code.
+     deactivations on stderr. A change to trust, key, parent, family or priority
+     under  the same source ID is reported as policy-change. Review and save the
+     plan, then supply its SHA-256 to  source  apply.  An  existing  initialized
+     database  is required. No source command downloads packages or runs package
+     code.
 
-     The  plan binds the previous registry digest, installed database generation
+     The plan binds the previous registry digest, installed database  generation
      and database device/inode. Apply stages the plan, verifies its approved di-
-     gest and checks those inputs under	 the  database	writer	lock.  It  never
-     rereads  config  or  includes.  A changed input, another database or a dis-
-     carded historical source returns decision-required (3). Malformed	proposed
+     gest  and	checks	those  inputs  under  the database writer lock. It never
+     rereads config or includes. A changed input, another  database  or	 a  dis-
+     carded  historical source returns decision-required (3). Malformed proposed
      registry data returns 2; I/O or existing-state corruption returns 1; an in-
      complete transaction returns 5.
 
-     The  registry  is /var/lib/holypkg/sources under the target root. Its holy-
-     sources-1 records contain ID, alias, active/inactive state, canonical defi-
-     nition, trust policy and optional raw Ed25519 public key. Key rotation  re-
+     The registry is /var/lib/holypkg/sources under the target root.  Its  holy-
+     sources-3 records contain ID, alias, active/inactive state, canonical defi-
+     nition,  trust policy, public-key fingerprint, parent ID, family and prior-
+     ity.  source show ALIAS prints the effective registered definition and pol-
+     icy for an active alias without downloading its catalog. Key  rotation  re-
      tains  the	 source ID and changes the registry revision. Replacement uses a
      private temporary file, fsync, rename and directory fsync.	 Registry  revi-
      sions  are separate from installed database generations.  List prints iden-

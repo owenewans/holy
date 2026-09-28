@@ -179,6 +179,39 @@ fi
 apply
 test "$(cat "$db/generation")" -eq 0
 expect 0 "$bin" db status --root "$root"
+policy_root="$tmp/policy-root"
+mkdir "$policy_root"
+expect 0 "$bin" db init --root "$policy_root"
+cat > "$tmp/policy-base" <<'EOF'
+[source alpha]
+type holy-http
+url https://alpha.example/holy/
+[source beta]
+type holy-http
+url https://beta.example/holy/
+EOF
+expect 0 "$bin" source plan --config "$tmp/policy-base" --root "$policy_root"
+cp "$tmp/out" "$tmp/policy.plan"
+policy_digest=$(sha256sum "$tmp/policy.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" source apply "$tmp/policy.plan" --sha256 "$policy_digest" --root "$policy_root"
+expect 0 "$bin" source show alpha --root "$policy_root"
+policy_id=$(sed -n 's/^source-id //p' "$tmp/out")
+test "${#policy_id}" -eq 64
+grep -qx 'family "-"' "$tmp/out"
+grep -qx 'priority 0' "$tmp/out"
+sed '/url https:\/\/alpha.example\/holy\//a family workstation\npriority -5\nparent beta' \
+    "$tmp/policy-base" > "$tmp/policy-config"
+expect 0 "$bin" source plan --config "$tmp/policy-config" --root "$policy_root"
+grep -q "^policy-change $policy_id \"alpha\" trust=warn parent=[0-9a-f]\{64\} family=\"workstation\" priority=-5 key=-$" "$tmp/err"
+cp "$tmp/out" "$tmp/policy.plan"
+policy_digest=$(sha256sum "$tmp/policy.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" source apply "$tmp/policy.plan" --sha256 "$policy_digest" --root "$policy_root"
+expect 0 "$bin" source show alpha --root "$policy_root"
+grep -qx "source-id $policy_id" "$tmp/out"
+grep -qx 'family "workstation"' "$tmp/out"
+grep -qx 'priority -5' "$tmp/out"
+grep -q '^parent-id [0-9a-f]\{64\}$' "$tmp/out"
+expect 6 "$bin" source show missing --root "$policy_root"
 if test "${HOLY_SOURCE_CHROOT:-0}" = 1; then
     command -v doas >/dev/null && doas -n true || exit 6
     test ! -e "$root/lib" && test ! -e "$root/lib64" && test ! -e "$root/usr/lib"

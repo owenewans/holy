@@ -86,6 +86,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg source list --root DIRECTORY
 .br
+.B holypkg source show ALIAS --root DIRECTORY
+.br
 .B holypkg source catalog bind ALIAS MIRROR [--root DIRECTORY]
 .br
 .B holypkg sync SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256 INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--commit GIT_COMMIT] [--ca-file FILE]
@@ -2247,7 +2249,8 @@ trust to the package; repository metadata and objects remain unsigned.
 .SH SOURCE REGISTRATION
 source plan reads the explicit configuration and writes a complete proposed
 registry to stdout. It reports alias changes, origin changes, additions and
-deactivations on stderr. Review and save the plan, then supply its SHA-256 to
+deactivations on stderr. A change to trust, key, parent, family or priority
+under the same source ID is reported as policy-change. Review and save the plan, then supply its SHA-256 to
 source apply. An existing initialized database is required. No source command
 downloads packages or runs package code.
 .PP
@@ -2259,8 +2262,10 @@ returns decision-required (3). Malformed proposed registry data returns 2;
 I/O or existing-state corruption returns 1; an incomplete transaction returns 5.
 .PP
 The registry is /var/lib/holypkg/sources under the target root. Its
-holy-sources-1 records contain ID, alias, active/inactive state, canonical
-definition, trust policy and optional raw Ed25519 public key. Key rotation
+holy-sources-3 records contain ID, alias, active/inactive state, canonical
+definition, trust policy, public-key fingerprint, parent ID, family and priority.
+source show ALIAS prints the effective registered definition and policy for an
+active alias without downloading its catalog. Key rotation
 retains the source ID and changes the registry revision. Replacement uses a
 private temporary file, fsync, rename and directory
 fsync. Registry revisions are separate from installed database generations.

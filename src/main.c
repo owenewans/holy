@@ -1703,7 +1703,9 @@ int main(int argc, char **argv)
             return holy_source_apply(argv[3], argv[5], argv[7]);
         if (argc == 5 && !strcmp(argv[2], "list") && !strcmp(argv[3], "--root"))
             return holy_source_list(argv[4]);
-        fputs("usage: holypkg source plan --config FILE --root DIRECTORY | source apply PLAN --sha256 HASH --root DIRECTORY | source list --root DIRECTORY | source catalog bind ALIAS MIRROR [--root DIRECTORY]\n", stderr);
+        if (argc == 6 && !strcmp(argv[2], "show") && !strcmp(argv[4], "--root"))
+            return holy_source_show(argv[5], argv[3]);
+        fputs("usage: holypkg source plan --config FILE --root DIRECTORY | source apply PLAN --sha256 HASH --root DIRECTORY | source list --root DIRECTORY | source show ALIAS --root DIRECTORY | source catalog bind ALIAS MIRROR [--root DIRECTORY]\n", stderr);
         return 2;
     }
 
