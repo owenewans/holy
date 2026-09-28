@@ -58,6 +58,15 @@ with tempfile.TemporaryDirectory() as scratch:
     assert "sonames-sha256 " in (signed / "conversion").read_text()
     run("apk", "providers", "soname:libbeta.so.2", "--catalog", signed, status=4)
     run("apk", "providers", "file:/usr/lib/libbeta.so.1", "--catalog", signed, status=2)
+    duplicate_provider = convert(index("duplicate-provider.tar.gz", rows + (
+        b"C:Q1hashthree=\nP:gamma\nV:1.0-r0\nA:x86_64\nS:90\n"
+        b"p:so:libbeta.so.1\n\n")), "duplicate-provider")
+    run("apk", "fetch-provider", "soname:libbeta.so.1", "x86_64",
+        "--catalog", duplicate_provider, "--output", tmp / "ambiguous-provider", status=3)
+    assert not (tmp / "ambiguous-provider").exists()
+    run("apk", "fetch-provider", "soname:libbeta.so.1", "x86",
+        "--catalog", duplicate_provider, "--output", tmp / "wrong-arch-provider", status=4)
+    assert not (tmp / "wrong-arch-provider").exists()
     run("apk", "info", "missing", "--catalog", signed, status=4)
     convert(index("unsigned.tar.gz", rows), "unsigned")
 

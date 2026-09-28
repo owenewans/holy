@@ -164,6 +164,12 @@ with tempfile.TemporaryDirectory() as scratch:
             "--require-file", "/usr/lib/libfixture.so.1")
         assert "soname-provider verified-payload\n" in (
             tmp / "verified-soname/selection").read_text()
+        run("apk", "fetch-provider", "soname:libfixture.so.1", "x86_64",
+            "--catalog", elf_catalog, "--output", tmp / "provider-package",
+            "--ca-file", tmp / "cert.pem")
+        assert "soname-provider verified-payload\n" in (
+            tmp / "provider-package/selection").read_text()
+        assert list((tmp / "provider-package/converted").glob("*.holy"))
 
         root = tmp / "root"
         root.mkdir()
@@ -302,6 +308,11 @@ with tempfile.TemporaryDirectory() as scratch:
             "--public-key", signing_pub, "--import", "--require-soname",
             "libfixture.so.1", status=4)
         assert not (tmp / "signed-false-soname/selection").exists()
+        run("apk", "fetch-provider", "soname:libfixture.so.1", "x86_64",
+            "--source", "signed", "--repo", "main", "--root", signed_root,
+            "--output", tmp / "signed-false-provider", "--ca-file", tmp / "cert.pem",
+            "--public-key", signing_pub, status=4)
+        assert not (tmp / "signed-false-provider/selection").exists()
         signed_origin = origin(next((tmp / "signed-package/converted").glob("*.holy")))
         assert "verification rsa-sha256\n" in signed_origin
         assert "public-key-sha256 " in signed_origin

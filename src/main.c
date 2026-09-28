@@ -1235,15 +1235,20 @@ int main(int argc, char **argv)
                 return result;
             }
         }
-        if (argc >= 10 && !strcmp(argv[2], "fetch")) {
+        if (argc >= 9 && (!strcmp(argv[2], "fetch") ||
+                          !strcmp(argv[2], "fetch-provider"))) {
             const char *catalog = NULL, *output = NULL, *sha256 = NULL;
             const char *ca_file = NULL, *root = NULL, *source_alias = NULL, *repo = NULL;
             const char *public_key = NULL, *required_soname = NULL;
             const char *required_file = NULL;
             char *bound = NULL;
-            int i, result, import = 0;
-            for (i = 6; i < argc;) {
-                if (!strcmp(argv[i], "--import") && !import) { import = 1; ++i; continue; }
+            int provider = !strcmp(argv[2], "fetch-provider");
+            int i, result, import = provider;
+            if (provider && strncmp(argv[3], "soname:", 7)) return 2;
+            for (i = provider ? 5 : 6; i < argc;) {
+                if (!provider && !strcmp(argv[i], "--import") && !import) {
+                    import = 1; ++i; continue;
+                }
                 if (i + 1 >= argc) break;
                 if (!strcmp(argv[i], "--catalog") && !catalog) catalog = argv[i + 1];
                 else if (!strcmp(argv[i], "--output") && !output) output = argv[i + 1];
@@ -1260,6 +1265,7 @@ int main(int argc, char **argv)
             }
             if (i == argc && output && (!required_soname || import) &&
                 (!required_file || import) &&
+                (!provider || (!required_soname && !required_file)) &&
                 ((catalog && !repo && (!source_alias || root)) ||
                  (!catalog && source_alias && repo && root))) {
                 if (!catalog) {
@@ -1267,14 +1273,18 @@ int main(int argc, char **argv)
                     if (result) return result;
                     catalog = bound;
                 }
-                result = holy_apk_fetch(catalog, argv[3], argv[4], argv[5], output,
-                                        sha256, ca_file, root, source_alias, public_key,
-                                        import, required_soname, required_file);
+                result = provider ?
+                    holy_apk_fetch_provider(catalog, argv[3] + 7, argv[4], output,
+                                            sha256, ca_file, root, source_alias,
+                                            public_key) :
+                    holy_apk_fetch(catalog, argv[3], argv[4], argv[5], output,
+                                   sha256, ca_file, root, source_alias, public_key,
+                                   import, required_soname, required_file);
                 free(bound);
                 return result;
             }
         }
-        fputs("usage: holypkg apk verify-index FILE --public-key FILE | apk sync SOURCE REPO --root DIRECTORY --output NEW_DIRECTORY [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] [--public-key FILE] | apk bind SOURCE REPO CATALOG --root DIRECTORY [--accept-unsigned HASH] [--public-key FILE] | apk index FILE --source NAME --base URL --output NEW_DIRECTORY | apk search|info NAME [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] | apk providers soname:NAME [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] | apk fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE] [--public-key FILE] [--import] [--require-soname SONAME] [--require-file /PATH]\n", stderr);
+        fputs("usage: holypkg apk verify-index FILE --public-key FILE | apk sync SOURCE REPO --root DIRECTORY --output NEW_DIRECTORY [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] [--public-key FILE] | apk bind SOURCE REPO CATALOG --root DIRECTORY [--accept-unsigned HASH] [--public-key FILE] | apk index FILE --source NAME --base URL --output NEW_DIRECTORY | apk search|info NAME [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] | apk providers soname:NAME [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] | apk fetch-provider soname:NAME ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE] [--public-key FILE] | apk fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE] [--public-key FILE] [--import] [--require-soname SONAME] [--require-file /PATH]\n", stderr);
         return 2;
     }
     if (argc > 1 && !strcmp(argv[1], "search") && argc > 2)

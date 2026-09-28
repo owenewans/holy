@@ -639,7 +639,8 @@ int holy_apk_index(const char *input, const char *source, const char *base,
     return apk_index_bound(input, source, base, output, NULL, NULL, NULL, NULL);
 }
 
-static int query_sonames(int dir, const char *expected, const char *soname)
+static int query_sonames(int dir, const char *expected, const char *soname,
+                         const char *arch, char **name, char **version)
 {
     char actual[65], *line = NULL;
     size_t capacity = 0, matches = 0;
@@ -667,16 +668,28 @@ static int query_sonames(int dir, const char *expected, const char *soname)
             free(error); holy_tokens_free(v, n); goto done;
         }
         order = strcmp(v[1], soname);
-        if (!order) {
-            printf("%s %s %s index-hint\n", v[2], v[3], v[4]);
+        if (!order && (!arch || !strcmp(v[4], arch))) {
+            if (arch) {
+                fprintf(stderr, "holypkg: APK candidate %s %s %s for %s\n",
+                        v[2], v[3], v[4], soname);
+                if (!matches) {
+                    *name = strdup(v[2]); *version = strdup(v[3]);
+                    if (!*name || !*version) {
+                        free(error); holy_tokens_free(v, n); result = 1; goto done;
+                    }
+                }
+            } else printf("%s %s %s index-hint\n", v[2], v[3], v[4]);
             ++matches;
         }
         free(error); holy_tokens_free(v, n);
         if (order > 0) break;
     }
     if (ferror(file)) goto done;
-    result = matches ? 0 : 4;
+    result = arch && matches > 1 ? 3 : matches ? 0 : 4;
+    if (result == 3)
+        fputs("holypkg: select an APK candidate by NAME VERSION ARCH with apk fetch\n", stderr);
 done:
+    if (result && arch) { free(*name); free(*version); *name = *version = NULL; }
     if (file) fclose(file);
     if (fd >= 0) close(fd);
     free(line);
@@ -731,7 +744,10 @@ int holy_apk_query(const char *directory, const char *query, int mode)
         !hash_fd(fileno(catalog), actual) || strcmp(expected, actual) ||
         getline(&line, &capacity, catalog) < 0 ||
         strcmp(line, "format holy-apk-catalog-1\n")) goto done;
-    if (mode == 2) { result = query_sonames(dir, sonames_digest, query); goto done; }
+    if (mode == 2) {
+        result = query_sonames(dir, sonames_digest, query, NULL, NULL, NULL);
+        goto done;
+    }
     while (1) {
         char **v = NULL, *error = NULL;
         size_t n = 0;
@@ -768,7 +784,7 @@ struct apk_selection {
     char source_id[65];
     char verification[16], key_hash[65];
     unsigned long long size;
-    char index_hash[65], catalog_hash[65];
+    char index_hash[65], catalog_hash[65], sonames_hash[65];
 };
 
 static void free_selection(struct apk_selection *selection)
@@ -838,6 +854,8 @@ static int select_package(const char *directory, const char *name,
             memcpy(selection->index_hash, v[1], 65);
         } else if (n == 2 && !strcmp(v[0], "catalog-sha256") && hex_digest(v[1])) {
             memcpy(selection->catalog_hash, v[1], 65);
+        } else if (n == 2 && !strcmp(v[0], "sonames-sha256") && hex_digest(v[1])) {
+            memcpy(selection->sonames_hash, v[1], 65);
         } else if (n == 2 && !strcmp(v[0], "state") && !strcmp(v[1], "complete")) {
             ++matches;
         }
@@ -898,6 +916,41 @@ done:
     if (dir >= 0) close(dir);
     if (snapshot) { unlink(snapshot); free(snapshot); }
     free(line);
+    return result;
+}
+
+static int select_soname_candidate(const char *catalog, const char *soname,
+                                    const char *arch, char **name, char **version)
+{
+    struct apk_selection selection = {0};
+    int dir = -1, result;
+    *name = NULL; *version = NULL;
+    if (!catalog || !soname || !arch || !*soname || strchr(soname, '/') ||
+        strlen(soname) > 255 || !package_name(soname) || !package_name(arch)) return 2;
+    result = select_package(catalog, NULL, NULL, NULL, &selection);
+    if (result) goto done;
+    if (!selection.sonames_hash[0]) { result = 6; goto done; }
+    dir = open(catalog, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir < 0) { result = 6; goto done; }
+    result = query_sonames(dir, selection.sonames_hash, soname,
+                           arch, name, version);
+done:
+    if (dir >= 0) close(dir);
+    free_selection(&selection);
+    return result;
+}
+
+int holy_apk_fetch_provider(const char *catalog, const char *soname, const char *arch,
+                            const char *output, const char *sha256,
+                            const char *ca_file, const char *root,
+                            const char *source_alias, const char *public_key)
+{
+    char *name = NULL, *version = NULL;
+    int result = select_soname_candidate(catalog, soname, arch, &name, &version);
+    if (!result) result = holy_apk_fetch(catalog, name, version, arch, output,
+                                         sha256, ca_file, root, source_alias,
+                                         public_key, 1, soname, NULL);
+    free(name); free(version);
     return result;
 }
 

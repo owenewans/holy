@@ -167,6 +167,9 @@
   `apk providers soname:NAME` searches a digest-bound inverted index of so:
   claims as hints; the
   checked import still decides whether a package really provides the SONAME.
+  `apk fetch-provider` now chooses a unique candidate by SONAME and architecture,
+  verifies its payload, and returns decision-required when the index lists
+  multiple candidates. The general resolver does not invoke this path yet.
   Feeding foreign candidates into the general resolver and full relation
   semantics remain open.
 

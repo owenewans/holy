@@ -52,6 +52,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apk providers soname:NAME [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY]
 .br
+.B holypkg apk fetch-provider soname:NAME ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE] [--public-key FILE]
+.br
 .B holypkg apk fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE] [--public-key FILE] [--import] [--require-soname SONAME] [--require-file /PATH]
 .br
 .B holypkg xbps index REPODATA --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--public-key FILE]
@@ -527,6 +529,12 @@ Direct fetch without --root records source-binding unchecked. Fetch and sync do
 not install files. apk providers soname:NAME searches exact so:NAME entries in
 the hash-bound SONAME index generated from APKINDEX. Each result is an index hint. Use fetch --import
 --require-soname NAME to verify the actual ELF before selecting a provider.
+fetch-provider soname:NAME ARCH chooses the sole indexed candidate for that
+architecture, fetches and imports it, then checks the exact ELF SONAME. Multiple
+candidates return decision-required before download; use apk fetch with an
+explicit name and version to choose one. A false index claim fails after import
+and leaves no complete selection receipt. Source-bound fetch still checks the
+registered source, key and index generation.
 With --import, fetch converts the checked archive into .holy
 outputs under NEW_DIRECTORY/converted, checks each output's name, version and
 architecture, and rechecks the original SHA-256 after staging. Signed packages
