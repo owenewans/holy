@@ -52,6 +52,9 @@ static char *update_record(int dir, const char *name);
 static int installed_fields(int item, const char *const *keys,
                              const char *const *values, size_t fields);
 static int valid_owner_path(const char *path);
+static const char *literal_loader_dir(const struct holy_elf_info *elf);
+static int loader_file_match(const char *directory, const char *path,
+                             const char *name);
 
 static int native_architecture(const char *host, const char *target)
 {
@@ -1648,7 +1651,8 @@ static int check_status(int checked, const struct check_result *record)
     if (checked < 0 || !record->count) return checked;
     for (i = 0; i < record->count; ++i)
         if (strcmp(record->findings[i].code, "unknown-interpreter") &&
-            strcmp(record->findings[i].code, "unavailable-path-resolution")) return 0;
+            strcmp(record->findings[i].code, "unavailable-path-resolution") &&
+            strcmp(record->findings[i].code, "unknown-loader-context")) return 0;
     return 2;
 }
 
@@ -1691,7 +1695,8 @@ static int print_check_result(const struct check_result *record,
     for (i = 0; i < record->count; ++i) {
         const struct check_finding *finding = &record->findings[i];
         int unknown = !strcmp(finding->code, "unknown-interpreter") ||
-                      !strcmp(finding->code, "unavailable-path-resolution");
+                      !strcmp(finding->code, "unavailable-path-resolution") ||
+                      !strcmp(finding->code, "unknown-loader-context");
         printf("%s{\"code\":\"%s\",\"severity\":\"%s\",\"path\":",
                i ? "," : "", finding->code, unknown ? "warning" : "error");
         print_check_string(finding->path);
@@ -1717,6 +1722,104 @@ static int compare_check_result(const void *a, const void *b)
     return strcmp(left->digest, right->digest);
 }
 
+struct graph_elf {
+    struct holy_elf_info info;
+    int seen;
+};
+
+struct graph_soname {
+    const struct holy_elf_info *consumer;
+    const char *name;
+    int found, arch, versions, path_ok;
+};
+
+static int graph_consumer_elf(void *context, const char *path, int fd)
+{
+    struct graph_elf *captured = context;
+    (void)path;
+    if (captured->seen || holy_elf_read_fd(fd, &captured->info)) return 0;
+    captured->seen = 1;
+    return 1;
+}
+
+static int graph_provider_elf(void *context, const char *path, int fd)
+{
+    struct graph_soname *match = context;
+    struct holy_elf_info info = {0};
+    size_t i, j;
+    int status = holy_elf_read_fd(fd, &info), versions = 1;
+    if (status == 1) { holy_elf_free(&info); return 1; }
+    if (status) { holy_elf_free(&info); return 0; }
+    if (info.type != ET_DYN || (info.flags1 & DF_1_PIE) ||
+        !info.soname || strcmp(info.soname, match->name)) goto done;
+    match->found = 1;
+    if (!match->consumer) { match->arch = 1; match->versions = 1; goto done; }
+    if (info.elf_class != match->consumer->elf_class ||
+        info.machine != match->consumer->machine) goto done;
+    match->arch = 1;
+    for (i = 0; i < match->consumer->version_count; ++i) {
+        const struct holy_elf_version *want = &match->consumer->versions[i];
+        if (want->weak || strcmp(want->provider, match->name)) continue;
+        for (j = 0; j < info.defined_version_count; ++j)
+            if (!strcmp(info.defined_versions[j].name, want->name)) break;
+        if (j == info.defined_version_count) { versions = 0; break; }
+    }
+    if (versions) {
+        const char *directory = literal_loader_dir(match->consumer);
+        match->versions = 1;
+        if (directory && loader_file_match(directory, path, match->name))
+            match->path_ok = 1;
+    }
+done:
+    holy_elf_free(&info);
+    return 1;
+}
+
+static int check_soname_edge(int installed, int root, const char *consumer,
+                             int provider, const char *path, const char *name,
+                             const char **code)
+{
+    struct graph_elf captured = {0};
+    struct graph_soname match = {0};
+    int item = -1, files = -1, provider_files = -1, status, result = -1;
+    size_t i;
+    *code = "broken-provider";
+    if (strcmp(path, "-")) {
+        item = child_dir(installed, consumer, 0);
+        files = item < 0 ? -1 : openat(item, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+        if (files < 0) goto done;
+        status = holy_install_visit_regular(files, root, path, graph_consumer_elf, &captured);
+        if (status < 0) goto done;
+        if (!status || !captured.seen) { result = 0; goto done; }
+        for (i = 0; i < captured.info.needed_count; ++i)
+            if (!strcmp(captured.info.needed[i], name)) break;
+        if (i == captured.info.needed_count) goto done;
+        match.consumer = &captured.info;
+    }
+    match.name = name;
+    provider_files = openat(provider, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (provider_files < 0) goto done;
+    status = holy_install_visit_regular(provider_files, root, NULL, graph_provider_elf, &match);
+    if (status < 0) goto done;
+    if (!status) { result = 0; goto done; }
+    if (!match.found || !match.arch) {
+        *code = "missing-soname";
+        result = 0;
+    } else if (!match.versions) {
+        *code = "missing-symbol-version";
+        result = 0;
+    } else {
+        *code = "unknown-loader-context";
+        result = match.consumer && !match.path_ok ? 2 : 1;
+    }
+done:
+    holy_elf_free(&captured.info);
+    if (provider_files >= 0) close(provider_files);
+    if (files >= 0) close(files);
+    if (item >= 0) close(item);
+    return result;
+}
+
 static int check_graph(int installed, int root, const char *digest,
                         struct check_result *record)
 {
@@ -1734,7 +1837,7 @@ static int check_graph(int installed, int root, const char *digest,
     while ((length = getline(&line, &capacity, stream)) >= 0) {
         char **v = NULL, *error = NULL;
         size_t count = 0;
-        int provider, intact = 1;
+        int provider, intact = 1, detailed = 0;
         ++number;
         if (memchr(line, 0, (size_t)length) ||
             !holy_lex(line, (size_t)length, &v, &count, "installed/graph", number, &error)) {
@@ -1747,7 +1850,18 @@ static int check_graph(int installed, int root, const char *digest,
         if (strcmp(v[1], digest)) { holy_tokens_free(v, count); continue; }
         provider = child_dir(installed, v[3], 0);
         if (provider < 0) intact = errno == ENOENT ? 0 : -1;
-        else if (!strcmp(v[5], "interpreter") || !strcmp(v[5], "needed-path") ||
+        else if (!strcmp(v[5], "soname")) {
+            const char *code;
+            intact = check_soname_edge(installed, root, digest, provider,
+                                       v[4], v[6], &code);
+            if (intact == 2) {
+                if (record && !collect_finding(record, v[4], code, v[6])) result = -1;
+                else if (record && result == 1) result = 0;
+            } else if (!intact && record) {
+                if (!collect_finding(record, v[4], code, v[6])) result = -1;
+                else detailed = 1;
+            }
+        } else if (!strcmp(v[5], "interpreter") || !strcmp(v[5], "needed-path") ||
                  !strcmp(v[5], "shebang") || !strcmp(v[5], "path-alias")) {
             int files = openat(provider, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
             intact = files < 0 || v[6][0] != '/' ? -1 : holy_install_check_path(files, root, v[6] + 1);
@@ -1759,7 +1873,8 @@ static int check_graph(int installed, int root, const char *digest,
             fprintf(stderr, "holypkg: broken-provider consumer=%s requirement=%s provider=%s target=%s\n",
                     digest, v[2], v[3], v[6]);
             if (result == 1) result = 0;
-            if (record && !collect_finding(record, v[6], "broken-provider", NULL)) result = -1;
+            if (record && !detailed &&
+                !collect_finding(record, v[6], "broken-provider", NULL)) result = -1;
         }
         holy_tokens_free(v, count);
         if (result < 0) break;
@@ -2540,7 +2655,25 @@ static int set_claims_valid(struct install_set *set)
     return 1;
 }
 
-static int explicit_elf_paths(const char *snapshot)
+static const char *literal_loader_dir(const struct holy_elf_info *elf)
+{
+    const char *path = elf->runpath ? elf->runpath : elf->rpath;
+    size_t length;
+    if (!path || path[0] != '/' || strchr(path, ':') || strchr(path, '$') ||
+        (length = strlen(path)) < 2 || path[length - 1] == '/' ||
+        !valid_owner_path(path + 1)) return NULL;
+    return path;
+}
+
+static int loader_file_match(const char *directory, const char *path,
+                             const char *name)
+{
+    size_t length = strlen(directory + 1);
+    return !strncmp(path, directory + 1, length) && path[length] == '/' &&
+           !strcmp(path + length + 1, name);
+}
+
+static int explicit_elf_paths(const char *snapshot, int allow_soname)
 {
     struct holy_scan_result scan = {0};
     size_t i, j;
@@ -2551,7 +2684,8 @@ static int explicit_elf_paths(const char *snapshot)
         const struct holy_scanned_file *file = &scan.files[i];
         if (file->elf.interpreter && file->elf.interpreter[0] != '/') { result = 3; break; }
         for (j = 0; j < file->elf.needed_count; ++j)
-            if (file->elf.needed[j][0] != '/') {
+            if (file->elf.needed[j][0] != '/' &&
+                (!allow_soname || !literal_loader_dir(&file->elf))) {
                 fprintf(stderr, "holypkg: unknown-loader-search consumer=%s requirement=%s\n",
                         file->path, file->elf.needed[j]);
                 result = 3;
@@ -2567,6 +2701,51 @@ static int explicit_elf_paths(const char *snapshot)
         }
     holy_scan_free(&scan);
     return result;
+}
+
+static int set_soname_paths(const struct install_set *set)
+{
+    size_t i, j, k;
+    for (i = 0; i < set->resolution.edge_count; ++i) {
+        const struct holy_resolved_edge *edge = &set->resolution.edges[i];
+        struct holy_scan_result consumer = {0}, provider = {0};
+        const struct holy_scanned_file *file = NULL;
+        const char *directory = NULL;
+        int found = 0, ok = 0;
+        if (strcmp(edge->kind, "soname") || !strcmp(edge->path, "-")) continue;
+        for (j = 0; j < set->count; ++j)
+            if (!strcmp(set->items[j].identity.digest, edge->consumer)) break;
+        if (j == set->count || !holy_scan_collect(set->items[j].snapshot, &consumer)) goto edge_done;
+        for (k = 0; k < consumer.count; ++k)
+            if (!strcmp(consumer.files[k].path, edge->path)) {
+                file = &consumer.files[k]; break;
+            }
+        if (!file || !(directory = literal_loader_dir(&file->elf))) goto edge_done;
+        for (j = 0; j < set->count; ++j)
+            if (!strcmp(set->items[j].identity.digest, edge->provider)) break;
+        if (j == set->count || !holy_scan_collect(set->items[j].snapshot, &provider)) goto edge_done;
+        for (k = 0; k < provider.count; ++k) {
+            const struct holy_scanned_file *candidate = &provider.files[k];
+            if (candidate->elf.type == ET_DYN && !(candidate->elf.flags1 & DF_1_PIE) &&
+                candidate->elf.soname && !strcmp(candidate->elf.soname, edge->target) &&
+                candidate->elf.elf_class == file->elf.elf_class &&
+                candidate->elf.machine == file->elf.machine &&
+                !strcmp(candidate->runtime, file->runtime) &&
+                loader_file_match(directory, candidate->path, edge->target)) {
+                found = 1; break;
+            }
+        }
+        ok = found;
+edge_done:
+        holy_scan_free(&consumer);
+        holy_scan_free(&provider);
+        if (!ok) {
+            fprintf(stderr, "holypkg: unknown-loader-search consumer=%s requirement=%s provider=%s\n",
+                    edge->path, edge->target, edge->provider);
+            return 0;
+        }
+    }
+    return 1;
 }
 
 static int instance_matches_snapshot(int item, const char *snapshot);
@@ -2957,6 +3136,9 @@ static int discover_installed(const char *root_path, int dir,
             for (k = 0; ok && k < elf->needed_count; ++k)
                 if (elf->needed[k][0] == '/')
                     ok = add_installed_candidates(&catalog, QUERY_PATH, elf->needed[k] + 1, NULL, NULL);
+                else
+                    ok = add_installed_candidates(&catalog, QUERY_SONAME, elf->needed[k],
+                        holy_elf_machine(elf), scan->files[j].runtime);
         }
         for (j = 0; ok && j < scan->script_count; ++j)
             if (scan->scripts[j].kind == 1) {
@@ -3108,7 +3290,7 @@ static int build_set(const char *root_path, int root, int dir,
              strcmp(item->identity.libc, "musl")) ||
             !empty_transform(item->snapshot) || !instance_preflight(item->snapshot)) goto done;
         strcpy(item->source_id, "-");
-        result = explicit_elf_paths(item->snapshot);
+        result = explicit_elf_paths(item->snapshot, 1);
         if (result) goto done;
         result = reuse_instance(dir, root, item, generation, completed, set->graph, plan.hash);
         if (result < 0) { result = 4; goto done; }
@@ -3213,6 +3395,7 @@ static int build_set(const char *root_path, int root, int dir,
         if (!holy_verify_visit(item->snapshot, set_claim, set)) goto done;
     }
     if (!set_claims_valid(set)) { result = 4; goto done; }
+    if (!set_soname_paths(set)) { result = 3; goto done; }
     if (!same_root(root_path, &st)) { result = 4; goto done; }
     set->bindings = calloc(set->count, sizeof *set->bindings);
     if (!set->bindings) goto done;
@@ -4554,7 +4737,7 @@ static int state_update(const char *old_digest, const char *new_digest,
     if (pending != 1) { result = pending < 0 ? 1 : 4; goto done; }
     result = holy_preview_resolved(new_snapshot, root_path, 1, new_privileged);
     if (result) goto done;
-    result = explicit_elf_paths(new_snapshot);
+    result = explicit_elf_paths(new_snapshot, 0);
     if (result) goto done;
     validation.completed = 1;
     validation.accepted_privileged = new_privileged;

@@ -23,6 +23,10 @@ typedef int (*holy_install_finding)(void *context, const char *path,
                                     const char *code, const char *target);
 int holy_install_check_report(int files_fd, int root,
                               holy_install_finding finding, void *context);
+/* visits intact regular payload through root-confined fds; fd is borrowed. */
+typedef int (*holy_install_regular_visit)(void *context, const char *path, int fd);
+int holy_install_visit_regular(int files_fd, int root, const char *filter,
+                               holy_install_regular_visit visit, void *context);
 /* caller must journal first; directories and unlisted paths are retained. */
 int holy_install_remove_manifest(int files_fd, int root);
 /* resume a removing journal: absent listed files are accepted, changed files block. */

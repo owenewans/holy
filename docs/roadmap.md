@@ -216,7 +216,13 @@
   blocking a separate operation. A later set can find and reuse the installed
   SONAME provider from its cached archive, and a mismatched arch scope cannot
   reuse it. An unrelated ABI package needs no cache object for this lookup.
-  Indexed installed SONAME lookup and loader-path checks remain open.
+  A later set also discovers installed providers for ELF DT_NEEDED SONAME edges.
+  Indexed installed SONAME lookup remains open.
+- [x] Install a bare DT_NEEDED SONAME when the consumer has one literal absolute
+  RUNPATH/RPATH directory and the chosen provider owns DIRECTORY/SONAME with
+  matching ABI and required symbol versions. Installed check reads verified
+  target-root ELF files and reports provider drift. General loader search,
+  aliases, plugins and SONAME-bearing cached updates remain open.
 - [x] Resolve direct absolute shebangs in native package sets against exact
   executable ELF paths. Save the selected provider edge, reject unresolved
   env/malformed scripts, block removal of a needed interpreter, and report

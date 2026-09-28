@@ -771,7 +771,8 @@ done:
 }
 
 static int walk_manifest(int files_fd, int root, int mode,
-                          holy_install_finding finding, void *context, const char *filter)
+                          holy_install_finding finding, void *context, const char *filter,
+                          holy_install_regular_visit regular, void *regular_context)
 {
     struct stat st;
     struct manifest_row *rows = NULL;
@@ -854,6 +855,21 @@ static int walk_manifest(int files_fd, int root, int mode,
         }
         if (finding && (checked == 0 || checked == 2) &&
             !finding(context, v[1], checked == 2 ? "missing-file" : "changed-file", NULL)) result = -1;
+        if (regular && checked == 1 && S_ISREG(row->observed.st_mode)) {
+            char *storage = NULL;
+            const char *base;
+            struct stat opened;
+            int parent = parent_fd(root, v[1], &storage, &base), fd = -1;
+            if (parent < 0) { free(storage); result = -1; goto done; }
+            fd = openat(parent, base, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+            if (fd < 0 || fstat(fd, &opened) ||
+                opened.st_dev != row->observed.st_dev || opened.st_ino != row->observed.st_ino ||
+                opened.st_size != row->observed.st_size || opened.st_mode != row->observed.st_mode ||
+                !regular(regular_context, v[1], fd)) result = -1;
+            if (fd >= 0) close(fd);
+            close(parent); free(storage);
+            if (result < 0) goto done;
+        }
         if (finding && checked == 1 && !strcmp(v[0], "file") &&
             (row->observed.st_mode & 0111)) {
             char *storage = NULL, *interpreter = NULL;
@@ -898,35 +914,42 @@ done:
 
 int holy_install_check_manifest(int files_fd, int root)
 {
-    return walk_manifest(files_fd, root, 0, NULL, NULL, NULL);
+    return walk_manifest(files_fd, root, 0, NULL, NULL, NULL, NULL, NULL);
 }
 
 int holy_install_check_report(int files_fd, int root,
                               holy_install_finding finding, void *context)
 {
-    return walk_manifest(files_fd, root, 0, finding, context, NULL);
+    return walk_manifest(files_fd, root, 0, finding, context, NULL, NULL, NULL);
+}
+
+int holy_install_visit_regular(int files_fd, int root, const char *filter,
+                               holy_install_regular_visit visit, void *context)
+{
+    if (!visit) return -1;
+    return walk_manifest(files_fd, root, 0, NULL, NULL, filter, visit, context);
 }
 
 int holy_install_check_path(int files_fd, int root, const char *path)
 {
-    return walk_manifest(files_fd, root, 0, NULL, NULL, path);
+    return walk_manifest(files_fd, root, 0, NULL, NULL, path, NULL, NULL);
 }
 
 int holy_install_check_or_missing(int files_fd, int root)
 {
-    return walk_manifest(files_fd, root, 3, NULL, NULL, NULL);
+    return walk_manifest(files_fd, root, 3, NULL, NULL, NULL, NULL, NULL);
 }
 
 int holy_install_remove_manifest(int files_fd, int root)
 {
     if (holy_install_check_manifest(files_fd, root) != 1) return 0;
-    return walk_manifest(files_fd, root, 1, NULL, NULL, NULL) == 1;
+    return walk_manifest(files_fd, root, 1, NULL, NULL, NULL, NULL, NULL) == 1;
 }
 
 int holy_install_finish_remove_manifest(int files_fd, int root)
 {
-    if (walk_manifest(files_fd, root, 3, NULL, NULL, NULL) != 1) return 0;
-    return walk_manifest(files_fd, root, 2, NULL, NULL, NULL) == 1;
+    if (walk_manifest(files_fd, root, 3, NULL, NULL, NULL, NULL, NULL) != 1) return 0;
+    return walk_manifest(files_fd, root, 2, NULL, NULL, NULL, NULL, NULL) == 1;
 }
 
 static int manifest_claims(int files_fd, const char *path, int other)

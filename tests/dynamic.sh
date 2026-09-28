@@ -77,6 +77,34 @@ plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
 test "${#plan}" -eq 64
 expect 0 "$bin" db apply-set "$plan" "$probe" "$provider" "$runtime_hash" --root "$root"
 expect 0 "$bin" db check --all --root "$root"
+new unresolved-soname
+mkdir -p "$tree/DATA/usr/bin"
+cp "$tmp/probe" "$tree/DATA/usr/bin/unresolved-soname"
+patchelf --set-interpreter "$loader" --replace-needed libc.so.6 "$libc" \
+    "$tree/DATA/usr/bin/unresolved-soname"
+pack unresolved-soname
+expect 3 "$bin" db plan-set "$(hash unresolved-soname)" --root "$root"
+grep -q 'unknown-loader-search' "$tmp/err"
+new soname-probe
+mkdir -p "$tree/DATA/usr/bin"
+cp "$tmp/probe" "$tree/DATA/usr/bin/soname-probe"
+patchelf --set-interpreter "$loader" --set-rpath "$runtime" \
+    --replace-needed libc.so.6 "$libc" \
+    "$tree/DATA/usr/bin/soname-probe"
+pack soname-probe
+soname_probe=$(hash soname-probe)
+expect 0 "$bin" db plan-set "$soname_probe" --root "$root"
+soname_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+expect 0 "$bin" db apply-set "$soname_plan" "$soname_probe" --root "$root"
+expect 0 "$bin" db check "$soname_probe" --root "$root" --json
+grep -q '"state":"pass"' "$tmp/out"
+cp -p "$root$library" "$tmp/soname-library.saved"
+printf corrupt > "$root$library"
+expect 4 "$bin" db check "$soname_probe" --root "$root" --json
+grep -q '"code":"broken-provider"' "$tmp/out"
+cp -p "$tmp/soname-library.saved" "$root$library"
+expect 0 "$bin" db check "$soname_probe" --root "$root"
+expect 0 "$bin" db rm "$soname_probe" --root "$root"
 test "$(readlink "$root/usr/lib64/ld-linux-x86-64.so.2")" = ../lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2
 cp -a "$root" "$tmp/broken-libc"
 expect 3 "$bin" db rm "$runtime_hash" --root "$tmp/broken-libc"

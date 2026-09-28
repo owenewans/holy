@@ -648,11 +648,13 @@ A missing archive returns unavailable instead of guessing ABI facts. Reuse
 requires the version-2 or version-3 installed graph format. Multiple viable providers still
 require --choose; automatic installed/source preference ranking remains open.
 .PP
-Dynamic sets require literal absolute PT_INTERP and DT_NEEDED paths. Providers
-must contain those exact regular payload paths and satisfy the recorded
-architecture, runtime, symbol and version requirements. The planner rejects
-relative or tokenized dependency paths. Ordinary SONAME search returns
-decision-required because RPATH/RUNPATH and loader search are not modeled.
+Dynamic sets require literal absolute PT_INTERP paths. Absolute DT_NEEDED paths
+must name exact provider payload paths. For a bare SONAME, the consumer must
+have one literal absolute RUNPATH or RPATH directory, and the selected provider
+must own a matching ELF file at DIRECTORY/SONAME. The planner checks architecture,
+runtime, symbols and version needs and rejects tokenized or ambiguous search
+paths. General loader search, symlink aliases and update replacement of bare
+SONAME consumers still require a separate decision.
 Parent directories must exist or be declared in that package manifest;
 installation does not traverse symlinked parents. This interface
 does not automatically rewrite ELF files or resolve loader aliases.
@@ -1005,7 +1007,10 @@ checks the shebang interpreter within the target root. A missing interpreter
 fails; a malformed shebang, env command, invalid interpreter ELF or unresolved
 path reports unknown. This does not test interpreter libraries or runtime
 behavior. A missing openat2 syscall returns 6 and reports unknown coverage.
-It does not model loader search order. --all walks
+For saved SONAME edges, check opens intact provider ELF files through the target
+root and compares actual SONAME, ELF class, machine and strong version needs.
+A direct literal loader directory can pass; unresolved loader context reports
+unknown-loader-context. This does not model general loader search order. --all walks
 every supported installed manifest under the same shared lock and reports each
 artifact as intact, changed or unknown in digest order. It returns 4 if any
 artifact has changed or remains unknown. An empty installed set reports zero checked packages. --json
@@ -1019,7 +1024,8 @@ manifest mismatches, including inaccessible or symlinked parents. Paths encode
 non-ASCII bytes as \eu00HH; consumers reconstruct the original bytes. Findings
 follow manifest order; intact artifacts have an empty array. The artifact-level
 code names the first finding. Coverage is data-manifest-and-direct-shebang,
-including the selected literal-path provider files.
+including selected literal-path provider files and the supported direct SONAME
+case. The coverage label is retained for the current JSON schema.
 .PP
 Hardlink groups are checked by device and inode as well as contents and metadata.
 Independent copies with matching bytes fail the group check. Missing-only repair
