@@ -705,7 +705,7 @@ static int add_source(int argc, char **argv)
     size_t answer_count = 0;
     size_t digest_count = 0, binding_count = 0, skip_count = 0, i, j, k;
     int unavailable_seen = 0;
-    int yes = 0, noninteractive = 0, root_seen = 0, result = 2;
+    int yes = 0, prepare = 0, noninteractive = 0, root_seen = 0, result = 2;
     if (!separator || separator == argv[2] || !separator[1] ||
         strchr(separator + 1, ':')) goto done;
     alias = malloc((size_t)(separator - argv[2]) + 1);
@@ -792,9 +792,11 @@ static int add_source(int argc, char **argv)
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2))
             accepted_privileged[privileged_count++] = argv[++i];
         else if (!strcmp(argv[i], "--yes") && !yes) yes = 1;
+        else if (!strcmp(argv[i], "--prepare") && !prepare) prepare = 1;
         else if (!strcmp(argv[i], "--noninteractive") && !noninteractive) noninteractive = 1;
         else goto done;
     }
+    if (yes && prepare) goto done;
     if (answers_path) {
         result = load_source_answers(answers_path, &answers, &answer_count);
         if (result) goto done;
@@ -1061,6 +1063,7 @@ next_alias:
                                             accepted_arch, arch_count,
                                             accepted_privileged, privileged_count, plan);
     if (result) goto done;
+    if (prepare) goto done;
     if (!yes) {
         if (noninteractive || !isatty(STDIN_FILENO)) {
             fprintf(stderr, "holypkg: decision-required plan=%s; rerun with --yes after review\n", plan);
@@ -1119,7 +1122,7 @@ next_alias:
                                             accepted_privileged, privileged_count, NULL);
 done:
     if (result == 2)
-        fputs("usage: holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--candidate-local SOURCE=FILE.holy ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
+        fputs("usage: holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--candidate-local SOURCE=FILE.holy ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--prepare | --yes] [--noninteractive]\n", stderr);
     for (i = 0; i < binding_count; ++i) free((void *)bindings[i]);
     for (i = 0; i < skip_count; ++i) free((void *)skipped[i]);
     for (i = 0; extras && i <= extra_count && i < 10000; ++i) {

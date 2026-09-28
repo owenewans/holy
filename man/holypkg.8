@@ -4,7 +4,7 @@ holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
 .B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--associate SHA256=ALIAS ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
-.B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--candidate-local SOURCE=FILE.holy ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
+.B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--candidate-local SOURCE=FILE.holy ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--prepare | --yes] [--noninteractive]
 .br
 .B holypkg up SOURCE:PACKAGE [--prepare] [--output NEW_FILE] [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
@@ -2367,6 +2367,12 @@ the same extraction and records NAME as unverified provenance. It returns
 status 3 after writing the reviewable output because no native .holy can be
 issued until dependency and path decisions are complete. NAME does not grant
 a registered source identity.
+.SS Prepared source set
+add SOURCE:PACKAGE --prepare prints the selected set, source bindings and
+plan hash, then returns success without installing files or writing a
+transaction. It can stage verified artifacts in the target cache. It cannot
+be combined with --yes. The caller must preserve the catalog and artifact
+hashes when carrying this selection into another target root.
 .SH EXIT STATUS
 0 indicates success under the implemented checks; 1 indicates a failed local
 fetch, extraction or check; 2 indicates invalid arguments, configuration or

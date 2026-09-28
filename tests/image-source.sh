@@ -146,12 +146,15 @@ printf 'format holy-mirror-1\nurl "https://other.example/holy/"\nindex-sha256 %s
     "$other_index" "$other_id" > "$tmp/cross-other/mirror-origin"
 cp -R "$tmp/cross-fixture" "$tmp/cross-image/mirrors/fixture"
 cp -R "$tmp/cross-other" "$tmp/cross-image/mirrors/other"
+cp "$tmp/cross-sources.conf" "$tmp/cross-image/inputs/sources.conf"
+printf 'fixture\nother\n' > "$tmp/cross-image/inputs/source-aliases"
 : > "$tmp/cross-image/build.record"
 sh tools/image-package-stage.sh "$bin" "$tmp/cross-image" x86_64 \
-    --source fixture fixture --source other helper
-grep -q '^source-root fixture:fixture selected-with-external-requirements ' \
-    "$tmp/cross-image/build.record"
+    --source fixture fixture
 test "$(wc -l < "$tmp/cross-image/work/add-sources")" -eq 2
+grep -q " $other_id$" "$tmp/cross-image/work/add-sources"
+grep -q '^selected ' "$tmp/cross-image/work/solve-fixture-fixture.record"
+test ! -e "$tmp/cross-image/work/resolver-root/var/lib/holypkg/installed"/*/meta
 if "$bin" solve "local:$tmp/cross-image/inputs/add-0001.holy" \
     > "$tmp/result" 2> "$tmp/error"; then exit 1; else test "$?" -eq 4; fi
 printf '[install]\nroot "%s"\n' "$tmp/cross-root" > "$tmp/cross-install.conf"
@@ -168,6 +171,16 @@ done
     --holypkg "$bin" > "$tmp/result"
 ./holyinstall --apply "$tmp/cross-install.plan" --holypkg "$bin" > "$tmp/result"
 "$bin" db check --all --root "$tmp/cross-root" > "$tmp/result"
+mkdir -p "$tmp/explicit-image/inputs" "$tmp/explicit-image/packages" "$tmp/explicit-image/work"
+cp -R "$tmp/cross-image/mirrors" "$tmp/explicit-image/mirrors"
+cp "$tmp/cross-image/inputs/sources.conf" "$tmp/cross-image/inputs/source-aliases" \
+    "$tmp/explicit-image/inputs/"
+cp "$tmp/cross-image/work/source-list" "$tmp/explicit-image/work/source-list"
+: > "$tmp/explicit-image/build.record"
+sh tools/image-package-stage.sh "$bin" "$tmp/explicit-image" x86_64 \
+    --source fixture fixture --source other helper
+test "$(wc -w < "$tmp/explicit-image/work/additional-packages")" -eq 2
+test "$(wc -l < "$tmp/explicit-image/work/add-sources")" -eq 2
 printf 'fixture build plan\n' > "$tmp/image/plan"
 printf 'fixture install plan\n' > "$tmp/image/install.plan"
 python3 tools/image-host-tools.py "$tmp/image/host-tools.jsonl" sh python3

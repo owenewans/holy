@@ -12,6 +12,25 @@ case "$arch" in x86_64|i686) ;; *) exit 2 ;; esac
 additional_index=0
 : > "$work/additional-packages"
 : > "$work/source-artifacts"
+: > "$work/requested-sources"
+scan_kind=
+scan_alias=
+for token do
+    case "$scan_kind" in
+        local) scan_kind= ;;
+        alias) scan_alias=$token; scan_kind=package ;;
+        package)
+            printf '%s %s\n' "$scan_alias" "$token" >> "$work/requested-sources"
+            scan_kind= ;;
+        *)
+            case "$token" in
+                --local) scan_kind=local ;;
+                --source) scan_kind=alias ;;
+                *) exit 2 ;;
+            esac ;;
+    esac
+done
+test -z "$scan_kind" || exit 2
 add_image_package() {
     input=$1
     selected_source=${2:-}
@@ -33,6 +52,22 @@ add_image_package() {
         printf '%s %s\n' "$label" "$selected_source" >> "$work/add-sources"
     fi
 }
+prepare_resolver() {
+    resolver_root="$work/resolver-root"
+    if test -d "$resolver_root"; then return; fi
+    test -f "$out/inputs/sources.conf" || exit 6
+    mkdir "$resolver_root"
+    "$bin" db init --root "$resolver_root" > "$work/resolver-init.record"
+    "$bin" source plan --config "$out/inputs/sources.conf" --root "$resolver_root" \
+        > "$work/resolver-source.plan"
+    resolver_plan=$(sha256sum "$work/resolver-source.plan")
+    "$bin" source apply "$work/resolver-source.plan" --sha256 "${resolver_plan%% *}" \
+        --root "$resolver_root" > "$work/resolver-source.record"
+    while IFS= read -r resolver_alias; do
+        "$bin" source catalog bind "$resolver_alias" "$out/mirrors/$resolver_alias" \
+            --root "$resolver_root" > "$work/resolver-bind-$resolver_alias.record"
+    done < "$out/inputs/source-aliases"
+}
 while test "$#" -gt 0; do
     case "$1" in
         --local)
@@ -49,54 +84,46 @@ while test "$#" -gt 0; do
             source_id=$(awk -v name="\"$alias\"" \
                 '$1 == "source" && $3 == name && $4 == "active" {print $2}' "$work/source-list")
             test "${#source_id}" -eq 64 || exit 6
-            if "$bin" repo solve "$out/mirrors/$alias" "$package_name" \
-                > "$work/solve-$alias-$package_name.record"; then
-                sed -n 's/^selected \([0-9a-f]*\)$/\1/p' \
-                    "$work/solve-$alias-$package_name.record" > "$work/selected"
-            else
-                status=$?
-                case "$status" in 4|6) ;; *) exit "$status" ;; esac
-                "$bin" repo search "$out/mirrors/$alias" "$package_name" \
-                    > "$work/search-$alias-$package_name.record"
-                awk -v name="\"$package_name\"" '
-                    $1 == "package" && $2 == name {
-                        for (i = 3; i <= NF; ++i)
-                            if (length($i) == 64 && $i ~ /^[0-9a-f]+$/) {
-                                print $i; break
-                            }
-                    }
-                ' "$work/search-$alias-$package_name.record" > "$work/selected"
-                count=$(wc -l < "$work/selected")
-                if test "$count" -eq 0; then
-                    echo "source $alias package $package_name is absent" >&2
-                    exit 6
-                fi
-                if test "$count" -ne 1; then
-                    echo "source $alias package $package_name has $count exact candidates; explicit choice required" >&2
-                    exit 3
-                fi
-                printf 'source-root %s:%s selected-with-external-requirements %s\n' \
-                    "$alias" "$package_name" "$(cat "$work/selected")" >> "$record"
-            fi
+            prepare_resolver
+            (
+                set -- "$bin" add "$alias:$package_name" --root "$resolver_root" \
+                    --prepare --noninteractive
+                while read -r candidate_alias candidate_name; do
+                    if test "$candidate_alias" != "$alias"; then
+                        set -- "$@" --candidate "$candidate_alias:$candidate_name"
+                    fi
+                done < "$work/requested-sources"
+                "$@"
+            ) > "$work/solve-$alias-$package_name.record"
+            awk '$1 == "selected" {print $2}' \
+                "$work/solve-$alias-$package_name.record" > "$work/selected"
             test -s "$work/selected" || exit 6
             while IFS= read -r digest; do
                 test "${#digest}" -eq 64 || exit 6
+                selected_source=$(awk -v hash="$digest" \
+                    '$1 == "binding" && $2 == hash && $3 == "source" {print $4}' \
+                    "$work/solve-$alias-$package_name.record")
+                test "${#selected_source}" -eq 64 || exit 6
+                selected_alias=$(awk -v id="$selected_source" \
+                    '$1 == "source" && $2 == id && $4 == "active" {gsub(/"/, "", $3); print $3}' \
+                    "$work/source-list")
+                test -n "$selected_alias" || exit 6
                 existing=$(awk -v hash="$digest" '$1 == hash {print $2}' "$work/source-artifacts")
                 if test -n "$existing"; then
-                    test "$existing" = "$source_id" || {
+                    test "$existing" = "$selected_source" || {
                         echo "artifact $digest selected from multiple sources" >&2
                         exit 4
                     }
                     continue
                 fi
                 mkdir "$work/fetch-$digest"
-                "$bin" repo fetch "$out/mirrors/$alias" "$digest" \
+                "$bin" repo fetch "$out/mirrors/$selected_alias" "$digest" \
                     --output "$work/fetch-$digest" > "$work/fetch-$digest.record"
                 input="$work/fetch-$digest/$digest.holy"
                 test "$(cat "$work/fetch-$digest.record")" = "$input" || exit 6
                 test -f "$input" || exit 6
-                add_image_package "$input" "$source_id"
-                printf '%s %s\n' "$digest" "$source_id" >> "$work/source-artifacts"
+                add_image_package "$input" "$selected_source"
+                printf '%s %s\n' "$digest" "$selected_source" >> "$work/source-artifacts"
             done < "$work/selected" ;;
         *) exit 2 ;;
     esac

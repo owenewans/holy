@@ -114,11 +114,14 @@ builder writes "result untested" after producing the image and returns 6.
 A successful process exit alone does not certify
 hardware, a desktop or all packages named in the Holy specification.
 .SH LIMITS
-This bootstrap command supports holy-http and holy-git sources, same-catalog
-dependency closures and explicit cross-source package choices for additional packages,
-while boot core inputs remain local. It does not yet implement cross-source
-provider discovery, every package policy or a portable export of build
-tools. It is kept in-tree until those inputs and profiles can be
-resolved without the source checkout.
+This bootstrap command supports holy-http and holy-git sources. For additional
+packages it uses holypkg's native resolver in a temporary root with every
+pinned mirror bound. The resolver can select a unique exact provider from
+another source. Explicitly listed packages from other sources become
+candidate providers; unresolved ambiguity stops the build. The builder copies
+only selected artifacts and their source IDs into the final install plan.
+Boot core inputs remain local. Full package policy and a portable export of
+build tools remain open. The command stays in-tree while the source checkout
+provides build tools and profiles.
 .SH SEE ALSO
 holy-image(7), holypkg(8), holyinstall(8), holy.conf(5)

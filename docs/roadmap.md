@@ -7,15 +7,19 @@
   cache recovery. A second build selected a noarch package from a pinned,
   sealed native mirror, installed it with its source ID, embedded the mirror,
   and passed the same two-boot contract. Both `--export-inputs` bundles passed
-  SHA-256 verification. Cross-source dependency choices and portable host-tool
-  export remain open.
+  SHA-256 verification. Portable host-tool export remains open.
 - [x] Stage an exact package when its native catalog cannot close a dependency,
   then resolve it with an explicitly added package from another pinned source
   in holyinstall's frozen set plan. A fixture rejects the root alone, installs
   both artifacts with their separate source IDs, and checks the installed DB.
   A full x86_64 ext4 image with two sealed source mirrors passed two QEMU boots;
-  its exported input bundle passed SHA-256 verification. Automatic cross-source
-  provider discovery remains open.
+  its exported input bundle passed SHA-256 verification.
+- [x] Prepare additional image packages with the native `holypkg add` resolver
+  in a separate root bound to all pinned mirrors. The image builder copies its
+  selected artifacts with their source IDs, including a unique exact provider
+  from another source. A two-source fixture installs the result with
+  `holyinstall`; no package is installed in the resolver root. Image-level
+  ambiguity and full QEMU boot remain to be tested for this path.
 - [x] Fetch pinned bootstrap inputs over HTTPS into an explicit directory,
   verify SHA-256 before publication, and reject altered cached files. On
   x86_64, local builds produced musl 1.2.5, static BusyBox 1.37.0,
@@ -680,8 +684,8 @@
   tool paths and hashes, but does not archive their dependency closure. The
   explicit build-only path records untested and exits 6. The local-input and
   sealed-mirror builds above pass full QEMU gates. Explicit cross-source
-  choices now work; automatic provider discovery and relocatable installation
-  remain open.
+  choices and unique native provider discovery now work for additional image
+  packages. Relocatable installation remains open.
 
 ## Acceptance gates
 
