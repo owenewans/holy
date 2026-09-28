@@ -435,8 +435,8 @@
   without silently discarding runtime requirements.
   AppImage type 2 inspect/extract now snapshots the original, checks ELF and
   SquashFS structure, extracts with unsquashfs without running the image, and
-  records an unclassified AppDir. ABI/dependency classification, a launcher and
-  .holy emission remain open.
+  records an unclassified AppDir plus per-file ELF, script and link facts.
+  Dependency closure, a launcher and .holy emission remain open.
 - [ ] Implement `holypkg run`, context-specific provider paths, grouped `up --prepare`,
   isolated root/VM trials and full `check` reports.
 

@@ -2,9 +2,11 @@
 #include "appimage.h"
 #include "elf.h"
 #include "stage.h"
+#include "verify.h"
 
 #include <openssl/evp.h>
 #include <errno.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -137,6 +139,161 @@ done:
     return ok;
 }
 
+struct scan_state {
+    FILE *report;
+    size_t files, elfs, scripts, unknown, links;
+};
+
+static void quoted(FILE *out, const char *value)
+{
+    const unsigned char *p = (const unsigned char *)value;
+    fputc('"', out);
+    for (; *p; ++p) {
+        if (*p == '"' || *p == '\\') fprintf(out, "\\%c", *p);
+        else if (*p < 32 || *p >= 127) fprintf(out, "\\x%02x", *p);
+        else fputc(*p, out);
+    }
+    fputc('"', out);
+}
+
+static char *child_path(const char *parent, const char *name)
+{
+    size_t a = strlen(parent), b = strlen(name);
+    char *path;
+    if (a > SIZE_MAX - b - 2) return NULL;
+    path = malloc(a + b + 2);
+    if (path) sprintf(path, "%s%s%s", parent, a ? "/" : "", name);
+    return path;
+}
+
+static int classify_file(int parent, const char *name, const char *path, struct scan_state *scan)
+{
+    struct holy_elf_info elf;
+    unsigned char head[256];
+    ssize_t got;
+    int fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    int parsed;
+    if (fd < 0) return 0;
+    got = pread(fd, head, sizeof head, 0);
+    if (got < 0) { close(fd); return 0; }
+    parsed = holy_elf_read_fd(fd, &elf);
+    if (!parsed) {
+        const char *arch = holy_elf_machine(&elf), *libc = holy_elf_runtime(&elf);
+        fputs("elf ", scan->report); quoted(scan->report, path);
+        fprintf(scan->report, " %s %s %s\n", arch, libc, holy_elf_isa(&elf));
+        ++scan->elfs;
+        if (!strcmp(arch, "unknown") || !strcmp(libc, "unknown")) ++scan->unknown;
+    } else if (parsed == 2 || (got >= 8 && !memcmp(head, "!<arch>\n", 8)) ||
+               (got >= 2 && head[0] == 'M' && head[1] == 'Z')) {
+        fputs("unknown ", scan->report); quoted(scan->report, path); fputc('\n', scan->report);
+        ++scan->unknown;
+    } else if (got >= 2 && head[0] == '#' && head[1] == '!') {
+        size_t len = 2;
+        char interpreter[256];
+        while (len < (size_t)got && head[len] != '\n' && head[len] != '\r') ++len;
+        memcpy(interpreter, head + 2, len - 2); interpreter[len - 2] = 0;
+        fputs("script ", scan->report); quoted(scan->report, path);
+        fputc(' ', scan->report); quoted(scan->report, interpreter); fputc('\n', scan->report);
+        ++scan->scripts;
+    } else {
+        struct stat st;
+        if (fstat(fd, &st)) { holy_elf_free(&elf); close(fd); return 0; }
+        if (st.st_mode & 0111) {
+            fputs("unknown-executable ", scan->report); quoted(scan->report, path); fputc('\n', scan->report);
+            ++scan->unknown;
+        }
+    }
+    holy_elf_free(&elf);
+    close(fd);
+    ++scan->files;
+    return !ferror(scan->report);
+}
+
+static int classify_tree(int parent, const char *prefix, struct scan_state *scan, unsigned depth)
+{
+    DIR *dir;
+    struct dirent *entry;
+    int copy, ok = 1;
+    if (depth > 64 || scan->files + scan->links > 100000) return 0;
+    copy = dup(parent);
+    if (copy < 0) return 0;
+    dir = fdopendir(copy);
+    if (!dir) { close(copy); return 0; }
+    errno = 0;
+    while ((entry = readdir(dir))) {
+        struct stat st;
+        char *path;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        path = child_path(prefix, entry->d_name);
+        if (!path || fstatat(parent, entry->d_name, &st, AT_SYMLINK_NOFOLLOW)) { free(path); ok = 0; break; }
+        if (S_ISDIR(st.st_mode)) {
+            int child = openat(parent, entry->d_name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+            if (child < 0 || !classify_tree(child, path, scan, depth + 1)) ok = 0;
+            if (child >= 0) close(child);
+        } else if (S_ISREG(st.st_mode)) ok = classify_file(parent, entry->d_name, path, scan);
+        else if (S_ISLNK(st.st_mode)) {
+            size_t capacity = 128;
+            char *target = NULL;
+            ssize_t got;
+            for (;;) {
+                char *next = realloc(target, capacity);
+                if (!next) { ok = 0; break; }
+                target = next;
+                got = readlinkat(parent, entry->d_name, target, capacity - 1);
+                if (got < 0) { ok = 0; break; }
+                if ((size_t)got < capacity - 1) { target[got] = 0; break; }
+                if (capacity > 1024 * 1024) { ok = 0; break; }
+                capacity *= 2;
+            }
+            if (ok) {
+                fputs(target[0] != '/' && holy_safe_link(path, target) ?
+                      "symlink " : "path-view-required ", scan->report);
+                quoted(scan->report, path); fputc(' ', scan->report);
+                quoted(scan->report, target); fputc('\n', scan->report);
+                ++scan->links;
+            }
+            free(target);
+        } else {
+            fputs("unsupported-node ", scan->report); quoted(scan->report, path); fputc('\n', scan->report);
+            ++scan->unknown;
+        }
+        free(path);
+        if (!ok || ferror(scan->report) || scan->files + scan->links > 100000) { ok = 0; break; }
+        errno = 0;
+    }
+    if (errno) ok = 0;
+    closedir(dir);
+    return ok;
+}
+
+static int classify_appdir(int output)
+{
+    struct scan_state scan = {0};
+    int appdir = openat(output, "AppDir", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int report = -1, ok = 0;
+    if (appdir < 0) return 0;
+    report = openat(output, "classification", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (report < 0) goto done;
+    scan.report = fdopen(report, "w");
+    if (!scan.report) goto done;
+    report = -1;
+    fputs("format holy-appimage-classification-1\n", scan.report);
+    if (!classify_tree(appdir, "", &scan, 0)) goto done;
+    fprintf(scan.report, "summary files %zu elf %zu scripts %zu links %zu unknown %zu\n",
+            scan.files, scan.elfs, scan.scripts, scan.links, scan.unknown);
+    if (fflush(scan.report) || fsync(fileno(scan.report)) || fclose(scan.report)) {
+        scan.report = NULL; goto done;
+    }
+    scan.report = NULL;
+    ok = !fsync(output);
+done:
+    if (scan.report) fclose(scan.report);
+    if (report >= 0) close(report);
+    if (!ok) unlinkat(output, "classification", 0);
+    close(appdir);
+    return ok;
+}
+
 int holy_appimage_extract(const char *input, const char *output)
 {
     char *path = NULL, *original = NULL, *appdir = NULL, hash[65], copied_hash[65];
@@ -175,6 +332,7 @@ int holy_appimage_extract(const char *input, const char *output)
     }
     while (waitpid(child, &status, 0) < 0) if (errno != EINTR) goto done;
     if (!WIFEXITED(status) || WEXITSTATUS(status)) { result = WIFEXITED(status) && WEXITSTATUS(status) == 127 ? 6 : 2; goto done; }
+    if (!classify_appdir(dir)) { result = 3; goto done; }
     {
         int receipt = openat(dir, "conversion", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
         FILE *file;

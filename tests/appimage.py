@@ -12,6 +12,11 @@ with tempfile.TemporaryDirectory() as scratch:
     source = root / "AppDir"
     source.mkdir()
     (source / "hello").write_text("appimage fixture\n")
+    (source / "program").write_bytes(pathlib.Path("/bin/true").read_bytes())
+    script = source / "launch"
+    script.write_text("#!/bin/sh\nexit 0\n")
+    script.chmod(0o755)
+    (source / "system-link").symlink_to("/usr/lib/external")
     filesystem = root / "filesystem.squashfs"
     subprocess.run(["mksquashfs", str(source), str(filesystem), "-noappend", "-quiet"],
                    check=True, stdout=subprocess.DEVNULL)
@@ -36,6 +41,10 @@ with tempfile.TemporaryDirectory() as scratch:
         assert (output / "original").read_bytes() == image.read_bytes()
         assert (output / "AppDir" / "hello").read_text() == "appimage fixture\n"
         assert "state extracted-unclassified\n" in (output / "conversion").read_text()
+        classification = (output / "classification").read_text()
+        assert 'elf "program" x86_64 glibc' in classification
+        assert 'script "launch" "/bin/sh"' in classification
+        assert 'path-view-required "system-link" "/usr/lib/external"' in classification
         assert list(output.glob("*.holy")) == []
         run("extract", image, "--output", output, status=1)
         no_tool = root / "no-tool"

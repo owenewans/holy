@@ -2021,8 +2021,10 @@ locates one plausible SquashFS superblock and prints its offset and SHA-256.
 The command reads the image without executing its runtime.
 appimage extract copies the exact image to a new private output directory and
 invokes unsquashfs with the recorded offset. It requires an unprivileged user and
-an available unsquashfs command. The output contains original, AppDir and a
-conversion receipt with state extracted-unclassified. No .holy is produced and
+an available unsquashfs command. The output contains original, AppDir, a
+classification report and a conversion receipt with state extracted-unclassified.
+The report lists ELF arch/libc/ISA, shebang scripts, links that need a path view
+and unknown executables without following symlinks. No .holy is produced and
 no package is installed. The extracted AppDir still needs ELF, dependency,
 path and launcher classification before native import. This operation does not
 claim that the extracted program can run.
