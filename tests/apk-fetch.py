@@ -23,8 +23,16 @@ def member(items):
         for name, content in items:
             entry = tarfile.TarInfo(name)
             entry.size = len(content)
+            entry.uid, entry.gid = os.getuid(), os.getgid()
             archive.addfile(entry, io.BytesIO(content))
     return gzip.compress(output.getvalue(), mtime=0)
+
+
+def origin(package):
+    data = subprocess.run(["lz4", "-d", "-c", str(package)],
+                          capture_output=True, check=True).stdout
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
+        return archive.extractfile("HOLY/origin").read().decode()
 
 
 def run(*args, status=0):
@@ -108,6 +116,43 @@ with tempfile.TemporaryDirectory() as scratch:
         fetch("accepted", extra=("--sha256", hashlib.sha256(package).hexdigest()))
         assert (tmp / "accepted/original").read_bytes() == package
         assert "state complete" in (tmp / "accepted/selection").read_text()
+        fetch("imported", extra=("--import",))
+        assert "imported yes\n" in (tmp / "imported/selection").read_text()
+        imported_origin = origin(next((tmp / "imported/converted").glob("*.holy")))
+        assert "verification unverified\n" in imported_origin
+        assert f"index-sha256 {hashlib.sha256((tmp / 'APKINDEX.tar.gz').read_bytes()).hexdigest()}\n" in imported_origin
+        assert f'source-url "{base}"\n' in imported_origin
+        fetch("invalid-soname-flags", status=2,
+              extra=("--require-soname", "libfixture.so.1"))
+        fetch("false-soname", status=4,
+              extra=("--import", "--require-soname", "libfixture.so.1"))
+        assert not (tmp / "false-soname/selection").exists()
+        assert list((tmp / "false-soname/converted").glob("*.holy"))
+        library = tmp / "libfixture.so.1"
+        subprocess.run(["cc", "-shared", "-fPIC", "-x", "c", "-",
+                        "-Wl,-soname,libfixture.so.1", "-o", str(library)],
+                       input=b"#include <stdio.h>\nint fixture(void) { return puts(\"fixture\"); }\n",
+                       capture_output=True, check=True)
+        elf_data = member([("usr/lib/libfixture.so.1", library.read_bytes())])
+        elf_control = member([(".PKGINFO", (
+            "pkgname = fixturelib\npkgver = 1.0-r0\narch = x86_64\n"
+            f"datahash = {hashlib.sha256(elf_data).hexdigest()}\n").encode())])
+        elf_package = elf_control + elf_data
+        (serve / "elf").mkdir()
+        (serve / "elf/fixturelib-1.0-r0.apk").write_bytes(elf_package)
+        elf_checksum = "Q1" + base64.b64encode(hashlib.sha1(elf_control).digest()).decode()
+        elf_index = tmp / "elf-index.tar.gz"
+        elf_index.write_bytes(member([("APKINDEX", (
+            f"C:{elf_checksum}\nP:fixturelib\nV:1.0-r0\nA:x86_64\n"
+            f"S:{len(elf_package)}\n\n").encode())]))
+        elf_catalog = tmp / "elf-catalog"
+        run("apk", "index", elf_index, "--source", "fixture",
+            "--base", base + "elf/", "--output", elf_catalog)
+        run("apk", "fetch", "fixturelib", "1.0-r0", "x86_64", "--catalog",
+            elf_catalog, "--output", tmp / "verified-soname", "--ca-file",
+            tmp / "cert.pem", "--import", "--require-soname", "libfixture.so.1")
+        assert "soname-provider verified-payload\n" in (
+            tmp / "verified-soname/selection").read_text()
 
         root = tmp / "root"
         root.mkdir()
@@ -231,12 +276,23 @@ with tempfile.TemporaryDirectory() as scratch:
         run("apk", "fetch", "fixture", "1.2-r0", "x86_64", "--source",
             "signed", "--repo", "main", "--root", signed_root, "--output",
             tmp / "signed-package", "--ca-file", tmp / "cert.pem", "--public-key",
-            signing_pub)
+            signing_pub, "--import")
         assert "index-verification rsa-sha256" in (
             tmp / "signed-package/selection").read_text()
         assert "verification rsa-sha256" in (
             tmp / "signed-package/selection").read_text()
         assert (tmp / "signed-package/original").read_bytes() == signed_package
+        signed_origin = origin(next((tmp / "signed-package/converted").glob("*.holy")))
+        assert "verification rsa-sha256\n" in signed_origin
+        assert "public-key-sha256 " in signed_origin
+        signed_native = next((tmp / "signed-package/converted").glob("*.holy"))
+        (signed_root / "usr/share").mkdir(parents=True)
+        run("add", "local:" + str(signed_native), "--associate-source", "signed",
+            "--root", signed_root, "--yes")
+        assert (signed_root / "usr/share/fixture").read_bytes() == b"payload\n"
+        run("check", "signed:fixture", "--root", signed_root)
+        run("rm", "signed:fixture", "--root", signed_root, "--yes")
+        assert not (signed_root / "usr/share/fixture").exists()
         run("apk", "fetch", "fixture", "1.2-r0", "x86_64", "--source",
             "signed", "--repo", "main", "--root", signed_root, "--output",
             tmp / "missing-package-key", "--ca-file", tmp / "cert.pem", status=6)

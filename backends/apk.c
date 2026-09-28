@@ -5,9 +5,13 @@
 #include "../src/fetch.h"
 #include "../src/source.h"
 #include "../src/state.h"
+#include "../src/import.h"
+#include "../src/package.h"
+#include "../src/provides.h"
 
 #include <archive.h>
 #include <archive_entry.h>
+#include <dirent.h>
 #include <errno.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
@@ -1072,16 +1076,60 @@ done:
     return result;
 }
 
+static int imported_arch_matches(const char *source, const char *output)
+{
+    if (!strcmp(output, "noarch")) return 1;
+    if (!strcmp(source, "x86_64"))
+        return !strcmp(output, "x86_64") || !strcmp(output, "x86");
+    return !strcmp(source, "x86") && !strcmp(output, "x86");
+}
+
+static int imported_claim(const char *directory, const char *name, const char *version,
+                          const char *arch, const char *soname)
+{
+    DIR *dir = opendir(directory);
+    struct dirent *entry;
+    size_t count = 0;
+    int found = 0, ok = 0;
+    if (!dir) return 0;
+    errno = 0;
+    while ((entry = readdir(dir))) {
+        struct holy_package_identity identity = {0};
+        size_t length = strlen(entry->d_name);
+        char *path;
+        int matched = 0;
+        if (length < 6 || strcmp(entry->d_name + length - 5, ".holy")) continue;
+        path = malloc(strlen(directory) + length + 2);
+        if (!path) goto done;
+        sprintf(path, "%s/%s", directory, entry->d_name);
+        if (!holy_package_identity(path, &identity) ||
+            strcmp(identity.name, name) || strcmp(identity.version, version) ||
+            strcmp(identity.release, "1") ||
+            !imported_arch_matches(arch, identity.arch) ||
+            (soname && !holy_provides_match(path, "soname", soname, &matched))) {
+            holy_package_identity_free(&identity); free(path); goto done;
+        }
+        if (matched) found = 1;
+        holy_package_identity_free(&identity); free(path);
+        ++count;
+        errno = 0;
+    }
+    ok = count && !errno && (!soname || found);
+done:
+    closedir(dir);
+    return ok;
+}
+
 int holy_apk_fetch(const char *catalog, const char *name, const char *version,
                    const char *arch, const char *output, const char *sha256,
                    const char *ca_file, const char *root, const char *source_alias,
-                   const char *public_key)
+                   const char *public_key, int import, const char *required_soname)
 {
     struct apk_selection selection = {0};
     FILE *parts[3] = {0}, *receipt = NULL;
     struct stat st;
     char digests[3][65] = {{0}}, digest[65] = {0}, template[] = "/tmp/holy-apk-fetch-XXXXXX";
-    char *url = NULL, *filename = NULL, *downloaded = NULL;
+    char *url = NULL, *filename = NULL, *downloaded = NULL, *converted = NULL;
     char *registered_base = NULL, *registered_trust = NULL;
     char *bound_catalog = NULL, *canonical_catalog = NULL;
     char *key_snapshot = NULL;
@@ -1092,6 +1140,8 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
     if (!catalog || !name || !version || !arch || !output ||
         (source_alias && !root) || (public_key && !root) ||
         !package_name(name) || !package_name(version) || !package_name(arch) ||
+        (required_soname && (!import || strlen(required_soname) > 255 ||
+                             !package_name(required_soname))) ||
         (sha256 && !hex_digest(sha256))) return 2;
     result = select_package(catalog, name, version, arch, &selection);
     if (result) goto done;
@@ -1180,6 +1230,26 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
     if (mkdir(output, 0700)) goto done;
     dir = open(output, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dir < 0 || !copy_original(downloaded, dir)) goto done;
+    if (import) {
+        char *original = malloc(strlen(output) + sizeof "/original");
+        converted = malloc(strlen(output) + sizeof "/converted");
+        if (!original || !converted) {
+            free(original); result = 1; goto done;
+        }
+        sprintf(original, "%s/original", output);
+        sprintf(converted, "%s/converted", output);
+        result = holy_import_apk_verified(original, selection.source, converted,
+                                          registered_key[0] ? public_key : NULL,
+                                          digest, registered_key[0] ? registered_key : NULL,
+                                          selection.index_hash, selection.base);
+        free(original);
+        if (result) goto done;
+        if (!imported_claim(converted, name, version, arch, required_soname)) {
+            if (required_soname)
+                fprintf(stderr, "holypkg: APK payload does not provide SONAME %s\n", required_soname);
+            result = 4; goto done;
+        }
+    }
     {
         int fd = openat(dir, "selection", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
         if (fd < 0) goto done;
@@ -1208,6 +1278,8 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
             digest, selection.checksum, package_verification);
     if (registered_key[0] && root)
         fprintf(receipt, "package-key-sha256 %s\n", registered_key);
+    if (required_soname) fprintf(receipt, "required-soname %s\nsoname-provider verified-payload\n", required_soname);
+    fprintf(receipt, "imported %s\n", import ? "yes" : "no");
     fputs("state complete\n", receipt);
     {
         int failed = ferror(receipt);
@@ -1224,7 +1296,7 @@ done:
     for (i = 0; i < 3; ++i) if (parts[i]) fclose(parts[i]);
     if (downloaded) unlink(downloaded);
     if (temp) rmdir(template);
-    free(downloaded); free(url); free(filename);
+    free(downloaded); free(url); free(filename); free(converted);
     free(registered_base); free(registered_trust);
     free(bound_catalog); free(canonical_catalog);
     if (key_snapshot) { unlink(key_snapshot); free(key_snapshot); }

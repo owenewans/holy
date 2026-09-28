@@ -12,6 +12,10 @@ int holy_import_deb_verified(const char *input, const char *source, const char *
 int holy_import_slackware(const char *input, const char *source, const char *output);
 int holy_import_apk(const char *input, const char *source, const char *output,
                     const char *public_key);
+int holy_import_apk_verified(const char *input, const char *source, const char *output,
+                             const char *public_key, const char *expected_hash,
+                             const char *expected_key_hash, const char *index_hash,
+                             const char *source_url);
 int holy_import_xbps(const char *input, const char *source, const char *output);
 /* called only after the fetcher checks the pinned archive and optional signature. */
 int holy_import_xbps_verified(const char *input, const char *source, const char *output,

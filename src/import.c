@@ -1813,8 +1813,10 @@ done:
     return result;
 }
 
-int holy_import_apk(const char *input_path, const char *source, const char *output,
-                    const char *public_key)
+int holy_import_apk_verified(const char *input_path, const char *source, const char *output,
+                             const char *public_key, const char *expected_hash,
+                             const char *expected_key_hash, const char *index_hash,
+                             const char *source_url)
 {
     struct foreign_input input = {0};
     struct apk_metadata metadata = {0};
@@ -1825,7 +1827,10 @@ int holy_import_apk(const char *input_path, const char *source, const char *outp
     char temporary[43] = {0};
     int input_fd = -1, output_fd = -1, count, control, result = 1, common;
     size_t i;
-    if (!*source || !strcmp(source, "local")) return 2;
+    if (!input_path || !source || !output || !*source || !strcmp(source, "local") ||
+        (!!expected_hash != !!index_hash) || (!!expected_hash != !!source_url) ||
+        (expected_hash && (!lower_digest(expected_hash) || !lower_digest(index_hash))) ||
+        (expected_key_hash && (!public_key || !lower_digest(expected_key_hash)))) return 2;
     for (i = 0; source[i]; ++i)
         if ((unsigned char)source[i] <= 32 || source[i] == ':' ||
             source[i] == '/' || source[i] == '@') return 2;
@@ -1835,7 +1840,9 @@ int holy_import_apk(const char *input_path, const char *source, const char *outp
         result = 6; goto done;
     }
     snapshot = holy_stage_fd(input_fd, "holy-import");
-    if (!snapshot || !input_hash(snapshot, hash) || mkdir(output, 0700)) goto done;
+    if (!snapshot || !input_hash(snapshot, hash)) goto done;
+    if (expected_hash && strcmp(expected_hash, hash)) { result = 4; goto done; }
+    if (mkdir(output, 0700)) goto done;
     output_fd = open(output, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (output_fd < 0 || fstat(output_fd, &st) || st.st_uid != geteuid() ||
         (st.st_mode & 0777) != 0700 || !preserve_original(snapshot, output_fd)) goto done;
@@ -1873,6 +1880,9 @@ int holy_import_apk(const char *input_path, const char *source, const char *outp
             !holy_apk_verify_signature(parts[0], parts[1], key_snapshot,
                                        keyname, verification)) {
             fputs("holypkg: APK package signature verification failed\n", stderr);
+            result = 4; goto done;
+        }
+        if (expected_key_hash && strcmp(expected_key_hash, key_hash)) {
             result = 4; goto done;
         }
     }
@@ -1913,10 +1923,16 @@ int holy_import_apk(const char *input_path, const char *source, const char *outp
     fprintf(receipt, "\nverification %s\ndata-sha256 %s\n",
             verification, digests[count - 1]);
     if (key_hash[0]) fprintf(receipt, "public-key-sha256 %s\n", key_hash);
+    if (index_hash) fprintf(receipt, "index-sha256 %s\n", index_hash);
+    if (source_url) {
+        fputs("source-url ", receipt); token(receipt, source_url);
+        fputc('\n', receipt);
+    }
     for (i = 0; i < input.group_count; ++i)
         if (!write_output(&input, NULL, NULL, NULL, &metadata, NULL, source, hash,
                           output, output_fd, receipt, (int)i, verification,
-                          key_hash[0] ? key_hash : NULL, NULL, NULL, NULL)) goto done;
+                          key_hash[0] ? key_hash : NULL, NULL,
+                          index_hash, source_url)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
     if (fclose(receipt)) { receipt = NULL; goto done; }
@@ -1934,6 +1950,13 @@ done:
     if (key_snapshot) { unlink(key_snapshot); free(key_snapshot); }
     free_apk(&metadata); free_input(&input);
     return result;
+}
+
+int holy_import_apk(const char *input_path, const char *source, const char *output,
+                    const char *public_key)
+{
+    return holy_import_apk_verified(input_path, source, output, public_key,
+                                    NULL, NULL, NULL, NULL);
 }
 
 static int lower_digest(const char *value)
