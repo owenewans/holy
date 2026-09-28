@@ -24,6 +24,15 @@ SOLV_LIBS ?= $(shell pkg-config --libs libsolv 2>/dev/null) -lz
 
 .DEFAULT_GOAL := all
 
+.PHONY: fetch-sources fetch-bootstrap-sources
+fetch-sources:
+	@test -n "$(INPUTS)" || { echo 'INPUTS directory required' >&2; exit 2; }
+	sh tools/fetch-sources.sh "$(INPUTS)" profiles/static-sources $(SOURCES)
+
+fetch-bootstrap-sources:
+	@test -n "$(INPUTS)" || { echo 'INPUTS directory required' >&2; exit 2; }
+	sh tools/fetch-sources.sh "$(INPUTS)" profiles/bootstrap-sources $(SOURCES)
+
 .PHONY: all check check-fixtures check-root check-qemu check-qemu-gate check-hardware check-https check-solver check-install-payload check-install bootstrap-busybox check-bootstrap-busybox check-static-core man
 all: holypkg holy-init holyinstall holygetiso
 

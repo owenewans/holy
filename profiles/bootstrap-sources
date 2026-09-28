@@ -1,0 +1,7 @@
+3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4 busybox-1.37.0.tar.bz2 https://busybox.net/downloads/busybox-1.37.0.tar.bz2
+8907d4f668259c4f66d9d2c7cbbb55d455c28dc433596ab29005d589cb572e1e dinit-0.22.1.tar.gz https://github.com/davmac314/dinit/archive/refs/tags/v0.22.1.tar.gz
+23e242d70492b5381cab2227dd5b5407f748e52fe7a5df919a352c8dae26919d mdevd-0.1.8.2.tar.gz https://codeload.github.com/skarnet/mdevd/tar.gz/refs/tags/v0.1.8.2
+efa8b213fe341d57c8b7ad087d928b8d3296643a3a1583bf7e7675766bb68b06 skalibs-2.15.1.0.tar.gz https://codeload.github.com/skarnet/skalibs/tar.gz/refs/tags/v2.15.1.0
+c5d410d9f82a4f24c549fe5d24f988f85b2679b452413a9f7e5f7b956f2fe7ea x86_64-linux-musl-cross.tgz https://musl.cc/x86_64-linux-musl-cross.tgz
+93bd5504d5d0349258c43d7a668b506acbd627d31c0843a96e4b4c47b27a0180 i686-linux-musl-cross.tgz https://musl.cc/i686-linux-musl-cross.tgz
+d1775e32e4628e64ef930f435b67bb63af7599acb6be2b335b9f19f16509f17f glibc-2.42.tar.xz https://ftp.gnu.org/gnu/glibc/glibc-2.42.tar.xz

@@ -720,6 +720,16 @@ output untouched. It requires neither root nor network. For image roots whose
 manifests use UID 0, run inside the builder's matching user namespace.
 HOLY_DOCS_CHROOT=1 sh tests/installed-docs.sh ./holypkg additionally exercises
 the static binary and gzip decoding in a libc-free chroot using host doas.
+.SS Bootstrap source retrieval
+make fetch-sources INPUTS=DIRECTORY SOURCES="NAME ..." obtains selected pinned
+archives from profiles/static-sources. make fetch-bootstrap-sources uses
+profiles/bootstrap-sources for BusyBox, dinit, mdevd, skalibs, glibc and
+musl.cc cross compilers. Omitting SOURCES selects the whole manifest.
+The fetcher accepts HTTPS and HTTPS redirects, verifies SHA-256 before
+publishing each file, and checks existing files before reuse. A wrong digest
+stops the command without replacing that file. A failed download leaves no
+published archive. The resulting INPUTS directory feeds the bootstrap targets;
+fetching alone does not install a package.
 .SS Bootstrap shell package
 The repository target make bootstrap-busybox ARCH=i686|x86_64 INPUTS=DIRECTORY OUTPUT=DIRECTORY
 builds a small BusyBox package with static musl linkage. The default is x86_64;
