@@ -2,6 +2,14 @@
 .SH NAME
 holy-image \- image build and libc recovery boot tests
 .SH BUILD
+make bootstrap-kernel packages an existing x86 kernel image as linux.holy.
+KERNEL_IMAGE, KERNEL_VERSION, ARCH and OUTPUT select its inputs and output;
+MODULES_DIR optionally names a staging tree for that release. The builder
+checks the x86 boot header, matches every .ko to modules.dep, verifies the
+package and scans each module's architecture and vermagic. It records the
+input and artifact hashes. This target packages an existing kernel; QEMU
+boot acceptance belongs to holygetiso.
+.PP
 make bootstrap-image builds a live ISO and runs its QEMU boot test. ARCH defaults
 to x86_64. ARCH=i686 supports BIOS optical ISOs with ROOT_STORAGE=ram or ext4
 and an independently bootable BIOS GPT disk with ROOT_STORAGE=gpt-ext4.

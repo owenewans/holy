@@ -661,6 +661,13 @@
   and found dummy in /proc/modules; the second boot followed removal and
   recovery of both dynamic libc packages. General module dependency handling,
   i686 kernel modules and hardware drivers remain open.
+- [x] Add `make bootstrap-kernel` for an existing x86 kernel image and optional
+  modules staging tree. It checks the boot header, modules.dep coverage,
+  package manifest and ELF module facts, then records input and artifact
+  hashes. Wrong architecture and missing modules.dep targets fail before
+  publication. The generated linux.holy entered a pinned source catalog and
+  passed the same x86_64 ext4 two-boot QEMU contract, including dummy load on
+  both boots and libc removal/recovery. A kernel source recipe remains open.
 - [x] Extend that RAM profile with both dynamic libc packages and separate
   C probes. Boot present, glibc-missing, musl-missing and both-missing images
   under BIOS/TCG and UEFI/TCG. Restore absent payloads and loader links from
