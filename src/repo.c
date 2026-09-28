@@ -456,6 +456,19 @@ static int parse_file(char **v, size_t n, struct object *object)
     return add_file(object, v[2]);
 }
 
+static int indexed_file(const struct object *object, const char *path)
+{
+    size_t low = 0, high = object->file_count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        int cmp = strcmp(object->files[middle], path);
+        if (!cmp) return 1;
+        if (cmp < 0) low = middle + 1;
+        else high = middle;
+    }
+    return 0;
+}
+
 struct mirror {
     const char *base, *ca_file, *downloads;
     int status;
@@ -606,6 +619,8 @@ static int list(const char *directory, const char *query,
         if (stage && (stage->index_only ||
             (stage->slot && !same_slot(&objects[i].identity, stage->slot))))
             continue;
+        if (file_query && (!file_index || !indexed_file(&objects[i], file_query)))
+            continue;
         if (indexed && provider_kind) {
             size_t k;
             objects[i].provider_match =
@@ -738,13 +753,8 @@ static int list(const char *directory, const char *query,
         for (j = 0; j < count; ++j) {
             if (query && strcmp(objects[j].identity.name, query)) continue;
             if (provider_kind && !objects[j].provider_match) continue;
-            if (file_query) {
-                size_t k;
-                if (!file_index) continue;
-                for (k = 0; k < objects[j].file_count; ++k)
-                    if (!strcmp(objects[j].files[k], file_query)) break;
-                if (k == objects[j].file_count) continue;
-            }
+            if (file_query && (!file_index || !indexed_file(&objects[j], file_query)))
+                continue;
             if (emit == 1 && !record(stdout, &objects[j])) goto done;
             if (emit == 2) candidate_json(&objects[j]);
             if (emit == 3) only = j;

@@ -1083,8 +1083,9 @@ payload path and declares complete file coverage. The result prints matching
 packages, the coverage state, index digest and index timestamp. A miss in a
 complete index returns zero matches; a legacy index reports unavailable
 coverage and exits 6 because absence cannot be established. File queries
-read and verify the sealed catalog without running package code. Fuzzy and
-multi-source results remain open.
+verify the digest-pinned index and only matching archives; an unselected
+archive can change without invalidating the query. No package code runs.
+Fuzzy and multi-source results remain open.
 .PP
 The verify command checks regular DATA files against the supported HOLY/files
 records, including size, mode, numeric owner and SHA-256. It checks symlinks,
@@ -1484,6 +1485,8 @@ or activates this directory as a package source.
 The repository search command verifies the same complete local index and
 returns exact name matches. repo search-file takes an absolute path and returns
 matching package records plus coverage status, index hash and timestamp.
+With a version-3 index, it verifies only indexed candidates; a changed
+unselected archive does not invalidate this query.
 Legacy generations return unavailable coverage and status 6. No match in a
 complete native index prints a zero-count summary. This
 prototype does not perform fuzzy search, dependency resolution or provider

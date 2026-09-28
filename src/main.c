@@ -187,7 +187,9 @@ static int query_source(int argc, char **argv, int search)
     if (!name || !*name || !alias || !*alias ||
         !strcmp(alias, "local")) goto done;
     if (!catalog) {
-        result = holy_source_catalog_path(root, alias, &bound_catalog);
+        result = search && file_search ?
+                 holy_source_catalog_path_fast(root, alias, &bound_catalog) :
+                 holy_source_catalog_path(root, alias, &bound_catalog);
         if (result) goto done;
         catalog = bound_catalog;
     }

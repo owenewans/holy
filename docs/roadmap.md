@@ -256,7 +256,8 @@
   full catalog and artifacts before returning exact names; report missing and
   ambiguous info queries without mutating the target. Native repositories also
   index verified nondirectory payload paths and support exact `search --file`
-  with complete/unavailable coverage. Fuzzy search remains open.
+  with complete/unavailable coverage. File queries verify indexed candidates
+  without reopening unrelated archives. Fuzzy search remains open.
 - [x] Bind a verified synced mirror and index digest to a registered source-id
   under the target database lock. Resolve add, fetch, search and info without
   repeating --catalog; reject corrupt bindings and changed mirrors. Keep the
