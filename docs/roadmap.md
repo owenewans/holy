@@ -463,6 +463,11 @@
   Dependency closure, a launcher and .holy emission remain open.
 - [ ] Implement `holypkg run`, context-specific provider paths, grouped `up --prepare`,
   isolated root/VM trials and full `check` reports.
+  The existing run launcher now derives private PATH directories from the
+  selected installed manifest, so a public executable can invoke its own
+  private helper by name. Explicit directory views bind package-owned private
+  trees over existing /usr/lib or /app mountpoints in the child namespace.
+  Automatic conflict mappings remain open.
 
 ## Base system and images
 

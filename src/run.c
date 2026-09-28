@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "run.h"
+#include "config.h"
 #include "install.h"
 #include "source.h"
 #include "state.h"
@@ -7,6 +8,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/openat2.h>
+#include <stdint.h>
 #include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +19,7 @@
 #include <unistd.h>
 
 #undef strchr
+#undef memchr
 
 #define RUN_VIEW_LIMIT 32
 
@@ -29,7 +32,86 @@ struct run_choice {
     int private_path;
     struct run_view views[RUN_VIEW_LIMIT];
     size_t view_count;
+    char *private_bins[RUN_VIEW_LIMIT];
+    size_t private_bin_count;
 };
+
+static int valid_name(const char *name);
+
+static int private_bin_order(const void *left, const void *right)
+{
+    return strcmp(*(const char *const *)left, *(const char *const *)right);
+}
+
+static int collect_private_bins(int files, struct run_choice *choice)
+{
+    static const char *const dirs[] = {"usr/bin/", "bin/", "usr/sbin/", "sbin/"};
+    static const char prefix[] = "usr/lib/holy/private/";
+    struct stat st;
+    FILE *stream = NULL;
+    char *line = NULL;
+    size_t capacity = 0, number = 0;
+    ssize_t length;
+    int copy, ok = 0;
+    if (fstat(files, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+        st.st_size > 16 * 1024 * 1024 || lseek(files, 0, SEEK_SET) < 0) return 0;
+    copy = dup(files);
+    if (copy < 0) return 0;
+    stream = fdopen(copy, "r");
+    if (!stream) { close(copy); return 0; }
+    while ((length = getline(&line, &capacity, stream)) >= 0) {
+        char **fields = NULL, *error = NULL;
+        size_t count = 0, i, j;
+        const char *path, *artifact, *suffix;
+        ++number;
+        if (memchr(line, 0, (size_t)length) ||
+            !holy_lex(line, (size_t)length, &fields, &count,
+                      "installed/files", number, &error)) {
+            free(error); holy_tokens_free(fields, count); goto done;
+        }
+        free(error);
+        if (!count || !strcmp(fields[0], "dir")) {
+            holy_tokens_free(fields, count); continue;
+        }
+        if (count != 12 && count != 13) {
+            holy_tokens_free(fields, count); goto done;
+        }
+        path = fields[1];
+        if (strncmp(path, prefix, sizeof prefix - 1)) {
+            holy_tokens_free(fields, count); continue;
+        }
+        artifact = path + sizeof prefix - 1;
+        suffix = strchr(artifact, '/');
+        if (!suffix || suffix == artifact) {
+            holy_tokens_free(fields, count); goto done;
+        }
+        ++suffix;
+        for (i = 0; i < sizeof dirs / sizeof dirs[0]; ++i) {
+            char *bin;
+            if (strncmp(suffix, dirs[i], strlen(dirs[i])) ||
+                !valid_name(suffix + strlen(dirs[i]))) continue;
+            bin = strndup(path, (size_t)(suffix - path) + strlen(dirs[i]) - 1);
+            if (!bin) { holy_tokens_free(fields, count); goto done; }
+            for (j = 0; j < choice->private_bin_count; ++j)
+                if (!strcmp(choice->private_bins[j], bin)) break;
+            if (j == choice->private_bin_count) {
+                if (j == RUN_VIEW_LIMIT) {
+                    free(bin); holy_tokens_free(fields, count); goto done;
+                }
+                choice->private_bins[choice->private_bin_count++] = bin;
+            } else free(bin);
+            break;
+        }
+        holy_tokens_free(fields, count);
+    }
+    ok = !ferror(stream) && st.st_size == ftello(stream);
+    if (ok) qsort(choice->private_bins, choice->private_bin_count,
+                  sizeof *choice->private_bins, private_bin_order);
+done:
+    free(line);
+    fclose(stream);
+    return ok;
+}
 
 static char *join(const char *left, const char *right)
 {
@@ -64,10 +146,17 @@ static int valid_public_view(const char *path)
     const char *p;
     size_t i;
     if (!path) return 0;
+    if (!strcmp(path, "/app")) return 1;
+    if (!strncmp(path, "/app/", 5)) {
+        p = path + 5;
+        if (!*p) return 0;
+        goto components;
+    }
     for (i = 0; i < sizeof roots / sizeof roots[0]; ++i)
         if (!strncmp(path, roots[i], strlen(roots[i]))) break;
     if (i == sizeof roots / sizeof roots[0]) return 0;
     p = path + strlen(roots[i]);
+components:
     while (*p) {
         const char *end = strchr(p, '/');
         size_t n = end ? (size_t)(end - p) : strlen(p);
@@ -145,8 +234,9 @@ static int select_path(void *context, int root, int instance, const char *digest
             choice->private_path = private_candidate;
             for (i = 0; i < choice->view_count; ++i) {
                 int owned = holy_install_manifest_owns(files, choice->views[i].private_path + 1);
-                if (owned != 1) { status = owned < 0 ? 1 : 6; goto done; }
+                if (owned != 1 && owned != 2) { status = owned < 0 ? 1 : 6; goto done; }
             }
+            if (!collect_private_bins(files, choice)) { status = 1; goto done; }
             status = 0;
             goto done;
         }
@@ -188,7 +278,7 @@ static int enter_view_namespace(void)
            !mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL);
 }
 
-static int view_file(int root, const char *path, struct stat *st)
+static int view_object(int root, const char *path, struct stat *st)
 {
     struct open_how how = {0};
     int fd;
@@ -196,7 +286,9 @@ static int view_file(int root, const char *path, struct stat *st)
     how.resolve = RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS;
     fd = (int)syscall(SYS_openat2, root, path + 1, &how, sizeof how);
     if (fd < 0) return -1;
-    if (fstat(fd, st) || !S_ISREG(st->st_mode)) { close(fd); return -1; }
+    if (fstat(fd, st) || (!S_ISREG(st->st_mode) && !S_ISDIR(st->st_mode))) {
+        close(fd); return -1;
+    }
     return fd;
 }
 
@@ -207,11 +299,13 @@ static int apply_views(const char *root, const struct run_choice *choice)
     if (rootfd < 0) return 6;
     for (i = 0; i < choice->view_count; ++i) {
         struct stat original, replacement;
-        int source = view_file(rootfd, choice->views[i].private_path, &replacement);
-        int target = view_file(rootfd, choice->views[i].public_path, &original);
+        int source = view_object(rootfd, choice->views[i].private_path, &replacement);
+        int target = view_object(rootfd, choice->views[i].public_path, &original);
         char source_descriptor[64], target_descriptor[64];
         if (source < 0 || target < 0 ||
-            (strncmp(choice->views[i].public_path, "/usr/lib/", 9) &&
+            S_ISDIR(original.st_mode) != S_ISDIR(replacement.st_mode) ||
+            (S_ISREG(replacement.st_mode) &&
+             strncmp(choice->views[i].public_path, "/usr/lib/", 9) &&
              !(replacement.st_mode & 0111))) {
             if (source >= 0) close(source);
             if (target >= 0) close(target);
@@ -229,34 +323,38 @@ static int apply_views(const char *root, const struct run_choice *choice)
     return 0;
 }
 
-static int private_path_env(const char *root, const char *digest)
+static int private_path_env(const char *root, const struct run_choice *choice)
 {
-    static const char *const dirs[] = {"usr/bin", "bin", "usr/sbin", "sbin"};
     const char *old = getenv("PATH");
-    char *base = join_root(root, "usr/lib/holy/private/");
-    char *prefix = NULL, *value = NULL;
+    char *value;
     size_t i, length = 0, old_length;
-    int ok = 0;
+    char *cursor;
+    int ok;
+    if (!choice->private_bin_count) return 1;
     if (!old || !*old) old = "/usr/bin:/bin";
+    if (strchr(root, ':')) return 0;
     old_length = strlen(old);
-    if (!base) return 0;
-    prefix = join(base, digest);
-    free(base);
-    if (!prefix) return 0;
-    for (i = 0; i < sizeof dirs / sizeof dirs[0]; ++i)
-        if (strlen(prefix) > (size_t)-1 - strlen(dirs[i]) - length - 2) goto done;
-        else length += strlen(prefix) + strlen(dirs[i]) + 2;
-    if (length > (size_t)-1 - old_length - 1) goto done;
-    value = malloc(length + old_length + 1);
-    if (!value) goto done;
-    value[0] = 0;
-    for (i = 0; i < sizeof dirs / sizeof dirs[0]; ++i) {
-        strcat(value, prefix); strcat(value, "/"); strcat(value, dirs[i]); strcat(value, ":");
+    for (i = 0; i < choice->private_bin_count; ++i) {
+        size_t a = strlen(root), b = strlen(choice->private_bins[i]), n;
+        if (strchr(choice->private_bins[i], ':') || a > SIZE_MAX - b - 2) return 0;
+        n = a + b + 2;
+        if (n > SIZE_MAX - length) return 0;
+        length += n;
     }
-    strcat(value, old);
+    if (length > SIZE_MAX - old_length - 1) return 0;
+    value = malloc(length + old_length + 1);
+    if (!value) return 0;
+    cursor = value;
+    for (i = 0; i < choice->private_bin_count; ++i) {
+        size_t a = strlen(root), b = strlen(choice->private_bins[i]);
+        memcpy(cursor, root, a); cursor += a;
+        if (cursor[-1] != '/') *cursor++ = '/';
+        memcpy(cursor, choice->private_bins[i], b); cursor += b;
+        *cursor++ = ':';
+    }
+    memcpy(cursor, old, old_length + 1);
     ok = !setenv("PATH", value, 1);
-done:
-    free(prefix); free(value);
+    free(value);
     return ok;
 }
 
@@ -301,7 +399,7 @@ int holy_run(int argc, char **argv)
     if (!choice.relative) { result = 6; goto done; }
     path = join_root(choice.view_count ? "/" : canonical, choice.relative);
     if (!path) { result = 1; goto done; }
-    if (choice.private_path && !private_path_env(choice.view_count ? "/" : canonical, digest)) {
+    if (!private_path_env(choice.view_count ? "/" : canonical, &choice)) {
         result = 1; goto done;
     }
     if (choice.view_count) {
@@ -330,6 +428,7 @@ done:
     for (i = 0; i < RUN_VIEW_LIMIT; ++i) {
         free(choice.views[i].public_path);
         free(choice.views[i].private_path);
+        free(choice.private_bins[i]);
     }
     return result;
 }

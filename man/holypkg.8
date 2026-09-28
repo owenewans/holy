@@ -2110,8 +2110,9 @@ absolute path in /usr/bin, /bin, /usr/sbin or /sbin. run checks the installed
 manifest, including the executable bit and current payload, before exec.
 .PP
 When the installed manifest owns a matching path under
-/usr/lib/holy/private/ARTIFACT-SHA256/, run selects it before the public path
-and prepends that artifact's private bin directories to PATH. It passes argv
+/usr/lib/holy/private/ARTIFACT-ID/, run selects it before the public path.
+run prepends the selected package's manifest-owned private bin directories to
+PATH even when the main executable uses a public path. It passes argv
 unchanged and returns the program's exit status through exec. Without --view
 this is a direct launcher. It does not replace shell builtins or intercept
 another process that directly executes the public path. A private
@@ -2125,9 +2126,10 @@ the host's namespace, so a trial root must use a compatible host or a static
 program. An unavailable package or command returns 6; an altered payload
 returns 4. An incomplete transaction returns 5.
 .PP
---view PUBLIC=PRIVATE maps one selected package-owned regular file under
-/usr/lib/holy/private/ onto an existing regular public path. PUBLIC may be
-under /usr/bin, /usr/sbin, /bin, /sbin or /usr/lib. run checks the selected
+--view PUBLIC=PRIVATE maps one selected package-owned regular file or directory
+under /usr/lib/holy/private/ onto an existing public path of the same type.
+PUBLIC may be under /usr/bin, /usr/sbin, /bin, /sbin or /usr/lib, or name an
+existing /app directory. run checks the selected
 package manifest and current payload before creating user and mount namespaces.
 It makes mount propagation private, bind mounts the selected file, enters the
 target root and execs the command with the caller's UID/GID mapping. Descendants
@@ -2135,7 +2137,9 @@ inherit the view; the mount ends with its namespace. No host mount or setuid
 launcher is created. The user namespace maps the caller's primary UID and GID;
 supplementary groups are not remapped. If namespaces, openat2 or mounts are
 unavailable, run returns 6.
-An unowned private file, missing target or symlink target is rejected.
+An unowned private path, missing target, symlink target or file/directory type
+mismatch is rejected. Directory views require an existing target mountpoint;
+run does not create one in the target root.
 --view changes only the listed paths. With --view and --root, the command
 executes inside the target root rather than at a host-prefixed path.
 .SS AppImage staging

@@ -40,7 +40,9 @@ grep -qx 'runner:first:second' "$tmp/out"
 viewroot="$tmp/viewroot"
 viewtree="$tmp/viewtree"
 mkdir -p "$viewroot/usr/bin" "$viewtree/HOLY" "$viewtree/DATA/usr/bin" \
-    "$viewtree/DATA/usr/lib/holy/private/fixture/usr/bin"
+    "$viewtree/DATA/usr/lib/holy/private/fixture/usr/bin" \
+    "$viewtree/DATA/usr/lib/holy/private/fixture/usr/lib/app-context" \
+    "$viewroot/usr/lib/app-context" "$viewroot/app"
 cat > "$tmp/view-helper.c" <<'EOF'
 #include <stdio.h>
 #include <unistd.h>
@@ -59,10 +61,36 @@ int main(int argc, char **argv) {
     return 31;
 }
 EOF
+cat > "$tmp/path-runner.c" <<'EOF'
+#include <unistd.h>
+int main(int argc, char **argv) {
+    if (argc != 2) return 32;
+    argv[0] = "helper";
+    execvp(argv[0], argv);
+    return 31;
+}
+EOF
+cat > "$tmp/dir-runner.c" <<'EOF'
+#include <unistd.h>
+int main(int argc, char **argv) {
+    if (argc != 2) return 32;
+    argv[0] = "/usr/lib/app-context/helper";
+    execv(argv[0], argv);
+    return 31;
+}
+EOF
+sed 's|/usr/lib/app-context/helper|/app/helper|' "$tmp/dir-runner.c" > "$tmp/app-runner.c"
 sed 's/private helper/public helper/; s/return 23/return 24/' "$tmp/view-helper.c" > "$tmp/public-helper.c"
 ${FIXTURE_CC:-gcc} -static -o "$viewroot/usr/bin/helper" "$tmp/public-helper.c"
 ${FIXTURE_CC:-gcc} -static -o "$viewtree/DATA/usr/lib/holy/private/fixture/usr/bin/helper" "$tmp/view-helper.c"
 ${FIXTURE_CC:-gcc} -static -o "$viewtree/DATA/usr/bin/runner" "$tmp/view-runner.c"
+${FIXTURE_CC:-gcc} -static -o "$viewtree/DATA/usr/bin/path-runner" "$tmp/path-runner.c"
+${FIXTURE_CC:-gcc} -static -o "$viewtree/DATA/usr/bin/dir-runner" "$tmp/dir-runner.c"
+${FIXTURE_CC:-gcc} -static -o "$viewtree/DATA/usr/bin/app-runner" "$tmp/app-runner.c"
+cp "$viewtree/DATA/usr/lib/holy/private/fixture/usr/bin/helper" \
+    "$viewtree/DATA/usr/lib/holy/private/fixture/usr/lib/app-context/helper"
+cp "$viewroot/usr/bin/helper" "$viewroot/usr/lib/app-context/helper"
+cp "$viewroot/usr/bin/helper" "$viewroot/app/helper"
 printf 'format holy-package-1\nname view-runner\nversion 1\nrelease 1\nos linux\narch x86_64\nlibc nolibc\n' > "$viewtree/HOLY/meta"
 for field in deps provides hooks origin transform; do : > "$viewtree/HOLY/$field"; done
 "$bin" manifest generate "$viewtree" --output "$tmp/view-files" > "$tmp/out"
@@ -74,6 +102,16 @@ viewdigest=$(sha256sum "$tmp/view-runner.holy" | cut -d ' ' -f 1)
 "$bin" db plan-set "$viewdigest" --root "$viewroot" > "$tmp/out"
 viewplan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
 "$bin" db apply-set "$viewplan" "$viewdigest" --root "$viewroot" > "$tmp/out"
+if "$bin" run local:view-runner --root "$viewroot" -- path-runner example > "$tmp/out"; then exit 1; else test "$?" -eq 23; fi
+grep -qx "private helper:example:$(id -u)" "$tmp/out"
+if "$bin" run local:view-runner --root "$viewroot" \
+    --view /app=/usr/lib/holy/private/fixture/usr/lib/app-context \
+    -- app-runner example > "$tmp/out"; then exit 1; else test "$?" -eq 23; fi
+grep -qx "private helper:example:$(id -u)" "$tmp/out"
+if "$bin" run local:view-runner --root "$viewroot" \
+    --view /usr/lib/app-context=/usr/lib/holy/private/fixture/usr/lib/app-context \
+    -- dir-runner example > "$tmp/out"; then exit 1; else test "$?" -eq 23; fi
+grep -qx "private helper:example:$(id -u)" "$tmp/out"
 if "$bin" run local:view-runner --root "$viewroot" \
     --view /usr/bin/helper=/usr/lib/holy/private/fixture/usr/bin/helper \
     -- runner example > "$tmp/out"; then exit 1; else test "$?" -eq 23; fi
@@ -81,6 +119,13 @@ grep -qx "private helper:example:$(id -u)" "$tmp/out"
 if "$bin" run local:view-runner --root "$viewroot" \
     --view /usr/bin/helper=/usr/lib/holy/private/fixture/usr/bin/missing \
     -- runner example > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+if "$bin" run local:view-runner --root "$viewroot" \
+    --view /usr/bin/helper=/usr/lib/holy/private/fixture/usr/lib/app-context \
+    -- runner example > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+mkdir -p "$viewroot/usr/lib/holy/private/fixture/unowned"
+if "$bin" run local:view-runner --root "$viewroot" \
+    --view /app=/usr/lib/holy/private/fixture/unowned \
+    -- app-runner example > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 ln -s ../bin "$viewroot/usr/lib/host-link"
 if "$bin" run local:view-runner --root "$viewroot" \
     --view /usr/lib/host-link/helper=/usr/lib/holy/private/fixture/usr/bin/helper \
