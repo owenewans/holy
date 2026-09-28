@@ -121,6 +121,23 @@ done:
     return result;
 }
 
+static int xbps_registered_catalog(const char *root, const char *alias,
+                                   const char *catalog, const char *public_key,
+                                   int fetch)
+{
+    char id[65], key[65], supplied[65];
+    char *base = NULL, *trust = NULL;
+    int result = holy_source_xbps(root, alias, id, &base, &trust, key);
+    if (result) return result;
+    result = holy_xbps_source_catalog(catalog, alias, id, base, key);
+    if (!result && fetch && key[0] &&
+        (!public_key || !holy_xbps_key_fingerprint(public_key, supplied) ||
+         strcmp(supplied, key))) result = 6;
+    if (!result && !key[0] && public_key) result = 2;
+    free(base); free(trust);
+    return result;
+}
+
 static int fetch_source(int argc, char **argv)
 {
     const char *separator = strchr(argv[2], ':');
@@ -1003,7 +1020,7 @@ int main(int argc, char **argv)
             !strcmp(argv[8], "--base") && !strcmp(argv[10], "--output") &&
             (argc == 12 || !strcmp(argv[12], "--public-key")))
             return holy_xbps_index(argv[3], argv[7], argv[9], argv[11], argv[5],
-                                   argc == 14 ? argv[13] : NULL);
+                                   argc == 14 ? argv[13] : NULL, NULL);
         if (argc >= 11 && argc <= 15 && (argc & 1) && !strcmp(argv[2], "sync") &&
             !strcmp(argv[5], "--sha256") && !strcmp(argv[7], "--source") &&
             !strcmp(argv[9], "--output")) {
@@ -1015,24 +1032,60 @@ int main(int argc, char **argv)
                 else break;
             }
             if (i == argc) return holy_xbps_sync(argv[3], argv[4], argv[8], argv[10], argv[6],
-                                                  ca_file, public_key);
+                                                  ca_file, public_key, NULL);
         }
-        if (argc == 6 && (!strcmp(argv[2], "search") || !strcmp(argv[2], "info")) &&
-            !strcmp(argv[4], "--catalog"))
-            return holy_xbps_query(argv[5], argv[3], !strcmp(argv[2], "info"));
-        if (argc >= 10 && argc <= 14 && !(argc & 1) && !strcmp(argv[2], "fetch") &&
-            !strcmp(argv[6], "--catalog") && !strcmp(argv[8], "--output")) {
+        if (argc >= 11 && argc <= 15 && (argc & 1) &&
+            !strcmp(argv[2], "sync-source") && !strcmp(argv[5], "--root") &&
+            !strcmp(argv[7], "--sha256") && !strcmp(argv[9], "--output")) {
             const char *ca_file = NULL, *public_key = NULL;
-            int i;
-            for (i = 10; i < argc; i += 2) {
+            char id[65], registered_key[65], supplied[65];
+            char *base = NULL, *trust = NULL;
+            int i, result;
+            for (i = 11; i < argc; i += 2) {
                 if (!strcmp(argv[i], "--ca-file") && !ca_file) ca_file = argv[i + 1];
                 else if (!strcmp(argv[i], "--public-key") && !public_key) public_key = argv[i + 1];
                 else break;
             }
-            if (i == argc) return holy_xbps_fetch(argv[7], argv[3], argv[4], argv[5], argv[9],
-                                                   ca_file, public_key);
+            if (i != argc) return 2;
+            result = holy_source_xbps(argv[6], argv[3], id, &base, &trust, registered_key);
+            if (result) return result;
+            if ((registered_key[0] &&
+                 (!public_key || !holy_xbps_key_fingerprint(public_key, supplied) ||
+                  strcmp(supplied, registered_key))) ||
+                (!registered_key[0] && public_key)) result = 6;
+            else result = holy_xbps_sync(base, argv[4], argv[3], argv[10], argv[8],
+                                         ca_file, public_key, id);
+            free(base); free(trust);
+            return result;
         }
-        fputs("usage: holypkg xbps index FILE --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--public-key FILE] | xbps sync HTTPS_BASE/ ARCH --sha256 HASH --source NAME --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE] | xbps search|info QUERY --catalog DIRECTORY | xbps fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE]\n", stderr);
+        if (argc == 6 && (!strcmp(argv[2], "search") || !strcmp(argv[2], "info")) &&
+            !strcmp(argv[4], "--catalog"))
+            return holy_xbps_query(argv[5], argv[3], !strcmp(argv[2], "info"));
+        if (argc == 10 && (!strcmp(argv[2], "search") || !strcmp(argv[2], "info")) &&
+            !strcmp(argv[4], "--catalog") && !strcmp(argv[6], "--source") &&
+            !strcmp(argv[8], "--root")) {
+            int result = xbps_registered_catalog(argv[9], argv[7], argv[5], NULL, 0);
+            return result ? result : holy_xbps_query(argv[5], argv[3], !strcmp(argv[2], "info"));
+        }
+        if (argc >= 10 && argc <= 18 && !(argc & 1) && !strcmp(argv[2], "fetch") &&
+            !strcmp(argv[6], "--catalog") && !strcmp(argv[8], "--output")) {
+            const char *ca_file = NULL, *public_key = NULL, *source = NULL, *root = NULL;
+            int i;
+            for (i = 10; i < argc; i += 2) {
+                if (!strcmp(argv[i], "--ca-file") && !ca_file) ca_file = argv[i + 1];
+                else if (!strcmp(argv[i], "--public-key") && !public_key) public_key = argv[i + 1];
+                else if (!strcmp(argv[i], "--source") && !source) source = argv[i + 1];
+                else if (!strcmp(argv[i], "--root") && !root) root = argv[i + 1];
+                else break;
+            }
+            if (i == argc && !!source == !!root) {
+                int result = source ? xbps_registered_catalog(root, source, argv[7], public_key, 1) : 0;
+                if (result) return result;
+                return holy_xbps_fetch(argv[7], argv[3], argv[4], argv[5], argv[9],
+                                                   ca_file, public_key);
+            }
+        }
+        fputs("usage: holypkg xbps index FILE --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--public-key FILE] | xbps sync HTTPS_BASE/ ARCH --sha256 HASH --source NAME --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE] | xbps sync-source ALIAS ARCH --root ROOT --sha256 HASH --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE] | xbps search|info QUERY --catalog DIRECTORY [--source ALIAS --root ROOT] | xbps fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE] [--source ALIAS --root ROOT]\n", stderr);
         return 2;
     }
     if (argc > 2 && !strcmp(argv[1], "apk")) {

@@ -128,6 +128,14 @@ done:
     return ok;
 }
 
+int holy_xbps_key_fingerprint(const char *path, char output[65])
+{
+    EVP_PKEY *key = public_key_file(path);
+    int ok = key && key_digest(key, output);
+    EVP_PKEY_free(key);
+    return ok;
+}
+
 static int index_key(const char *xml, size_t size, const char *trusted_path, char hash[65])
 {
     plist_t root = NULL, node, bits_node;
@@ -369,7 +377,8 @@ done:
 }
 
 int holy_xbps_index(const char *input, const char *source, const char *base,
-                    const char *output, const char *expected, const char *public_key)
+                    const char *output, const char *expected, const char *public_key,
+                    const char *source_id)
 {
     struct xbps_row *rows = NULL;
     struct stat st;
@@ -379,7 +388,8 @@ int holy_xbps_index(const char *input, const char *source, const char *base,
     FILE *catalog = NULL, *record = NULL;
     int dir = -1, fd = -1, result = 1;
     if (!input || !source || !label(source) || !strcmp(source, "local") || !base || !output ||
-        !digest_label(expected) || !(url = holy_fetch_child_url(base, "repodata"))) {
+        !digest_label(expected) || (source_id && !digest_label(source_id)) ||
+        !(url = holy_fetch_child_url(base, "repodata"))) {
         free(url); return 2;
     }
     free(url);
@@ -429,6 +439,7 @@ int holy_xbps_index(const char *input, const char *source, const char *base,
     }
     fprintf(record, "format holy-xbps-index-record-1\nsource %s\nbase %s\noriginal-sha256 %s\ncatalog-sha256 %s\nverification %s\n",
             source, base, original, catalog_hash, public_key ? "key-matched" : "hash-pinned");
+    if (source_id) fprintf(record, "source-id %s\n", source_id);
     if (key_hash[0]) fprintf(record, "public-key-sha256 %s\n", key_hash);
     fprintf(record, "package-coverage complete\nfile-coverage unavailable\npackages %zu\nstate complete\n", count);
     if (ferror(record) || fflush(record) || fsync(fileno(record))) goto done;
@@ -449,7 +460,7 @@ done:
 
 struct catalog_state {
     FILE *catalog;
-    char source[256], base[2048], original[65], catalog_hash[65], key_hash[65];
+    char source[256], base[2048], original[65], catalog_hash[65], key_hash[65], source_id[65];
 };
 
 static int open_catalog(const char *directory, struct catalog_state *state)
@@ -461,6 +472,7 @@ static int open_catalog(const char *directory, struct catalog_state *state)
     memset(state, 0, sizeof *state);
     dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dir < 0 || fstat(dir, &st) || !S_ISDIR(st.st_mode) ||
+        st.st_uid != geteuid() ||
         (st.st_mode & 0022)) goto done;
     fd = openat(dir, "conversion", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0) goto done;
@@ -476,6 +488,9 @@ static int open_catalog(const char *directory, struct catalog_state *state)
         if (!strncmp(line, "source ", 7)) {
             if (state->source[0] || strlen(line + 7) >= sizeof state->source) goto done;
             strcpy(state->source, line + 7);
+        } else if (!strncmp(line, "source-id ", 10)) {
+            if (state->source_id[0] || strlen(line + 10) >= sizeof state->source_id) goto done;
+            strcpy(state->source_id, line + 10);
         } else if (!strncmp(line, "base ", 5)) {
             if (state->base[0] || strlen(line + 5) >= sizeof state->base) goto done;
             strcpy(state->base, line + 5);
@@ -492,7 +507,8 @@ static int open_catalog(const char *directory, struct catalog_state *state)
     }
     if (ferror(record) || !complete || !label(state->source) ||
         !digest_label(state->original) || !digest_label(state->catalog_hash) ||
-        (state->key_hash[0] && !digest_label(state->key_hash))) goto done;
+        (state->key_hash[0] && !digest_label(state->key_hash)) ||
+        (state->source_id[0] && !digest_label(state->source_id))) goto done;
     {
         char *url = holy_fetch_child_url(state->base, "fixture.xbps");
         if (!url) goto done;
@@ -519,6 +535,20 @@ done:
     if (record) fclose(record);
     if (dir >= 0) close(dir);
     return ok;
+}
+
+int holy_xbps_source_catalog(const char *directory, const char *source,
+                             const char *id, const char *base, const char *key)
+{
+    struct catalog_state state;
+    int ok;
+    if (!directory || !source || !id || !base || !key ||
+        !open_catalog(directory, &state)) return 6;
+    ok = !strcmp(state.source, source) && !strcmp(state.source_id, id) &&
+         !strcmp(state.base, base) &&
+         (!key[0] || !strcmp(state.key_hash, key));
+    fclose(state.catalog);
+    return ok ? 0 : 6;
 }
 
 static int next_row(FILE *catalog, struct xbps_row *row)
@@ -664,7 +694,7 @@ done:
 
 int holy_xbps_sync(const char *base, const char *arch, const char *source,
                    const char *output, const char *expected, const char *ca_file,
-                   const char *public_key)
+                   const char *public_key, const char *source_id)
 {
     char template[] = "/tmp/holy-xbps-sync-XXXXXX";
     char *url = NULL, *path = NULL, *filename = NULL;
@@ -685,7 +715,7 @@ int holy_xbps_sync(const char *base, const char *arch, const char *source,
         if (!path) result = 1;
         else {
             sprintf(path, "%s/%s", template, expected);
-            result = holy_xbps_index(path, source, base, output, expected, public_key);
+            result = holy_xbps_index(path, source, base, output, expected, public_key, source_id);
         }
     }
     if (path) { unlink(path); free(path); }

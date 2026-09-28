@@ -462,7 +462,9 @@
   resolves simple versioned dependencies with a bounded Dewey comparator.
   A pinned repodata catalog supports HTTPS sync, search, info and archive fetch.
   An explicit RSA public key can match index metadata and verify package .sig2.
-  Complex patterns remain review-required. Source-id binding, key enrollment
+  A registered XBPS source can now pin the RSA key, URL and source-id during
+  sync-source; source-aware search/info/fetch check those fields. Complex
+  patterns remain review-required. Persistent catalog binding, key enrollment
   and a file index remain open.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
   Gentoo and Pacstall recipe conversion with helper environments and split outputs.

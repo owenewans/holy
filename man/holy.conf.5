@@ -112,3 +112,11 @@ they recheck the current registry. The keyring is selected by the user;
 adding a source does not import public keys from the network.
 The --inrelease option selects a clearsigned InRelease; without it sync-source
 uses Release and Release.gpg.
+.PP
+A registered XBPS source uses type xbps and one url HTTPS_BASE/. public-key
+points to an RSA PEM public key; source plan freezes the SHA-256 fingerprint
+of its public-key encoding. trust require needs that key. xbps sync-source
+checks the selected key against the registry and the index metadata. It also
+requires an explicit repodata SHA-256 pin. Source-aware queries check the
+catalog's source-id, URL and recorded key fingerprint. Fetch requires the
+same key file and verifies the package .sig2 signature.

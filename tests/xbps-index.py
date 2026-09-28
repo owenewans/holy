@@ -135,6 +135,42 @@ def main():
                 "--source", "fixture", "--output", signed_sync,
                 "--ca-file", root / "cert.pem", "--public-key", public_key)
             assert "verification key-matched" in (signed_sync / "conversion").read_text()
+            target = root / "target"
+            target.mkdir()
+            run("db", "init", "--root", target)
+            config = root / "source.conf"
+            config.write_text(f'[source fixture]\ntype xbps\nurl "{base}"\n'
+                              f'trust require\npublic-key "{public_key}"\n')
+            plan = root / "source.plan"
+            plan.write_text(run("source", "plan", "--config", config, "--root", target))
+            run("source", "apply", plan, "--sha256",
+                hashlib.sha256(plan.read_bytes()).hexdigest(), "--root", target)
+            registered = root / "registered"
+            run("xbps", "sync-source", "fixture", "x86_64", "--root", target,
+                "--sha256", signed_hash, "--output", registered,
+                "--ca-file", root / "cert.pem", "--public-key", public_key)
+            assert "source-id " in (registered / "conversion").read_text()
+            assert package_hash in run("xbps", "info", "fixture", "--catalog", registered,
+                                       "--source", "fixture", "--root", target)
+            run("xbps", "fetch", "fixture", "1.0_1", "x86_64",
+                "--catalog", registered, "--output", root / "registered-fetch",
+                "--source", "fixture", "--root", target,
+                "--ca-file", root / "cert.pem", "--public-key", public_key)
+            run("xbps", "fetch", "fixture", "1.0_1", "x86_64",
+                "--catalog", registered, "--output", root / "missing-key-fetch",
+                "--source", "fixture", "--root", target,
+                "--ca-file", root / "cert.pem", status=6)
+            run("xbps", "info", "fixture", "--catalog", signed_sync,
+                "--source", "fixture", "--root", target, status=6)
+            rotated = root / "rotated.conf"
+            rotated.write_text(config.read_text().replace(base, "https://localhost:65535/"))
+            rotated_plan = root / "rotated.plan"
+            rotated_plan.write_text(run("source", "plan", "--config", rotated,
+                                        "--root", target))
+            run("source", "apply", rotated_plan, "--sha256",
+                hashlib.sha256(rotated_plan.read_bytes()).hexdigest(), "--root", target)
+            run("xbps", "info", "fixture", "--catalog", registered,
+                "--source", "fixture", "--root", target, status=6)
             signed_fetch = root / "signed-fetch"
             run("xbps", "fetch", "fixture", "1.0_1", "x86_64", "--catalog", signed_catalog,
                 "--output", signed_fetch, "--ca-file", root / "cert.pem",
