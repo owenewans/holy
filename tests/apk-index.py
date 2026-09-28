@@ -55,6 +55,7 @@ with tempfile.TemporaryDirectory() as scratch:
     assert "file-coverage unavailable" in (signed / "conversion").read_text()
     assert run("apk", "providers", "soname:libbeta.so.1", "--catalog", signed) == (
         "beta 2.0-r1 x86_64 index-hint\n")
+    assert "sonames-sha256 " in (signed / "conversion").read_text()
     run("apk", "providers", "soname:libbeta.so.2", "--catalog", signed, status=4)
     run("apk", "providers", "file:/usr/lib/libbeta.so.1", "--catalog", signed, status=2)
     run("apk", "info", "missing", "--catalog", signed, status=4)
@@ -94,6 +95,12 @@ with tempfile.TemporaryDirectory() as scratch:
                     "-pubout", "-out", str(wrong_key)], capture_output=True, check=True)
     run("apk", "verify-index", signed_index, "--public-key", wrong_key, status=4)
 
+    saved_sonames = (signed / "sonames").read_bytes()
+    edited_sonames = bytearray(saved_sonames)
+    edited_sonames[-3] ^= 1
+    (signed / "sonames").write_bytes(edited_sonames)
+    run("apk", "providers", "soname:libbeta.so.1", "--catalog", signed, status=2)
+    (signed / "sonames").write_bytes(saved_sonames)
     edited = bytearray((signed / "catalog").read_bytes())
     edited[-2] = ord("2")
     (signed / "catalog").write_bytes(edited)

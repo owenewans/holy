@@ -95,6 +95,11 @@ struct apk_index {
     size_t count, capacity;
 };
 
+struct apk_soname_row {
+    char *soname;
+    const struct apk_index_entry *package;
+};
+
 static int digit(char c) { return c >= '0' && c <= '9'; }
 
 static int package_name(const char *name)
@@ -138,6 +143,83 @@ static int entry_order(const void *left, const void *right)
     if (!result) result = strcmp(a->version, b->version);
     if (!result) result = strcmp(a->arch, b->arch);
     return result;
+}
+
+static int hash_fd(int fd, char output[65]);
+
+static int soname_order(const void *left, const void *right)
+{
+    const struct apk_soname_row *a = left, *b = right;
+    int order = strcmp(a->soname, b->soname);
+    if (!order) order = entry_order(a->package, b->package);
+    return order;
+}
+
+static int apk_sonames(const struct apk_index *index, int dir, char digest[65])
+{
+    struct apk_soname_row *rows = NULL;
+    size_t count = 0, capacity = 0, i;
+    FILE *out = NULL;
+    int fd = -1, ok = 0;
+    for (i = 0; i < index->count; ++i) {
+        const struct apk_index_entry *package = &index->entries[i];
+        const char *part = package->provides;
+        if (!part) continue;
+        while (*part) {
+            const char *end, *version;
+            size_t length;
+            struct apk_soname_row *grown;
+            while (*part == ' ' || *part == '\t') ++part;
+            if (!*part) break;
+            end = part + strcspn(part, " \t");
+            if (end - part < 4 || strncmp(part, "so:", 3)) { part = end; continue; }
+            version = memchr(part + 3, '=', (size_t)(end - part - 3));
+            length = (size_t)((version ? version : end) - part - 3);
+            if (!length || length > 255) { part = end; continue; }
+            if (count == 1000000) goto done;
+            if (count == capacity) {
+                size_t next = capacity ? capacity * 2 : 256;
+                if (next > 1000000) next = 1000000;
+                grown = realloc(rows, next * sizeof *rows);
+                if (!grown) goto done;
+                rows = grown; capacity = next;
+            }
+            rows[count].soname = strndup(part + 3, length);
+            if (!rows[count].soname) goto done;
+            rows[count].package = package;
+            ++count;
+            part = end;
+        }
+    }
+    qsort(rows, count, sizeof *rows, soname_order);
+    fd = openat(dir, "sonames", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0 || !(out = fdopen(fd, "w"))) goto done;
+    fd = -1;
+    fputs("format holy-apk-sonames-1\n", out);
+    for (i = 0; i < count; ++i) {
+        const struct apk_index_entry *package = rows[i].package;
+        if (i && !soname_order(&rows[i - 1], &rows[i])) continue;
+        fputs("soname ", out); quote(out, rows[i].soname); fputc(' ', out);
+        quote(out, package->name); fputc(' ', out);
+        quote(out, package->version); fputc(' ', out);
+        quote(out, package->arch); fputc('\n', out);
+    }
+    {
+        int failed = ferror(out);
+        if (fflush(out) || fsync(fileno(out))) failed = 1;
+        if (fclose(out)) failed = 1;
+        out = NULL;
+        if (failed) goto done;
+    }
+    fd = openat(dir, "sonames", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0 || !hash_fd(fd, digest)) goto done;
+    ok = 1;
+done:
+    if (out) fclose(out);
+    if (fd >= 0) close(fd);
+    for (i = 0; i < count; ++i) free(rows[i].soname);
+    free(rows);
+    return ok;
 }
 
 static int parse_index(char *data, size_t size, struct apk_index *index)
@@ -461,7 +543,7 @@ static int apk_index_bound(const char *input, const char *source, const char *ba
     struct apk_index index = {0};
     struct stat st;
     FILE *parts[3] = {0}, *catalog = NULL, *record = NULL;
-    char digests[3][65] = {{0}}, digest[65], catalog_digest[65];
+    char digests[3][65] = {{0}}, digest[65], catalog_digest[65], sonames_digest[65];
     char *snapshot = NULL, *bytes = NULL;
     size_t size = 0, i;
     int input_fd = -1, output_fd = -1, count, result = 1;
@@ -513,6 +595,7 @@ static int apk_index_bound(const char *input, const char *source, const char *ba
         if (fd >= 0) close(fd);
         if (!ok) goto done;
     }
+    if (!apk_sonames(&index, output_fd, sonames_digest)) goto done;
     {
         int fd = openat(output_fd, "conversion", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
         if (fd < 0) goto done;
@@ -522,8 +605,9 @@ static int apk_index_bound(const char *input, const char *source, const char *ba
     fputs("format holy-apk-index-record-1\nsource-name ", record); quote(record, source);
     fputs("\nbase-url ", record); quote(record, base);
     if (source_id) { fprintf(record, "\nsource-id %s\nrepo ", source_id); quote(record, repo); }
-    fprintf(record, "\noriginal-sha256 %s\ncatalog-sha256 %s\nverification %s\n",
-            digest, catalog_digest, verification ? verification : "unverified");
+    fprintf(record, "\noriginal-sha256 %s\ncatalog-sha256 %s\nsonames-sha256 %s\nverification %s\n",
+            digest, catalog_digest, sonames_digest,
+            verification ? verification : "unverified");
     if (key_hash) fprintf(record, "public-key-sha256 %s\n", key_hash);
     fprintf(record, "package-coverage complete\nfile-coverage unavailable\npackages %zu\nstate complete\n",
             index.count);
@@ -555,28 +639,54 @@ int holy_apk_index(const char *input, const char *source, const char *base,
     return apk_index_bound(input, source, base, output, NULL, NULL, NULL, NULL);
 }
 
-static int indexed_soname(const char *provides, const char *soname)
+static int query_sonames(int dir, const char *expected, const char *soname)
 {
-    const char *part = provides;
-    size_t length = strlen(soname);
-    if (!strcmp(provides, "-")) return 0;
-    while (*part) {
-        const char *end;
-        while (*part == ' ' || *part == '\t') ++part;
-        if (!*part) break;
-        end = part + strcspn(part, " \t");
-        if ((size_t)(end - part) >= length + 3 &&
-            !strncmp(part, "so:", 3) && !strncmp(part + 3, soname, length) &&
-            ((size_t)(end - part) == length + 3 || part[3 + length] == '=')) return 1;
-        part = end;
+    char actual[65], *line = NULL;
+    size_t capacity = 0, matches = 0;
+    struct stat st;
+    FILE *file = NULL;
+    int fd = openat(dir, "sonames", O_RDONLY | O_NOFOLLOW | O_CLOEXEC), result = 2;
+    if (fd < 0) { result = 6; goto done; }
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 25 ||
+        st.st_size > 64LL * 1024 * 1024 || !hash_fd(fd, actual) ||
+        strcmp(actual, expected)) goto done;
+    file = fdopen(fd, "r");
+    if (!file) goto done;
+    fd = -1;
+    if (getline(&line, &capacity, file) < 0 ||
+        strcmp(line, "format holy-apk-sonames-1\n")) goto done;
+    while (1) {
+        char **v = NULL, *error = NULL;
+        size_t n = 0;
+        ssize_t got = getline(&line, &capacity, file);
+        int order;
+        if (got < 0) break;
+        if (got > 65536 || !holy_lex(line, (size_t)got, &v, &n,
+                                     "APK SONAME index", 0, &error) ||
+            n != 5 || strcmp(v[0], "soname")) {
+            free(error); holy_tokens_free(v, n); goto done;
+        }
+        order = strcmp(v[1], soname);
+        if (!order) {
+            printf("%s %s %s index-hint\n", v[2], v[3], v[4]);
+            ++matches;
+        }
+        free(error); holy_tokens_free(v, n);
+        if (order > 0) break;
     }
-    return 0;
+    if (ferror(file)) goto done;
+    result = matches ? 0 : 4;
+done:
+    if (file) fclose(file);
+    if (fd >= 0) close(fd);
+    free(line);
+    return result;
 }
 
 int holy_apk_query(const char *directory, const char *query, int mode)
 {
     char *line = NULL;
-    char expected[65] = {0}, actual[65];
+    char expected[65] = {0}, sonames_digest[65] = {0}, actual[65];
     FILE *catalog = NULL, *record = NULL;
     struct stat st;
     size_t capacity = 0, matches = 0;
@@ -602,9 +712,15 @@ int holy_apk_query(const char *directory, const char *query, int mode)
                 memcpy(expected, line + 15, 64); expected[64] = 0;
                 if (strspn(expected, "0123456789abcdef") != 64) goto done;
             }
+            if (!strncmp(line, "sonames-sha256 ", 15) && got == 80) {
+                memcpy(sonames_digest, line + 15, 64); sonames_digest[64] = 0;
+                if (strspn(sonames_digest, "0123456789abcdef") != 64) goto done;
+            }
             if (!strcmp(line, "state complete\n")) complete = 1;
         }
-        if (!complete || !expected[0]) { result = 6; goto done; }
+        if (!complete || !expected[0] || (mode == 2 && !sonames_digest[0])) {
+            result = 6; goto done;
+        }
     }
     fd = openat(dir, "catalog", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0) { result = 6; goto done; }
@@ -615,6 +731,7 @@ int holy_apk_query(const char *directory, const char *query, int mode)
         !hash_fd(fileno(catalog), actual) || strcmp(expected, actual) ||
         getline(&line, &capacity, catalog) < 0 ||
         strcmp(line, "format holy-apk-catalog-1\n")) goto done;
+    if (mode == 2) { result = query_sonames(dir, sonames_digest, query); goto done; }
     while (1) {
         char **v = NULL, *error = NULL;
         size_t n = 0;
@@ -626,14 +743,12 @@ int holy_apk_query(const char *directory, const char *query, int mode)
             free(error); holy_tokens_free(v, n); goto done;
         }
         if ((mode == 1 && !strcmp(v[1], query)) ||
-            (mode == 0 && strstr(v[1], query)) ||
-            (mode == 2 && indexed_soname(v[7], query))) {
+            (mode == 0 && strstr(v[1], query))) {
             ++matches;
             if (mode == 1) {
                 printf("package %s\nversion %s\narch %s\nchecksum %s\nsize %s\ndepend %s\nprovides %s\n",
                        v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
-            } else if (mode == 2) printf("%s %s %s index-hint\n", v[1], v[2], v[3]);
-            else printf("%s %s %s\n", v[1], v[2], v[3]);
+            } else printf("%s %s %s\n", v[1], v[2], v[3]);
         }
         free(error); holy_tokens_free(v, n);
     }
