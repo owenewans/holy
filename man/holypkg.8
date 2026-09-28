@@ -94,6 +94,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg sync XBPS_SOURCE --arch ARCH --sha256 HASH --output NEW_DIRECTORY [--root DIRECTORY] [--ca-file FILE] [--public-key FILE]
 .br
+.B holypkg sync APT_SOURCE --suite SUITE --component COMPONENT --index-arch ARCH --keyring FILE --output NEW_DIRECTORY [--root DIRECTORY] [--inrelease] [--files] [--ca-file FILE]
+.br
 .B holypkg orphan [--root DIRECTORY] [--json]
 .br
 .B holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--view PUBLIC=PRIVATE ...] -- COMMAND [ARGS...]
@@ -104,9 +106,9 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg info local:FILE
 .br
-.B holypkg info SOURCE:PACKAGE [--repo REPO] [--arch ARCH] [--catalog MIRROR] [--root DIRECTORY]
+.B holypkg info SOURCE:PACKAGE [--repo REPO] [--arch ARCH] [--suite SUITE --component COMPONENT --index-arch ARCH] [--catalog MIRROR] [--root DIRECTORY]
 .br
-.B holypkg search QUERY [--source SOURCE] [--repo REPO] [--arch ARCH] [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]
+.B holypkg search QUERY [--source SOURCE] [--repo REPO] [--arch ARCH] [--suite SUITE --component COMPONENT --index-arch ARCH] [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]
 .br
 .B holypkg verify local:FILE
 .br
@@ -135,6 +137,8 @@ holypkg \- Holy local package tooling prototype
 .B holypkg fetch APK_SOURCE:PACKAGE --version VERSION --arch ARCH [--repo REPO] --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--sha256 HASH] [--import] [--require-soname SONAME] [--require-file /PATH]
 .br
 .B holypkg fetch XBPS_SOURCE:PACKAGE --version VERSION --arch ARCH --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--import] [--require-soname SONAME]
+.br
+.B holypkg fetch APT_SOURCE:PACKAGE --version VERSION --arch ARCH --suite SUITE --component COMPONENT --index-arch ARCH --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--import] [--require-file /PATH]
 .br
 .B holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE]
 .br
@@ -351,6 +355,15 @@ Alias renames preserve the binding; a changed source URL or key invalidates it.
 With an explicit --catalog, --source and --root check the catalog against the
 registered source without changing its binding. The package architecture in
 apt fetch is distinct from --index-arch.
+.PP
+The common sync APT_SOURCE command uses the signed Release verifier and binds
+its result. It requires suite, component, index architecture, keyring and
+output. --inrelease selects a clearsigned Release; --files includes the signed
+Contents index. Common search, info and fetch require the same three catalog
+coordinates and verify the binding. Common fetch also requires the package
+version and architecture; --import and --require-file keep the APT payload
+checks. A supplied --catalog must resolve to the bound directory.
+.PP
 .B apt search
 and
 .B apt info
@@ -1580,9 +1593,12 @@ Native sources use their sealed mirrors. APK sources search their bound
 repositories and label results with the repository name; --repo restricts an
 explicit APK source to one repository. XBPS sources query the bound repodata
 for --arch; an explicit XBPS query without it returns decision-required (3).
-XBPS file coverage is unavailable. Missing or unsupported source catalogs
+APT sources query the bound Packages index for --suite, --component and
+--index-arch; an explicit APT query without them returns decision-required (3).
+APT --file uses its partial Contents index when present. XBPS file coverage is
+unavailable. Missing or unsupported source catalogs
 report unavailable coverage. An empty active registry exits 6. --catalog
-requires --source and applies to native mirrors or a bound XBPS catalog.
+requires --source and applies to native mirrors or a bound APT/XBPS catalog.
 search QUERY --source
 SOURCE checks the active source-id and the bound catalog before printing
 matches. info SOURCE:PACKAGE checks the same inputs; APK info can require

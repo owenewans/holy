@@ -5,6 +5,7 @@ import http.server
 import io
 import os
 import pathlib
+import shutil
 import ssl
 import subprocess
 import sys
@@ -319,6 +320,50 @@ with tempfile.TemporaryDirectory() as scratch:
         run("apt", "sync-source", "debian", "stable", "main", "all",
             "--root", root, "--keyring", keyring, "--output", bound,
             "--ca-file", tmp / "cert.pem")
+        generic_root = tmp / "generic-root"
+        generic_root.mkdir()
+        run("db", "init", "--root", generic_root)
+        generic_plan = tmp / "generic-plan"
+        generic_plan.write_text(run("source", "plan", "--config", config,
+                                    "--root", generic_root))
+        run("source", "apply", generic_plan, "--sha256",
+            hashlib.sha256(generic_plan.read_bytes()).hexdigest(),
+            "--root", generic_root)
+        generic_bound = tmp / "generic-bound"
+        run("sync", "debian", "--root", generic_root, "--suite", "stable",
+            "--component", "main", "--index-arch", "all", "--keyring",
+            keyring, "--output", generic_bound, "--ca-file", tmp / "cert.pem")
+        assert (generic_bound / "conversion").exists()
+        generic_inline = tmp / "generic-inline"
+        run("sync", "debian", "--root", generic_root, "--suite", "stable",
+            "--component", "main", "--index-arch", "all", "--keyring",
+            keyring, "--output", generic_inline, "--ca-file", tmp / "cert.pem",
+            "--inrelease", "--files")
+        assert "fixture /usr/share/fixture" in run(
+            "search", "/usr/share/fixture", "--file", "--source", "debian",
+            "--suite", "stable", "--component", "main", "--index-arch", "all",
+            "--root", generic_root)
+        run("info", "debian:fixture", "--root", root, status=3)
+        assert "fixture 1:2.0-3 all" in run(
+            "search", "fixture", "--source", "debian", "--suite", "stable",
+            "--component", "main", "--index-arch", "all", "--root", root)
+        assert "source-binding checked" in run(
+            "info", "debian:fixture", "--suite", "stable", "--component",
+            "main", "--index-arch", "all", "--root", root)
+        copied_catalog = tmp / "copied-bound"
+        shutil.copytree(bound, copied_catalog)
+        run("info", "debian:fixture", "--suite", "stable", "--component",
+            "main", "--index-arch", "all", "--catalog", copied_catalog,
+            "--root", root, status=6)
+        assert 'source "debian"' in run(
+            "search", "fixture", "--suite", "stable", "--component", "main",
+            "--index-arch", "all", "--root", root)
+        generic_fetch = tmp / "generic-fetch"
+        run("fetch", "debian:fixture", "--version", "1:2.0-3", "--arch", "all",
+            "--suite", "stable", "--component", "main", "--index-arch", "all",
+            "--root", root, "--output", generic_fetch, "--ca-file", tmp / "cert.pem",
+            "--import")
+        assert "source-binding checked" in (generic_fetch / "selection").read_text()
         binding = next((root / "var/lib/holypkg/apt-catalogs").iterdir())
         assert "fixture 1:2.0-3 all\n" == run(
             "apt", "search", "fixture", "--source", "debian", "--suite", "stable",

@@ -179,11 +179,28 @@ static int xbps_bound_catalog(const char *root, const char *alias,
     return result;
 }
 
+static int apt_bound_catalog(const char *root, const char *alias,
+                             const char *suite, const char *component,
+                             const char *index_arch, const char *candidate,
+                             char **bound)
+{
+    char *selected = NULL, *registered = NULL;
+    int result = holy_apt_catalog_path(root, alias, suite, component,
+                                       index_arch, bound);
+    if (result || !candidate) return result;
+    selected = realpath(candidate, NULL);
+    registered = realpath(*bound, NULL);
+    result = selected && registered && !strcmp(selected, registered) ? 0 : 6;
+    free(selected); free(registered);
+    return result;
+}
+
 static int fetch_source(int argc, char **argv)
 {
     const char *separator = strchr(argv[2], ':');
     const char *root = "/", *catalog = NULL, *output = NULL;
     const char *repo = NULL, *version = NULL, *arch = NULL, *sha256 = NULL;
+    const char *suite = NULL, *component = NULL, *index_arch = NULL;
     const char *ca_file = NULL, *public_key = NULL;
     const char *required_soname = NULL, *required_file = NULL;
     char source_id[65], *alias = NULL, *bound_catalog = NULL, *family = NULL;
@@ -200,6 +217,8 @@ static int fetch_source(int argc, char **argv)
     for (i = 3; i < argc; ++i) {
         if ((!strcmp(argv[i], "--repo") || !strcmp(argv[i], "--version") ||
              !strcmp(argv[i], "--arch") || !strcmp(argv[i], "--sha256") ||
+             !strcmp(argv[i], "--suite") || !strcmp(argv[i], "--component") ||
+             !strcmp(argv[i], "--index-arch") ||
              !strcmp(argv[i], "--ca-file") || !strcmp(argv[i], "--public-key") ||
              !strcmp(argv[i], "--require-soname") || !strcmp(argv[i], "--require-file")) &&
             (i + 1 >= argc || !argv[i + 1][0] || !strncmp(argv[i + 1], "--", 2)))
@@ -219,6 +238,9 @@ static int fetch_source(int argc, char **argv)
         else if (!strcmp(argv[i], "--version") && !version && i + 1 < argc) version = argv[++i];
         else if (!strcmp(argv[i], "--arch") && !arch && i + 1 < argc) arch = argv[++i];
         else if (!strcmp(argv[i], "--sha256") && !sha256 && i + 1 < argc) sha256 = argv[++i];
+        else if (!strcmp(argv[i], "--suite") && !suite && i + 1 < argc) suite = argv[++i];
+        else if (!strcmp(argv[i], "--component") && !component && i + 1 < argc) component = argv[++i];
+        else if (!strcmp(argv[i], "--index-arch") && !index_arch && i + 1 < argc) index_arch = argv[++i];
         else if (!strcmp(argv[i], "--ca-file") && !ca_file && i + 1 < argc) ca_file = argv[++i];
         else if (!strcmp(argv[i], "--public-key") && !public_key && i + 1 < argc) public_key = argv[++i];
         else if (!strcmp(argv[i], "--require-soname") && !required_soname && i + 1 < argc)
@@ -231,7 +253,7 @@ static int fetch_source(int argc, char **argv)
     result = holy_source_type(root, alias, &family);
     if (result) goto done;
     if (!strcmp(family, "apk")) {
-        if (extract) { result = 2; goto done; }
+        if (extract || suite || component || index_arch) { result = 2; goto done; }
         if (!version || !arch) {
             fprintf(stderr, "holypkg: APK fetch needs --version and --arch for %s:%s\n",
                     alias, separator + 1);
@@ -258,7 +280,8 @@ static int fetch_source(int argc, char **argv)
         goto done;
     }
     if (!strcmp(family, "xbps")) {
-        if (extract || repo || sha256 || required_file ||
+        if (extract || repo || sha256 || required_file || suite || component ||
+            index_arch ||
             (required_soname && !import)) { result = 2; goto done; }
         if (!version || !arch) {
             fprintf(stderr, "holypkg: XBPS fetch needs --version and --arch for %s:%s\n",
@@ -275,8 +298,23 @@ static int fetch_source(int argc, char **argv)
                                      required_soname);
         goto done;
     }
+    if (!strcmp(family, "apt")) {
+        if (extract || repo || sha256 || public_key || required_soname ||
+            (required_file && !import)) { result = 2; goto done; }
+        if (!version || !arch || !suite || !component || !index_arch) {
+            fprintf(stderr, "holypkg: APT fetch needs --version, --arch, --suite, --component and --index-arch for %s:%s\n",
+                    alias, separator + 1);
+            result = 3; goto done;
+        }
+        result = apt_bound_catalog(root, alias, suite, component, index_arch,
+                                   catalog, &bound_catalog);
+        if (result) goto done;
+        result = holy_apt_fetch(bound_catalog, separator + 1, version, arch,
+                                output, ca_file, import, required_file, root, alias);
+        goto done;
+    }
     if (repo || version || arch || sha256 || ca_file || public_key || import ||
-        required_soname || required_file) {
+        required_soname || required_file || suite || component || index_arch) {
         result = 2; goto done;
     }
     if (!catalog) {
@@ -288,7 +326,7 @@ static int fetch_source(int argc, char **argv)
     if (!result) result = holy_repo_fetch_name(catalog, separator + 1, output, extract);
 done:
     if (result == 2)
-        fputs("usage: holypkg fetch SOURCE:PACKAGE [--catalog MIRROR] --output DIRECTORY [--extract] [--root DIRECTORY] | holypkg fetch APK_SOURCE:PACKAGE --version VERSION --arch ARCH [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--sha256 HASH] [--import] [--require-soname SONAME] [--require-file /PATH] | holypkg fetch XBPS_SOURCE:PACKAGE --version VERSION --arch ARCH --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--import] [--require-soname SONAME]\n", stderr);
+        fputs("usage: holypkg fetch SOURCE:PACKAGE [--catalog MIRROR] --output DIRECTORY [--extract] [--root DIRECTORY] | holypkg fetch APK_SOURCE:PACKAGE --version VERSION --arch ARCH [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--sha256 HASH] [--import] [--require-soname SONAME] [--require-file /PATH] | holypkg fetch XBPS_SOURCE:PACKAGE --version VERSION --arch ARCH --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--import] [--require-soname SONAME] | holypkg fetch APT_SOURCE:PACKAGE --version VERSION --arch ARCH --suite SUITE --component COMPONENT --index-arch ARCH --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--import] [--require-file /PATH]\n", stderr);
     for (j = 0; j < repo_count; ++j) free(repos[j]);
     free(repos);
     free(alias); free(bound_catalog); free(family);
@@ -355,6 +393,7 @@ static int query_source(int argc, char **argv, int search)
 {
     const char *root = "/", *catalog = NULL, *alias = NULL, *name = NULL;
     const char *repo = NULL, *arch = NULL;
+    const char *suite = NULL, *component = NULL, *index_arch = NULL;
     const char *separator = search ? NULL : strchr(argv[2], ':');
     char source_id[65], *owned_alias = NULL, *bound_catalog = NULL;
     char **aliases = NULL;
@@ -384,13 +423,20 @@ static int query_source(int argc, char **argv, int search)
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) repo = argv[++i];
         else if (!strcmp(argv[i], "--arch") && !arch && i + 1 < argc &&
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) arch = argv[++i];
+        else if (!strcmp(argv[i], "--suite") && !suite && i + 1 < argc &&
+                 argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) suite = argv[++i];
+        else if (!strcmp(argv[i], "--component") && !component && i + 1 < argc &&
+                 argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) component = argv[++i];
+        else if (!strcmp(argv[i], "--index-arch") && !index_arch && i + 1 < argc &&
+                 argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) index_arch = argv[++i];
         else if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < argc &&
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) {
             root = argv[++i]; root_seen = 1;
         } else goto done;
     }
     if (!name || !*name || (alias && (!*alias || !strcmp(alias, "local"))) ||
-        (!alias && (!search || catalog || repo))) goto done;
+        (!alias && (!search || catalog || repo)) ||
+        ((!!suite + !!component + !!index_arch) % 3 != 0)) goto done;
     if (!alias) {
         result = holy_source_active_aliases(root, &aliases, &alias_count);
         if (result) goto done;
@@ -415,6 +461,13 @@ static int query_source(int argc, char **argv, int search)
                 if (!rc) rc = holy_source_active_id(root, current, source_id);
                 if (!rc) printf(" id %s\n", source_id);
                 if (!rc) rc = holy_xbps_query(path, name, 0);
+            } else if (!rc && !strcmp(family, "apt")) {
+                rc = !suite ? 6 : holy_apt_catalog_path(root, current, suite,
+                                                        component, index_arch, &path);
+                if (!rc) rc = holy_source_active_id(root, current, source_id);
+                if (!rc) printf(" id %s\n", source_id);
+                if (!rc) rc = holy_apt_query(path, name, 0, file_search,
+                                             root, current);
             } else if (!rc && (!strcmp(family, "holy-http") ||
                                !strcmp(family, "holy-git"))) {
                 rc = holy_source_catalog_path_fast(root, current, &path);
@@ -439,7 +492,7 @@ static int query_source(int argc, char **argv, int search)
         if (result) { free(family); goto done; }
         if (!strcmp(family, "apk")) {
             free(family);
-            if (catalog || arch) goto done;
+            if (catalog || arch || suite) goto done;
             result = holy_source_active_id(root, alias, source_id);
             if (!result) result = query_apk_source(root, alias, repo, name,
                                                     search, file_search);
@@ -448,7 +501,7 @@ static int query_source(int argc, char **argv, int search)
         }
         if (!strcmp(family, "xbps")) {
             free(family);
-            if (repo || file_search) { result = file_search ? 6 : 2; goto done; }
+            if (repo || suite || file_search) { result = file_search ? 6 : 2; goto done; }
             if (!arch) {
                 fprintf(stderr, "holypkg: XBPS query needs --arch for %s\n", alias);
                 result = 3; goto done;
@@ -462,7 +515,22 @@ static int query_source(int argc, char **argv, int search)
             if (!result) printf("source-id %s\n", source_id);
             goto done;
         }
-        if (repo || arch || (strcmp(family, "holy-http") && strcmp(family, "holy-git"))) {
+        if (!strcmp(family, "apt")) {
+            free(family);
+            if (repo || arch) goto done;
+            if (!suite) {
+                fprintf(stderr, "holypkg: APT query needs --suite, --component and --index-arch for %s\n", alias);
+                result = 3; goto done;
+            }
+            result = apt_bound_catalog(root, alias, suite, component, index_arch,
+                                       catalog, &bound_catalog);
+            if (result) goto done;
+            result = holy_apt_query(bound_catalog, name, !search, file_search,
+                                    root, alias);
+            goto done;
+        }
+        if (repo || arch || suite ||
+            (strcmp(family, "holy-http") && strcmp(family, "holy-git"))) {
             free(family); goto done;
         }
         free(family);
@@ -480,8 +548,8 @@ static int query_source(int argc, char **argv, int search)
     }
 done:
     if (result == 2) fprintf(stderr,
-        search ? "usage: holypkg search QUERY [--source SOURCE] [--repo REPO] [--arch ARCH] [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]\n" :
-                 "usage: holypkg info SOURCE:PACKAGE [--repo REPO] [--arch ARCH] [--catalog MIRROR] [--root DIRECTORY]\n");
+        search ? "usage: holypkg search QUERY [--source SOURCE] [--repo REPO] [--arch ARCH] [--suite SUITE --component COMPONENT --index-arch ARCH] [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]\n" :
+                 "usage: holypkg info SOURCE:PACKAGE [--repo REPO] [--arch ARCH] [--suite SUITE --component COMPONENT --index-arch ARCH] [--catalog MIRROR] [--root DIRECTORY]\n");
     for (j = 0; j < alias_count; ++j) free(aliases[j]);
     free(aliases);
     free(owned_alias); free(bound_catalog);
@@ -1584,12 +1652,20 @@ int main(int argc, char **argv)
         const char *root = "/", *digest = NULL, *accepted = NULL;
         const char *output = NULL, *ca_file = NULL, *commit = NULL;
         const char *repo = NULL, *public_key = NULL, *arch = NULL;
+        const char *suite = NULL, *component = NULL, *index_arch = NULL;
+        const char *keyring = NULL;
         char *family = NULL;
         char **repos = NULL;
         size_t repo_count = 0, j;
         int result;
-        int i, root_seen = 0, valid = argc >= 3;
-        for (i = 3; valid && i < argc; i += 2) {
+        int i, root_seen = 0, inrelease = 0, files = 0, valid = argc >= 3;
+        for (i = 3; valid && i < argc;) {
+            if (!strcmp(argv[i], "--inrelease") && !inrelease) {
+                inrelease = 1; ++i; continue;
+            }
+            if (!strcmp(argv[i], "--files") && !files) {
+                files = 1; ++i; continue;
+            }
             if (i + 1 >= argc || !argv[i + 1][0] ||
                 !strncmp(argv[i + 1], "--", 2)) { valid = 0; break; }
             if (!strcmp(argv[i], "--root") && !root_seen) {
@@ -1603,14 +1679,21 @@ int main(int argc, char **argv)
             else if (!strcmp(argv[i], "--repo") && !repo) repo = argv[i + 1];
             else if (!strcmp(argv[i], "--public-key") && !public_key) public_key = argv[i + 1];
             else if (!strcmp(argv[i], "--arch") && !arch) arch = argv[i + 1];
+            else if (!strcmp(argv[i], "--suite") && !suite) suite = argv[i + 1];
+            else if (!strcmp(argv[i], "--component") && !component) component = argv[i + 1];
+            else if (!strcmp(argv[i], "--index-arch") && !index_arch) index_arch = argv[i + 1];
+            else if (!strcmp(argv[i], "--keyring") && !keyring) keyring = argv[i + 1];
             else valid = 0;
+            i += 2;
         }
         if (valid && !(digest && accepted)) {
+            if ((!!suite + !!component + !!index_arch) % 3 != 0) goto sync_usage;
             result = holy_source_type(root, argv[2], &family);
             if (result) return result;
             if (!strcmp(family, "apk")) {
                 free(family);
-                if (commit || arch || !output) goto sync_usage;
+                if (commit || arch || suite || keyring || inrelease || files ||
+                    !output) goto sync_usage;
                 if (!repo) {
                     result = holy_source_apk_repos(root, argv[2], &repos, &repo_count);
                     if (result) return result;
@@ -1632,7 +1715,8 @@ sync_done:
                 char id[65], registered_key[65], supplied[65];
                 char *base = NULL, *trust = NULL;
                 free(family);
-                if (!arch || !digest || !output || repo || accepted || commit)
+                if (!arch || !digest || !output || repo || accepted || commit ||
+                    suite || keyring || inrelease || files)
                     goto sync_usage;
                 result = holy_source_xbps(root, argv[2], id, &base, &trust,
                                           registered_key);
@@ -1649,13 +1733,25 @@ sync_done:
                 free(base); free(trust);
                 return result;
             }
+            if (!strcmp(family, "apt")) {
+                free(family);
+                if (!suite || !keyring || !output || repo || arch || digest ||
+                    accepted || commit || public_key) goto sync_usage;
+                result = holy_apt_release_sync_source(root, argv[2], suite,
+                            component, index_arch, keyring, output, ca_file,
+                            inrelease, files);
+                if (!result) result = holy_apt_bind(root, argv[2], suite,
+                                             component, index_arch, output);
+                return result;
+            }
             free(family);
-            if (!repo && !public_key && !arch)
+            if (!repo && !public_key && !arch && !suite && !keyring &&
+                !inrelease && !files)
                 return holy_source_sync(argv[2], root, digest, accepted, output,
                                         ca_file, commit);
         }
 sync_usage:
-        fputs("usage: holypkg sync SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256 INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--commit GIT_COMMIT] [--ca-file FILE] | holypkg sync APK_SOURCE [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] [--public-key FILE] | holypkg sync XBPS_SOURCE --arch ARCH --sha256 HASH --output NEW_DIRECTORY [--root DIRECTORY] [--ca-file FILE] [--public-key FILE]\n", stderr);
+        fputs("usage: holypkg sync SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256 INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--commit GIT_COMMIT] [--ca-file FILE] | holypkg sync APK_SOURCE [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] [--public-key FILE] | holypkg sync XBPS_SOURCE --arch ARCH --sha256 HASH --output NEW_DIRECTORY [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] | holypkg sync APT_SOURCE --suite SUITE --component COMPONENT --index-arch ARCH --keyring FILE --output NEW_DIRECTORY [--root DIRECTORY] [--inrelease] [--files] [--ca-file FILE]\n", stderr);
         return 2;
     }
 

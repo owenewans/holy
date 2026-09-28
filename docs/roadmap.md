@@ -114,7 +114,9 @@
   partial; an absent match stays unknown. It remains a hint until
   the selected payload confirms the file. apt fetch --import --require-file
   checks the Contents hint and the converted .holy payload before recording
-  a file provider in its fetch receipt. An inverted index, automatic candidate
+  a file provider in its fetch receipt. Common sync/search/info/fetch now use
+  the registered APT binding with explicit suite, component and index
+  architecture. An inverted index, automatic candidate
   fetch, solver integration and full hook integration remain open.
 
 - [x] Import local Slackware .txz/.tgz/.tbz/.tlz packages into native outputs.
