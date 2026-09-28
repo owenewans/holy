@@ -1258,7 +1258,7 @@ static int list(const char *directory, const char *query,
             for (i = 0; i < count; ++i)
                 if (indexed_provider(&objects[i], provider_kind, provider_name,
                                      file_index, soname_index)) closure_add(&closure, i);
-            if (!closure.count) { *solve_rc = 6; ok = 1; goto done; }
+            if (!closure.count) { *solve_rc = 4; ok = 1; goto done; }
         } else closure_add(&closure, root);
     }
     if (stage && stage->provider && !closure.selected) {

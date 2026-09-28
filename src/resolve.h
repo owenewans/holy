@@ -15,6 +15,15 @@ struct holy_resolution {
     size_t edge_count;
 };
 
+struct holy_missing_requirement {
+    char *consumer, *id, *kind, *name;
+};
+
+/* returns 4 with one exact missing edge, 0 when solved, or another CLI status. */
+int holy_resolve_missing(const char *const *paths, size_t count,
+                         struct holy_missing_requirement *missing);
+void holy_missing_requirement_free(struct holy_missing_requirement *missing);
+
 /* owned result, no stdout; free after any result. selects artifact
    candidates, not physical library bindings in a launch context. */
 int holy_resolve_collect(const char *const *paths, size_t count,

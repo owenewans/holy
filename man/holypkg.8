@@ -775,9 +775,18 @@ selects matching packages by exact indexed package, file, command or SONAME
 facts from the named source, then stages their in-source dependency closure.
 The selected package still undergoes payload and resolver checks. The option
 requires a native index with complete dependency, file and SONAME records;
-an unavailable index returns status 6. Multiple matching packages remain
+an unavailable index returns status 6 and a complete index without a match
+returns status 4. Multiple matching packages remain
 candidates for the reviewed provider choice.
-Automatic discovery and ranking across sources remain open. Hooks and
+When a set has an unsatisfied exact package, file, command or SONAME edge,
+add searches active bound native catalogs for that edge. It stages matching
+providers and their in-source closures, then resolves again. The loop stops
+when the set is complete or no new artifact is found. It checks installed
+providers first; an inactive origin can still satisfy a new consumer. An
+unavailable catalog leaves coverage incomplete and returns 6 when no provider
+can be found. Selected packages retain their source IDs, and candidate
+catalogs are checked again before apply. Source preference ranking, fuzzy
+suggestions and runtime plugin discovery remain open. Hooks and
 transforms remain outside the supported installation subset.
 .PP
 up SOURCE:PACKAGE --prepare finds one installed slot by its immutable source-id,

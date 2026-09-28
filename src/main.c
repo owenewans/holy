@@ -269,6 +269,35 @@ struct source_candidate {
     int provider;
 };
 
+static char *copy_text(const char *value)
+{
+    char *copy = malloc(strlen(value) + 1);
+    if (copy) strcpy(copy, value);
+    return copy;
+}
+
+static int missing_from_cache(const char *const *digests, size_t count,
+                              const char *root,
+                              struct holy_missing_requirement *missing)
+{
+    char **paths = calloc(count, sizeof *paths);
+    size_t i;
+    int result = 6;
+    if (!paths) return 1;
+    for (i = 0; i < count; ++i) {
+        paths[i] = holy_cache_snapshot(digests[i], root);
+        if (!paths[i]) goto done;
+    }
+    result = holy_resolve_missing((const char *const *)paths, count, missing);
+done:
+    for (i = 0; i < count; ++i) if (paths[i]) {
+        unlink(paths[i]);
+        free(paths[i]);
+    }
+    free(paths);
+    return result;
+}
+
 static int add_source(int argc, char **argv)
 {
     const char *separator = strchr(argv[2], ':');
@@ -287,7 +316,8 @@ static int add_source(int argc, char **argv)
     alias = malloc((size_t)(separator - argv[2]) + 1);
     accepted_arch = calloc((size_t)argc, sizeof *accepted_arch);
     accepted_privileged = calloc((size_t)argc, sizeof *accepted_privileged);
-    extras = calloc((size_t)argc, sizeof *extras);
+    if (argc > 10000) goto done;
+    extras = calloc(10000, sizeof *extras);
     digests = calloc(10000, sizeof *digests);
     bindings = calloc(10000, sizeof *bindings);
     if (!alias || !accepted_arch || !accepted_privileged || !extras ||
@@ -387,6 +417,90 @@ static int add_source(int argc, char **argv)
             digests[digest_count++] = item->staged.digests[j];
         }
     }
+    for (k = 0; k < 10000; ++k) {
+        struct holy_missing_requirement missing = {0};
+        char **aliases = NULL;
+        size_t alias_count = 0, a;
+        int missing_status;
+        int progressed = 0, unavailable = 0;
+        result = holy_state_probe_source_bindings(digests, digest_count,
+                   source_id, staged.index, bindings, binding_count, choice, root,
+                   accepted_arch, arch_count, accepted_privileged, privileged_count);
+        if (!result) break;
+        if (result != 3 && result != 4) goto done;
+        missing_status = missing_from_cache(digests, digest_count, root, &missing);
+        if (missing_status == 0 || !missing.kind) {
+            holy_missing_requirement_free(&missing);
+            break;
+        }
+        if (missing_status != 4 && missing_status != 3) {
+            holy_missing_requirement_free(&missing);
+            result = missing_status; goto done;
+        }
+        result = holy_source_active_aliases(root, &aliases, &alias_count);
+        if (result) { holy_missing_requirement_free(&missing); goto done; }
+        for (a = 0; a < alias_count; ++a) {
+            struct source_candidate *item;
+            if (!strcmp(aliases[a], alias)) continue;
+            if (extra_count == 10000) { result = 2; break; }
+            item = &extras[extra_count];
+            item->alias = copy_text(aliases[a]);
+            item->kind = copy_text(missing.kind);
+            item->name = copy_text(missing.name);
+            item->provider = 1;
+            if (!item->alias || !item->kind || !item->name) { result = 1; break; }
+            result = holy_source_catalog_path_fast(root, item->alias, &item->catalog);
+            if (result) { ++unavailable; result = 0; goto next_alias; }
+            result = holy_source_catalog(root, item->alias, item->catalog, item->source_id);
+            if (result) { ++unavailable; result = 0; goto next_alias; }
+            result = holy_repo_stage_provider(item->catalog, item->kind,
+                                              item->name, root, &item->staged);
+            if (result == 4) { result = 0; goto next_alias; }
+            if (result == 6) { ++unavailable; result = 0; goto next_alias; }
+            if (result) break;
+            for (j = 0; j < item->staged.count; ++j) {
+                size_t existing;
+                char *binding;
+                for (existing = 0; existing < digest_count; ++existing)
+                    if (!strcmp(digests[existing], item->staged.digests[j])) break;
+                if (existing < digest_count) {
+                    const char *owner = existing < staged.count ? source_id : NULL;
+                    size_t q;
+                    for (q = 0; !owner && q < binding_count; ++q)
+                        if (!strncmp(bindings[q], digests[existing], 64))
+                            owner = bindings[q] + 65;
+                    if (!owner || strcmp(owner, item->source_id)) {
+                        fprintf(stderr, "holypkg: artifact offered by multiple sources: %s\n",
+                                item->staged.digests[j]);
+                        result = 3; break;
+                    }
+                    continue;
+                }
+                if (digest_count == 10000) { result = 2; break; }
+                binding = malloc(130);
+                if (!binding) { result = 1; break; }
+                snprintf(binding, 130, "%s=%s", item->staged.digests[j], item->source_id);
+                bindings[binding_count++] = binding;
+                digests[digest_count++] = item->staged.digests[j];
+                progressed = 1;
+            }
+            if (result) break;
+            ++extra_count;
+            continue;
+next_alias:
+            free(item->alias); free(item->kind); free(item->name);
+            free(item->catalog); holy_repo_set_free(&item->staged);
+            memset(item, 0, sizeof *item);
+        }
+        for (a = 0; a < alias_count; ++a) free(aliases[a]);
+        free(aliases);
+        holy_missing_requirement_free(&missing);
+        if (result) goto done;
+        if (!progressed) {
+            if (unavailable) { result = 6; goto done; }
+            break;
+        }
+    }
     result = holy_state_set_source_bindings(digests, digest_count,
                                             source_id, staged.index, bindings,
                                             binding_count, choice, NULL, root,
@@ -444,7 +558,7 @@ done:
     if (result == 2)
         fputs("usage: holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
     for (i = 0; i < binding_count; ++i) free((void *)bindings[i]);
-    for (i = 0; extras && i < (size_t)argc; ++i) {
+    for (i = 0; extras && i <= extra_count && i < 10000; ++i) {
         free(extras[i].alias); free(extras[i].kind); free(extras[i].name);
         free(extras[i].catalog); free(extras[i].next_catalog);
         holy_repo_set_free(&extras[i].staged);

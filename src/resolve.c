@@ -793,6 +793,41 @@ done:
     return missing;
 }
 
+static int capture_missing(const struct local_item *local, size_t count,
+                           const char *id, struct holy_missing_requirement *missing)
+{
+    size_t i, j, k;
+    for (i = 0; i < count; ++i) for (j = 0; j < local[i].requirement_count; ++j) {
+        const char *kind = NULL, *name = NULL, *original;
+        if (strcmp(local[i].requirement_ids[j], id)) continue;
+        for (k = 0; k < local[i].edge_count; ++k) {
+            const struct elf_edge *edge = &local[i].edges[k];
+            if (edge->requirement != j) continue;
+            kind = !strcmp(edge->kind, "soname") ? "soname" :
+                   !strcmp(edge->kind, "symbol") ? NULL : "file";
+            name = edge->target;
+            break;
+        }
+        if (!name) {
+            original = local[i].original_requirements[j];
+            if (!strncmp(original, "package:", 8)) { kind = "package"; name = original + 8; }
+            else if (!strncmp(original, "file:", 5)) { kind = "file"; name = original + 5; }
+            else if (!strncmp(original, "command:", 8)) { kind = "command"; name = original + 8; }
+            else if (!strncmp(original, "soname:", 7)) { kind = "soname"; name = original + 7; }
+        }
+        if (!kind || !name || !*name) return 0;
+        missing->consumer = strdup(local[i].identity.digest);
+        missing->id = strdup(id);
+        missing->kind = strdup(kind);
+        missing->name = strdup(name);
+        if (missing->consumer && missing->id && missing->kind && missing->name)
+            return 1;
+        holy_missing_requirement_free(missing);
+        return 0;
+    }
+    return 0;
+}
+
 static char *choice_requirement(const char *choice, const char **digest)
 {
     const char *equal = strchr(choice, '=');
@@ -885,7 +920,8 @@ static int collect_result(const struct local_item *local, const struct holy_solv
 
 static int resolve(const char *const *paths, size_t count, int json,
                     const char *generation, const char *choice,
-                    struct holy_resolution *output, int all)
+                    struct holy_resolution *output, int all,
+                    struct holy_missing_requirement *missing_output)
 {
     struct local_item *local = NULL;
     struct holy_solver_item *items = NULL;
@@ -1036,6 +1072,8 @@ static int resolve(const char *const *paths, size_t count, int json,
     else if (solved == 2) {
         result = 4;
         unresolved = missing_requirement(local, items, count);
+        if (missing_output && unresolved &&
+            !capture_missing(local, count, unresolved, missing_output)) result = 3;
         if (unresolved) for (i = 0; i < count; ++i)
             for (j = 0; j < local[i].edge_count; ++j) {
                 const struct elf_edge *edge = &local[i].edges[j];
@@ -1049,12 +1087,13 @@ done:
     if (result && output) holy_resolution_free(output);
     if (json >= 0 && (result == 3 || result == 4) && prepared == count && local && items)
         report_edges(local, items, count, NULL, json);
-    if (result) fprintf(stderr, "holypkg: local resolution %s\n",
+    if (result && !missing_output) fprintf(stderr, "holypkg: local resolution %s\n",
                         result == 2 ? "has an invalid choice" :
                         result == 3 ? "needs provider choice" :
                         result == 4 ? "has a dependency conflict" :
                         "requires unsupported data or failed");
-    if (unresolved) fprintf(stderr, "holypkg: unresolved requirement %s\n", unresolved);
+    if (unresolved && !missing_output)
+        fprintf(stderr, "holypkg: unresolved requirement %s\n", unresolved);
     if (result && json > 0) {
         if (unresolved)
             printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"%s\",\"requirement\":\"%s\"}\n",
@@ -1110,21 +1149,37 @@ done:
 int holy_resolve_local(const char *const *paths, size_t count, int json,
                        const char *generation, const char *choice)
 {
-    return resolve(paths, count, json, generation, choice, NULL, 0);
+    return resolve(paths, count, json, generation, choice, NULL, 0, NULL);
 }
 
 int holy_resolve_collect(const char *const *paths, size_t count,
                           const char *choice, struct holy_resolution *result)
 {
     memset(result, 0, sizeof *result);
-    return resolve(paths, count, -1, NULL, choice, result, 0);
+    return resolve(paths, count, -1, NULL, choice, result, 0, NULL);
 }
 
 int holy_resolve_collect_set(const char *const *paths, size_t count,
                               struct holy_resolution *result)
 {
     memset(result, 0, sizeof *result);
-    return resolve(paths, count, -1, NULL, NULL, result, 1);
+    return resolve(paths, count, -1, NULL, NULL, result, 1, NULL);
+}
+
+void holy_missing_requirement_free(struct holy_missing_requirement *missing)
+{
+    free(missing->consumer);
+    free(missing->id);
+    free(missing->kind);
+    free(missing->name);
+    memset(missing, 0, sizeof *missing);
+}
+
+int holy_resolve_missing(const char *const *paths, size_t count,
+                         struct holy_missing_requirement *missing)
+{
+    memset(missing, 0, sizeof *missing);
+    return resolve(paths, count, -1, NULL, NULL, NULL, 0, missing);
 }
 
 void holy_resolution_free(struct holy_resolution *result)

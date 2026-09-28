@@ -3873,7 +3873,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
                      const char *catalog_index,
                      const char *const *accepted_arch, size_t accepted_count,
                      const char *const *accepted_privileged, size_t privileged_count,
-                     char plan_hash[65])
+                     char plan_hash[65], int quiet)
 {
     struct install_set set = {0};
     unsigned long long generation;
@@ -3894,6 +3894,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
     if (result) goto done;
     if (!approved) {
         if (plan_hash) memcpy(plan_hash, set.hash, 65);
+        if (quiet) goto done;
         printf("plan-set generation %llu root %s artifacts %zu paths %zu sha256 %s read-only\n",
                generation, set.resolution.root, set.count, set.paths, set.hash);
         if (set.catalog_index[0]) printf("catalog-index %s\n", set.catalog_index);
@@ -3947,7 +3948,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
     printf("committed-set %s generation %llu artifacts %zu\n", set.hash, generation + 1, set.count);
     result = 0;
 done:
-    if (result) fprintf(stderr, "holypkg: package set failed (status %d)%s\n", result,
+    if (result && !quiet) fprintf(stderr, "holypkg: package set failed (status %d)%s\n", result,
                         journaled ? "; incomplete set journal retained" : "");
     free_set(&set);
     if (transactions >= 0) close(transactions);
@@ -3966,7 +3967,7 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
 {
     return state_set(digests, count, choice, approved, root_path, bindings,
                      binding_count, NULL, NULL, accepted_arch, accepted_count,
-                     accepted_privileged, privileged_count, plan_hash);
+                     accepted_privileged, privileged_count, plan_hash, 0);
 }
 
 int holy_state_set_source(const char *const *digests, size_t count,
@@ -3980,7 +3981,7 @@ int holy_state_set_source(const char *const *digests, size_t count,
     if (!source_id || !catalog_index) return 2;
     return state_set(digests, count, choice, approved, root_path, NULL, 0,
                      source_id, catalog_index, accepted_arch, accepted_count,
-                     accepted_privileged, privileged_count, plan_hash);
+                     accepted_privileged, privileged_count, plan_hash, 0);
 }
 
 int holy_state_set_source_bindings(const char *const *digests, size_t count,
@@ -3996,7 +3997,22 @@ int holy_state_set_source_bindings(const char *const *digests, size_t count,
     return state_set(digests, count, choice, approved, root_path,
                      bindings, binding_count, source_id, catalog_index,
                      accepted_arch, accepted_count,
-                     accepted_privileged, privileged_count, plan_hash);
+                     accepted_privileged, privileged_count, plan_hash, 0);
+}
+
+int holy_state_probe_source_bindings(const char *const *digests, size_t count,
+                                    const char *source_id, const char *catalog_index,
+                                    const char *const *bindings, size_t binding_count,
+                                    const char *choice, const char *root_path,
+                                    const char *const *accepted_arch, size_t accepted_count,
+                                    const char *const *accepted_privileged,
+                                    size_t privileged_count)
+{
+    if (!source_id || !catalog_index) return 2;
+    return state_set(digests, count, choice, NULL, root_path,
+                     bindings, binding_count, source_id, catalog_index,
+                     accepted_arch, accepted_count,
+                     accepted_privileged, privileged_count, NULL, 1);
 }
 
 static int instance_matches_snapshot(int item, const char *snapshot)

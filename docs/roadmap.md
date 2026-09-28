@@ -332,8 +332,11 @@
   Explicit `--candidate SOURCE:PACKAGE` combines bound catalogs in one reviewed
   set. `--candidate-provider SOURCE:KIND:NAME` stages exact indexed package,
   file, command or SONAME providers and their local closure. Both recheck each
-  source before apply and preserve selected source IDs. Automatic cross-source
-  discovery and ranking remain open.
+  source before apply and preserve selected source IDs. The add loop now queries
+  exact missing package, file, command and SONAME edges across active bound native
+  catalogs, stages indexed providers and their local closure, and repeats resolution.
+  It probes installed providers first, including inactive origins. Source preference
+  ranking, complete coverage diagnostics and plugin discovery remain open.
 - [x] Query an active holy-http source through an explicit synced mirror with
   `search QUERY --source ALIAS` and `info ALIAS:PACKAGE`. Verify source identity,
   pinned index and matching artifacts before returning exact names; report missing and
