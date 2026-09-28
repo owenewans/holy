@@ -62,13 +62,19 @@ with tempfile.TemporaryDirectory() as scratch:
     packages.write_bytes(gzip.compress(row, mtime=0))
     (serve / "dists/stable/main/binary-all").mkdir(parents=True)
     (serve / "dists/stable/main/binary-all/Packages.gz").write_bytes(packages.read_bytes())
+    contents = serve / "dists/stable/main/Contents-all.gz"
+    contents.write_bytes(gzip.compress(
+        b"FILE LOCATION\nusr/share/fixture main/misc/fixture,main/other/fixture\n"
+        b"usr/share/fixture file main/misc/fixture\n", mtime=0))
     release = serve / "dists/stable/Release"
     release.write_text("Suite: stable\nDate: Mon, 28 Sep 2026 00:00:00 UTC\n"
                        "Valid-Until: Thu, 31 Dec 2099 00:00:00 UTC\n"
                        "SHA256:\n"
                        f" {'0' * 64} 100000000 other/Contents-amd64.gz\n"
                        f" {hashlib.sha256(packages.read_bytes()).hexdigest()} "
-                       f"{packages.stat().st_size} main/binary-all/Packages.gz\n")
+                       f"{packages.stat().st_size} main/binary-all/Packages.gz\n"
+                       f" {hashlib.sha256(contents.read_bytes()).hexdigest()} "
+                       f"{contents.stat().st_size} main/Contents-all.gz\n")
     gnupg = tmp / "gnupg"
     gnupg.mkdir(mode=0o700)
     subprocess.run(["gpg", "--homedir", str(gnupg), "--batch", "--passphrase", "",
@@ -145,7 +151,31 @@ with tempfile.TemporaryDirectory() as scratch:
             "--base", base, "--output", tmp / "remote-no-ca", status=6)
         signed = tmp / "signed"
         run("apt", "sync-signed", base, "stable", "main", "all", "--source", "debian",
-            "--keyring", keyring, "--output", signed, "--ca-file", tmp / "cert.pem")
+            "--keyring", keyring, "--output", signed, "--files",
+            "--ca-file", tmp / "cert.pem")
+        assert run("apt", "search", "/usr/share/fixture", "--file", "--catalog", signed) == (
+            "fixture /usr/share/fixture\n")
+        assert run("apt", "search", "/usr/share/fixture file", "--file", "--catalog",
+                   signed) == "fixture /usr/share/fixture file\n"
+        run("apt", "search", "/missing", "--file", "--catalog", signed, status=6)
+        run("apt", "search", "/usr/share/fixture", "--file", "--catalog", catalog, status=6)
+        good_contents = contents.read_bytes()
+        good_release = release.read_bytes()
+        good_signature = (release.parent / "Release.gpg").read_bytes()
+        contents.write_bytes(b"plain text, not gzip")
+        release.write_bytes(good_release.replace(
+            f" {hashlib.sha256(good_contents).hexdigest()} {len(good_contents)} main/Contents-all.gz".encode(),
+            f" {hashlib.sha256(contents.read_bytes()).hexdigest()} {contents.stat().st_size} main/Contents-all.gz".encode()))
+        subprocess.run(["gpg", "--homedir", str(gnupg), "--batch", "--yes",
+                        "--detach-sign", "--output", str(release.parent / "Release.gpg"),
+                        str(release)], capture_output=True, check=True)
+        run("apt", "sync-signed", base, "stable", "main", "all", "--source", "debian",
+            "--keyring", keyring, "--output", tmp / "bad-contents", "--files",
+            "--ca-file", tmp / "cert.pem", status=4)
+        assert not (tmp / "bad-contents").exists()
+        contents.write_bytes(good_contents)
+        release.write_bytes(good_release)
+        (release.parent / "Release.gpg").write_bytes(good_signature)
         assert "verification release-gpgv-user-key\n" in run(
             "apt", "info", "fixture", "--catalog", signed)
         missing_verifier = subprocess.run(
@@ -158,8 +188,10 @@ with tempfile.TemporaryDirectory() as scratch:
         assert "verification release-gpgv-user-key\n" in (signed_package / "selection").read_text()
         inline = tmp / "inline"
         run("apt", "sync-signed", base, "stable", "main", "all", "--source", "debian",
-            "--keyring", keyring, "--output", inline, "--inrelease",
+            "--keyring", keyring, "--output", inline, "--inrelease", "--files",
             "--ca-file", tmp / "cert.pem")
+        assert run("apt", "search", "/usr/share/fixture", "--catalog", inline,
+                   "--file") == "fixture /usr/share/fixture\n"
         assert "verification inrelease-gpgv-user-key\n" in run(
             "apt", "info", "fixture", "--catalog", inline)
         inline_package = tmp / "inline-package"
@@ -171,6 +203,15 @@ with tempfile.TemporaryDirectory() as scratch:
         (inline / "inrelease").write_bytes(inline_bytes + b"damage")
         run("apt", "search", "fixture", "--catalog", inline, status=2)
         (inline / "inrelease").write_bytes(inline_bytes)
+        file_bytes = (inline / "contents.gz").read_bytes()
+        (inline / "contents.gz").write_bytes(file_bytes + b"damage")
+        run("apt", "search", "fixture", "--catalog", inline, status=2)
+        (inline / "contents.gz").write_bytes(file_bytes)
+        file_proof = (inline / "file-proof").read_bytes()
+        (inline / "file-proof").write_bytes(file_proof.replace(
+            b"main/Contents-all.gz", b"other/Contents-all.gz"))
+        run("apt", "search", "fixture", "--catalog", inline, status=2)
+        (inline / "file-proof").write_bytes(file_proof)
         inline_release = (inline / "release").read_bytes()
         (inline / "release").write_bytes(b"unsigned\n")
         run("apt", "search", "fixture", "--catalog", inline, status=2)
@@ -275,10 +316,13 @@ with tempfile.TemporaryDirectory() as scratch:
         inline_bound = tmp / "inline-bound"
         run("apt", "sync-source", "debian", "stable", "main", "all",
             "--root", root, "--keyring", keyring, "--output", inline_bound,
-            "--ca-file", tmp / "cert.pem", "--inrelease")
+            "--ca-file", tmp / "cert.pem", "--inrelease", "--files")
         assert "verification inrelease-gpgv-user-key\n" in run(
             "apt", "info", "fixture", "--source", "debian", "--suite", "stable",
             "--component", "main", "--index-arch", "all", "--root", root)
+        assert run("apt", "search", "/usr/share/fixture", "--file", "--source", "debian",
+                   "--suite", "stable", "--component", "main", "--index-arch", "all",
+                   "--root", root) == "fixture /usr/share/fixture\n"
         run("apt", "bind", "debian", "stable", "main", "all", bound,
             "--root", root)
         assert "source-id " in bound_info

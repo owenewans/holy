@@ -107,7 +107,11 @@
   sync-source binds its catalog under the target database; source queries find
   that binding by suite, component and index architecture. Explicit
   --inrelease verifies clearsigned metadata through gpgv and rechecks it on
-  query/fetch. Solver integration and full hook integration remain open.
+  query/fetch. Optional --files fetches a signed Contents index and supports
+  exact path lookup, including source-bound catalogs. Coverage is marked
+  partial; an absent match stays unknown. It remains a hint until
+  the selected payload confirms the file. An inverted index, solver integration
+  and full hook integration remain open.
 
 - [x] Import local Slackware .txz/.tgz/.tbz/.tlz packages into native outputs.
   Preserve original bytes, filename identity/build tag, install/ metadata and

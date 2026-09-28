@@ -16,9 +16,9 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apt sync HTTPS_URL --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--ca-file FILE]
 .br
-.B holypkg apt sync-signed HTTPS_BASE/ SUITE COMPONENT ARCH --source NAME --keyring FILE --output NEW_DIRECTORY [--inrelease] [--ca-file FILE]
+.B holypkg apt sync-signed HTTPS_BASE/ SUITE COMPONENT ARCH --source NAME --keyring FILE --output NEW_DIRECTORY [--inrelease] [--files] [--ca-file FILE]
 .br
-.B holypkg apt sync-source ALIAS SUITE COMPONENT ARCH --root DIRECTORY --keyring FILE --output NEW_DIRECTORY [--inrelease] [--ca-file FILE]
+.B holypkg apt sync-source ALIAS SUITE COMPONENT ARCH --root DIRECTORY --keyring FILE --output NEW_DIRECTORY [--inrelease] [--files] [--ca-file FILE]
 .br
 .B holypkg apt bind ALIAS SUITE COMPONENT INDEX_ARCH CATALOG --root DIRECTORY
 .br
@@ -296,6 +296,12 @@ The catalog keeps InRelease, the extracted Release, the keyring and a proof
 record. Queries recheck the signature. Fetch receipts use
 verification=inrelease-gpgv-user-key. Selection is explicit; a failed
 InRelease fetch or signature does not fall back to detached Release.gpg.
+.B --files
+also downloads COMPONENT/Contents-ARCH.gz. Sync checks its signed Release
+SHA-256 and size, gzip stream and expanded size before publication. The
+catalog records the compressed file and its proof. Catalog reads recheck the
+file hash, retrieval time and partial coverage status. A missing signed
+Contents entry fails this requested sync.
 .B apt sync-source
 reads an active type apt source from the target-root registry. Its public-key
 is a binary OpenPGP keyring whose SHA-256 is frozen by source plan. The supplied
@@ -315,6 +321,12 @@ and
 read the catalog and recheck its original index digest. Search matches package
 name substrings; info requires an exact name and returns decision-required if
 several versions or architectures match.
+.B apt search /PATH --file
+looks up an exact file path in the verified Contents index and prints matching
+indexed package names. Without --files coverage is unavailable and status 6 is
+returned. An absent match in partial coverage is unknown and also returns 6.
+Contents is a source hint; the imported package payload must still
+be checked before a file requirement is satisfied.
 .B apt fetch
 selects an exact name, version and Debian architecture, downloads the listed
 Filename over HTTPS, and checks its SHA-256 and Size. The output retains the

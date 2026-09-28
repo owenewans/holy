@@ -21,6 +21,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <zlib.h>
 
 static int hex_hash(const char *value)
 {
@@ -124,6 +125,33 @@ done:
     if (input >= 0) close(input);
     if (output >= 0) close(output);
     if (!ok) unlink(target);
+    return ok;
+}
+
+static int valid_contents(const char *path)
+{
+    char bytes[65536];
+    unsigned char magic[2];
+    size_t total = 0;
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    gzFile input;
+    int got, status, ok = 0;
+    if (fd < 0) return 0;
+    if (read(fd, magic, sizeof magic) != (ssize_t)sizeof magic ||
+        magic[0] != 0x1f || magic[1] != 0x8b || lseek(fd, 0, SEEK_SET) < 0) {
+        close(fd); return 0;
+    }
+    input = gzdopen(fd, "rb");
+    if (!input) { close(fd); return 0; }
+    for (;;) {
+        got = gzread(input, bytes, sizeof bytes);
+        if (got < 0 || total > 512u * 1024u * 1024u - (size_t)got) break;
+        if (!got) { ok = total > 0; break; }
+        total += (size_t)got;
+    }
+    gzerror(input, &status);
+    if (status != Z_OK && status != Z_STREAM_END) ok = 0;
+    if (gzclose(input) != Z_OK) ok = 0;
     return ok;
 }
 
@@ -351,22 +379,79 @@ done:
     return result;
 }
 
+int holy_apt_verify_files(const char *catalog)
+{
+    char *proof = path_name(catalog, "file-proof"), *release_proof = NULL;
+    char *release = NULL, *contents = NULL;
+    char suite[129], path[1025], stated_hash[65], expected_hash[65], actual[65];
+    char package_path[1025], release_suite[129], component[129], arch[129];
+    char release_hash[65], key_hash[65], wanted[512], trailing;
+    unsigned long long stated_size, retrieved_at;
+    struct stat st;
+    FILE *file = NULL, *bound = NULL;
+    off_t expected_size, actual_size;
+    int fd, bound_fd = -1, result = -1;
+    if (!proof) return -1;
+    fd = open(proof, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0 && errno == ENOENT) { result = 0; goto done; }
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size > 2048) {
+        if (fd >= 0) close(fd);
+        goto done;
+    }
+    file = fdopen(fd, "r");
+    if (!file) { close(fd); goto done; }
+    if (fscanf(file, "suite %128s\nfile-index-path %1024s\nfile-index-sha256 %64s\nfile-index-size %llu\nfile-index-coverage partial\nretrieved-at %llu\n",
+               suite, path, stated_hash, &stated_size, &retrieved_at) != 5 ||
+        fgetc(file) != EOF || !retrieved_at ||
+        !segment(suite) || !hex_hash(stated_hash) || path[0] == '/' ||
+        !strchr(path, '/') || strstr(path, "..") || stated_size > 64ULL * 1024 * 1024)
+        goto done;
+    release_proof = path_name(catalog, "release-proof");
+    if (!release_proof ||
+        (bound_fd = open(release_proof, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)) < 0 ||
+        fstat(bound_fd, &st) || !S_ISREG(st.st_mode) || st.st_size > 2048 ||
+        !(bound = fdopen(bound_fd, "r")) ||
+        fscanf(bound, "release-sha256 %64s\nkey-sha256 %64s\nsuite %128s\nindex-path %1024s\n",
+               release_hash, key_hash, release_suite, package_path) != 4 ||
+        strcmp(suite, release_suite) ||
+        sscanf(package_path, "%128[^/]/binary-%128[^/]/Packages.gz%c",
+               component, arch, &trailing) != 2 ||
+        !segment(component) || !segment(arch) ||
+        snprintf(wanted, sizeof wanted, "%s/Contents-%s.gz", component, arch) >=
+        (int)sizeof wanted || strcmp(path, wanted)) goto done;
+    release = path_name(catalog, "release");
+    contents = path_name(catalog, "contents.gz");
+    if (!release || !contents ||
+        !release_entry(release, path, suite, expected_hash, &expected_size) ||
+        strcmp(stated_hash, expected_hash) || stated_size != (unsigned long long)expected_size ||
+        !hash_file(contents, actual, &actual_size, 64 * 1024 * 1024) ||
+        strcmp(actual, expected_hash) || actual_size != expected_size) goto done;
+    result = 1;
+done:
+    if (file) fclose(file);
+    if (bound) fclose(bound);
+    else if (bound_fd >= 0) close(bound_fd);
+    free(proof); free(release_proof); free(release); free(contents);
+    return result;
+}
+
 static int sync_release(const char *base, const char *suite,
                         const char *component, const char *arch,
                         const char *source, const char *keyring,
                         const char *output, const char *ca_file,
                         const char *root, const char *source_id,
                         const char *source_key, const char *source_trust,
-                        int inrelease)
+                        int inrelease, int files)
 {
     char *staging = NULL, *catalog = NULL, *key_copy = NULL;
     char *dists = NULL, *suite_url = NULL, *component_url = NULL, *arch_url = NULL;
-    char *release_url = NULL, *signature_url = NULL, *index_url = NULL;
-    char *release = NULL, *signature = NULL, *index = NULL, *target = NULL;
+    char *release_url = NULL, *signature_url = NULL, *index_url = NULL, *files_url = NULL;
+    char *release = NULL, *signature = NULL, *index = NULL, *contents = NULL, *target = NULL;
     char release_hash[65] = {0}, signature_hash[65] = {0}, index_hash[65] = {0};
-    char key_hash[65], expected_hash[65], relative[512], subdir[160];
+    char key_hash[65], expected_hash[65], files_hash[65] = {0};
+    char relative[512], files_relative[512], subdir[160], files_name[160];
     struct stat st;
-    off_t expected_size, actual_size;
+    off_t expected_size, actual_size, files_size = 0;
     FILE *proof = NULL;
     int dir = -1, parent_fd = -1, result = 1, published = 0;
     char *parent = NULL;
@@ -385,13 +470,18 @@ static int sync_release(const char *base, const char *suite,
     component_url = suite_url ? child_directory(suite_url, component) : NULL;
     if (snprintf(subdir, sizeof subdir, "binary-%s", arch) >= (int)sizeof subdir ||
         snprintf(relative, sizeof relative, "%s/%s/Packages.gz", component, subdir) >=
-        (int)sizeof relative) { result = 2; goto done; }
+        (int)sizeof relative ||
+        snprintf(files_name, sizeof files_name, "Contents-%s.gz", arch) >= (int)sizeof files_name ||
+        snprintf(files_relative, sizeof files_relative, "%s/%s", component, files_name) >=
+        (int)sizeof files_relative) { result = 2; goto done; }
     arch_url = component_url ? child_directory(component_url, subdir) : NULL;
     release_url = !inrelease && suite_url ? holy_fetch_child_url(suite_url, "Release") : NULL;
     signature_url = suite_url ? holy_fetch_child_url(suite_url,
                                    inrelease ? "InRelease" : "Release.gpg") : NULL;
     index_url = arch_url ? holy_fetch_child_url(arch_url, "Packages.gz") : NULL;
-    if (!index_url || (!inrelease && !release_url) || !signature_url) { result = 2; goto done; }
+    files_url = files && component_url ? holy_fetch_child_url(component_url, files_name) : NULL;
+    if (!index_url || (!inrelease && !release_url) || !signature_url ||
+        (files && !files_url)) { result = 2; goto done; }
     staging = malloc(strlen(output) + sizeof ".tmp-XXXXXX");
     if (!staging) goto done;
     sprintf(staging, "%s.tmp-XXXXXX", output);
@@ -423,6 +513,9 @@ static int sync_release(const char *base, const char *suite,
     if (!release_entry(release, relative, suite, expected_hash, &expected_size)) {
         result = 4; goto done;
     }
+    if (files && !release_entry(release, files_relative, suite, files_hash, &files_size)) {
+        result = 4; goto done;
+    }
     result = holy_fetch_https_foreign_limited(index_url, staging, ca_file,
                                               index_hash, 64 * 1024 * 1024);
     if (result) goto done;
@@ -430,6 +523,18 @@ static int sync_release(const char *base, const char *suite,
     if (!index || !hash_file(index, index_hash, &actual_size, 64 * 1024 * 1024) ||
         strcmp(index_hash, expected_hash) || actual_size != expected_size) {
         result = 4; goto done;
+    }
+    if (files) {
+        char received[65];
+        result = holy_fetch_https_foreign_limited(files_url, staging, ca_file,
+                                                  received, 64 * 1024 * 1024);
+        if (result) goto done;
+        contents = path_name(staging, received);
+        if (!contents || strcmp(received, files_hash) ||
+            !hash_file(contents, received, &actual_size, 64 * 1024 * 1024) ||
+            actual_size != files_size || !valid_contents(contents)) {
+            result = 4; goto done;
+        }
     }
     catalog = path_name(staging, "catalog");
     if (!catalog) { result = 1; goto done; }
@@ -458,6 +563,27 @@ static int sync_release(const char *base, const char *suite,
         int verified = holy_apt_verify_release(catalog, expected_hash);
         if (verified != (inrelease ? 2 : 1)) {
             result = verified == -2 ? 6 : 4; goto done;
+        }
+    }
+    if (files) {
+        time_t retrieved_at = time(NULL);
+        if (retrieved_at == (time_t)-1) { result = 1; goto done; }
+        free(target); target = path_name(catalog, "contents.gz");
+        if (!target || !copy_file(contents, target, 64 * 1024 * 1024)) {
+            result = 1; goto done;
+        }
+        free(target); target = path_name(catalog, "file-proof");
+        if (!target || !(proof = fopen(target, "wx"))) { result = 1; goto done; }
+        fprintf(proof, "suite %s\nfile-index-path %s\nfile-index-sha256 %s\nfile-index-size %lld\nfile-index-coverage partial\nretrieved-at %lld\n",
+                suite, files_relative, files_hash, (long long)files_size,
+                (long long)retrieved_at);
+        {
+            int failed = ferror(proof) || fflush(proof) || fsync(fileno(proof));
+            if (fclose(proof)) failed = 1;
+            proof = NULL;
+            if (failed || holy_apt_verify_files(catalog) != 1) {
+                result = 4; goto done;
+            }
         }
     }
     if (source_id) {
@@ -507,7 +633,7 @@ done:
     if (parent_fd >= 0) close(parent_fd);
     if (!published && catalog) {
         const char *files[] = {"original", "conversion", "release", "release.gpg",
-                               "inrelease", "keyring", "release-proof"};
+                               "inrelease", "keyring", "release-proof", "contents.gz", "file-proof"};
         size_t i;
         for (i = 0; i < sizeof files / sizeof files[0]; ++i) {
             char *name = path_name(catalog, files[i]);
@@ -518,11 +644,12 @@ done:
     if (release) unlink(release);
     if (signature) unlink(signature);
     if (index) unlink(index);
+    if (contents) unlink(contents);
     if (staging) rmdir(staging);
     if (key_copy) { unlink(key_copy); free(key_copy); }
     free(parent); free(staging); free(catalog); free(dists); free(suite_url); free(component_url);
-    free(arch_url); free(release_url); free(signature_url); free(index_url);
-    free(release); free(signature); free(index); free(target);
+    free(arch_url); free(release_url); free(signature_url); free(index_url); free(files_url);
+    free(release); free(signature); free(index); free(contents); free(target);
     if (result) fprintf(stderr, "holypkg: APT signed sync failed (status %d)\n", result);
     return result;
 }
@@ -530,17 +657,18 @@ done:
 int holy_apt_release_sync(const char *base, const char *suite,
                           const char *component, const char *arch,
                           const char *source, const char *keyring,
-                          const char *output, const char *ca_file, int inrelease)
+                          const char *output, const char *ca_file, int inrelease,
+                          int files)
 {
     return sync_release(base, suite, component, arch, source, keyring,
-                        output, ca_file, NULL, NULL, NULL, NULL, inrelease);
+                        output, ca_file, NULL, NULL, NULL, NULL, inrelease, files);
 }
 
 int holy_apt_release_sync_source(const char *root, const char *alias,
                                  const char *suite, const char *component,
                                  const char *arch, const char *keyring,
                                  const char *output, const char *ca_file,
-                                 int inrelease)
+                                 int inrelease, int files)
 {
     char id[65], key[65], actual[65];
     char *base = NULL, *trust = NULL, *snapshot = NULL;
@@ -552,7 +680,7 @@ int holy_apt_release_sync_source(const char *root, const char *alias,
     }
     if (strcmp(key, actual)) { result = 4; goto done; }
     result = sync_release(base, suite, component, arch, alias, snapshot,
-                          output, ca_file, root, id, key, trust, inrelease);
+                          output, ca_file, root, id, key, trust, inrelease, files);
 done:
     if (snapshot) { unlink(snapshot); free(snapshot); }
     free(base); free(trust);

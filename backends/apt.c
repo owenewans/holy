@@ -25,6 +25,7 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <zlib.h>
 
 #define APT_INDEX_LIMIT (64u * 1024u * 1024u)
 
@@ -472,6 +473,7 @@ static int read_catalog(const char *catalog, struct apt_index *index)
     index->release_verified = holy_apt_verify_release(catalog, index->hash);
     if (index->release_verified == -2) { status = 6; goto done; }
     if (index->release_verified < 0 || (release_required && !index->release_verified)) goto done;
+    if (holy_apt_verify_files(catalog) < 0) goto done;
     status = 0;
 done:
     if (record) fclose(record);
@@ -504,7 +506,77 @@ done:
     return result;
 }
 
-int holy_apt_query(const char *catalog, const char *query, int info,
+static int file_query(const char *catalog, const struct apt_index *index,
+                      const char *query)
+{
+    char *path = NULL, line[65536], **found = NULL;
+    const char *wanted = query[0] == '/' ? query + 1 : query;
+    gzFile gz = NULL;
+    size_t bytes = 0, matches = 0, i;
+    int result = 2, code = Z_OK;
+    if (!*wanted) return 2;
+    if (holy_apt_verify_files(catalog) != 1) {
+        fputs("holypkg: APT file index coverage unavailable\n", stderr);
+        return 6;
+    }
+    path = malloc(strlen(catalog) + sizeof "/contents.gz");
+    if (!path) return 1;
+    sprintf(path, "%s/contents.gz", catalog);
+    {
+        int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (fd < 0) goto done;
+        gz = gzdopen(fd, "rb");
+        if (!gz) { close(fd); goto done; }
+    }
+    while (gzgets(gz, line, sizeof line)) {
+        char *end = strrchr(line, '\n'), *location, *name;
+        size_t length = strlen(line);
+        if (!end || length > sizeof line - 2 || bytes > 512u * 1024u * 1024u - length)
+            goto done;
+        bytes += length;
+        *end = 0;
+        location = line + strlen(line);
+        while (location > line && location[-1] != ' ' && location[-1] != '\t') --location;
+        if (location == line) continue;
+        name = location;
+        while (name > line && (name[-1] == ' ' || name[-1] == '\t')) --name;
+        *name = 0;
+        if (strcmp(line, wanted)) continue;
+        for (name = strtok(location, ","); name; name = strtok(NULL, ",")) {
+            char *slash = strrchr(name, '/');
+            const char *package = slash ? slash + 1 : name;
+            if (!token(package)) continue;
+            for (i = 0; i < index->count; ++i)
+                if (!strcmp(index->entries[i].name, package)) break;
+            if (i == index->count) continue;
+            for (i = 0; i < matches; ++i) if (!strcmp(found[i], package)) break;
+            if (i == matches) {
+                char **next;
+                if (matches == 100000) { result = 6; goto done; }
+                next = realloc(found, (matches + 1) * sizeof *next);
+                if (!next) { result = 1; goto done; }
+                found = next;
+                found[matches] = strdup(package);
+                if (!found[matches]) { result = 1; goto done; }
+                ++matches;
+            }
+        }
+    }
+    gzerror(gz, &code);
+    if (code != Z_OK && code != Z_STREAM_END) goto done;
+    result = matches ? 0 : 6;
+done:
+    if (gz && gzclose(gz) != Z_OK) result = 2;
+    if (result == 6 && !matches)
+        fputs("holypkg: no match in partial APT file index; absence is unknown\n", stderr);
+    if (!result) for (i = 0; i < matches; ++i) printf("%s /%s\n", found[i], wanted);
+    for (i = 0; i < matches; ++i) free(found[i]);
+    free(found);
+    free(path);
+    return result;
+}
+
+int holy_apt_query(const char *catalog, const char *query, int info, int file_search,
                    const char *root, const char *source)
 {
     struct apt_index index = {0};
@@ -515,6 +587,7 @@ int holy_apt_query(const char *catalog, const char *query, int info,
     if (result) goto done;
     result = check_source(catalog, &index, root, source);
     if (result) goto done;
+    if (file_search) { result = file_query(catalog, &index, query); goto done; }
     for (i = 0; i < index.count; ++i) {
         const struct apt_entry *e = &index.entries[i];
         if (info ? strcmp(e->name, query) : !strstr(e->name, query)) continue;
