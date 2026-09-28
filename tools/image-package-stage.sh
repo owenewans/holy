@@ -12,6 +12,7 @@ case "$arch" in x86_64|i686) ;; *) exit 2 ;; esac
 additional_index=0
 : > "$work/additional-packages"
 : > "$work/source-artifacts"
+: > "$work/core-roots"
 : > "$work/requested-sources"
 scan_kind=
 scan_alias=
@@ -22,10 +23,12 @@ for token do
         package)
             printf '%s %s\n' "$scan_alias" "$token" >> "$work/requested-sources"
             scan_kind= ;;
+        core_role) scan_kind=alias ;;
         *)
             case "$token" in
                 --local) scan_kind=local ;;
                 --source) scan_kind=alias ;;
+                --core) scan_kind=core_role ;;
                 *) exit 2 ;;
             esac ;;
     esac
@@ -74,7 +77,14 @@ while test "$#" -gt 0; do
             test "$#" -ge 2 || exit 2
             add_image_package "$2"
             shift 2 ;;
-        --source)
+        --source|--core)
+            kind=$1
+            if test "$kind" = --core; then
+                test "$#" -ge 4 || exit 2
+                role=$2
+                case "$role" in busybox|dinit|mdevd|glibc|musl) ;; *) exit 2 ;; esac
+                shift
+            fi
             test "$#" -ge 3 && test -f "$work/source-list" || exit 2
             alias=$2
             package_name=$3
@@ -98,6 +108,12 @@ while test "$#" -gt 0; do
                 done < "$work/requested-sources"
                 "$@"
             ) > "$work/solve-$alias-$package_name.record"
+            if test "$kind" = --core; then
+                root_digest=$(awk '$1 == "plan-set" && $4 == "root" {print $5}' \
+                    "$work/solve-$alias-$package_name.record")
+                test "${#root_digest}" -eq 64 || exit 6
+                printf '%s %s %s\n' "$role" "$root_digest" "$source_id" >> "$work/core-roots"
+            fi
             awk '$1 == "selected" {print $2}' \
                 "$work/solve-$alias-$package_name.record" > "$work/selected"
             test -s "$work/selected" || exit 6
@@ -107,10 +123,6 @@ while test "$#" -gt 0; do
                     '$1 == "binding" && $2 == hash && $3 == "source" {print $4}' \
                     "$work/solve-$alias-$package_name.record")
                 test "${#selected_source}" -eq 64 || exit 6
-                selected_alias=$(awk -v id="$selected_source" \
-                    '$1 == "source" && $2 == id && $4 == "active" {gsub(/"/, "", $3); print $3}' \
-                    "$work/source-list")
-                test -n "$selected_alias" || exit 6
                 existing=$(awk -v hash="$digest" '$1 == hash {print $2}' "$work/source-artifacts")
                 if test -n "$existing"; then
                     test "$existing" = "$selected_source" || {
@@ -119,16 +131,35 @@ while test "$#" -gt 0; do
                     }
                     continue
                 fi
-                mkdir "$work/fetch-$digest"
-                "$bin" repo fetch "$out/mirrors/$selected_alias" "$digest" \
-                    --output "$work/fetch-$digest" > "$work/fetch-$digest.record"
-                input="$work/fetch-$digest/$digest.holy"
-                test "$(cat "$work/fetch-$digest.record")" = "$input" || exit 6
-                test -f "$input" || exit 6
-                add_image_package "$input" "$selected_source"
                 printf '%s %s\n' "$digest" "$selected_source" >> "$work/source-artifacts"
             done < "$work/selected" ;;
         *) exit 2 ;;
     esac
 done
+while read -r digest selected_source; do
+    selected_alias=$(awk -v id="$selected_source" \
+        '$1 == "source" && $2 == id && $4 == "active" {gsub(/"/, "", $3); print $3}' \
+        "$work/source-list")
+    test -n "$selected_alias" || exit 6
+    mkdir "$work/fetch-$digest"
+    "$bin" repo fetch "$out/mirrors/$selected_alias" "$digest" \
+        --output "$work/fetch-$digest" > "$work/fetch-$digest.record"
+    input="$work/fetch-$digest/$digest.holy"
+    test "$(cat "$work/fetch-$digest.record")" = "$input" && test -f "$input" || exit 6
+    roles=$(awk -v hash="$digest" '$2 == hash {print $1}' "$work/core-roots")
+    if test -n "$roles"; then
+        test "$(printf '%s\n' "$roles" | wc -l)" -eq 1 || {
+            echo "artifact $digest selected for multiple core roles" >&2
+            exit 4
+        }
+        role=$roles
+        root_source=$(awk -v hash="$digest" '$2 == hash {print $3}' "$work/core-roots")
+        test "$root_source" = "$selected_source" || exit 4
+        cp "$input" "$work/core-$role.holy"
+        printf '%s %s\n' "$role" "$selected_source" >> "$work/add-sources"
+        printf 'core-input %s %s %s\n' "$role" "$digest" "$selected_source" >> "$record"
+    else
+        add_image_package "$input" "$selected_source"
+    fi
+done < "$work/source-artifacts"
 printf '\n' >> "$work/additional-packages"

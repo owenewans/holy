@@ -391,10 +391,13 @@ static int parse(const char *path)
         char *alias;
         if (strcmp(options[i].section, "packages") || !options[i].value) continue;
         alias = reference_alias(options[i].value);
-        if (alias) {
+        if (alias && (!source_for(alias) ||
+                      (!strcmp(options[i].key, "doas") ||
+                       !strcmp(options[i].key, "storage-tools")))) {
             free(alias);
-            return die(path, 0, "boot core packages require local paths; use add for source refs");
+            return die(path, 0, "package source reference is unknown or unsupported");
         }
+        free(alias);
     }
     for (i = 0; i < additional_count; ++i) {
         char *alias = reference_alias(additional[i]);
@@ -677,6 +680,10 @@ int main(int argc, char **argv)
                get("image", "output"));
         for (i = 0; i < additional_count; ++i)
             printf("add %s\n", additional[i]);
+        for (i = 0; i < sizeof options / sizeof options[0]; ++i)
+            if (!strcmp(options[i].section, "packages") && options[i].value &&
+                strchr(options[i].value, ':'))
+                printf("core %s %s\n", options[i].key, options[i].value);
         for (i = 0; i < source_count; ++i)
             printf("source %s index %s\n", sources[i].alias, sources[i].index);
         remove_source_inputs(source_dir); free(effective); free(source_dir); free(config);
@@ -709,10 +716,10 @@ int main(int argc, char **argv)
         perror("setenv"); remove_source_inputs(source_dir); free(source_dir);
         free(effective); free(config); return 1;
     }
-    if (additional_count > (((size_t)-1 / sizeof(*command)) - 13) / 3) {
+    if (additional_count > (((size_t)-1 / sizeof(*command)) - 33) / 3) {
         remove_source_inputs(source_dir); free(effective); free(source_dir); free(config); return 2;
     }
-    command = calloc(13 + additional_count * 3, sizeof(*command));
+    command = calloc(33 + additional_count * 3, sizeof(*command));
     if (!command) {
         remove_source_inputs(source_dir); free(effective); free(source_dir); free(config); return 1;
     }
@@ -729,6 +736,18 @@ int main(int argc, char **argv)
     command[10] = (char *)get("image", "limine-dir");
     command[11] = (char *)get("image", "output");
     used = 12;
+    for (i = 0; i < sizeof options / sizeof options[0]; ++i) {
+        char *alias;
+        if (strcmp(options[i].section, "packages") || !options[i].value) continue;
+        if (!strcmp(options[i].key, "doas") ||
+            !strcmp(options[i].key, "storage-tools")) continue;
+        alias = reference_alias(options[i].value);
+        if (!alias) continue;
+        command[used++] = "--core";
+        command[used++] = (char *)options[i].key;
+        command[used++] = alias;
+        command[used++] = strchr(options[i].value, ':') + 1;
+    }
     for (i = 0; i < additional_count; ++i) {
         char *alias = reference_alias(additional[i]);
         if (alias) {
@@ -750,8 +769,10 @@ int main(int argc, char **argv)
         perror("sh"); _exit(1);
     }
     do { rc = waitpid(child, &status, 0); } while (rc < 0 && errno == EINTR);
-    for (i = 12; i < used; ++i)
+    for (i = 12; i < used; ++i) {
         if (!strcmp(command[i], "--source")) free(command[++i]);
+        else if (!strcmp(command[i], "--core")) { ++i; free(command[++i]); }
+    }
     free(command);
     remove_source_inputs(source_dir);
     free(effective);

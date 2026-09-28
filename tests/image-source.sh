@@ -18,6 +18,10 @@ mv "$tmp/tree/HOLY/helper-meta" "$tmp/tree/HOLY/meta"
 : > "$tmp/tree/HOLY/deps"
 tar -cf "$tmp/helper.tar" -C "$tmp/tree" HOLY DATA
 lz4 -q "$tmp/helper.tar" "$tmp/repo/helper.holy"
+sed 's/name helper/name busybox/' "$tmp/tree/HOLY/meta" > "$tmp/tree/HOLY/busybox-meta"
+mv "$tmp/tree/HOLY/busybox-meta" "$tmp/tree/HOLY/meta"
+tar -cf "$tmp/busybox.tar" -C "$tmp/tree" HOLY DATA
+lz4 -q "$tmp/busybox.tar" "$tmp/repo/busybox.holy"
 "$bin" repo index "$tmp/repo" > "$tmp/result"
 "$bin" repo seal "$tmp/repo" > "$tmp/result"
 index=$(sed -n 's/^sha256 //p' "$tmp/repo/current")
@@ -68,6 +72,9 @@ EOF
 ./holygetiso --check "$tmp/image.conf" > "$tmp/result"
 grep -qx "source fixture index $index" "$tmp/result"
 grep -qx 'add fixture:fixture' "$tmp/result"
+sed "s@busybox \"$tmp/busybox\"@busybox fixture:busybox@" "$tmp/image.conf" > "$tmp/core-image.conf"
+./holygetiso --check "$tmp/core-image.conf" > "$tmp/result"
+grep -qx 'core busybox fixture:busybox' "$tmp/result"
 grep -Fxq "output $tmp/config-parts/../output" "$tmp/result"
 config_hash=$(sed -n 's/^config-sha256 //p' "$tmp/result")
 sed 's/boot-test build-only/boot-test required/' "$tmp/config-parts/image.conf" \
@@ -129,6 +136,17 @@ done
     --holypkg "$bin" > "$tmp/result"
 ./holyinstall --apply "$tmp/image-install.plan" --holypkg "$bin" > "$tmp/result"
 "$bin" db check --all --root "$tmp/image-root" > "$tmp/result"
+mkdir -p "$tmp/core-root" "$tmp/core-image/inputs" "$tmp/core-image/packages" "$tmp/core-image/work"
+: > "$tmp/core-image/build.record"
+"$bin" db init --root "$tmp/core-root" > "$tmp/result"
+sh tools/image-source-stage.sh "$bin" "$tmp/core-root" "$tmp/core-image" "$tmp/source-input"
+sh tools/image-package-stage.sh "$bin" "$tmp/core-image" x86_64 \
+    --core busybox fixture busybox --source fixture fixture
+test -f "$tmp/core-image/work/core-busybox.holy"
+cmp "$tmp/core-image/work/core-busybox.holy" "$tmp/repo/busybox.holy"
+test "$(wc -w < "$tmp/core-image/work/additional-packages")" -eq 2
+grep -qx "busybox $source_id" "$tmp/core-image/work/add-sources"
+test ! -f "$tmp/core-image/packages/add-0003.holy"
 mkdir -p "$tmp/cross-fixture" "$tmp/cross-other" "$tmp/cross-root" \
     "$tmp/cross-image/work" "$tmp/cross-image/inputs" \
     "$tmp/cross-image/packages" "$tmp/cross-image/mirrors"

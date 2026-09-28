@@ -634,6 +634,12 @@
   private dracut sysroot and Limine. Audit initramfs payloads against the installed
   root and reject dynamic ELF. Boot with dinit as PID 1, BusyBox, mdevd/coldplug
   and a local package install/check/remove in QEMU.
+- [x] Select BusyBox, dinit, mdevd, glibc and musl from a pinned native source
+  during image construction. Record each original hash and source ID, normalize
+  the selected core packages, and preserve the source binding when the guest
+  reinstalls libc from cache. The source-stage fixture and x86_64 two-boot
+  ext4 QEMU contract pass. These inputs came from a disposable local catalog;
+  a public Holy repository and i686 source-backed image remain open.
 - [x] Extend that RAM profile with both dynamic libc packages and separate
   C probes. Boot present, glibc-missing, musl-missing and both-missing images
   under BIOS/TCG and UEFI/TCG. Restore absent payloads and loader links from

@@ -17,9 +17,12 @@ bin=$(realpath "$1")
 static=$(realpath "$2")
 installer=$(realpath "${STATIC_HOLYINSTALL:?STATIC_HOLYINSTALL required}")
 cc=$(realpath "$3")
-busybox=$(realpath "$4")
-dinit=$(realpath "$5")
-mdevd=$(realpath "$6")
+core_input() {
+    case "$1" in *:*) printf '%s\n' "$1" ;; *) realpath "$1" ;; esac
+}
+busybox=$(core_input "$4")
+dinit=$(core_input "$5")
+mdevd=$(core_input "$6")
 kernel=$(realpath "$7")
 version=$8
 limine_dir=$(realpath "$9")
@@ -114,11 +117,11 @@ install_doas=
 case "$profile:$boot_state" in
     static-core:present) ;;
     dual-libc:present|dual-libc:glibc|dual-libc:musl|dual-libc:both|dual-libc:remove-both)
-        glibc=$(realpath "${GLIBC_PACKAGE:?GLIBC_PACKAGE required}")
-        musl=$(realpath "${MUSL_PACKAGE:?MUSL_PACKAGE required}")
+        glibc=$(core_input "${GLIBC_PACKAGE:?GLIBC_PACKAGE required}")
+        musl=$(core_input "${MUSL_PACKAGE:?MUSL_PACKAGE required}")
         glibc_cc=$(command -v "${GLIBC_CC:-gcc}")
         musl_cc=$(realpath "${MUSL_CC:?MUSL_CC required}")
-        test -f "$glibc" && test -f "$musl" && test -x "$musl_cc" || exit 6
+        test -x "$musl_cc" || exit 6
         command -v patchelf >/dev/null || exit 6
         extra_packages='glibc musl probe-glibc probe-musl'
         ;;
@@ -218,6 +221,21 @@ pack() {
     rm -rf "$tree"
 }
 sh "$project/tools/image-package-stage.sh" "$bin" "$out" "$arch" "$@"
+for role in busybox dinit mdevd glibc musl; do
+    if test -f "$work/core-$role.holy"; then
+        case "$role" in
+            busybox) busybox="$work/core-$role.holy" ;;
+            dinit) dinit="$work/core-$role.holy" ;;
+            mdevd) mdevd="$work/core-$role.holy" ;;
+            glibc) glibc="$work/core-$role.holy" ;;
+            musl) musl="$work/core-$role.holy" ;;
+        esac
+    fi
+done
+test -f "$busybox" && test -f "$dinit" && test -f "$mdevd" || exit 6
+if test "$profile" = dual-libc; then
+    test -f "$glibc" && test -f "$musl" || exit 6
+fi
 additional_packages=$(cat "$work/additional-packages")
 for name in busybox dinit mdevd $extra_packages; do
     case "$name" in
@@ -375,6 +393,10 @@ if test "$profile" = dual-libc; then
     for name in $extra_packages; do
         hash=$(sha256sum "$out/packages/$name.holy")
         printf '%s\n' "${hash%% *}" > "$tree/DATA/etc/holy/$name.sha256"
+        source_id=$(awk -v label="$name" '$1 == label {print $2}' "$work/add-sources")
+        if test -n "$source_id"; then
+            printf '%s\n' "$source_id" > "$tree/DATA/etc/holy/$name.source-id"
+        fi
     done
 fi
 printf 'root:x:0:0:root:/root:/bin/sh\n' > "$tree/DATA/etc/passwd"

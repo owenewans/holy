@@ -10,7 +10,7 @@ holygetiso \- build and boot-test a Holy image from explicit local inputs
 .I IMAGE_OUTPUT DIRECTORY
 .SH DESCRIPTION
 The current command drives the repository's bootstrap-image builder. Run it
-from the Holy source directory after make. It accepts local core inputs and
+from the Holy source directory after make. It accepts local or pinned-source core inputs and
 pinned native source packages for additional applications. It rejects unknown sections, keys,
 duplicate scalar keys, missing input paths and malformed quoting. It uses the
 holy.conf lexer; configuration text is not executed by a shell. A top-level
@@ -66,9 +66,11 @@ catalogs in a temporary root, then copies selected .holy artifacts into inputs
 and binds each source ID in holyinstall's frozen set plan. A unique exact
 provider can come from another source. Other explicit "add ALIAS:PACKAGE"
 entries become candidates for the current package; unresolved ambiguity stops
-the build. Boot core package fields still require local
-artifacts because the builder normalizes those artifacts into new unsigned
-Holy packages. Added packages must target the image architecture or noarch; x86 packages are
+the build. The busybox, dinit, mdevd, glibc and musl fields accept local
+artifacts or ALIAS:PACKAGE from a pinned source. The builder records the
+source ID and original digest, then normalizes each core artifact into a new
+unsigned Holy package. Doas and storage-tools fields require local artifacts.
+Added packages must target the image architecture or noarch; x86 packages are
 also accepted in an x86_64 image. Duplicate package names fail before plan
 generation. The package manager checks payload ownership and dependencies.
 .TP
@@ -128,7 +130,7 @@ pinned mirror bound. The resolver can select a unique exact provider from
 another source. Explicitly listed packages from other sources become
 candidate providers; unresolved ambiguity stops the build. The builder copies
 only selected artifacts and their source IDs into the final install plan.
-Boot core inputs remain local. Full package policy and a portable export of
+Boot core packages may come from a pinned native source. Full package policy and a portable export of
 build tools remain open. The command stays in-tree while the source checkout
 provides build tools and profiles.
 .SH SEE ALSO

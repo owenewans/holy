@@ -155,10 +155,16 @@ if test "$profile" = dual-libc; then
                 $pkg info "local:/var/cache/holypkg/objects/sha256/$digest.holy" > /run/libc-info
                 $bb grep -qx "libc $abi" /run/libc-info
                 if test "$state" = removed-both; then
-                    $pkg db plan-set "$digest" --root / > /run/libc-plan
+                    set --
+                    if test -f "/etc/holy/$abi.source-id"; then
+                        source_id=$($bb cat "/etc/holy/$abi.source-id")
+                        test "${#source_id}" -eq 64
+                        set -- --source "$digest=$source_id"
+                    fi
+                    $pkg db plan-set "$digest" "$@" --root / > /run/libc-plan
                     hash=$($bb sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' /run/libc-plan)
                     test "${#hash}" -eq 64
-                    $pkg db apply-set "$hash" "$digest" --root / > /run/libc-repair
+                    $pkg db apply-set "$hash" "$digest" "$@" --root / > /run/libc-repair
                     echo "HOLY-BOOT-1 reinstalled-libc $abi"
                 else
                     $pkg db repair-plan "$digest" --root / > /run/libc-plan
