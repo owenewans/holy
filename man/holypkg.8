@@ -100,6 +100,10 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg cache verify SHA256 --root DIRECTORY
 .br
+.B holypkg cache list --root DIRECTORY
+.br
+.B holypkg cache clean SHA256 --root DIRECTORY [--yes]
+.br
 .B holypkg db init --root DIRECTORY
 .br
 .B holypkg db status --root DIRECTORY
@@ -1479,6 +1483,16 @@ target-root directory chain, stages a private snapshot and checks the digest,
 payload, known ELF ABI facts and supported requirements. It reports the
 verified name, arch and libc. It does not mutate the cache or prove that
 other package dependencies can be satisfied.
+.B cache list
+reads SHA-256 objects in name order and reports size and current installed-slot
+status. It requires an intact database and does not verify payload bytes.
+.B cache clean SHA256
+prints a read-only deletion preview. --yes removes the exact object after
+rechecking it under the database writer lock and cache lock. Installed artifacts
+and hashes found in retained transaction records are protected. An incomplete
+transaction blocks deletion. Unknown cache entries, unsafe file types and
+transaction records too large to inspect cause an error instead of deletion.
+The command does not remove installed files or rewrite transaction history.
 .PP
 Database init creates an empty ROOT/var/lib/holypkg with installed,
 transactions and index directories, and a generation file containing 0.

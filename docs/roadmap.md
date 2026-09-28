@@ -181,6 +181,11 @@
   after injected write failure. Resolve installed `SOURCE:PACKAGE` for plan and
   apply; expose exact path ownership through `owner`. General reinstall and
   config merge remain open.
+- [x] List native cache objects and require an explicit `cache clean SHA256 --yes`
+  before deleting an unreferenced object. Hold database/cache locks, protect
+  installed instances and hashes retained in transaction records, and reject
+  incomplete transactions. Per-object unavailable markers and rollback-aware
+  forced deletion remain open.
 - [x] Discover installed providers through package names and literal ELF paths;
   scan cached archives of the resulting candidate closure. Reuse intact version-2/3
   instances without changing their state, reason, graph or payload. Bind reused

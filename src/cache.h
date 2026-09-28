@@ -12,5 +12,9 @@ int holy_cache_verify(const char *digest, const char *root_path);
 int holy_cache_object(const char *digest, const char *root_path);
 /* returns a verified private snapshot; caller must unlink and free it. */
 char *holy_cache_snapshot(const char *digest, const char *root_path);
+/* lists cached native objects and whether an installed slot uses each one. */
+int holy_cache_list(const char *root_path);
+/* previews or confirms removal of one object after database reference checks. */
+int holy_cache_clean(const char *digest, const char *root_path, int yes);
 
 #endif

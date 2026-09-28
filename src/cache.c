@@ -7,13 +7,17 @@
 #include "stage.h"
 #include "verify.h"
 #include "provides.h"
+#include "state.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/file.h>
 #include <unistd.h>
 
 static int cache_directory(const char *root_path, int create)
@@ -64,7 +68,7 @@ int holy_cache_stage_local_digest(const char *source, const char *root_path,
         !holy_provides_local(snapshot, 0) ||
         !holy_package_identity(snapshot, &identity)) goto done;
     current = cache_directory(root_path, 1);
-    if (current < 0) goto done;
+    if (current < 0 || flock(current, LOCK_EX)) goto done;
     if (!holy_fetch_at(snapshot, current, identity.digest, name) ||
         fstatat(current, name, &st, AT_SYMLINK_NOFOLLOW) ||
         !S_ISREG(st.st_mode) || st.st_uid != geteuid() ||
@@ -142,4 +146,183 @@ int holy_cache_verify(const char *digest, const char *root_path)
 int holy_cache_object(const char *digest, const char *root_path)
 {
     return verify_object(digest, root_path, 0);
+}
+
+static int cache_name(const char *name)
+{
+    size_t i;
+    if (strlen(name) != 69 || strcmp(name + 64, ".holy")) return 0;
+    for (i = 0; i < 64; ++i)
+        if (!((name[i] >= '0' && name[i] <= '9') ||
+              (name[i] >= 'a' && name[i] <= 'f'))) return 0;
+    return 1;
+}
+
+static int name_order(const void *left, const void *right)
+{
+    const char *const *a = left, *const *b = right;
+    return strcmp(*a, *b);
+}
+
+static int cache_names(int dir, char ***output, size_t *count)
+{
+    DIR *list = NULL;
+    struct dirent *entry;
+    char **names = NULL;
+    size_t used = 0;
+    int ok = 0;
+    *output = NULL; *count = 0;
+    list = fdopendir(dup(dir));
+    if (!list) return 0;
+    errno = 0;
+    while ((entry = readdir(list))) {
+        struct stat st;
+        char **grown;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        if (!cache_name(entry->d_name) || used == 100000 ||
+            fstatat(dir, entry->d_name, &st, AT_SYMLINK_NOFOLLOW) ||
+            !S_ISREG(st.st_mode) || (st.st_mode & 0022)) goto done;
+        grown = realloc(names, (used + 1) * sizeof *grown);
+        if (!grown) goto done;
+        names = grown;
+        names[used] = strdup(entry->d_name);
+        if (!names[used]) goto done;
+        ++used;
+        errno = 0;
+    }
+    if (errno) goto done;
+    qsort(names, used, sizeof *names, name_order);
+    *output = names; *count = used; names = NULL; used = 0;
+    ok = 1;
+done:
+    while (used) free(names[--used]);
+    free(names);
+    closedir(list);
+    return ok;
+}
+
+static int transaction_refs(int dir, const char *digest, unsigned depth)
+{
+    DIR *list;
+    struct dirent *entry;
+    int result = 0;
+    if (depth > 4 || (list = fdopendir(dup(dir))) == NULL) return -1;
+    errno = 0;
+    while ((entry = readdir(list))) {
+        struct stat st;
+        int fd;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        if (strstr(entry->d_name, digest)) { result = 1; break; }
+        if (fstatat(dir, entry->d_name, &st, AT_SYMLINK_NOFOLLOW) ||
+            (st.st_mode & 0022)) { result = -1; break; }
+        if (S_ISDIR(st.st_mode)) {
+            fd = openat(dir, entry->d_name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+            if (fd < 0) { result = -1; break; }
+            result = transaction_refs(fd, digest, depth + 1);
+            close(fd);
+        } else if (S_ISREG(st.st_mode) && st.st_size <= 4 * 1024 * 1024) {
+            char buffer[4096 + 63];
+            ssize_t got;
+            size_t carry = 0, i;
+            fd = openat(dir, entry->d_name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+            if (fd < 0) { result = -1; break; }
+            while ((got = read(fd, buffer + carry, 4096)) > 0) {
+                size_t length = carry + (size_t)got;
+                for (i = 0; i + 64 <= length; ++i)
+                    if (!memcmp(buffer + i, digest, 64)) { result = 1; break; }
+                if (result) break;
+                carry = length < 63 ? length : 63;
+                memmove(buffer, buffer + length - carry, carry);
+            }
+            if (got < 0) result = -1;
+            close(fd);
+        } else result = -1;
+        if (result) break;
+        errno = 0;
+    }
+    if (!entry && errno) result = -1;
+    closedir(list);
+    return result;
+}
+
+int holy_cache_list(const char *root_path)
+{
+    char **names = NULL;
+    size_t count = 0, i;
+    unsigned long long generation;
+    int status = 1, state = -1, installed = -1, cache = -1, result = 1;
+    state = holy_state_lock(root_path, 0, &generation, &status);
+    if (state < 0) return status;
+    installed = openat(state, "installed", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    cache = cache_directory(root_path, 0);
+    if (installed < 0 || cache < 0 || flock(cache, LOCK_SH) ||
+        !cache_names(cache, &names, &count)) goto done;
+    for (i = 0; i < count; ++i) {
+        struct stat st, used;
+        char digest[65];
+        memcpy(digest, names[i], 64); digest[64] = 0;
+        if (fstatat(cache, names[i], &st, AT_SYMLINK_NOFOLLOW) || !S_ISREG(st.st_mode)) goto done;
+        if (!fstatat(installed, digest, &used, AT_SYMLINK_NOFOLLOW)) {
+            if (!S_ISDIR(used.st_mode)) goto done;
+            printf("cache %s size %ju installed\n", digest, (uintmax_t)st.st_size);
+        } else if (errno == ENOENT)
+            printf("cache %s size %ju retained\n", digest, (uintmax_t)st.st_size);
+        else goto done;
+    }
+    result = ferror(stdout) ? 1 : 0;
+done:
+    for (i = 0; i < count; ++i) free(names[i]);
+    free(names);
+    if (cache >= 0) close(cache);
+    if (installed >= 0) close(installed);
+    if (state >= 0) close(state);
+    return result;
+}
+
+int holy_cache_clean(const char *digest, const char *root_path, int yes)
+{
+    char name[70];
+    struct stat st, installed_st;
+    unsigned long long generation;
+    int status = 1, state = -1, installed = -1, transactions = -1;
+    int cache = -1, result = 1, refs;
+    if (!digest || strlen(digest) != 64) return 2;
+    snprintf(name, sizeof name, "%s.holy", digest);
+    if (!cache_name(name)) return 2;
+    state = holy_state_lock(root_path, yes, &generation, &status);
+    if (state < 0) return status;
+    installed = openat(state, "installed", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    transactions = openat(state, "transactions", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    cache = cache_directory(root_path, 0);
+    if (installed < 0 || transactions < 0 || cache < 0 ||
+        flock(cache, yes ? LOCK_EX : LOCK_SH)) goto done;
+    if (fstatat(cache, name, &st, AT_SYMLINK_NOFOLLOW)) {
+        result = errno == ENOENT ? 6 : 1; goto done;
+    }
+    if (!S_ISREG(st.st_mode) || (st.st_mode & 0022)) goto done;
+    if (!fstatat(installed, digest, &installed_st, AT_SYMLINK_NOFOLLOW)) {
+        fprintf(stderr, "holypkg: cache object belongs to an installed package: %s\n", digest);
+        result = 4; goto done;
+    }
+    if (errno != ENOENT) goto done;
+    refs = transaction_refs(transactions, digest, 0);
+    if (refs < 0) goto done;
+    if (refs) {
+        fprintf(stderr, "holypkg: cache object is retained by a transaction: %s\n", digest);
+        result = 4; goto done;
+    }
+    if (!yes) {
+        printf("cache-clean-plan %s size %ju generation %llu read-only\n",
+               digest, (uintmax_t)st.st_size, generation);
+        result = 0; goto done;
+    }
+    if (unlinkat(cache, name, 0) || fsync(cache)) goto done;
+    printf("cache-cleaned %s\n", digest);
+    result = 0;
+done:
+    if (cache >= 0) close(cache);
+    if (transactions >= 0) close(transactions);
+    if (installed >= 0) close(installed);
+    if (state >= 0) close(state);
+    return result;
 }
