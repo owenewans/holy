@@ -229,7 +229,7 @@ mkdir -p "$tmp/parent-root"
 "$bin" source plan --config "$tmp/parent-sources" --root "$tmp/parent-root" > "$tmp/parent-plan"
 parent_plan=$(sha256sum "$tmp/parent-plan" | cut -d ' ' -f 1)
 "$bin" source apply "$tmp/parent-plan" --sha256 "$parent_plan" --root "$tmp/parent-root" > "$tmp/out"
-grep -q " $other_id$" "$tmp/parent-root/var/lib/holypkg/sources"
+grep -q " $other_id \"-\" 0$" "$tmp/parent-root/var/lib/holypkg/sources"
 for source in fixture other third; do
     case "$source" in
         fixture) parent_catalog=$tmp/repo ;;
@@ -260,6 +260,33 @@ test -f "$tmp/parent-root/usr/share/auto-child"
 auto_child_hash=$(sha256sum "$tmp/other-repo/auto-child.holy" | cut -d ' ' -f 1)
 grep -q "$other_id" "$tmp/parent-root/var/lib/holypkg/installed/$auto_child_hash/source"
 "$bin" db check --all --root "$tmp/parent-root" > "$tmp/out"
+for policy in family priority; do
+    policy_root="$tmp/$policy-root"
+    policy_config="$tmp/$policy-sources"
+    if test "$policy" = family; then
+        printf '[source fixture]\ntype holy-http\nurl https://fixture.example/holy/\nfamily workstation\n[source other]\ntype holy-http\nurl https://other.example/holy/\nfamily workstation\npriority -5\n[source third]\ntype holy-http\nurl https://third.example/holy/\nfamily unrelated\npriority 100\n' > "$policy_config"
+    else
+        printf '[source fixture]\ntype holy-http\nurl https://fixture.example/holy/\n[source other]\ntype holy-http\nurl https://other.example/holy/\npriority 10\n[source third]\ntype holy-http\nurl https://third.example/holy/\npriority 5\n' > "$policy_config"
+    fi
+    mkdir -p "$policy_root"
+    "$bin" db init --root "$policy_root" > "$tmp/out"
+    "$bin" source plan --config "$policy_config" --root "$policy_root" > "$tmp/policy-plan"
+    policy_plan=$(sha256sum "$tmp/policy-plan" | cut -d ' ' -f 1)
+    "$bin" source apply "$tmp/policy-plan" --sha256 "$policy_plan" --root "$policy_root" > "$tmp/out"
+    for source in fixture other third; do
+        case "$source" in
+            fixture) policy_catalog=$tmp/repo ;;
+            other) policy_catalog=$tmp/other-repo ;;
+            third) policy_catalog=$tmp/third-repo ;;
+        esac
+        "$bin" source catalog bind "$source" "$policy_catalog" --root "$policy_root" > "$tmp/out"
+    done
+    "$bin" add fixture:auto-root --root "$policy_root" --yes --noninteractive \
+        > "$tmp/out" 2> "$tmp/err"
+    grep -q "selected other for package:auto-child by $policy preference" "$tmp/err"
+    test -f "$policy_root/usr/share/auto-child"
+    "$bin" db check --all --root "$policy_root" > "$tmp/out"
+done
 for target in choice-root answers-root; do
     mkdir -p "$tmp/$target"
     "$bin" db init --root "$tmp/$target" > "$tmp/out"

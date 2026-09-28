@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -249,7 +250,8 @@ static int key_arity(const char *section, const char *key)
     } else if (!strncmp(section, "source ", 7)) {
         if (!strcmp(key, "repo")) return 2;
         if (!strcmp(key, "type") || !strcmp(key, "url") ||
-            !strcmp(key, "parent") || !strcmp(key, "trust") ||
+            !strcmp(key, "parent") || !strcmp(key, "family") ||
+            !strcmp(key, "priority") || !strcmp(key, "trust") ||
             !strcmp(key, "public-key") ||
             !strcmp(key, "public-key-ed25519")) return 1;
     } else if (!strncmp(section, "rule ", 5)) {
@@ -261,6 +263,15 @@ static int key_arity(const char *section, const char *key)
 
 static int known_value(const char *section, const char *key, const char *v)
 {
+    if (!strncmp(section, "source ", 7) && !strcmp(key, "family"))
+        return *v && strcmp(v, "-") && strlen(v) <= 128;
+    if (!strncmp(section, "source ", 7) && !strcmp(key, "priority")) {
+        char *end;
+        long number;
+        errno = 0;
+        number = strtol(v, &end, 10);
+        return *v && !errno && !*end && number >= INT_MIN && number <= INT_MAX;
+    }
     if (!strcmp(section, "disk") && !strcmp(key, "layout"))
         return !strcmp(v, "gpt-ext4");
     if (!strcmp(key, "scripts") && !strcmp(section, "general"))

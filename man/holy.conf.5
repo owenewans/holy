@@ -81,7 +81,7 @@ registry replacement. The source apply command consumes that frozen plan; it
 does not reread the configuration. See holypkg(8) for the command sequence.
 .PP
 The current source ID is SHA-256 of a canonical, sorted representation of type,
-url and repo records. Alias, parent, trust policy and public key are excluded. Renaming an
+url and repo records. Alias, parent, family, priority, trust policy and public key are excluded. Renaming an
 alias preserves the ID. Changing an endpoint, backend type or repository name
 creates another ID and retains the previous definition as inactive history.
 Readding the same definition reactivates its existing ID. Equivalent URL
@@ -96,6 +96,11 @@ associations. The registry stores parent as a source-id, separate from the
 endpoint-derived identity. Renaming a parent alias retains the relationship.
 Parent preference applies when add discovers a missing native provider; it
 does not replace the child's URL with the parent's URL.
+.PP
+Optional family NAME groups sources for dependency preference. Optional priority
+SIGNED_INTEGER ranks candidates within the same preference group; a larger
+number wins. The default priority is zero. Family and priority are policy,
+not part of source identity. A changed policy is recorded by source apply.
 .PP
 A registered APK source uses type apk and one or more repo NAME HTTPS_BASE/
 entries. holypkg apk sync names the repo, obtains its APKINDEX.tar.gz and writes

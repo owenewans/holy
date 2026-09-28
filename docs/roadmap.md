@@ -519,9 +519,10 @@
   `--answers FILE` now selects a source by consumer hash and requirement-id for
   noninteractive add; duplicate and stale answers fail before rootfs changes.
   It probes installed providers first, including inactive origins. Same-source
-  and registered-parent preference now choose among exact native offers by
-  source-id; explicit answers override them. Source-family and user-priority
-  ranking, complete coverage diagnostics and plugin discovery remain open. A
+  registered-parent and source-family preference now choose among exact native
+  offers by source-id and policy; source priority breaks ties within a rank.
+  Explicit answers override them. Complete coverage diagnostics and plugin
+  discovery remain open. A
   three-catalog ELF fixture verifies SONAME discovery after installed libc and
   interpreter paths, selected source identity, and installed check. The source
   probe rejects a same-SONAME candidate without the consumer's version-attributed

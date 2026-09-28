@@ -15,6 +15,9 @@ int holy_source_active_id(const char *root, const char *alias, char output[65]);
 int holy_source_type(const char *root, const char *alias, char **type);
 /* resolves a saved parent source-id for one source-id; empty means no parent. */
 int holy_source_parent_id(const char *root, const char *id, char output[65]);
+/* returns an owned family (or NULL) and priority for one registered source-id. */
+int holy_source_rank_info(const char *root, const char *id,
+                          char **family, int *priority);
 /* returns owned repository names for one active APK source. */
 int holy_source_apk_repos(const char *root, const char *alias,
                           char ***repos, size_t *count);

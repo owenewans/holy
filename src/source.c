@@ -25,9 +25,9 @@
 
 struct source {
     char id[65];
-    char *alias, *definition, *trust;
+    char *alias, *definition, *trust, *family;
     char key[65], parent[65];
-    int active;
+    int active, priority;
 };
 
 struct registry {
@@ -75,7 +75,8 @@ static void clear_registry(struct registry *r)
 {
     size_t i;
     for (i = 0; i < r->count; ++i) {
-        free(r->items[i].alias); free(r->items[i].definition); free(r->items[i].trust);
+        free(r->items[i].alias); free(r->items[i].definition);
+        free(r->items[i].trust); free(r->items[i].family);
     }
     free(r->items);
     memset(r, 0, sizeof *r);
@@ -178,13 +179,15 @@ static char *serialize(struct registry *r)
     int ok;
     if (!out) return NULL;
     if (r->count) qsort(r->items, r->count, sizeof *r->items, source_order);
-    fprintf(out, "format holy-sources-2\nrevision %llu\n", r->revision);
+    fprintf(out, "format holy-sources-3\nrevision %llu\n", r->revision);
     for (i = 0; i < r->count; ++i) {
         struct source *s = &r->items[i];
         fprintf(out, "source %s ", s->id); quote(out, s->alias);
         fprintf(out, " %s ", s->active ? "active" : "inactive"); quote(out, s->definition);
-        fprintf(out, " %s %s %s\n", s->trust, s->key[0] ? s->key : "-",
+        fprintf(out, " %s %s %s ", s->trust, s->key[0] ? s->key : "-",
                 s->parent[0] ? s->parent : "-");
+        quote(out, s->family ? s->family : "-");
+        fprintf(out, " %d\n", s->priority);
     }
     ok = !ferror(out);
     if (fclose(out)) ok = 0;
@@ -205,7 +208,8 @@ static int parse_registry(const char *data, struct registry *r)
         int ok = end && tokens(line, (size_t)(end - line), &v, &n);
         if (ok && number == 0) {
             version = n == 2 && !strcmp(v[0], "format") && !strcmp(v[1], "holy-sources-1") ? 1 :
-                      n == 2 && !strcmp(v[0], "format") && !strcmp(v[1], "holy-sources-2") ? 2 : 0;
+                      n == 2 && !strcmp(v[0], "format") && !strcmp(v[1], "holy-sources-2") ? 2 :
+                      n == 2 && !strcmp(v[0], "format") && !strcmp(v[1], "holy-sources-3") ? 3 : 0;
             ok = version != 0;
         }
         else if (ok && number == 1) {
@@ -214,7 +218,8 @@ static int parse_registry(const char *data, struct registry *r)
             if (n != 2 || strcmp(v[0], "revision") || !v[1][0] || strspn(v[1], "0123456789") != strlen(v[1])) ok = 0;
             else { r->revision = strtoull(v[1], &last, 10); ok = !errno && !*last; }
         } else if (ok && ((version == 1 && n >= 5 && n <= 7) ||
-                          (version == 2 && n == 8)) &&
+                          (version == 2 && n == 8) ||
+                          (version == 3 && n == 10)) &&
                    !strcmp(v[0], "source") && valid_hash(v[1]) &&
                    v[2][0] && strcmp(v[2], "local") &&
                    (!strcmp(v[3], "active") || !strcmp(v[3], "inactive")) &&
@@ -223,13 +228,23 @@ static int parse_registry(const char *data, struct registry *r)
                     !strcmp(v[5], "ignore")) &&
                    (version == 1 ? n < 7 || valid_hash(v[6]) :
                     (!strcmp(v[6], "-") || valid_hash(v[6])) &&
-                    (!strcmp(v[7], "-") || valid_hash(v[7])))) {
+                    (!strcmp(v[7], "-") || valid_hash(v[7]))) &&
+                   (version != 3 || (!strcmp(v[8], "-") ||
+                     (v[8][0] && strlen(v[8]) <= 128)))) {
             struct source *grown;
             char id[65];
             int active = !strcmp(v[3], "active");
-            ok = hash(v[4], id) && !strcmp(id, v[1]) && r->count < 10000 &&
+            long priority = 0;
+            char *end_priority = NULL;
+            if (version == 3) {
+                errno = 0;
+                priority = strtol(v[9], &end_priority, 10);
+                if (errno || !v[9][0] || *end_priority || priority < INT_MIN ||
+                    priority > INT_MAX) ok = 0;
+            }
+            ok = ok && hash(v[4], id) && !strcmp(id, v[1]) && r->count < 10000 &&
                  !(((version == 1 && n == 6) ||
-                    (version == 2 && !strcmp(v[6], "-"))) &&
+                    (version >= 2 && !strcmp(v[6], "-"))) &&
                    !strcmp(v[5], "require") &&
                    (strstr(v[4], "type \"holy-http\"\n") ||
                     strstr(v[4], "type \"holy-git\"\n") ||
@@ -245,11 +260,14 @@ static int parse_registry(const char *data, struct registry *r)
                 r->items = grown; s = &grown[r->count++]; memset(s, 0, sizeof *s);
                 memcpy(s->id, id, 65); s->alias = strdup(v[2]);
                 s->definition = strdup(v[4]); s->trust = strdup(n >= 6 ? v[5] : "warn");
-                if ((version == 1 && n == 7) || (version == 2 && strcmp(v[6], "-")))
+                if ((version == 1 && n == 7) || (version >= 2 && strcmp(v[6], "-")))
                     memcpy(s->key, v[6], 65);
-                if (version == 2 && strcmp(v[7], "-")) memcpy(s->parent, v[7], 65);
+                if (version >= 2 && strcmp(v[7], "-")) memcpy(s->parent, v[7], 65);
+                if (version == 3 && strcmp(v[8], "-")) s->family = strdup(v[8]);
+                s->priority = (int)priority;
                 s->active = active;
-                ok = s->alias && s->definition && s->trust;
+                ok = s->alias && s->definition && s->trust &&
+                     (version != 3 || !strcmp(v[8], "-") || s->family);
             }
         } else ok = 0;
         holy_tokens_free(v, n);
@@ -490,7 +508,7 @@ int holy_source_plan(const char *path, const char *root)
         free(r.items[j].alias); r.items[j].alias = alias; r.items[j].active = 1;
     }
     for (i = 0; i < r.count; ++i) if (r.items[i].active) {
-        const struct holy_entry *parent;
+        const struct holy_entry *parent, *family, *priority;
         char *section;
         size_t length = strlen(r.items[i].alias);
         if (length > SIZE_MAX - sizeof "source ") { result = 2; goto done; }
@@ -498,7 +516,27 @@ int holy_source_plan(const char *path, const char *root)
         if (!section) goto done;
         snprintf(section, length + sizeof "source ", "source %s", r.items[i].alias);
         parent = config_field(&config, section, "parent");
+        family = config_field(&config, section, "family");
+        priority = config_field(&config, section, "priority");
         free(section);
+        free(r.items[i].family); r.items[i].family = NULL;
+        r.items[i].priority = 0;
+        if (family) {
+            if (!family->values[0][0] || !strcmp(family->values[0], "-") ||
+                strlen(family->values[0]) > 128 ||
+                !(r.items[i].family = strdup(family->values[0]))) {
+                result = 2; goto done;
+            }
+        }
+        if (priority) {
+            char *end = NULL;
+            long value;
+            errno = 0;
+            value = strtol(priority->values[0], &end, 10);
+            if (errno || !priority->values[0][0] || *end ||
+                value < INT_MIN || value > INT_MAX) { result = 2; goto done; }
+            r.items[i].priority = (int)value;
+        }
         r.items[i].parent[0] = 0;
         if (!parent) continue;
         for (j = 0; j < r.count; ++j)
@@ -732,6 +770,33 @@ int holy_source_parent_id(const char *root, const char *id, char output[65])
         if (!strcmp(registry.items[i].id, id)) {
             memcpy(output, registry.items[i].parent, 65);
             result = 0; break;
+        }
+done:
+    free(data); clear_registry(&registry); close(dir);
+    return result;
+}
+
+int holy_source_rank_info(const char *root, const char *id,
+                          char **family, int *priority)
+{
+    struct registry registry = {0};
+    unsigned long long generation;
+    char *data = NULL;
+    size_t i;
+    int dir, result = 1;
+    if (!root || !id || !valid_hash(id) || !family || !priority) return 2;
+    *family = NULL; *priority = 0;
+    dir = holy_state_lock(root, 0, &generation, &result);
+    if (dir < 0) return result;
+    data = load_registry(dir, &registry);
+    if (!data) goto done;
+    result = 6;
+    for (i = 0; i < registry.count; ++i)
+        if (!strcmp(registry.items[i].id, id)) {
+            *family = registry.items[i].family ? strdup(registry.items[i].family) : NULL;
+            *priority = registry.items[i].priority;
+            result = registry.items[i].family && !*family ? 1 : 0;
+            break;
         }
 done:
     free(data); clear_registry(&registry); close(dir);

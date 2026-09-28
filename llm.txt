@@ -633,7 +633,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holy.conf.5 source=holy version=development sha256=4400db607185dae548fc76b2db1c2fd8ae695f8651759ab5bcd5e15c9d59db65
+holy.conf.5 source=holy version=development sha256=e6982c0e544d319a0a5e73af4ea2ee55e10f80ab4cbcafa09a2228a6ca7f3134
 HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
 
 NAME
@@ -725,53 +725,59 @@ SOURCE IDENTITIES
      quence.
 
      The current source ID is SHA-256 of a canonical, sorted  representation  of
-     type,  url and repo records. Alias, parent, trust policy and public key are
-     excluded. Renaming an alias preserves the ID. Changing an endpoint, backend
-     type or repository name creates another ID and retains the previous defini-
-     tion as inactive history.	Readding the same definition reactivates its ex-
-     isting ID. Equivalent URL spellings and mirrors are not automatically iden-
-     tified as one source.
+     type,  url	 and repo records. Alias, parent, family, priority, trust policy
+     and public key are excluded. Renaming an alias preserves the  ID.	Changing
+     an endpoint, backend type or repository name creates another ID and retains
+     the  previous definition as inactive history.  Readding the same definition
+     reactivates its existing ID. Equivalent URL spellings and mirrors	are  not
+     automatically identified as one source.
 
-     Registration requires endpoints with a scheme followed by ://  and	 rejects
-     URL  userinfo,  queries,  fragments  and whitespace. Plans therefore cannot
-     carry those credential forms. Two aliases with the same definition	 require
-     a	decision.   Registration  neither contacts a repository nor verifies its
-     signatures. Set installation can bind local  artifacts  to	 registered  IDs
-     through  explicit	--source  associations.	 The registry stores parent as a
-     source-id, separate from the endpoint-derived identity. Renaming  a  parent
+     Registration  requires  endpoints with a scheme followed by :// and rejects
+     URL userinfo, queries, fragments and  whitespace.	Plans  therefore  cannot
+     carry  those credential forms. Two aliases with the same definition require
+     a decision.  Registration neither contacts a repository  nor  verifies  its
+     signatures.  Set  installation  can  bind local artifacts to registered IDs
+     through explicit --source associations. The registry  stores  parent  as  a
+     source-id,	 separate  from the endpoint-derived identity. Renaming a parent
      alias retains the relationship.  Parent preference applies when add discov-
      ers a missing native provider; it does not replace the child's URL with the
      parent's URL.
 
+     Optional family NAME groups sources  for  dependency  preference.	Optional
+     priority  SIGNED_INTEGER ranks candidates within the same preference group;
+     a larger number wins. The default priority is zero. Family and priority are
+     policy, not part of source identity. A changed policy is recorded by source
+     apply.
+
      A registered APK source uses type apk and one or more repo NAME HTTPS_BASE/
-     entries.  holypkg	apk sync names the repo, obtains its APKINDEX.tar.gz and
-     writes a source-id-bearing	 catalog  and  target-root  binding.  public-key
-     points  to	 an  RSA PEM public key for APK sources; source plan freezes its
-     SHA-256 fingerprint.  trust require needs that key	 and  a	 valid	APKINDEX
-     signature.	 The  matching	key  file  is supplied to apk sync and apk fetch
-     through --public-key. Fetch verifies the bound APK package	 signature  with
-     the  same	registered  key.  See holypkg(8) for the digest confirmation and
+     entries. holypkg apk sync names the repo, obtains its  APKINDEX.tar.gz  and
+     writes  a	source-id-bearing  catalog  and	 target-root binding. public-key
+     points to an RSA PEM public key for APK sources; source  plan  freezes  its
+     SHA-256  fingerprint.   trust  require  needs that key and a valid APKINDEX
+     signature. The matching key file is supplied to  apk  sync	 and  apk  fetch
+     through  --public-key.  Fetch verifies the bound APK package signature with
+     the same registered key. See holypkg(8) for  the  digest  confirmation  and
      fetch sequence.
 
-     A registered APT source uses type apt and one url	HTTPS_BASE/.  public-key
-     points  to a binary OpenPGP keyring; source plan freezes its SHA-256. trust
-     require needs that key. holypkg apt sync-source requires the  same	 keyring
-     and  records  the stable source-id in its signed catalog and database bind-
-     ing. Queries and fetches can select it with source,  suite,  component  and
-     index  architecture;  they recheck the current registry. The keyring is se-
-     lected by the user; adding a source does not import public	 keys  from  the
-     network.	The  --inrelease option selects a clearsigned InRelease; without
+     A	registered  APT source uses type apt and one url HTTPS_BASE/. public-key
+     points to a binary OpenPGP keyring; source plan freezes its SHA-256.  trust
+     require  needs  that key. holypkg apt sync-source requires the same keyring
+     and records the stable source-id in its signed catalog and	 database  bind-
+     ing.  Queries  and	 fetches can select it with source, suite, component and
+     index architecture; they recheck the current registry. The keyring	 is  se-
+     lected  by	 the  user; adding a source does not import public keys from the
+     network.  The --inrelease option selects a clearsigned  InRelease;	 without
      it sync-source uses Release and Release.gpg.
 
      A registered XBPS source uses type xbps and one url HTTPS_BASE/. public-key
-     points to an RSA PEM public key; source plan freezes  the	SHA-256	 finger-
-     print  of its public-key encoding. trust require needs that key. xbps sync-
+     points  to	 an  RSA PEM public key; source plan freezes the SHA-256 finger-
+     print of its public-key encoding. trust require needs that key. xbps  sync-
      source checks the selected key against the registry and the index metadata.
-     It also requires an explicit repodata  SHA-256  pin.  Source-aware	 queries
-     check  the catalog's source-id, URL and recorded key fingerprint. Fetch re-
-     quires the same key file and verifies the package	.sig2  signature.  sync-
-     source  also  binds  the catalog's conversion digest under the target data-
-     base; later queries can select that binding by source and	index  architec-
+     It	 also  requires	 an  explicit repodata SHA-256 pin. Source-aware queries
+     check the catalog's source-id, URL and recorded key fingerprint. Fetch  re-
+     quires  the  same	key file and verifies the package .sig2 signature. sync-
+     source also binds the catalog's conversion digest under  the  target  data-
+     base;  later  queries can select that binding by source and index architec-
      ture.
 
 Holy				 September 2026			    HOLY.CONF(5)
@@ -1110,7 +1116,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=641de940c37e05dd41b2a84b03f7bbe9520c86fe86341cd51c9723b9ec07429f
+holypkg.8 source=holy version=development sha256=86934b799972317b05026d6a8a5fcd054a6f6dafacfd738fd09a8ff6bfc56d87
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -2312,32 +2318,33 @@ DESCRIPTION
      catalogs for that edge  before  staging  foreign  artifacts.  One	matching
      source with complete coverage supplies its providers and in-source closure.
      For  multiple offers, add prefers the missing consumer's registered source-
-     id, then its saved parent source-id. It prints each preference  reason.  An
-     --answers	entry  overrides  these	 preferences. Remaining ties, or a match
-     alongside unavailable coverage without a preferred source, list aliases and
-     ask for one on a TTY.  Active foreign sources are skipped during  this  na-
-     tive-catalog  probe;  their  absence of a native mirror is not counted as a
-     failed native lookup.  For a scanned ELF  SONAME  edge,  the  source  probe
-     checks  the consumer's machine, runtime, strong version needs and provider-
-     attributed imported symbols against each indexed candidate. A same-name li-
-     brary missing such a symbol is not offered.  An  explicit	SONAME	metadata
-     requirement  without  a  consumer	ELF path uses exact indexed-name lookup.
-     Without a TTY or under  --noninteractive,	add  returns  decision-required;
-     --candidate-provider  names  the  choice in a subsequent command. --yes ap-
-     proves the final plan but does not choose an  ambiguous  source.  The  loop
-     stops  when  the set is complete or no new artifact is found. It checks in-
-     stalled providers first; an inactive origin can still satisfy  a  new  con-
-     sumer.  An	 edge without a catalog match does not hide another missing edge
-     in the same consumer; a required SONAME can still be found after an  inter-
-     preter  or libc path already satisfied by an installed package. An unavail-
-     able catalog leaves coverage incomplete and returns 6 when no provider  can
-     be	 found.	 Older	indexes	 without file or SONAME facts report unavailable
-     coverage for those requirements. Selected packages retain their source IDs,
-     and candidate catalogs are checked again before  apply.  Source-family  and
-     user-priority  ranking,  fuzzy suggestions and runtime plugin discovery re-
-     main open. Executable hooks remain outside the supported installation  sub-
-     set. Recorded transforms are accepted after payload verification; no trans-
-     formation runs during installation.
+     id, then its saved parent source-id, then a matching source family. It next
+     compares configured source priorities within the same group; larger  values
+     win.  It  prints each rank and priority. An --answers entry overrides these
+     preferences. Remaining ties, or a family/priority match alongside	unavail-
+     able  coverage,  list  aliases  and  ask  for one on a TTY.  Active foreign
+     sources are skipped during this native-catalog probe; their  absence  of  a
+     native  mirror is not counted as a failed native lookup.  For a scanned ELF
+     SONAME edge, the source  probe  checks  the  consumer's  machine,	runtime,
+     strong  version needs and provider-attributed imported symbols against each
+     indexed candidate. A same-name library missing such a  symbol  is	not  of-
+     fered.  An explicit SONAME metadata requirement without a consumer ELF path
+     uses  exact  indexed-name lookup.	Without a TTY or under --noninteractive,
+     add returns decision-required; --candidate-provider names the choice  in  a
+     subsequent	 command.  --yes  approves the final plan but does not choose an
+     ambiguous source. The loop stops when the set is complete or no  new  arti-
+     fact  is found. It checks installed providers first; an inactive origin can
+     still satisfy a new consumer. An edge without a catalog match does not hide
+     another missing edge in the same consumer; a required SONAME can  still  be
+     found  after  an interpreter or libc path already satisfied by an installed
+     package. An unavailable catalog leaves coverage incomplete	 and  returns  6
+     when  no  provider can be found. Older indexes without file or SONAME facts
+     report unavailable coverage for those requirements. Selected  packages  re-
+     tain  their source IDs, and candidate catalogs are checked again before ap-
+     ply. Fuzzy suggestions and runtime plugin discovery remain open. Executable
+     hooks remain outside the supported installation subset. Recorded transforms
+     are accepted after payload verification; no transformation runs during  in-
+     stallation.
 
      For  add SOURCE:PACKAGE, --answers FILE supplies source decisions by stable
      consumer artifact hash and requirement-id.	 The  file  uses  the  holy.conf

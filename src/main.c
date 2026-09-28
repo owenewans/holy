@@ -29,6 +29,7 @@
 #include "../backends/apt-release.h"
 
 #include <stdio.h>
+#include <limits.h>
 #include <locale.h>
 #include <stdlib.h>
 #include <string.h>
@@ -570,6 +571,8 @@ struct source_candidate {
     int provider;
 };
 
+struct source_offer { unsigned char offered, rank; int priority; };
+
 struct source_local_candidate {
     char *alias, *path;
     char source_id[65], digest[65];
@@ -870,11 +873,12 @@ static int add_source(int argc, char **argv)
     for (k = 0; k < 10000; ++k) {
         struct holy_missing_requirement missing = {0};
         char **aliases = NULL;
-        unsigned char *offer_flags = NULL;
+        struct source_offer *offers = NULL;
         size_t alias_count = 0, a, offered = 0;
-        const char *winner = NULL, *same_source = NULL, *parent_source = NULL;
+        const char *winner = NULL, *preferred = NULL;
         const char *consumer_origin = NULL;
-        char parent_id[65] = {0};
+        char parent_id[65] = {0}, consumer_family[129] = {0};
+        int best_rank = 5, best_priority = INT_MIN, best_count = 0;
         int missing_status;
         int progressed = 0, unavailable = 0, answered = 0;
         result = holy_state_probe_source_bindings(digests, digest_count,
@@ -899,13 +903,19 @@ static int add_source(int argc, char **argv)
             if (!strncmp(bindings[a], missing.consumer, 64) && bindings[a][64] == '=')
                 consumer_origin = bindings[a] + 65;
         if (consumer_origin) {
+            char *family = NULL;
+            int priority;
             result = holy_source_parent_id(root, consumer_origin, parent_id);
+            if (!result) result = holy_source_rank_info(root, consumer_origin,
+                                                        &family, &priority);
+            if (!result && family) snprintf(consumer_family, sizeof consumer_family, "%s", family);
+            free(family);
             if (result) { holy_missing_requirement_free(&missing); goto done; }
         }
         result = holy_source_active_aliases(root, &aliases, &alias_count);
         if (result) { holy_missing_requirement_free(&missing); goto done; }
-        offer_flags = calloc(alias_count ? alias_count : 1, 1);
-        if (!offer_flags) {
+        offers = calloc(alias_count ? alias_count : 1, sizeof *offers);
+        if (!offers) {
             for (a = 0; a < alias_count; ++a) free(aliases[a]);
             free(aliases);
             holy_missing_requirement_free(&missing);
@@ -914,7 +924,9 @@ static int add_source(int argc, char **argv)
         for (a = 0; a < alias_count; ++a) {
             char *path = NULL;
             char *family = NULL;
+            char *source_family = NULL;
             char candidate_id[65];
+            int source_priority = 0, rank = 4;
             int probe;
             probe = holy_source_type(root, aliases[a], &family);
             if (probe) { result = probe; break; }
@@ -933,17 +945,27 @@ static int add_source(int argc, char **argv)
                 holy_repo_has_provider(path, missing.kind, missing.name);
             free(path);
             if (!probe) {
+                probe = holy_source_rank_info(root, candidate_id,
+                                              &source_family, &source_priority);
+                if (probe) { free(source_family); result = probe; break; }
+                if (consumer_origin && !strcmp(candidate_id, consumer_origin)) rank = 1;
+                else if (parent_id[0] && !strcmp(candidate_id, parent_id)) rank = 2;
+                else if (consumer_family[0] && source_family &&
+                         !strcmp(consumer_family, source_family)) rank = 3;
+                free(source_family);
                 ++offered;
-                offer_flags[a] = 1;
+                offers[a].offered = 1;
+                offers[a].rank = (unsigned char)rank;
+                offers[a].priority = source_priority;
                 winner = aliases[a];
-                if (consumer_origin && !strcmp(candidate_id, consumer_origin))
-                    same_source = aliases[a];
-                else if (parent_id[0] && !strcmp(candidate_id, parent_id))
-                    parent_source = aliases[a];
-                fprintf(stderr, "holypkg: provider %s:%s available from %s%s\n",
+                if (rank < best_rank || (rank == best_rank && source_priority > best_priority)) {
+                    best_rank = rank; best_priority = source_priority;
+                    best_count = 1; preferred = aliases[a];
+                } else if (rank == best_rank && source_priority == best_priority) ++best_count;
+                fprintf(stderr, "holypkg: provider %s:%s available from %s rank=%s priority=%d\n",
                         missing.kind, missing.name, aliases[a],
-                        aliases[a] == same_source ? " rank=same-source" :
-                        aliases[a] == parent_source ? " rank=parent" : "");
+                        rank == 1 ? "same-source" : rank == 2 ? "parent" :
+                        rank == 3 ? "family" : "other", source_priority);
             } else if (probe == 6) ++unavailable;
             else if (probe != 4) { result = probe; break; }
         }
@@ -959,7 +981,7 @@ static int add_source(int argc, char **argv)
                 answered = 1;
                 winner = NULL;
                 for (a = 0; a < alias_count; ++a)
-                    if (offer_flags[a] && !strcmp(aliases[a], requested))
+                    if (offers[a].offered && !strcmp(aliases[a], requested))
                         winner = aliases[a];
                 if (!winner) {
                     fprintf(stderr, "holypkg: answer source %s does not offer %s:%s for %s:%s\n",
@@ -969,11 +991,13 @@ static int add_source(int argc, char **argv)
                 }
             }
         }
-        if (!result && !answered && (same_source || parent_source)) {
-            winner = same_source ? same_source : parent_source;
+        if (!result && !answered && preferred && best_count == 1 &&
+            (best_rank <= 2 || !unavailable)) {
+            winner = preferred;
             fprintf(stderr, "holypkg: selected %s for %s:%s by %s preference\n",
                     winner, missing.kind, missing.name,
-                    same_source ? "same-source" : "parent");
+                    best_rank == 1 ? "same-source" : best_rank == 2 ? "parent" :
+                    best_rank == 3 ? "family" : "priority");
         } else if (!result && (offered > 1 || (offered && unavailable)) && !answered) {
             winner = NULL;
             if (!noninteractive && isatty(STDIN_FILENO)) {
@@ -987,7 +1011,7 @@ static int add_source(int argc, char **argv)
                 if (length && response[length - 1] == '\n') {
                     response[length - 1] = 0;
                     for (a = 0; a < alias_count; ++a)
-                        if (offer_flags[a] && !strcmp(response, aliases[a])) winner = aliases[a];
+                        if (offers[a].offered && !strcmp(response, aliases[a])) winner = aliases[a];
                 }
             }
             if (!winner && !result) {
@@ -1000,7 +1024,7 @@ static int add_source(int argc, char **argv)
         if (result) {
             for (a = 0; a < alias_count; ++a) free(aliases[a]);
             free(aliases);
-            free(offer_flags);
+            free(offers);
             holy_missing_requirement_free(&missing);
             goto done;
         }
@@ -1014,7 +1038,9 @@ static int add_source(int argc, char **argv)
             item->name = copy_text(missing.name);
             item->provider = 1;
             if (!item->alias || !item->kind || !item->name) { result = 1; break; }
-            result = holy_source_catalog_path_fast(root, item->alias, &item->catalog);
+            result = !strcmp(item->alias, alias) ?
+                ((item->catalog = copy_text(catalog)) ? 0 : 1) :
+                holy_source_catalog_path_fast(root, item->alias, &item->catalog);
             if (result) { ++unavailable; result = 0; goto next_alias; }
             result = holy_source_catalog(root, item->alias, item->catalog, item->source_id);
             if (result) { ++unavailable; result = 0; goto next_alias; }
@@ -1059,7 +1085,7 @@ next_alias:
         }
         for (a = 0; a < alias_count; ++a) free(aliases[a]);
         free(aliases);
-        free(offer_flags);
+        free(offers);
         if (result) { holy_missing_requirement_free(&missing); goto done; }
         if (progressed) {
             for (i = 0; i < skip_count; ++i) free((void *)skipped[i]);
