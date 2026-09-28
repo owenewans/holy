@@ -728,12 +728,15 @@ may retain staged objects after a declined or unresolved operation. Automatic
 doas escalation, source lookup and script execution are not part of this local
 subset.
 .PP
-add SOURCE:PACKAGE reads one sealed holy-http mirror made by sync. --catalog
+add SOURCE:PACKAGE reads one sealed native mirror made by sync. --catalog
 selects a mirror for this invocation; without it the manager reads the mirror
 bound to the active source-id by source catalog bind. The active source-id and
 URL must match the mirror
-record. The manager verifies and stages all indexed packages in the target
-cache, then the set resolver chooses the root and its dependencies. If multiple
+record. For an index with complete dependency, file and ELF SONAME records,
+the manager opens the root archive and indexed candidates reachable through
+declared requirements, interpreter paths, shared-library names and script
+interpreters. It verifies each selected candidate against the index before
+staging. Older indexes still use the full candidate pool. If multiple
 packages share the root name, it returns decision-required (3). Every newly
 selected catalog package receives the registered source-id; reused installed
 providers retain their existing source. The reviewed plan binds the catalog
@@ -742,8 +745,9 @@ the source and catalog; changes require a new decision. The transaction journal
 retains source bindings and index digest for recovery without network access.
 An unsigned mirror record proves only local provenance. A source with a
 registered public key requires a signed mirror and rechecks its signature.
-The current implementation scans every object in the selected mirror and does
-not combine candidates from multiple sources. Hooks and transforms remain
+An unrelated corrupt archive in a current indexed mirror does not block add;
+source catalog bind and sync still verify entire mirrors. The current add path
+does not combine candidates from multiple sources. Hooks and transforms remain
 outside the supported installation subset.
 .PP
 up SOURCE:PACKAGE --prepare finds one installed slot by its immutable source-id,
@@ -1673,7 +1677,8 @@ root. The file is mode 0600 and replaced with fsync and rename under the
 database writer lock. The command changes neither installed packages nor the
 source registry. A renamed alias with the same source-id keeps its binding;
 an inactive or changed source cannot use it. Queries without --catalog reread
-the binding and reject a missing, changed or corrupt mirror. When the mirror
+the binding and reject a missing or changed index; each queried or selected
+object is verified before use. When the mirror
 resides inside the target root, the binding records its root-relative path and
 survives moving that root. An external mirror retains its host path and must
 be rebound after a move. Sync with --output exports a mirror without

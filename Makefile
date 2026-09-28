@@ -69,6 +69,10 @@ check-run: holypkg
 check-repo-sign: holypkg
 	sh tests/repo-sign.sh ./holypkg
 
+.PHONY: check-repo-closure
+check-repo-closure: holypkg
+	sh tests/repo-closure.sh ./holypkg
+
 .PHONY: check-git-source
 check-git-source: holypkg
 	sh tests/git-source.sh ./holypkg
@@ -158,7 +162,7 @@ src/%.o: src/%.c $(wildcard src/*.h) $(wildcard backends/*.h) .build-config
 check-init: holy-init
 	@./holy-init >/dev/null 2>&1; test $$? -eq 2
 
-check: check-pacman check-deb check-native-version holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source
+check: check-pacman check-deb check-native-version holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg

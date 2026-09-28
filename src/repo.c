@@ -744,6 +744,142 @@ struct stage_request {
     int index_only;
 };
 
+struct closure {
+    unsigned char *selected;
+    size_t *queue;
+    size_t count;
+    struct provider_key *providers;
+    size_t provider_count;
+};
+
+struct provider_key {
+    const char *kind, *name;
+    size_t index;
+};
+
+static int provider_key_order(const void *left, const void *right)
+{
+    const struct provider_key *a = left, *b = right;
+    int order = strcmp(a->kind, b->kind);
+    if (!order) order = strcmp(a->name, b->name);
+    return order ? order : a->index < b->index ? -1 : a->index > b->index;
+}
+
+static int closure_index(const struct object *objects, size_t count,
+                         struct closure *closure)
+{
+    static const char *const dirs[] = {"usr/bin/", "bin/", "usr/sbin/", "sbin/"};
+    size_t capacity = count, i, j, k, used = 0;
+    struct provider_key *keys;
+    for (i = 0; i < count; ++i) {
+        const struct object *o = &objects[i];
+        size_t extra;
+        if (o->claim_count > SIZE_MAX - o->soname_count) return 0;
+        extra = o->claim_count + o->soname_count;
+        if (o->file_count > (SIZE_MAX - extra) / 2) return 0;
+        extra += o->file_count * 2;
+        if (capacity > SIZE_MAX - extra) return 0;
+        capacity += extra;
+    }
+    if (capacity > SIZE_MAX / sizeof *keys) return 0;
+    keys = calloc(capacity ? capacity : 1, sizeof *keys);
+    if (!keys) return 0;
+    for (i = 0; i < count; ++i) {
+        const struct object *o = &objects[i];
+        keys[used++] = (struct provider_key){"package", o->identity.name, i};
+        for (j = 0; j < o->claim_count; ++j)
+            keys[used++] = (struct provider_key){o->claims[j].kind,
+                                                  o->claims[j].name, i};
+        for (j = 0; j < o->soname_count; ++j)
+            keys[used++] = (struct provider_key){"soname", o->sonames[j].name, i};
+        for (j = 0; j < o->file_count; ++j) {
+            const char *path = o->files[j];
+            keys[used++] = (struct provider_key){"file", path, i};
+            for (k = 0; k < sizeof dirs / sizeof *dirs; ++k)
+                if (!strncmp(path, dirs[k], strlen(dirs[k])) &&
+                    path[strlen(dirs[k])]) {
+                    keys[used++] = (struct provider_key){"command",
+                                   path + strlen(dirs[k]), i};
+                    break;
+                }
+        }
+    }
+    qsort(keys, used, sizeof *keys, provider_key_order);
+    closure->providers = keys;
+    closure->provider_count = used;
+    return 1;
+}
+
+static int closure_add(struct closure *closure, size_t index)
+{
+    if (!closure->selected[index]) {
+        closure->selected[index] = 1;
+        closure->queue[closure->count++] = index;
+    }
+    return 1;
+}
+
+static int closure_provider(struct closure *closure, const char *kind,
+                            const char *name)
+{
+    size_t low = 0, high = closure->provider_count, i;
+    const char *file = !strcmp(kind, "file") && name[0] == '/' ? name + 1 : name;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        const struct provider_key *key = &closure->providers[middle];
+        int order = strcmp(key->kind, kind);
+        if (!order) order = strcmp(key->name, file);
+        if (order < 0) low = middle + 1;
+        else high = middle;
+    }
+    for (i = low; i < closure->provider_count; ++i) {
+        const struct provider_key *key = &closure->providers[i];
+        if (strcmp(key->kind, kind) || strcmp(key->name, file)) break;
+        if (!closure_add(closure, key->index)) return 0;
+    }
+    return 1;
+}
+
+static int closure_expand(const struct object *objects,
+                          struct closure *closure, size_t index,
+                          const char *snapshot)
+{
+    const struct object *o = &objects[index];
+    struct holy_scan_result scan = {0};
+    size_t i, j;
+    int ok = 1;
+    for (i = 0; i < o->requirement_count && ok; ++i) {
+        const char *kind = o->requirements[i].fields[2];
+        const char *name = o->requirements[i].fields[3];
+        ok = closure_provider(closure, kind, name);
+    }
+    if (ok) ok = holy_scan_collect(snapshot, &scan);
+    for (i = 0; i < scan.count && ok; ++i) {
+        const struct holy_elf_info *elf = &scan.files[i].elf;
+        if (elf->interpreter && elf->interpreter[0] == '/')
+            ok = closure_provider(closure, "file", elf->interpreter);
+        for (j = 0; j < elf->needed_count && ok; ++j)
+            ok = closure_provider(closure,
+                                  elf->needed[j][0] == '/' ? "file" : "soname",
+                                  elf->needed[j]);
+    }
+    for (i = 0; i < scan.script_count && ok; ++i)
+        if (scan.scripts[i].kind == 1 && scan.scripts[i].interpreter[0] == '/')
+            ok = closure_provider(closure, "file",
+                                  scan.scripts[i].interpreter);
+    for (i = 0; i < scan.symlink_count && ok; ++i) {
+        char *path = scan.symlinks[i].target[0] == '/' ?
+            strdup(scan.symlinks[i].target) :
+            holy_relative_link_path(scan.symlinks[i].path,
+                strlen(scan.symlinks[i].path), scan.symlinks[i].target, "");
+        if (!path) { ok = 0; break; }
+        ok = closure_provider(closure, "file", path);
+        free(path);
+    }
+    holy_scan_free(&scan);
+    return ok;
+}
+
 static int mirror_object(struct mirror *mirror, int dir, const struct object *object)
 {
     char *url = holy_fetch_child_url(mirror->base, object->filename);
@@ -775,11 +911,12 @@ static int list(const char *directory, const char *query,
 {
     struct object *objects = NULL;
     char **candidate_snapshots = NULL;
+    struct closure closure = {0};
     struct stat st;
     FILE *index = NULL;
     char *line = NULL, *error = NULL, *index_snapshot = NULL, *chosen = NULL;
     char expected[65], actual_digest[65], index_name[71];
-    size_t capacity = 0, count = 0, i, j, number = 0;
+    size_t capacity = 0, count = 0, i, j, number = 0, cursor;
     ssize_t length;
     int dir = -1, fd = -1, ok = 0, indexed = 0, file_index = 0;
     int dependency_index = 0, soname_index = 0;
@@ -916,10 +1053,31 @@ static int list(const char *directory, const char *query,
         candidate_snapshots = calloc(count ? count : 1, sizeof *candidate_snapshots);
         if (!candidate_snapshots) goto done;
     }
-    for (i = 0; i < count; ++i) {
+    if (stage && !stage->slot && !stage->index_only &&
+        dependency_index && file_index && soname_index) {
+        size_t root = count, roots = 0;
+        for (i = 0; i < count; ++i)
+            if (!strcmp(objects[i].identity.name, solve_name)) {
+                root = i;
+                ++roots;
+            }
+        if (roots != 1) {
+            *solve_rc = roots ? 3 : 6;
+            fprintf(stderr, "holypkg: repository root %s\n",
+                    roots ? "requires package choice" : "not found");
+            ok = 1; goto done;
+        }
+        closure.selected = calloc(count, 1);
+        closure.queue = calloc(count, sizeof *closure.queue);
+        if (!closure.selected || !closure.queue ||
+            !closure_index(objects, count, &closure)) goto done;
+        closure_add(&closure, root);
+    }
+    for (cursor = 0; cursor < (closure.selected ? closure.count : count); ++cursor) {
         struct holy_package_identity actual;
         char *snapshot;
         int input, matches;
+        i = closure.selected ? closure.queue[cursor] : cursor;
         if (stage && (stage->index_only ||
             (stage->slot && !same_slot(&objects[i].identity, stage->slot))))
             continue;
@@ -1007,6 +1165,12 @@ static int list(const char *directory, const char *query,
                 goto done;
             }
         }
+        if (closure.selected &&
+            !closure_expand(objects, &closure, i, snapshot)) {
+            unlink(snapshot);
+            free(snapshot);
+            goto done;
+        }
         if (provider_kind && !indexed) {
             int claim = 0;
             if (!holy_provides_match(snapshot, provider_kind,
@@ -1046,12 +1210,15 @@ static int list(const char *directory, const char *query,
             size_t position = 0;
             *solve_rc = 6;
             if (count > 100000) { ok = 1; goto done; }
-            stage->set->digests = calloc(count ? count : 1, sizeof *stage->set->digests);
+            stage->set->digests = calloc(closure.selected ? closure.count : count,
+                                         sizeof *stage->set->digests);
             if (!stage->set->digests) { *solve_rc = 1; ok = 1; goto done; }
-            for (i = 0; i < count; ++i) {
+            for (cursor = 0; cursor < (closure.selected ? closure.count : count); ++cursor) {
+                i = closure.selected ? closure.queue[cursor] : cursor;
                 if (stage->slot && !same_slot(&objects[i].identity, stage->slot))
                     continue;
-                size_t selected = stage->slot ? i : i ? (i <= root ? i - 1 : i) : root;
+                size_t selected = closure.selected ? i :
+                                  stage->slot ? i : i ? (i <= root ? i - 1 : i) : root;
                 char actual[65];
                 if (position >= 10000) { *solve_rc = 6; ok = 1; goto done; }
                 if (!holy_cache_stage_local_digest(candidate_snapshots[selected],
@@ -1198,6 +1365,9 @@ done:
         free_files(&objects[i]);
     }
     free(objects);
+    free(closure.selected);
+    free(closure.queue);
+    free(closure.providers);
     if (dir >= 0) close(dir);
     return ok;
 }

@@ -1,0 +1,95 @@
+#!/bin/sh
+set -eu
+bin=$(realpath "$1")
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+mkdir -p "$tmp/root" "$tmp/repo" "$tmp/tree/HOLY" "$tmp/tree/DATA/usr/share"
+build() {
+    name=$1
+    required=$2
+    kind=${3:-package}
+    printf 'format holy-package-1\nname %s\nversion 1\nrelease 1\nos linux\narch noarch\nlibc nolibc\n' "$name" > "$tmp/tree/HOLY/meta"
+    for field in files deps provides hooks origin transform; do : > "$tmp/tree/HOLY/$field"; done
+    if test -n "$required"; then
+        printf 'require dep-1 %s %s %s any any any - %s metadata\n' \
+            "$name" "$kind" "$required" "$required" > "$tmp/tree/HOLY/deps"
+    fi
+    rm -f "$tmp/tree/DATA/usr/share/"*
+    printf '%s\n' "$name" > "$tmp/tree/DATA/usr/share/$name"
+    "$bin" manifest generate "$tmp/tree" --output "$tmp/files" > "$tmp/out"
+    mv "$tmp/files" "$tmp/tree/HOLY/files"
+    "$bin" pack "$tmp/tree" --output "$tmp/repo/$name.holy" > "$tmp/out"
+}
+build root dep
+build dep leaf
+build leaf ''
+build file-root /usr/share/file-provider file
+build file-provider ''
+build unrelated ''
+case "$(uname -m)" in
+    x86_64)
+        arch=x86_64
+        printf '.global _start\n_start:\n mov $60, %%rax\n xor %%rdi, %%rdi\n syscall\n' > "$tmp/helper.s"
+        ;;
+    i?86)
+        arch=x86
+        printf '.global _start\n_start:\n mov $1, %%eax\n xor %%ebx, %%ebx\n int $0x80\n' > "$tmp/helper.s"
+        ;;
+    *) arch= ;;
+esac
+if test -n "$arch"; then
+    "${CC:-cc}" -nostdlib -static -o "$tmp/helper" "$tmp/helper.s"
+    rm -rf "$tmp/tree/DATA"
+    mkdir -p "$tmp/tree/DATA/usr/bin"
+    printf 'format holy-package-1\nname helper\nversion 1\nrelease 1\nos linux\narch %s\nlibc nolibc\n' "$arch" > "$tmp/tree/HOLY/meta"
+    for field in files deps provides hooks origin transform; do : > "$tmp/tree/HOLY/$field"; done
+    cp "$tmp/helper" "$tmp/tree/DATA/usr/bin/closure-helper"
+    "$bin" manifest generate "$tmp/tree" --output "$tmp/files" > "$tmp/out"
+    mv "$tmp/files" "$tmp/tree/HOLY/files"
+    "$bin" pack "$tmp/tree" --output "$tmp/repo/helper.holy" > "$tmp/out"
+    rm -rf "$tmp/tree/DATA"
+    mkdir -p "$tmp/tree/DATA/usr/bin"
+    printf 'format holy-package-1\nname script\nversion 1\nrelease 1\nos linux\narch noarch\nlibc nolibc\n' > "$tmp/tree/HOLY/meta"
+    for field in files deps provides hooks origin transform; do : > "$tmp/tree/HOLY/$field"; done
+    printf '#!/usr/bin/closure-helper\n' > "$tmp/tree/DATA/usr/bin/closure-script"
+    chmod 755 "$tmp/tree/DATA/usr/bin/closure-script"
+    "$bin" manifest generate "$tmp/tree" --output "$tmp/files" > "$tmp/out"
+    mv "$tmp/files" "$tmp/tree/HOLY/files"
+    "$bin" pack "$tmp/tree" --output "$tmp/repo/script.holy" > "$tmp/out"
+fi
+"$bin" repo index "$tmp/repo" > "$tmp/out"
+"$bin" repo seal "$tmp/repo" > "$tmp/out"
+index=$(sed -n 's/^sha256 //p' "$tmp/repo/current")
+"$bin" db init --root "$tmp/root" > "$tmp/out"
+printf '[source fixture]\ntype holy-http\nurl https://fixture.example/holy/\n' > "$tmp/config"
+"$bin" source plan --config "$tmp/config" --root "$tmp/root" > "$tmp/plan"
+plan=$(sha256sum "$tmp/plan" | cut -d ' ' -f 1)
+"$bin" source apply "$tmp/plan" --sha256 "$plan" --root "$tmp/root" > "$tmp/out"
+"$bin" source list --root "$tmp/root" > "$tmp/out"
+source_id=$(sed -n 's/^source \([0-9a-f]*\) "fixture" active$/\1/p' "$tmp/out")
+printf 'format holy-mirror-1\nurl "https://fixture.example/holy/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$index" "$source_id" > "$tmp/repo/mirror-origin"
+"$bin" source catalog bind fixture "$tmp/repo" --root "$tmp/root" > "$tmp/out"
+cp "$tmp/repo/dep.holy" "$tmp/dep.saved"
+printf 'corrupt\n' > "$tmp/repo/dep.holy"
+if "$bin" add fixture:root --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -e "$tmp/root/usr/share/root"
+cp "$tmp/dep.saved" "$tmp/repo/dep.holy"
+unrelated=$(sha256sum "$tmp/repo/unrelated.holy" | cut -d ' ' -f 1)
+printf 'corrupt\n' > "$tmp/repo/unrelated.holy"
+"$bin" add fixture:root --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"
+for name in root dep leaf; do
+    test -f "$tmp/root/usr/share/$name"
+    digest=$(sha256sum "$tmp/repo/$name.holy" | cut -d ' ' -f 1)
+    test -f "$tmp/root/var/cache/holypkg/objects/sha256/$digest.holy"
+done
+test ! -e "$tmp/root/var/cache/holypkg/objects/sha256/$unrelated.holy"
+"$bin" db check --all --root "$tmp/root" > "$tmp/out"
+"$bin" add fixture:file-root --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"
+test -f "$tmp/root/usr/share/file-root"
+test -f "$tmp/root/usr/share/file-provider"
+if test -n "$arch"; then
+    "$bin" add fixture:script --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"
+    test -x "$tmp/root/usr/bin/closure-helper"
+    test -x "$tmp/root/usr/bin/closure-script"
+fi

@@ -252,8 +252,17 @@
   archives against the index before planning; keep the full catalog validation
   path for explicit source binding. Exact search, info and fetch now also verify
   only matching archives against the pinned index. A corrupt unrelated archive
-  no longer blocks these operations. Add and general requirement lookup still
-  scan full catalogs.
+  no longer blocks these operations. Older native indexes still require a full
+  candidate scan during add.
+- [x] Select the add candidate pool from a v5 native index by walking declared
+  package/file/command/SONAME requirements and scanned interpreter, DT_NEEDED,
+  shebang and symlink paths. Verify and stage only reachable archives; a corrupt
+  unrelated object no longer blocks add, while a corrupt selected provider does.
+  An in-memory inverted map resolves exact requirement names to indexed
+  candidates without rereading every archive or rescanning every index entry.
+  The pinned index and selected hashes remain bound to the reviewed plan.
+  Cross-source discovery, indexed symbol versions and runtime dlopen probes
+  remain open.
 - [x] Require a fresh artifact-hash approval when a cached replacement contains
   a setuid executable. The plan, journal, installed state and recovery retain
   the decision; a previous package's approval is not inherited. Fixtures

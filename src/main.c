@@ -300,7 +300,7 @@ static int add_source(int argc, char **argv)
         else goto done;
     }
     if (!catalog) {
-        result = holy_source_catalog_path(root, alias, &bound_catalog);
+        result = holy_source_catalog_path_fast(root, alias, &bound_catalog);
         if (result) goto done;
         catalog = bound_catalog;
     }
@@ -327,7 +327,7 @@ static int add_source(int argc, char **argv)
         }
     }
     if (bound_catalog) {
-        result = holy_source_catalog_path(root, alias, &next_catalog);
+        result = holy_source_catalog_path_fast(root, alias, &next_catalog);
         if (result || strcmp(bound_catalog, next_catalog)) { result = 3; goto done; }
     }
     result = holy_source_catalog(root, alias, catalog, next_id);
