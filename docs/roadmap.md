@@ -2,6 +2,13 @@
 
 ## Current state
 
+- [x] Run C99 `holygetiso` from an explicit config through a real x86_64
+  dual-libc ext4 build. Its ISO passed two QEMU boots with libc removal and
+  cache recovery. A second build selected a noarch package from a pinned,
+  sealed native mirror, installed it with its source ID, embedded the mirror,
+  and passed the same two-boot contract. Both `--export-inputs` bundles passed
+  SHA-256 verification. Cross-source dependency choices and portable host-tool
+  export remain open.
 - [x] Fetch pinned bootstrap inputs over HTTPS into an explicit directory,
   verify SHA-256 before publication, and reject altered cached files. On
   x86_64, local builds produced musl 1.2.5, static BusyBox 1.37.0,
@@ -652,7 +659,7 @@
   in the boot plan and drives the existing bootstrap/QEMU path. Additional
   relative includes now contribute to one frozen effective config; include
   cycles and duplicate scalar values fail before the build.
-  local .holy packages join its set plan and input record.
+  Local .holy packages join its set plan and input record.
   Pinned holy-http sources now solve and fetch same-catalog dependency closures,
   register their source IDs in the image root and bind each fetched artifact
   in the set plan.
@@ -663,10 +670,10 @@
   entire repository.
   `--export-inputs` now checks the build's input lock, then copies and verifies
   package inputs, mirrors and plans separately. The builder records direct host
-  tool paths and hashes, but does not archive their dependency closure. Cross-source dependency
-  selection and relocatable installation remain
-  open. The explicit build-only path records untested and exits 6. No image
-  was built from this frontend without local package and kernel inputs.
+  tool paths and hashes, but does not archive their dependency closure. The
+  explicit build-only path records untested and exits 6. The local-input and
+  sealed-mirror builds above pass full QEMU gates. Cross-source dependency
+  selection and relocatable installation remain open.
 
 ## Acceptance gates
 
