@@ -873,26 +873,41 @@ int main(int argc, char **argv)
     if (argc > 1 && !strcmp(argv[1], "up")) return holy_up_command(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "run")) return holy_run(argc, argv);
     if (argc > 2 && !strcmp(argv[1], "apt")) {
-        if ((argc == 13 || argc == 15) && !strcmp(argv[2], "sync-source") &&
+        if (argc >= 13 && argc <= 16 && !strcmp(argv[2], "sync-source") &&
             !strcmp(argv[7], "--root") && !strcmp(argv[9], "--keyring") &&
-            !strcmp(argv[11], "--output") &&
-            (argc == 13 || !strcmp(argv[13], "--ca-file"))) {
+            !strcmp(argv[11], "--output")) {
+            const char *ca_file = NULL;
+            int inrelease = 0, i;
+            for (i = 13; i < argc; ++i) {
+                if (!strcmp(argv[i], "--inrelease") && !inrelease) inrelease = 1;
+                else if (!strcmp(argv[i], "--ca-file") && !ca_file && i + 1 < argc)
+                    ca_file = argv[++i];
+                else return 2;
+            }
             int result = holy_apt_release_sync_source(argv[8], argv[3], argv[4], argv[5],
                                                       argv[6], argv[10], argv[12],
-                                                      argc == 15 ? argv[14] : NULL);
+                                                      ca_file, inrelease);
             if (!result) result = holy_apt_bind(argv[8], argv[3], argv[4], argv[5],
                                                 argv[6], argv[12]);
             return result;
         }
         if (argc == 10 && !strcmp(argv[2], "bind") && !strcmp(argv[8], "--root"))
             return holy_apt_bind(argv[9], argv[3], argv[4], argv[5], argv[6], argv[7]);
-        if ((argc == 13 || argc == 15) && !strcmp(argv[2], "sync-signed") &&
+        if (argc >= 13 && argc <= 16 && !strcmp(argv[2], "sync-signed") &&
             !strcmp(argv[7], "--source") && !strcmp(argv[9], "--keyring") &&
-            !strcmp(argv[11], "--output") &&
-            (argc == 13 || !strcmp(argv[13], "--ca-file")))
+            !strcmp(argv[11], "--output")) {
+            const char *ca_file = NULL;
+            int inrelease = 0, i;
+            for (i = 13; i < argc; ++i) {
+                if (!strcmp(argv[i], "--inrelease") && !inrelease) inrelease = 1;
+                else if (!strcmp(argv[i], "--ca-file") && !ca_file && i + 1 < argc)
+                    ca_file = argv[++i];
+                else return 2;
+            }
             return holy_apt_release_sync(argv[3], argv[4], argv[5], argv[6],
                                          argv[8], argv[10], argv[12],
-                                         argc == 15 ? argv[14] : NULL);
+                                         ca_file, inrelease);
+        }
         if ((argc == 12 || argc == 14) && !strcmp(argv[2], "sync") &&
             !strcmp(argv[4], "--sha256") && !strcmp(argv[6], "--source") &&
             !strcmp(argv[8], "--base") && !strcmp(argv[10], "--output") &&
@@ -965,7 +980,7 @@ int main(int argc, char **argv)
                 return result;
             }
         }
-        fputs("usage: holypkg apt index FILE --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY | apt sync URL --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--ca-file FILE] | apt sync-signed HTTPS_BASE/ SUITE COMPONENT ARCH --source NAME --keyring FILE --output NEW_DIRECTORY [--ca-file FILE] | apt sync-source ALIAS SUITE COMPONENT ARCH --root DIRECTORY --keyring FILE --output NEW_DIRECTORY [--ca-file FILE] | apt bind ALIAS SUITE COMPONENT INDEX_ARCH CATALOG --root ROOT | apt search|info NAME --catalog DIRECTORY [--source ALIAS --root ROOT] | apt search|info NAME --source ALIAS --suite SUITE --component COMPONENT --index-arch ARCH --root ROOT | apt fetch NAME VERSION ARCH [--catalog DIRECTORY | --source ALIAS --suite SUITE --component COMPONENT --index-arch ARCH --root ROOT] --output NEW_DIRECTORY [--ca-file FILE] [--import]\n", stderr);
+        fputs("usage: holypkg apt index FILE --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY | apt sync URL --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--ca-file FILE] | apt sync-signed HTTPS_BASE/ SUITE COMPONENT ARCH --source NAME --keyring FILE --output NEW_DIRECTORY [--inrelease] [--ca-file FILE] | apt sync-source ALIAS SUITE COMPONENT ARCH --root DIRECTORY --keyring FILE --output NEW_DIRECTORY [--inrelease] [--ca-file FILE] | apt bind ALIAS SUITE COMPONENT INDEX_ARCH CATALOG --root ROOT | apt search|info NAME --catalog DIRECTORY [--source ALIAS --root ROOT] | apt search|info NAME --source ALIAS --suite SUITE --component COMPONENT --index-arch ARCH --root ROOT | apt fetch NAME VERSION ARCH [--catalog DIRECTORY | --source ALIAS --suite SUITE --component COMPONENT --index-arch ARCH --root ROOT] --output NEW_DIRECTORY [--ca-file FILE] [--import]\n", stderr);
         return 2;
     }
     if (argc > 1 && !strcmp(argv[1], "apply")) return holy_apply_command(argc, argv);

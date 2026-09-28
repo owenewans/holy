@@ -84,6 +84,7 @@ static int proof_coordinates(const char *catalog, const char *suite,
                              char release_hash[65], char key_hash[65])
 {
     char *path = NULL, saved_suite[129], index_path[1025], wanted[512];
+    char kind[128], signature_hash[65];
     struct stat st;
     FILE *file = NULL;
     int fd = -1, ok = 0;
@@ -101,7 +102,13 @@ static int proof_coordinates(const char *catalog, const char *suite,
     if (fscanf(file, "release-sha256 %64s\nkey-sha256 %64s\nsuite %128s\nindex-path %1024s\n",
                release_hash, key_hash, saved_suite, index_path) == 4 &&
         digest(release_hash) && digest(key_hash) && !strcmp(saved_suite, suite) &&
-        !strcmp(index_path, wanted) && fgetc(file) == EOF) ok = 1;
+        !strcmp(index_path, wanted)) {
+        if (fgets(kind, sizeof kind, file))
+            ok = !strcmp(kind, "signature-kind inrelease\n") &&
+                 fscanf(file, "signature-sha256 %64s\n", signature_hash) == 1 &&
+                 digest(signature_hash) && fgetc(file) == EOF;
+        else ok = !ferror(file);
+    }
 done:
     if (file) fclose(file);
     if (fd >= 0) close(fd);

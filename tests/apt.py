@@ -80,6 +80,10 @@ with tempfile.TemporaryDirectory() as scratch:
     subprocess.run(["gpg", "--homedir", str(gnupg), "--batch", "--yes",
                     "--detach-sign", "--output", str(release.parent / "Release.gpg"),
                     str(release)], capture_output=True, check=True)
+    inrelease = release.parent / "InRelease"
+    subprocess.run(["gpg", "--homedir", str(gnupg), "--batch", "--yes",
+                    "--clearsign", "--output", str(inrelease), str(release)],
+                   capture_output=True, check=True)
     bad_rows = [
         row + row,
         row.replace(b"pool/main/f/fixture/fixture_2.0_all.deb", b"../outside.deb"),
@@ -152,6 +156,33 @@ with tempfile.TemporaryDirectory() as scratch:
         run("apt", "fetch", "fixture", "1:2.0-3", "all", "--catalog", signed,
             "--output", signed_package, "--ca-file", tmp / "cert.pem", "--import")
         assert "verification release-gpgv-user-key\n" in (signed_package / "selection").read_text()
+        inline = tmp / "inline"
+        run("apt", "sync-signed", base, "stable", "main", "all", "--source", "debian",
+            "--keyring", keyring, "--output", inline, "--inrelease",
+            "--ca-file", tmp / "cert.pem")
+        assert "verification inrelease-gpgv-user-key\n" in run(
+            "apt", "info", "fixture", "--catalog", inline)
+        inline_package = tmp / "inline-package"
+        run("apt", "fetch", "fixture", "1:2.0-3", "all", "--catalog", inline,
+            "--output", inline_package, "--ca-file", tmp / "cert.pem")
+        assert "verification inrelease-gpgv-user-key\n" in (
+            inline_package / "selection").read_text()
+        inline_bytes = (inline / "inrelease").read_bytes()
+        (inline / "inrelease").write_bytes(inline_bytes + b"damage")
+        run("apt", "search", "fixture", "--catalog", inline, status=2)
+        (inline / "inrelease").write_bytes(inline_bytes)
+        inline_release = (inline / "release").read_bytes()
+        (inline / "release").write_bytes(b"unsigned\n")
+        run("apt", "search", "fixture", "--catalog", inline, status=2)
+        (inline / "release").write_bytes(inline_release)
+        run("apt", "search", "fixture", "--catalog", inline)
+        remote_inline = inrelease.read_bytes()
+        inrelease.write_bytes(remote_inline + b"unsigned trailer\n")
+        run("apt", "sync-signed", base, "stable", "main", "all", "--source", "debian",
+            "--keyring", keyring, "--output", tmp / "inline-trailer",
+            "--inrelease", "--ca-file", tmp / "cert.pem", status=4)
+        assert not (tmp / "inline-trailer").exists()
+        inrelease.write_bytes(remote_inline)
         signature = (signed / "release.gpg").read_bytes()
         (signed / "release.gpg").write_bytes(signature + b"damage")
         run("apt", "search", "fixture", "--catalog", signed, status=2)
@@ -241,6 +272,15 @@ with tempfile.TemporaryDirectory() as scratch:
         bound_info = run("apt", "info", "fixture", "--catalog", bound,
                          "--source", "debian", "--root", root)
         assert "source-binding checked\n" in bound_info
+        inline_bound = tmp / "inline-bound"
+        run("apt", "sync-source", "debian", "stable", "main", "all",
+            "--root", root, "--keyring", keyring, "--output", inline_bound,
+            "--ca-file", tmp / "cert.pem", "--inrelease")
+        assert "verification inrelease-gpgv-user-key\n" in run(
+            "apt", "info", "fixture", "--source", "debian", "--suite", "stable",
+            "--component", "main", "--index-arch", "all", "--root", root)
+        run("apt", "bind", "debian", "stable", "main", "all", bound,
+            "--root", root)
         assert "source-id " in bound_info
         conversion = (bound / "conversion").read_text()
         (bound / "conversion").write_text("\n".join(

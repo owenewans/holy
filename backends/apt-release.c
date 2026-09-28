@@ -145,6 +145,80 @@ static int verify_signature(const char *key, const char *signature, const char *
     return 4;
 }
 
+static int verify_inline(const char *key, const char *inrelease)
+{
+    pid_t child = fork();
+    int status;
+    if (child < 0) return 1;
+    if (!child) {
+        execlp("gpgv", "gpgv", "--quiet", "--keyring", key,
+               inrelease, (char *)NULL);
+        _exit(127);
+    }
+    while (waitpid(child, &status, 0) < 0) {
+        if (errno != EINTR) return 1;
+    }
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) return 0;
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 127) return 6;
+    return 4;
+}
+
+static int extract_inline(const char *input, const char *output)
+{
+    int fd = open(input, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    int out = -1, ok = 0, stage = 0;
+    FILE *file = NULL;
+    char *line = NULL;
+    size_t capacity = 0, total = 0;
+    ssize_t length;
+    struct stat st;
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size > 8 * 1024 * 1024) goto done;
+    file = fdopen(fd, "r");
+    if (!file) goto done;
+    fd = -1;
+    out = open(output, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (out < 0) goto done;
+    while ((length = getline(&line, &capacity, file)) >= 0) {
+        size_t n = (size_t)length;
+        if (!n || n > 65536 || memchr(line, 0, n) || line[n - 1] != '\n' ||
+            (n >= 2 && line[n - 2] == '\r')) goto done;
+        if (stage == 0) {
+            if (strcmp(line, "-----BEGIN PGP SIGNED MESSAGE-----\n")) goto done;
+            stage = 1;
+        } else if (stage == 1) {
+            if (n == 1) stage = 2;
+            else if (strncmp(line, "Hash: ", 6) || n > 128) goto done;
+        } else if (stage == 2) {
+            const char *body = line;
+            size_t written = 0;
+            if (!strcmp(line, "-----BEGIN PGP SIGNATURE-----\n")) { stage = 3; continue; }
+            if (line[0] == '-' && (n < 2 || line[1] != ' ')) goto done;
+            if (n >= 2 && line[0] == '-' && line[1] == ' ') { body += 2; n -= 2; }
+            if (n >= 2 && (body[n - 2] == ' ' || body[n - 2] == '\t')) goto done;
+            if (total > 4 * 1024 * 1024 - n) goto done;
+            while (written < n) {
+                ssize_t count = write(out, body + written, n - written);
+                if (count < 0 && errno == EINTR) continue;
+                if (count <= 0) goto done;
+                written += (size_t)count;
+            }
+            total += n;
+        } else if (stage == 3) {
+            if (!strcmp(line, "-----END PGP SIGNATURE-----\n")) stage = 4;
+            else if (n > 128) goto done;
+        } else goto done;
+    }
+    ok = !ferror(file) && stage == 4 && !fsync(out);
+done:
+    free(line);
+    if (file) fclose(file);
+    if (fd >= 0) close(fd);
+    if (out >= 0) close(out);
+    if (!ok) unlink(output);
+    return ok;
+}
+
 static int release_entry(const char *release, const char *path, const char *suite,
                          char hash[65], off_t *size)
 {
@@ -206,12 +280,14 @@ int holy_apt_verify_release(const char *catalog, const char *index_hash)
 {
     char *proof = path_name(catalog, "release-proof");
     char *release = NULL, *signature = NULL, *key = NULL, *original = NULL;
+    char *extracted = NULL;
     char release_hash[65], key_hash[65], path[1025], suite[129], actual[65];
-    char stated_release[65], stated_key[65];
+    char stated_release[65], stated_key[65], stated_signature[65], extra[128];
+    char scratch[] = "/tmp/holy-apt-verify-XXXXXX";
     struct stat st;
     FILE *stream = NULL;
     off_t expected_size, actual_size;
-    int result = -1, fd;
+    int result = -1, fd, inline_signature = 0, scratch_created = 0;
     if (!proof) return -1;
     fd = open(proof, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0 && errno == ENOENT) { result = 0; goto done; }
@@ -226,27 +302,51 @@ int holy_apt_verify_release(const char *catalog, const char *index_hash)
                stated_release, stated_key, suite, path) != 4 ||
         !hex_hash(stated_release) || !hex_hash(stated_key) ||
         !segment(suite) ||
-        !strchr(path, '/') || path[0] == '/' || strstr(path, "..") ||
-        !release_entry(release, path, suite, actual, &expected_size) ||
+        !strchr(path, '/') || path[0] == '/' || strstr(path, "..")) goto done;
+    if (fgets(extra, sizeof extra, stream)) {
+        if (strcmp(extra, "signature-kind inrelease\n") ||
+            fscanf(stream, "signature-sha256 %64s\n", stated_signature) != 1 ||
+            !hex_hash(stated_signature) || fgetc(stream) != EOF) goto done;
+        inline_signature = 1;
+    } else if (ferror(stream)) goto done;
+    if (!release_entry(release, path, suite, actual, &expected_size) ||
         strcmp(actual, index_hash)) goto done;
-    signature = path_name(catalog, "release.gpg");
+    signature = path_name(catalog, inline_signature ? "inrelease" : "release.gpg");
     key = path_name(catalog, "keyring");
     original = path_name(catalog, "original");
     if (!release || !signature || !key || !original ||
         !hash_file(release, release_hash, NULL, 4 * 1024 * 1024) ||
         strcmp(release_hash, stated_release) ||
-        !hash_file(signature, actual, NULL, 1024 * 1024) ||
+        !hash_file(signature, actual, NULL,
+                   inline_signature ? 8 * 1024 * 1024 : 1024 * 1024) ||
+        (inline_signature && strcmp(actual, stated_signature)) ||
         !hash_file(key, key_hash, NULL, 1024 * 1024) ||
         strcmp(key_hash, stated_key) ||
         !hash_file(original, actual, &actual_size, 64 * 1024 * 1024) ||
         strcmp(actual, index_hash) || actual_size != expected_size) goto done;
-    {
+    if (inline_signature) {
+        if (!mkdtemp(scratch)) goto done;
+        scratch_created = 1;
+        extracted = path_name(scratch, "release");
+        if (!extracted) goto done;
+        {
+            int verified = verify_inline(key, signature);
+            if (verified) { if (verified == 6) result = -2; goto done; }
+        }
+        if (!extract_inline(signature, extracted)) goto done;
+        if (!hash_file(extracted, actual, NULL, 4 * 1024 * 1024) ||
+            strcmp(actual, stated_release)) goto done;
+        result = 2;
+    } else {
         int verified = verify_signature(key, signature, release);
         if (verified) { if (verified == 6) result = -2; goto done; }
+        result = 1;
     }
-    result = 1;
 done:
     if (stream) fclose(stream);
+    if (extracted) unlink(extracted);
+    if (scratch_created) rmdir(scratch);
+    free(extracted);
     free(proof); free(release); free(signature); free(key); free(original);
     return result;
 }
@@ -256,7 +356,8 @@ static int sync_release(const char *base, const char *suite,
                         const char *source, const char *keyring,
                         const char *output, const char *ca_file,
                         const char *root, const char *source_id,
-                        const char *source_key, const char *source_trust)
+                        const char *source_key, const char *source_trust,
+                        int inrelease)
 {
     char *staging = NULL, *catalog = NULL, *key_copy = NULL;
     char *dists = NULL, *suite_url = NULL, *component_url = NULL, *arch_url = NULL;
@@ -286,28 +387,39 @@ static int sync_release(const char *base, const char *suite,
         snprintf(relative, sizeof relative, "%s/%s/Packages.gz", component, subdir) >=
         (int)sizeof relative) { result = 2; goto done; }
     arch_url = component_url ? child_directory(component_url, subdir) : NULL;
-    release_url = suite_url ? holy_fetch_child_url(suite_url, "Release") : NULL;
-    signature_url = suite_url ? holy_fetch_child_url(suite_url, "Release.gpg") : NULL;
+    release_url = !inrelease && suite_url ? holy_fetch_child_url(suite_url, "Release") : NULL;
+    signature_url = suite_url ? holy_fetch_child_url(suite_url,
+                                   inrelease ? "InRelease" : "Release.gpg") : NULL;
     index_url = arch_url ? holy_fetch_child_url(arch_url, "Packages.gz") : NULL;
-    if (!index_url || !release_url || !signature_url) { result = 2; goto done; }
+    if (!index_url || (!inrelease && !release_url) || !signature_url) { result = 2; goto done; }
     staging = malloc(strlen(output) + sizeof ".tmp-XXXXXX");
     if (!staging) goto done;
     sprintf(staging, "%s.tmp-XXXXXX", output);
     if (!mkdtemp(staging)) goto done;
-    result = holy_fetch_https_foreign_limited(release_url, staging, ca_file,
-                                              release_hash, 4 * 1024 * 1024);
-    if (result) goto done;
-    release = path_name(staging, release_hash);
+    if (!inrelease) {
+        result = holy_fetch_https_foreign_limited(release_url, staging, ca_file,
+                                                  release_hash, 4 * 1024 * 1024);
+        if (result) goto done;
+        release = path_name(staging, release_hash);
+    }
     result = holy_fetch_https_foreign_limited(signature_url, staging, ca_file,
-                                              signature_hash, 1024 * 1024);
+                                              signature_hash,
+                                              inrelease ? 8 * 1024 * 1024 : 1024 * 1024);
     if (result) goto done;
     signature = path_name(staging, signature_hash);
     key_copy = holy_stage_local(keyring, "holy-apt-key");
-    if (!key_copy || !release || !signature ||
+    if (!key_copy || (!inrelease && !release) || !signature ||
         !hash_file(key_copy, key_hash, NULL, 1024 * 1024)) { result = 6; goto done; }
     if (source_key && strcmp(source_key, key_hash)) { result = 4; goto done; }
-    result = verify_signature(key_copy, signature, release);
+    if (inrelease) release = path_name(staging, "release-clear");
+    if (!release) { result = 1; goto done; }
+    result = inrelease ? verify_inline(key_copy, signature) :
+                         verify_signature(key_copy, signature, release);
     if (result) goto done;
+    if (inrelease && !extract_inline(signature, release)) { result = 4; goto done; }
+    if (inrelease && !hash_file(release, release_hash, NULL, 4 * 1024 * 1024)) {
+        result = 4; goto done;
+    }
     if (!release_entry(release, relative, suite, expected_hash, &expected_size)) {
         result = 4; goto done;
     }
@@ -325,14 +437,17 @@ static int sync_release(const char *base, const char *suite,
     if (result) goto done;
     target = path_name(catalog, "release");
     if (!target || !copy_file(release, target, 4 * 1024 * 1024)) { result = 1; goto done; }
-    free(target); target = path_name(catalog, "release.gpg");
-    if (!target || !copy_file(signature, target, 1024 * 1024)) { result = 1; goto done; }
+    free(target); target = path_name(catalog, inrelease ? "inrelease" : "release.gpg");
+    if (!target || !copy_file(signature, target,
+                             inrelease ? 8 * 1024 * 1024 : 1024 * 1024)) { result = 1; goto done; }
     free(target); target = path_name(catalog, "keyring");
     if (!target || !copy_file(key_copy, target, 1024 * 1024)) { result = 1; goto done; }
     free(target); target = path_name(catalog, "release-proof");
     if (!target || !(proof = fopen(target, "wx"))) { result = 1; goto done; }
     fprintf(proof, "release-sha256 %s\nkey-sha256 %s\nsuite %s\nindex-path %s\n",
             release_hash, key_hash, suite, relative);
+    if (inrelease)
+        fprintf(proof, "signature-kind inrelease\nsignature-sha256 %s\n", signature_hash);
     {
         int failed = fflush(proof) || fsync(fileno(proof));
         if (fclose(proof)) failed = 1;
@@ -341,7 +456,9 @@ static int sync_release(const char *base, const char *suite,
     }
     {
         int verified = holy_apt_verify_release(catalog, expected_hash);
-        if (verified != 1) { result = verified == -2 ? 6 : 4; goto done; }
+        if (verified != (inrelease ? 2 : 1)) {
+            result = verified == -2 ? 6 : 4; goto done;
+        }
     }
     if (source_id) {
         char current_id[65], current_key[65];
@@ -389,7 +506,8 @@ done:
     if (dir >= 0) close(dir);
     if (parent_fd >= 0) close(parent_fd);
     if (!published && catalog) {
-        const char *files[] = {"original", "conversion", "release", "release.gpg", "keyring", "release-proof"};
+        const char *files[] = {"original", "conversion", "release", "release.gpg",
+                               "inrelease", "keyring", "release-proof"};
         size_t i;
         for (i = 0; i < sizeof files / sizeof files[0]; ++i) {
             char *name = path_name(catalog, files[i]);
@@ -412,16 +530,17 @@ done:
 int holy_apt_release_sync(const char *base, const char *suite,
                           const char *component, const char *arch,
                           const char *source, const char *keyring,
-                          const char *output, const char *ca_file)
+                          const char *output, const char *ca_file, int inrelease)
 {
     return sync_release(base, suite, component, arch, source, keyring,
-                        output, ca_file, NULL, NULL, NULL, NULL);
+                        output, ca_file, NULL, NULL, NULL, NULL, inrelease);
 }
 
 int holy_apt_release_sync_source(const char *root, const char *alias,
                                  const char *suite, const char *component,
                                  const char *arch, const char *keyring,
-                                 const char *output, const char *ca_file)
+                                 const char *output, const char *ca_file,
+                                 int inrelease)
 {
     char id[65], key[65], actual[65];
     char *base = NULL, *trust = NULL, *snapshot = NULL;
@@ -433,7 +552,7 @@ int holy_apt_release_sync_source(const char *root, const char *alias,
     }
     if (strcmp(key, actual)) { result = 4; goto done; }
     result = sync_release(base, suite, component, arch, alias, snapshot,
-                          output, ca_file, root, id, key, trust);
+                          output, ca_file, root, id, key, trust, inrelease);
 done:
     if (snapshot) { unlink(snapshot); free(snapshot); }
     free(base); free(trust);

@@ -522,7 +522,9 @@ int holy_apt_query(const char *catalog, const char *query, int info,
         if (info) {
             printf("package %s\nversion %s\narch %s\nfilename %s\nsize %llu\nsha256 %s\n",
                    e->name, e->version, e->arch, e->filename, e->size, e->sha256);
-            printf("verification %s\n", index.release_verified ? "release-gpgv-user-key" : "pinned-unverified");
+            printf("verification %s\n", index.release_verified == 2 ?
+                   "inrelease-gpgv-user-key" : index.release_verified == 1 ?
+                   "release-gpgv-user-key" : "pinned-unverified");
             if (root) printf("source-id %s\nsource-binding checked\n", index.source_id);
             fputs("depends ", stdout); quote(stdout, e->depends ? e->depends : "-"); fputc('\n', stdout);
             fputs("pre-depends ", stdout); quote(stdout, e->pre_depends ? e->pre_depends : "-"); fputc('\n', stdout);
@@ -661,7 +663,8 @@ int holy_apt_fetch(const char *catalog, const char *name, const char *version,
     if (root) fprintf(receipt, "\nsource-id %s\nsource-binding checked", index.source_id);
     fprintf(receipt, "\nindex-sha256 %s\nartifact-sha256 %s\nsize %llu\nverification %s\nimported %s\nstate complete\n",
             index.hash, selected->sha256, selected->size,
-            index.release_verified ? "release-gpgv-user-key" : "pinned-unverified",
+            index.release_verified == 2 ? "inrelease-gpgv-user-key" :
+            index.release_verified == 1 ? "release-gpgv-user-key" : "pinned-unverified",
             import ? "yes" : "no");
     {
         int failed = ferror(receipt);

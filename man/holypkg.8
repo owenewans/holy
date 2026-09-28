@@ -16,9 +16,9 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apt sync HTTPS_URL --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--ca-file FILE]
 .br
-.B holypkg apt sync-signed HTTPS_BASE/ SUITE COMPONENT ARCH --source NAME --keyring FILE --output NEW_DIRECTORY [--ca-file FILE]
+.B holypkg apt sync-signed HTTPS_BASE/ SUITE COMPONENT ARCH --source NAME --keyring FILE --output NEW_DIRECTORY [--inrelease] [--ca-file FILE]
 .br
-.B holypkg apt sync-source ALIAS SUITE COMPONENT ARCH --root DIRECTORY --keyring FILE --output NEW_DIRECTORY [--ca-file FILE]
+.B holypkg apt sync-source ALIAS SUITE COMPONENT ARCH --root DIRECTORY --keyring FILE --output NEW_DIRECTORY [--inrelease] [--ca-file FILE]
 .br
 .B holypkg apt bind ALIAS SUITE COMPONENT INDEX_ARCH CATALOG --root DIRECTORY
 .br
@@ -288,6 +288,14 @@ external requirement for this mode and the selected keyring is trusted for
 this operation. The command does not register that keyring as a source-id or
 implement the full APT repository policy. Signed catalog fetch receipts use
 verification=release-gpgv-user-key. Missing Valid-Until is accepted.
+.B --inrelease
+selects dists/SUITE/InRelease instead of Release and Release.gpg. gpgv checks
+the signature; a strict clearsign reader extracts the signed text. Only that
+text supplies the index hash and suite policy.
+The catalog keeps InRelease, the extracted Release, the keyring and a proof
+record. Queries recheck the signature. Fetch receipts use
+verification=inrelease-gpgv-user-key. Selection is explicit; a failed
+InRelease fetch or signature does not fall back to detached Release.gpg.
 .B apt sync-source
 reads an active type apt source from the target-root registry. Its public-key
 is a binary OpenPGP keyring whose SHA-256 is frozen by source plan. The supplied

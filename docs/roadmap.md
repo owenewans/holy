@@ -105,8 +105,9 @@
   for rechecking. Registered APT sources now pin an OpenPGP keyring hash;
   sync-source and source-aware query/fetch check the source-id, URL and key.
   sync-source binds its catalog under the target database; source queries find
-  that binding by suite, component and index architecture. InRelease, solver
-  integration and full hook integration remain open.
+  that binding by suite, component and index architecture. Explicit
+  --inrelease verifies clearsigned metadata through gpgv and rechecks it on
+  query/fetch. Solver integration and full hook integration remain open.
 
 - [x] Import local Slackware .txz/.tgz/.tbz/.tlz packages into native outputs.
   Preserve original bytes, filename identity/build tag, install/ metadata and
