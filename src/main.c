@@ -1,3 +1,4 @@
+#define _XOPEN_SOURCE 700
 #include "config.h"
 #include "package.h"
 #include "verify.h"
@@ -164,6 +165,20 @@ static int xbps_registered_catalog(const char *root, const char *alias,
     return result;
 }
 
+static int xbps_bound_catalog(const char *root, const char *alias,
+                              const char *arch, const char *candidate,
+                              char **bound)
+{
+    char *selected = NULL, *registered = NULL;
+    int result = holy_xbps_catalog_path(root, alias, arch, bound);
+    if (result || !candidate) return result;
+    selected = realpath(candidate, NULL);
+    registered = realpath(*bound, NULL);
+    result = selected && registered && !strcmp(selected, registered) ? 0 : 6;
+    free(selected); free(registered);
+    return result;
+}
+
 static int fetch_source(int argc, char **argv)
 {
     const char *separator = strchr(argv[2], ':');
@@ -250,11 +265,9 @@ static int fetch_source(int argc, char **argv)
                     alias, separator + 1);
             result = 3; goto done;
         }
-        if (!catalog) {
-            result = holy_xbps_catalog_path(root, alias, arch, &bound_catalog);
-            if (result) goto done;
-            catalog = bound_catalog;
-        }
+        result = xbps_bound_catalog(root, alias, arch, catalog, &bound_catalog);
+        if (result) goto done;
+        catalog = bound_catalog;
         result = xbps_registered_catalog(root, alias, catalog, public_key, 1);
         if (!result)
             result = holy_xbps_fetch(catalog, separator + 1, version, arch,
@@ -340,7 +353,8 @@ done:
 
 static int query_source(int argc, char **argv, int search)
 {
-    const char *root = "/", *catalog = NULL, *alias = NULL, *name = NULL, *repo = NULL;
+    const char *root = "/", *catalog = NULL, *alias = NULL, *name = NULL;
+    const char *repo = NULL, *arch = NULL;
     const char *separator = search ? NULL : strchr(argv[2], ':');
     char source_id[65], *owned_alias = NULL, *bound_catalog = NULL;
     char **aliases = NULL;
@@ -368,6 +382,8 @@ static int query_source(int argc, char **argv, int search)
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) catalog = argv[++i];
         else if (!strcmp(argv[i], "--repo") && !repo && i + 1 < argc &&
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) repo = argv[++i];
+        else if (!strcmp(argv[i], "--arch") && !arch && i + 1 < argc &&
+                 argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) arch = argv[++i];
         else if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < argc &&
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) {
             root = argv[++i]; root_seen = 1;
@@ -393,6 +409,12 @@ static int query_source(int argc, char **argv, int search)
                 if (!rc) printf(" id %s\n", source_id);
                 if (!rc) rc = query_apk_source(root, current, NULL, name, 1,
                                                 file_search);
+            } else if (!rc && !strcmp(family, "xbps")) {
+                rc = !arch || file_search ? 6 :
+                     holy_xbps_catalog_path(root, current, arch, &path);
+                if (!rc) rc = holy_source_active_id(root, current, source_id);
+                if (!rc) printf(" id %s\n", source_id);
+                if (!rc) rc = holy_xbps_query(path, name, 0);
             } else if (!rc && (!strcmp(family, "holy-http") ||
                                !strcmp(family, "holy-git"))) {
                 rc = holy_source_catalog_path_fast(root, current, &path);
@@ -417,14 +439,30 @@ static int query_source(int argc, char **argv, int search)
         if (result) { free(family); goto done; }
         if (!strcmp(family, "apk")) {
             free(family);
-            if (catalog) goto done;
+            if (catalog || arch) goto done;
             result = holy_source_active_id(root, alias, source_id);
             if (!result) result = query_apk_source(root, alias, repo, name,
                                                     search, file_search);
             if (!result) printf("source-id %s\n", source_id);
             goto done;
         }
-        if (repo || (strcmp(family, "holy-http") && strcmp(family, "holy-git"))) {
+        if (!strcmp(family, "xbps")) {
+            free(family);
+            if (repo || file_search) { result = file_search ? 6 : 2; goto done; }
+            if (!arch) {
+                fprintf(stderr, "holypkg: XBPS query needs --arch for %s\n", alias);
+                result = 3; goto done;
+            }
+            result = xbps_bound_catalog(root, alias, arch, catalog, &bound_catalog);
+            if (result) goto done;
+            catalog = bound_catalog;
+            result = xbps_registered_catalog(root, alias, catalog, NULL, 0);
+            if (!result) result = holy_source_active_id(root, alias, source_id);
+            if (!result) result = holy_xbps_query(catalog, name, !search);
+            if (!result) printf("source-id %s\n", source_id);
+            goto done;
+        }
+        if (repo || arch || (strcmp(family, "holy-http") && strcmp(family, "holy-git"))) {
             free(family); goto done;
         }
         free(family);
@@ -442,8 +480,8 @@ static int query_source(int argc, char **argv, int search)
     }
 done:
     if (result == 2) fprintf(stderr,
-        search ? "usage: holypkg search QUERY [--source SOURCE] [--repo REPO] [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]\n" :
-                 "usage: holypkg info SOURCE:PACKAGE [--repo REPO] [--catalog MIRROR] [--root DIRECTORY]\n");
+        search ? "usage: holypkg search QUERY [--source SOURCE] [--repo REPO] [--arch ARCH] [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]\n" :
+                 "usage: holypkg info SOURCE:PACKAGE [--repo REPO] [--arch ARCH] [--catalog MIRROR] [--root DIRECTORY]\n");
     for (j = 0; j < alias_count; ++j) free(aliases[j]);
     free(aliases);
     free(owned_alias); free(bound_catalog);

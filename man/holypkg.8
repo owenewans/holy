@@ -104,9 +104,9 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg info local:FILE
 .br
-.B holypkg info SOURCE:PACKAGE [--repo REPO] [--catalog MIRROR] [--root DIRECTORY]
+.B holypkg info SOURCE:PACKAGE [--repo REPO] [--arch ARCH] [--catalog MIRROR] [--root DIRECTORY]
 .br
-.B holypkg search QUERY [--source SOURCE] [--repo REPO] [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]
+.B holypkg search QUERY [--source SOURCE] [--repo REPO] [--arch ARCH] [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]
 .br
 .B holypkg verify local:FILE
 .br
@@ -471,7 +471,8 @@ The common sync XBPS_SOURCE command takes --arch and an explicit repodata
 The common fetch XBPS_SOURCE:PACKAGE command takes --version and --arch,
 checks the bound catalog and registered key, and uses the same archive verifier
 and optional import as xbps fetch. A missing version or architecture returns
-decision-required (3).
+decision-required (3). An explicit --catalog must resolve to the bound
+catalog directory; a copied unbound catalog is rejected.
 .PP
 xbps fetch selects an exact name/version/arch from that catalog, downloads
 the archive over HTTPS, checks size and SHA-256, and compares props.plist
@@ -1577,9 +1578,12 @@ search QUERY without --source visits every active source in alias order. It
 prints each source alias and immutable ID with its package or file results.
 Native sources use their sealed mirrors. APK sources search their bound
 repositories and label results with the repository name; --repo restricts an
-explicit APK source to one repository. Missing or unsupported source catalogs
+explicit APK source to one repository. XBPS sources query the bound repodata
+for --arch; an explicit XBPS query without it returns decision-required (3).
+XBPS file coverage is unavailable. Missing or unsupported source catalogs
 report unavailable coverage. An empty active registry exits 6. --catalog
-requires --source and applies only to native mirrors. search QUERY --source
+requires --source and applies to native mirrors or a bound XBPS catalog.
+search QUERY --source
 SOURCE checks the active source-id and the bound catalog before printing
 matches. info SOURCE:PACKAGE checks the same inputs; APK info can require
 --repo when multiple repositories match. Neither command installs or runs

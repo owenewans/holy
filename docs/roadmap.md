@@ -492,8 +492,8 @@
   Source-aware search/info/fetch resolve that binding by index architecture and
   reject changed catalog data or source definitions. Root-relative bindings
   survive moving a target root with its cache.
-  Common sync/fetch now use the same registered-source checks for XBPS, with
-  explicit index architecture and version at the CLI.
+  Common sync/search/info/fetch now use the same registered-source checks for
+  XBPS, with explicit index architecture and version where required.
   A separate digest-checked
   shlib-provides index now gives exact SONAME candidate hints from Void metadata,
   including source-bound queries. Foreign binary import now derives SONAME

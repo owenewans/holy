@@ -5,6 +5,7 @@ import io
 import os
 import pathlib
 import plistlib
+import shutil
 import ssl
 import subprocess
 import sys
@@ -208,6 +209,23 @@ def main():
                 "--sha256", signed_hash, "--output", registered,
                 "--ca-file", root / "cert.pem", "--public-key", public_key)
             assert "source-id " in (registered / "conversion").read_text()
+            run("info", "fixture:fixture", "--root", target, status=3)
+            assert package_hash in run("info", "fixture:fixture", "--arch", "x86_64",
+                                       "--root", target)
+            assert "fixture 1.0_1 x86_64" in run(
+                "search", "fixture", "--source", "fixture", "--arch", "x86_64",
+                "--root", target)
+            assert 'source "fixture"' in run(
+                "search", "fixture", "--arch", "x86_64", "--root", target)
+            run("search", "/usr/share/fixture", "--source", "fixture",
+                "--arch", "x86_64", "--root", target, "--file", status=6)
+            copied_catalog = root / "copied-catalog"
+            shutil.copytree(registered, copied_catalog)
+            run("info", "fixture:fixture", "--arch", "x86_64",
+                "--catalog", copied_catalog, "--root", target, status=6)
+            run("fetch", "fixture:fixture", "--version", "1.0_1",
+                "--arch", "x86_64", "--catalog", copied_catalog,
+                "--root", target, "--output", root / "copied-fetch", status=6)
             generic_target = root / "generic-target"
             generic_target.mkdir()
             run("db", "init", "--root", generic_target)
