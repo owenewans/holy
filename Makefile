@@ -11,15 +11,16 @@ SOLV_LIBS ?= $(shell pkg-config --libs libsolv 2>/dev/null) -lz
 
 .PHONY: force-build-config
 .build-config: force-build-config
-	$(file >$@.tmp,CC=$(CC))
-	$(file >>$@.tmp,CPPFLAGS=$(CPPFLAGS))
-	$(file >>$@.tmp,CFLAGS=$(CFLAGS))
-	$(file >>$@.tmp,LDFLAGS=$(LDFLAGS))
-	$(file >>$@.tmp,LDLIBS=$(LDLIBS))
-	$(file >>$@.tmp,SOLV_CFLAGS=$(SOLV_CFLAGS))
-	$(file >>$@.tmp,SOLV_LIBS=$(SOLV_LIBS))
-	@cmp -s "$@.tmp" "$@" || mv "$@.tmp" "$@"
-	@rm -f "$@.tmp"
+	$(eval holy_build_config_tmp := $(shell mktemp "$@.tmp.XXXXXX"))
+	$(file >$(holy_build_config_tmp),CC=$(CC))
+	$(file >>$(holy_build_config_tmp),CPPFLAGS=$(CPPFLAGS))
+	$(file >>$(holy_build_config_tmp),CFLAGS=$(CFLAGS))
+	$(file >>$(holy_build_config_tmp),LDFLAGS=$(LDFLAGS))
+	$(file >>$(holy_build_config_tmp),LDLIBS=$(LDLIBS))
+	$(file >>$(holy_build_config_tmp),SOLV_CFLAGS=$(SOLV_CFLAGS))
+	$(file >>$(holy_build_config_tmp),SOLV_LIBS=$(SOLV_LIBS))
+	@cmp -s "$(holy_build_config_tmp)" "$@" || mv "$(holy_build_config_tmp)" "$@"
+	@rm -f "$(holy_build_config_tmp)"
 
 .DEFAULT_GOAL := all
 
