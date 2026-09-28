@@ -104,7 +104,8 @@
   Valid-Until when present, and signed index hash/size; catalogs keep evidence
   for rechecking. Registered APT sources now pin an OpenPGP keyring hash;
   sync-source and source-aware query/fetch check the source-id, URL and key.
-  InRelease, automatic catalog binding/discovery, solver
+  sync-source binds its catalog under the target database; source queries find
+  that binding by suite, component and index architecture. InRelease, solver
   integration and full hook integration remain open.
 
 - [x] Import local Slackware .txz/.tgz/.tbz/.tlz packages into native outputs.

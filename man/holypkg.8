@@ -20,11 +20,19 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apt sync-source ALIAS SUITE COMPONENT ARCH --root DIRECTORY --keyring FILE --output NEW_DIRECTORY [--ca-file FILE]
 .br
+.B holypkg apt bind ALIAS SUITE COMPONENT INDEX_ARCH CATALOG --root DIRECTORY
+.br
 .B holypkg apt search QUERY --catalog DIRECTORY [--source ALIAS --root DIRECTORY]
+.br
+.B holypkg apt search QUERY --source ALIAS --suite SUITE --component COMPONENT --index-arch ARCH --root DIRECTORY
 .br
 .B holypkg apt info PACKAGE --catalog DIRECTORY [--source ALIAS --root DIRECTORY]
 .br
+.B holypkg apt info PACKAGE --source ALIAS --suite SUITE --component COMPONENT --index-arch ARCH --root DIRECTORY
+.br
 .B holypkg apt fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--source ALIAS --root DIRECTORY] [--ca-file FILE] [--import]
+.br
+.B holypkg apt fetch NAME VERSION ARCH --source ALIAS --suite SUITE --component COMPONENT --index-arch ARCH --root DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--import]
 .br
 .B holypkg appimage inspect INPUT
 .br
@@ -284,11 +292,15 @@ verification=release-gpgv-user-key. Missing Valid-Until is accepted.
 reads an active type apt source from the target-root registry. Its public-key
 is a binary OpenPGP keyring whose SHA-256 is frozen by source plan. The supplied
 --keyring must match that fingerprint. Sync checks the source again before
-publication and records its stable source-id. Search, info and fetch with
---source and --root verify the current source-id, base URL and keyring hash
-against the catalog. Alias renames preserve the binding; a changed source URL
-or key invalidates it. This is an explicit catalog path workflow; automatic
-catalog discovery and a database binding remain open.
+publication, records its stable source-id and writes a binding in the target
+database. apt bind can replace a binding for a previously verified catalog.
+The binding keys source-id, suite, component and index architecture. Search,
+info and fetch resolve these coordinates without --catalog. Each operation
+checks the stored catalog path, index, Release proof and current source URL/key.
+Alias renames preserve the binding; a changed source URL or key invalidates it.
+With an explicit --catalog, --source and --root check the catalog against the
+registered source without changing its binding. The package architecture in
+apt fetch is distinct from --index-arch.
 .B apt search
 and
 .B apt info

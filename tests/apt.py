@@ -218,6 +218,20 @@ with tempfile.TemporaryDirectory() as scratch:
         run("apt", "sync-source", "debian", "stable", "main", "all",
             "--root", root, "--keyring", keyring, "--output", bound,
             "--ca-file", tmp / "cert.pem")
+        binding = next((root / "var/lib/holypkg/apt-catalogs").iterdir())
+        assert "fixture 1:2.0-3 all\n" == run(
+            "apt", "search", "fixture", "--source", "debian", "--suite", "stable",
+            "--component", "main", "--index-arch", "all", "--root", root)
+        bound_record = binding.read_bytes()
+        binding.write_bytes(bound_record + b"tamper\n")
+        run("apt", "search", "fixture", "--source", "debian", "--suite", "stable",
+            "--component", "main", "--index-arch", "all", "--root", root, status=6)
+        binding.unlink()
+        run("apt", "bind", "debian", "stable", "main", "all", bound,
+            "--root", root)
+        assert binding.exists()
+        run("apt", "bind", "debian", "stable", "contrib", "all", bound,
+            "--root", root, status=4)
         wrong_keyring = tmp / "wrong-keyring.gpg"
         wrong_keyring.write_bytes(b"wrong keyring")
         run("apt", "sync-source", "debian", "stable", "main", "all",
@@ -235,8 +249,9 @@ with tempfile.TemporaryDirectory() as scratch:
             "--source", "debian", "--root", root, status=4)
         (bound / "conversion").write_text(conversion)
         bound_package = tmp / "bound-package"
-        run("apt", "fetch", "fixture", "1:2.0-3", "all", "--catalog", bound,
-            "--output", bound_package, "--source", "debian", "--root", root,
+        run("apt", "fetch", "fixture", "1:2.0-3", "all", "--source", "debian",
+            "--suite", "stable", "--component", "main", "--index-arch", "all",
+            "--root", root, "--output", bound_package,
             "--ca-file", tmp / "cert.pem", "--import")
         assert "source-binding checked\n" in (bound_package / "selection").read_text()
         run("apt", "info", "fixture", "--catalog", signed,
@@ -245,11 +260,16 @@ with tempfile.TemporaryDirectory() as scratch:
         assert "source-binding checked\n" in run(
             "apt", "info", "fixture", "--catalog", bound,
             "--source", "renamed", "--root", root)
+        assert "fixture 1:2.0-3 all\n" == run(
+            "apt", "search", "fixture", "--source", "renamed", "--suite", "stable",
+            "--component", "main", "--index-arch", "all", "--root", root)
         run("apt", "info", "fixture", "--catalog", bound,
             "--source", "debian", "--root", root, status=6)
         register("renamed", base + "other/")
         run("apt", "info", "fixture", "--catalog", bound,
             "--source", "renamed", "--root", root, status=4)
+        run("apt", "search", "fixture", "--source", "renamed", "--suite", "stable",
+            "--component", "main", "--index-arch", "all", "--root", root, status=6)
         config.write_text(f"[source broken]\ntype apt\n"
                           f"repo main \"{base}\"\ntrust require\npublic-key \"{keyring}\"\n")
         run("source", "plan", "--config", config, "--root", root, status=2)

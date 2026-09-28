@@ -106,6 +106,7 @@ for the digest confirmation and fetch sequence.
 A registered APT source uses type apt and one url HTTPS_BASE/. public-key points
 to a binary OpenPGP keyring; source plan freezes its SHA-256. trust require
 needs that key. holypkg apt sync-source requires the same keyring and records
-the stable source-id in its signed catalog. Queries and fetches can check the
-current registry with --source and --root. The keyring is selected by the user;
+the stable source-id in its signed catalog and database binding. Queries and
+fetches can select it with source, suite, component and index architecture;
+they recheck the current registry. The keyring is selected by the user;
 adding a source does not import public keys from the network.

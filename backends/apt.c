@@ -8,6 +8,7 @@
 #include "../src/import.h"
 #include "../src/package.h"
 #include "../src/source.h"
+#include "../src/state.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -678,5 +679,23 @@ done:
     if (fd >= 0) close(fd);
     if (dir >= 0) close(dir);
     free(url); free(converted); free(original); free_index(&index);
+    return result;
+}
+
+int holy_apt_catalog_identity(const char *catalog, const char *root,
+                              const char *source, char source_id[65],
+                              char index_hash[65])
+{
+    struct apt_index index = {0};
+    int result;
+    source_id[0] = index_hash[0] = 0;
+    if (!catalog || !root || !source) return 2;
+    result = read_catalog(catalog, &index);
+    if (!result) result = check_source(catalog, &index, root, source);
+    if (!result) {
+        memcpy(source_id, index.source_id, 65);
+        memcpy(index_hash, index.hash, 65);
+    }
+    free_index(&index);
     return result;
 }
