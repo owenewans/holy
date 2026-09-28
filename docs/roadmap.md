@@ -460,8 +460,9 @@
   and HTTPS fetch/import path; APK has a separate index/fetch path.
   XBPS local binary import parses plist metadata, checks payload hashes and
   resolves simple versioned dependencies with a bounded Dewey comparator.
-  Complex patterns remain review-required. Repository sync, fetch and
-  signature verification remain open.
+  A pinned repodata catalog supports HTTPS sync, search, info and archive fetch.
+  Complex patterns remain review-required. Publisher signature verification,
+  source-id binding and a file index remain open.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
   Gentoo and Pacstall recipe conversion with helper environments and split outputs.
 - [ ] Implement Nix closure, Flatpak, Snap, AppImage, Scoop and WinGet imports

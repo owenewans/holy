@@ -23,6 +23,7 @@
 #include "up.h"
 #include "run.h"
 #include "../backends/apk.h"
+#include "../backends/xbps.h"
 #include "../backends/apt.h"
 #include "../backends/apt-release.h"
 
@@ -913,7 +914,7 @@ int main(int argc, char **argv)
                                          argv[8], argv[10], argv[12],
                                          ca_file, inrelease, files);
         }
-        if ((argc == 12 || argc == 14) && !strcmp(argv[2], "sync") &&
+        if ((argc == 11 || argc == 13) && !strcmp(argv[2], "sync") &&
             !strcmp(argv[4], "--sha256") && !strcmp(argv[6], "--source") &&
             !strcmp(argv[8], "--base") && !strcmp(argv[10], "--output") &&
             (argc == 12 || !strcmp(argv[12], "--ca-file")))
@@ -996,6 +997,28 @@ int main(int argc, char **argv)
         return 2;
     }
     if (argc > 1 && !strcmp(argv[1], "apply")) return holy_apply_command(argc, argv);
+    if (argc > 2 && !strcmp(argv[1], "xbps")) {
+        if (argc == 12 && !strcmp(argv[2], "index") &&
+            !strcmp(argv[4], "--sha256") && !strcmp(argv[6], "--source") &&
+            !strcmp(argv[8], "--base") && !strcmp(argv[10], "--output"))
+            return holy_xbps_index(argv[3], argv[7], argv[9], argv[11], argv[5]);
+        if ((argc == 11 || argc == 13) && !strcmp(argv[2], "sync") &&
+            !strcmp(argv[5], "--sha256") && !strcmp(argv[7], "--source") &&
+            !strcmp(argv[9], "--output") &&
+            (argc == 11 || !strcmp(argv[11], "--ca-file")))
+            return holy_xbps_sync(argv[3], argv[4], argv[8], argv[10], argv[6],
+                                  argc == 13 ? argv[12] : NULL);
+        if (argc == 6 && (!strcmp(argv[2], "search") || !strcmp(argv[2], "info")) &&
+            !strcmp(argv[4], "--catalog"))
+            return holy_xbps_query(argv[5], argv[3], !strcmp(argv[2], "info"));
+        if ((argc == 10 || argc == 12) && !strcmp(argv[2], "fetch") &&
+            !strcmp(argv[6], "--catalog") && !strcmp(argv[8], "--output") &&
+            (argc == 10 || !strcmp(argv[10], "--ca-file")))
+            return holy_xbps_fetch(argv[7], argv[3], argv[4], argv[5], argv[9],
+                                   argc == 12 ? argv[11] : NULL);
+        fputs("usage: holypkg xbps index FILE --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY | xbps sync HTTPS_BASE/ ARCH --sha256 HASH --source NAME --output NEW_DIRECTORY [--ca-file FILE] | xbps search|info QUERY --catalog DIRECTORY | xbps fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE]\n", stderr);
+        return 2;
+    }
     if (argc > 2 && !strcmp(argv[1], "apk")) {
         if (argc == 6 && !strcmp(argv[2], "verify-index") &&
             !strcmp(argv[4], "--public-key"))

@@ -52,6 +52,14 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apk fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE] [--public-key FILE]
 .br
+.B holypkg xbps index REPODATA --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY
+.br
+.B holypkg xbps sync HTTPS_BASE/ ARCH --sha256 HASH --source NAME --output NEW_DIRECTORY [--ca-file FILE]
+.br
+.B holypkg xbps search|info QUERY --catalog DIRECTORY
+.br
+.B holypkg xbps fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE]
+.br
 .B holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--public-key PUBLIC_KEY.pem] [--ca-file FILE]
 .br
 .B holypkg repo seal DIRECTORY [--key PRIVATE_KEY.pem]
@@ -399,8 +407,26 @@ origin metadata without creating dependencies. INSTALL and REMOVE scripts
 remain review-required. Unknown file-list fields, unsupported architecture,
 and ELF/architecture contradictions stop conversion. make check-xbps-import
 covers a generated package, dependency selection and malformed file lists;
-make check-xbps-version checks component and revision ordering. These do not test XBPS
-repository sync, signature verification or the full Void package range.
+make check-xbps-version checks component and revision ordering. These do not
+test the full Void package range.
+.PP
+xbps index reads a local $ARCH-repodata archive after checking its explicit
+SHA-256. xbps sync retrieves the named architecture's repodata over HTTPS
+with the same required hash. The catalog stores package name, version,
+architecture, archive SHA-256 and size. Search and info read the catalog after
+checking its digest and the retained repodata. File-index coverage is marked
+unavailable. A source name records provenance; this workflow does not register
+a trusted source-id or verify the XBPS repository signature.
+.PP
+xbps fetch selects an exact name/version/arch from that catalog, downloads
+the archive over HTTPS, checks size and SHA-256, and compares props.plist
+identity with the selected record. It writes a complete receipt only after
+these checks. It does not install, convert or execute the package. The current
+transport limits one archive to 1 GiB; larger indexed objects return status 6.
+An explicit import of the fetched digest-named file creates .holy outputs.
+make check-xbps-index covers index parsing, HTTPS sync/fetch, conversion and
+failure cases on a local fixture server. Publisher signature verification and
+source binding remain open.
 .PP
 The apk index command snapshots a local APKINDEX.tar.gz, separates its gzip
 signature and data members, and publishes a sorted local catalog with the
