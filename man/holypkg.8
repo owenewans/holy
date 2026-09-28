@@ -1532,25 +1532,31 @@ source registry. A renamed alias with the same source-id keeps its binding;
 an inactive or changed source cannot use it. Queries without --catalog reread
 the binding and reject a missing, changed or corrupt mirror. The stored host
 path is not portable when a target root is moved to another machine. Rebind
-the mirror after such a move. Sync still accepts --output and does not bind a
-mirror as a side effect.
+the mirror after such a move. Sync with --output exports a mirror without
+changing the binding.
 .PP
 An ID identifies a configured origin; it is not signature evidence. The current
 registry retains inactive origins and supports explicit local-artifact associations
 in set installation and cached slot replacement. The sync command reads one
 active registered SOURCE alias under the database shared lock. For a holy-http
 source with one URL, --sha256 INDEX_SHA256 mirrors an explicitly pinned index
-and all referenced artifacts into NEW_DIRECTORY through the same validator as
-repo mirror. The
+and all referenced artifacts through the same validator as repo mirror. Without
+--output, sync publishes a verified generation under
+/var/cache/holypkg/catalogs/SOURCE_ID/INDEX_SHA256 in the target root and binds
+it to the active source. It reuses a valid cached generation and rejects a
+corrupt one. The source definition is checked again when binding, so an alias
+change during download cannot bind an unrelated source. --output writes a
+standalone NEW_DIRECTORY without changing the binding. The
 URL must be an HTTPS directory URL ending in slash. It writes the registered
 source-id in mirror-origin before sealing current. The snapshot stays in the
-chosen directory; repo search, solve and fetch can use it. No root mutation,
-package installation, script execution or automatic source migration occurs.
+chosen directory; repo search, solve and fetch can use it. Sync without
+--output writes the target cache and catalog binding, but does not install
+packages, execute scripts or migrate sources.
 .PP
 Without --sha256, sync reads the remote current pointer over certificate-checked
 HTTPS. It accepts only one line of the form "sha256" followed by a lowercase
 64-digit digest and newline. The first call reports decision-required (3),
-including that digest, without creating NEW_DIRECTORY; --output can be omitted
+including that digest, without creating a catalog; --output can be omitted
 for this preview. --root defaults to /. A second call with
 --accept-unsigned INDEX_SHA256 rereads current and mirrors index.INDEX_SHA256
 only if the pointer still matches. A changed pointer requires a new decision.

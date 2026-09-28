@@ -253,7 +253,9 @@
 - [x] Bind a verified synced mirror and index digest to a registered source-id
   under the target database lock. Resolve add, fetch, search and info without
   repeating --catalog; reject corrupt bindings and changed mirrors. Keep the
-  binding across alias renames. Automatic sync publication remains open.
+  binding across alias renames. Sync without --output now publishes a verified
+  generation in the target cache and binds it for source queries. Publisher
+  signatures and a rootless system-cache workflow remain open.
 - [ ] Implement remaining foreign binary adapters and file indexes with real
   fixtures: APT indexes, RPM, APK, XBPS, Slackware, eopkg, homebrew and guix.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,

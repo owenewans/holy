@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -683,6 +684,95 @@ done:
     return result;
 }
 
+static int sync_catalog_parent(const char *root, const char *id, char **path)
+{
+    static const char *const parts[] = {"var", "cache", "holypkg", "catalogs"};
+    char *canonical = NULL, *name = NULL;
+    struct stat st;
+    size_t i, length;
+    int fd = -1;
+    *path = NULL;
+    canonical = realpath(root, NULL);
+    if (!canonical) return -1;
+    length = strlen(canonical);
+    if (length > (size_t)-1 - strlen(id) - 31) goto done;
+    name = malloc(length + strlen(id) + 31);
+    if (!name) goto done;
+    snprintf(name, length + strlen(id) + 31,
+             "%s/var/cache/holypkg/catalogs/%s", canonical, id);
+    fd = open(canonical, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) goto done;
+    for (i = 0; i <= sizeof parts / sizeof *parts; ++i) {
+        int next;
+        const char *part = i == sizeof parts / sizeof *parts ? id : parts[i];
+        if (fstat(fd, &st) || !S_ISDIR(st.st_mode) ||
+            (st.st_uid != geteuid() && st.st_uid != 0) || (st.st_mode & 0022))
+            goto done;
+        if (mkdirat(fd, part, 0700)) {
+            if (errno != EEXIST) goto done;
+        } else if (fsync(fd)) goto done;
+        next = openat(fd, part, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (next < 0) goto done;
+        close(fd);
+        fd = next;
+    }
+    if (fstat(fd, &st) || !S_ISDIR(st.st_mode) ||
+        (st.st_uid != geteuid() && st.st_uid != 0) || (st.st_mode & 0022))
+        goto done;
+    *path = name;
+    name = NULL;
+done:
+    free(name);
+    free(canonical);
+    if (!*path && fd >= 0) { close(fd); fd = -1; }
+    return fd;
+}
+
+static int sync_bound_catalog(const char *alias, const char *root, const char *url,
+                              const char *id, const char *digest, const char *ca_file,
+                              int current_accepted)
+{
+    char *parent_path = NULL, *catalog = NULL, *temporary = NULL;
+    char actual[65];
+    struct stat st;
+    size_t length;
+    int parent = -1, result = 1;
+    parent = sync_catalog_parent(root, id, &parent_path);
+    if (parent < 0 || flock(parent, LOCK_EX)) goto done;
+    length = strlen(parent_path);
+    if (length > (size_t)-1 - 80) goto done;
+    catalog = malloc(length + 66);
+    temporary = malloc(length + 20);
+    if (!catalog || !temporary) goto done;
+    snprintf(catalog, length + 66, "%s/%s", parent_path, digest);
+    if (fstatat(parent, digest, &st, AT_SYMLINK_NOFOLLOW) == 0) {
+        if (!S_ISDIR(st.st_mode) ||
+            !holy_repo_source_catalog(catalog, id, url) ||
+            !holy_repo_catalog_index(catalog, actual) || strcmp(actual, digest)) {
+            result = 6; goto done;
+        }
+    } else {
+        if (errno != ENOENT) goto done;
+        snprintf(temporary, length + 20, "%s/.sync-XXXXXX", parent_path);
+        if (!mkdtemp(temporary) || rmdir(temporary)) goto done;
+        result = holy_repo_mirror_source(url, digest, temporary, ca_file, id,
+                                         current_accepted);
+        if (result) {
+            fprintf(stderr, "holypkg: incomplete catalog retained at %s\n", temporary);
+            goto done;
+        }
+        result = 1;
+        if (renameat(parent, strrchr(temporary, '/') + 1, parent, digest) ||
+            fsync(parent)) goto done;
+    }
+    result = holy_source_bind_catalog(root, alias, catalog);
+done:
+    if (result) fprintf(stderr, "holypkg: source catalog sync failed (status %d)\n", result);
+    if (parent >= 0) close(parent);
+    free(parent_path); free(catalog); free(temporary);
+    return result;
+}
+
 int holy_source_sync(const char *alias, const char *root, const char *digest,
                      const char *accepted_unsigned, const char *output,
                      const char *ca_file)
@@ -698,7 +788,6 @@ int holy_source_sync(const char *alias, const char *root, const char *digest,
         (digest && accepted_unsigned) ||
         (digest && !valid_hash(digest)) ||
         (accepted_unsigned && !valid_hash(accepted_unsigned)) ||
-        (!output && (digest || accepted_unsigned)) ||
         (output && !*output)) return 2;
     dir = holy_state_lock(root, 0, &generation, &result);
     if (dir < 0) return result;
@@ -731,8 +820,10 @@ int holy_source_sync(const char *alias, const char *root, const char *digest,
         }
         digest = current;
     }
-    result = holy_repo_mirror_source(url, digest, output, ca_file, source_id,
-                                     accepted_unsigned != NULL);
+    result = output ? holy_repo_mirror_source(url, digest, output, ca_file,
+                                             source_id, accepted_unsigned != NULL) :
+        sync_bound_catalog(alias, root, url, source_id, digest, ca_file,
+                           accepted_unsigned != NULL);
     if (!result) printf("synced source %s index %s\n", source_id, digest);
 done:
     if (dir >= 0) close(dir);

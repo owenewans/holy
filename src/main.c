@@ -356,8 +356,7 @@ int main(int argc, char **argv)
             else if (!strcmp(argv[i], "--ca-file") && !ca_file) ca_file = argv[i + 1];
             else valid = 0;
         }
-        if (valid && !(digest && accepted) &&
-            (output || (!digest && !accepted)))
+        if (valid && !(digest && accepted))
             return holy_source_sync(argv[2], root, digest, accepted, output, ca_file);
         fputs("usage: holypkg sync SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256 INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--ca-file FILE]\n", stderr);
         return 2;
