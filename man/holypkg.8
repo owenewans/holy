@@ -273,7 +273,7 @@ holypkg \- Holy local package tooling prototype
 .B holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 .SH DESCRIPTION
 .SS Local pacman, RPM, Debian, Slackware, APK and XBPS binary import
-import snapshots a local pacman tar archive, RPM v4 package, Debian .deb, Slackware package, APK v2 or XBPS package, retains its exact bytes as
+import snapshots a local pacman tar archive, RPM v4 or v6 package, Debian .deb, Slackware package, APK v2 or XBPS package, retains its exact bytes as
 NEW_DIRECTORY/original and creates verified LZ4-frame .holy outputs. The output
 directory must not exist. --format selects the adapter explicitly; --source
 records provenance only and grants no registered source identity or trust.
@@ -281,10 +281,11 @@ The command does not install files or execute package code. Without an explicit
 APK public key, each output records verification=unverified. An explicit key
 verifies the APK signature but does not grant a registered source identity.
 .PP
---format rpm uses librpm to read the v4 header and libarchive to read its cpio
-payload. The importer checks header and payload file lists, records config
+--format rpm uses librpm to read the header and payload of v4 and v6 packages.
+It verifies each supported file digest before packaging with libarchive.
+The importer checks header and payload file lists, records config
 flags and original provenance, and splits observed ELF ABI groups. RPM
-scriptlets, triggers, file capabilities, v6 payloads, epochs and versions
+scriptlets, triggers, file capabilities, epochs and versions
 outside the current Holy comparator require further conversion support.
 Versioned RPM requirements remain attributed foreign requirements because
 the native comparator does not implement RPM ordering. Local import does not

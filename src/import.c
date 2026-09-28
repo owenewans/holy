@@ -26,6 +26,9 @@
 #include <rpm/rpmtd.h>
 #include <rpm/rpmds.h>
 #include <rpm/rpmfiles.h>
+#include <rpm/rpmfi.h>
+#include <rpm/rpmarchive.h>
+#include <rpm/rpmpgp.h>
 #endif
 #ifdef __TINYC__
 /* libplist's fallback pragma is an error under tcc's strict warning mode. */
@@ -164,14 +167,12 @@ static struct archive *foreign_reader(const char *snapshot, int *result, int lzm
     else if (got >= 3 && !memcmp(header, "BZh", 3)) support = archive_read_support_filter_bzip2(a);
     else if (got >= 2 && header[0] == 0x1f && header[1] == 0x8b) support = archive_read_support_filter_gzip(a);
     else if (got >= 4 && !memcmp(header, "\x04\x22\x4d\x18", 4)) support = archive_read_support_filter_lz4(a);
-    else if (got >= 4 && !memcmp(header, "\xed\xab\xee\xdb", 4)) support = archive_read_support_filter_all(a);
     else support = archive_read_support_filter_none(a);
     if (support != ARCHIVE_OK) {
         fputs("holypkg: built-in foreign archive codec unavailable\n", stderr);
         *result = 6; archive_read_free(a); return NULL;
     }
     if ((archive_read_support_format_tar(a) != ARCHIVE_OK) ||
-        (archive_read_support_format_cpio(a) != ARCHIVE_OK) ||
         archive_read_open_filename(a, snapshot, 65536) != ARCHIVE_OK) {
         *result = 2; archive_read_free(a); return NULL;
     }
@@ -2226,8 +2227,10 @@ static int rpm_header(const char *snapshot, struct rpm_metadata *meta)
     rpmtsSetVSFlags(ts, _RPMVSF_NOSIGNATURES);
     fd = Fopen(snapshot, "r.ufdio");
     if (!fd || rpmReadPackageFile(ts, fd, snapshot, &h) != RPMRC_OK || !h) goto done;
-    if (headerGetNumber(h, RPMTAG_RPMFORMAT) && headerGetNumber(h, RPMTAG_RPMFORMAT) != 4) {
-        fputs("holypkg: RPM payload format requires a supported reader (v4 only)\n", stderr);
+    if (headerGetNumber(h, RPMTAG_RPMFORMAT) &&
+        headerGetNumber(h, RPMTAG_RPMFORMAT) != 4 &&
+        headerGetNumber(h, RPMTAG_RPMFORMAT) != 6) {
+        fputs("holypkg: unsupported RPM payload format\n", stderr);
         result = 6; goto done;
     }
     for (i = 0; i < sizeof scripts / sizeof *scripts; ++i)
@@ -2302,6 +2305,146 @@ done:
     rpmfilesFree(files); free(seen); free(sorted);
     return ok;
 }
+
+static const EVP_MD *rpm_digest(int algorithm)
+{
+    switch (algorithm) {
+    case PGPHASHALGO_MD5: return EVP_md5();
+    case PGPHASHALGO_SHA1: return EVP_sha1();
+    case PGPHASHALGO_SHA256: return EVP_sha256();
+    case PGPHASHALGO_SHA512: return EVP_sha512();
+    case PGPHASHALGO_SHA3_256: return EVP_sha3_256();
+    default: return NULL;
+    }
+}
+
+static int rpm_payload_to_tar(const char *snapshot, FILE *tar)
+{
+    rpmts ts = rpmtsCreate();
+    FD_t fd = NULL;
+    Header h = NULL;
+    rpmfiles files = NULL;
+    rpmfi fi = NULL;
+    struct archive *writer = NULL;
+    struct archive_entry *entry = NULL;
+    char **targets = NULL;
+    const char *compression;
+    char mode[64], buffer[65536];
+    rpm_count_t count = 0;
+    int result = 2, next = RPMERR_ITER_END;
+    size_t i;
+    if (!ts) return 1;
+    rpmtsSetVSFlags(ts, _RPMVSF_NOSIGNATURES);
+    fd = Fopen(snapshot, "r.ufdio");
+    if (!fd || rpmReadPackageFile(ts, fd, snapshot, &h) != RPMRC_OK || !h) goto done;
+    compression = headerGetString(h, RPMTAG_PAYLOADCOMPRESSOR);
+    if (!compression) compression = "gzip";
+    if (strlen(compression) > sizeof mode - 3) goto done;
+    snprintf(mode, sizeof mode, "r.%s", compression);
+    {
+        FD_t decoded = Fdopen(fd, mode);
+        if (!decoded) { result = 6; goto done; }
+        fd = decoded;
+    }
+    files = rpmfilesNew(NULL, h, 0, RPMFI_KEEPHEADER);
+    if (!files) goto done;
+    count = rpmfilesFC(files);
+    if (count > 100000) goto done;
+    targets = calloc(count ? count : 1, sizeof *targets);
+    writer = archive_write_new(); entry = archive_entry_new();
+    if (!targets || !writer || !entry) { result = 1; goto done; }
+    if (archive_write_set_format_pax_restricted(writer) != ARCHIVE_OK ||
+        archive_write_open_FILE(writer, tar) != ARCHIVE_OK) goto done;
+    fi = rpmfiNewArchiveReader(fd, files, RPMFI_ITER_READ_ARCHIVE_CONTENT_FIRST);
+    if (!fi) goto done;
+    while ((next = rpmfiNext(fi)) >= 0) {
+        const char *name = rpmfiFN(fi), *relative;
+        const int *links = NULL;
+        struct stat st;
+        int index = rpmfiFX(fi), algorithm = 0;
+        size_t digest_size = 0;
+        const unsigned char *expected;
+        char *clean;
+        uint32_t nlinks;
+        if (!name || index < 0 || (rpm_count_t)index >= count || rpmfiStat(fi, 0, &st)) goto done;
+        relative = name;
+        while (*relative == '/') ++relative;
+        clean = normalized(relative, S_ISDIR(st.st_mode));
+        if (!clean) goto done;
+        archive_entry_clear(entry);
+        archive_entry_set_pathname(entry, clean);
+        archive_entry_copy_stat(entry, &st);
+        archive_entry_set_uname(entry, rpmfiFUser(fi));
+        archive_entry_set_gname(entry, rpmfiFGroup(fi));
+        if (S_ISLNK(st.st_mode)) archive_entry_set_symlink(entry, rpmfiFLink(fi));
+        nlinks = rpmfiFLinks(fi, &links);
+        if (S_ISREG(st.st_mode) && nlinks > 1) {
+            if (rpmfiArchiveHasContent(fi)) {
+                uint32_t j;
+                if (!links) { free(clean); goto done; }
+                archive_entry_set_size(entry, rpmfiFSize(fi));
+                for (j = 0; j < nlinks; ++j) {
+                    int linked = links[j];
+                    if (linked < 0 || (rpm_count_t)linked >= count || targets[linked]) { free(clean); goto done; }
+                    targets[linked] = strdup(clean);
+                    if (!targets[linked]) { free(clean); result = 1; goto done; }
+                }
+            } else {
+                if (!targets[index]) { free(clean); goto done; }
+                archive_entry_set_hardlink(entry, targets[index]);
+                archive_entry_set_size(entry, 0);
+            }
+        }
+        free(clean);
+        if (archive_write_header(writer, entry) != ARCHIVE_OK) goto done;
+        if (S_ISREG(st.st_mode) && rpmfiArchiveHasContent(fi)) {
+            rpm_loff_t left = rpmfiFSize(fi);
+            EVP_MD_CTX *digest = EVP_MD_CTX_new();
+            unsigned char actual[EVP_MAX_MD_SIZE];
+            unsigned actual_size = 0;
+            const EVP_MD *md;
+            expected = rpmfiFDigest(fi, &algorithm, &digest_size);
+            md = rpm_digest(algorithm);
+            if (left > 1024LL * 1024 * 1024 || !expected || !md || !digest ||
+                digest_size != (size_t)EVP_MD_size(md) || EVP_DigestInit_ex(digest, md, NULL) != 1) {
+                EVP_MD_CTX_free(digest); result = 6; goto done;
+            }
+            while (left) {
+                size_t want = left > (rpm_loff_t)sizeof buffer ? sizeof buffer : (size_t)left;
+                ssize_t got = rpmfiArchiveRead(fi, buffer, want);
+                size_t offset = 0;
+                if (got <= 0 || EVP_DigestUpdate(digest, buffer, (size_t)got) != 1) {
+                    EVP_MD_CTX_free(digest); goto done;
+                }
+                while (offset < (size_t)got) {
+                    la_ssize_t written = archive_write_data(writer, buffer + offset, (size_t)got - offset);
+                    if (written <= 0) { EVP_MD_CTX_free(digest); goto done; }
+                    offset += (size_t)written;
+                }
+                left -= got;
+            }
+            if (EVP_DigestFinal_ex(digest, actual, &actual_size) != 1 ||
+                actual_size != digest_size || memcmp(actual, expected, digest_size)) {
+                EVP_MD_CTX_free(digest); goto done;
+            }
+            EVP_MD_CTX_free(digest);
+        }
+    }
+    if (next != RPMERR_ITER_END || rpmfiArchiveClose(fi) ||
+        archive_write_close(writer) != ARCHIVE_OK || fflush(tar) || fseeko(tar, 0, SEEK_SET)) goto done;
+    result = 0;
+done:
+    if (fi) rpmfiFree(fi);
+    if (writer) archive_write_free(writer);
+    if (entry) archive_entry_free(entry);
+    for (i = 0; i < count; ++i) free(targets ? targets[i] : NULL);
+    free(targets);
+    rpmfilesFree(files);
+    if (h) headerFree(h);
+    if (fd) Fclose(fd);
+    rpmtsFree(ts);
+    return result;
+}
 #endif
 
 int holy_import_rpm(const char *input_path, const char *source, const char *output)
@@ -2315,7 +2458,8 @@ int holy_import_rpm(const char *input_path, const char *source, const char *outp
     struct rpm_metadata metadata = {0};
     struct stat st;
     char *snapshot = NULL, hash[65], temporary[43] = {0};
-    FILE *receipt = NULL;
+    FILE *receipt = NULL, *tar = NULL;
+    char descriptor[64];
     int input_fd = -1, output_fd = -1, result = 1, common;
     size_t i;
     if (!*source || !strcmp(source, "local")) return 2;
@@ -2331,7 +2475,12 @@ int holy_import_rpm(const char *input_path, const char *source, const char *outp
         (st.st_mode & 0777) != 0700 || !preserve_original(snapshot, output_fd)) goto done;
     result = rpm_header(snapshot, &metadata);
     if (result) goto done;
-    result = collect_archive(snapshot, &input, FOREIGN_RPM, 0);
+    tar = tmpfile();
+    if (!tar) goto done;
+    result = rpm_payload_to_tar(snapshot, tar);
+    if (result) goto done;
+    snprintf(descriptor, sizeof descriptor, "/proc/self/fd/%d", fileno(tar));
+    result = collect_archive(descriptor, &input, FOREIGN_RPM, 0);
     if (result) goto done;
     if (!validate_paths(&input) || !rpm_files(&input, &metadata)) { result = 2; goto done; }
     result = 3;
@@ -2369,6 +2518,7 @@ int holy_import_rpm(const char *input_path, const char *source, const char *outp
 done:
     if (result) fprintf(stderr, "holypkg: RPM import incomplete (status %d); no installed state changed\n", result);
     if (receipt) fclose(receipt);
+    if (tar) fclose(tar);
     if (output_fd >= 0) { if (*temporary) unlinkat(output_fd, temporary, 0); close(output_fd); }
     if (input_fd >= 0) close(input_fd);
     if (snapshot) { unlink(snapshot); free(snapshot); }

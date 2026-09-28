@@ -24,10 +24,16 @@ Local RPM import fixture.
 mkdir -p %{buildroot}/etc %{buildroot}/usr/share/holy-rpm-fixture
 printf 'config\\n' > %{buildroot}/etc/holy-rpm-fixture.conf
 printf 'payload\\n' > %{buildroot}/usr/share/holy-rpm-fixture/data
+ln %{buildroot}/usr/share/holy-rpm-fixture/data %{buildroot}/usr/share/holy-rpm-fixture/data-hardlink
+ln -s data %{buildroot}/usr/share/holy-rpm-fixture/data-symlink
+touch %{buildroot}/usr/share/holy-rpm-fixture/empty
 """ + script + """
 %files
 %config(noreplace) /etc/holy-rpm-fixture.conf
 /usr/share/holy-rpm-fixture/data
+/usr/share/holy-rpm-fixture/data-hardlink
+/usr/share/holy-rpm-fixture/data-symlink
+/usr/share/holy-rpm-fixture/empty
 """)
     subprocess.run(["rpmbuild", "-bb", "--define", f"_rpmformat {fmt}",
                     "--define", f"_topdir {root}", str(spec)],
@@ -63,16 +69,24 @@ def main():
             assert 'x-version-family rpm' in read('HOLY/meta')
             assert 'file "etc/holy-rpm-fixture.conf"' in read('HOLY/files')
             assert ' config ' in read('HOLY/files')
+            assert 'data-hardlink' in read('HOLY/files')
+            assert 'data-symlink' in read('HOLY/files')
             assert '"foreign" "sample-lib ge 1.2"' in read('HOLY/deps')
             assert 'rpmlib(' not in read('HOLY/deps')
             assert 'rpmlib(' in read('HOLY/origin')
             assert 'verification unverified' in read('HOLY/origin')
+        truncated = root / "truncated.rpm"
+        truncated.write_bytes(package.read_bytes()[:-16])
+        assert run(binary, truncated, root / "truncated").returncode != 0
         package = build(root, 4, "%post\nprintf 'script\\n'\n")
         result = run(binary, package, root / "script")
         assert result.returncode == 3, result.stderr
         package = build(root, 6)
         result = run(binary, package, root / "v6")
-        assert result.returncode == 6, result.stderr
+        assert result.returncode == 0, result.stderr
+        assert (root / "v6" / "holy-rpm-fixture--noarch--nolibc.holy").is_file()
+        truncated.write_bytes(package.read_bytes()[:-16])
+        assert run(binary, truncated, root / "truncated-v6").returncode != 0
     return 0
 
 
