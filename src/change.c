@@ -55,6 +55,7 @@ static int collect(void *context, const struct holy_manifest_entry *entry)
     if (copy->hash) memcpy((unsigned char *)copy->hash, entry->hash, 32);
     copy->size = entry->size; copy->mode = entry->mode;
     copy->uid = entry->uid; copy->gid = entry->gid; copy->directory = entry->directory;
+    copy->config = entry->config; copy->mutable = entry->mutable;
     return copy->path && (!entry->link || copy->link) && (!entry->hardlink || copy->hardlink) &&
            (!entry->group || copy->group) && (!entry->hash || copy->hash);
 }
@@ -72,7 +73,8 @@ static int same_string(const char *a, const char *b)
 
 static int same_entry(const struct holy_manifest_entry *a, const struct holy_manifest_entry *b)
 {
-    return a->directory == b->directory && a->mode == b->mode && a->uid == b->uid &&
+    return a->directory == b->directory && a->config == b->config &&
+           a->mutable == b->mutable && a->mode == b->mode && a->uid == b->uid &&
            a->gid == b->gid && a->size == b->size && same_string(a->link, b->link) &&
            same_string(a->hardlink, b->hardlink) && same_string(a->group, b->group) &&
            (a->directory || a->link || (a->hash && b->hash && !memcmp(a->hash, b->hash, 32)));
@@ -268,7 +270,9 @@ static void entry_record(FILE *out, const char *side, const struct holy_manifest
     if (e->directory || e->link) fputc('-', out);
     else for (i = 0; i < 32; ++i) fprintf(out, "%02x", e->hash[i]);
     fputc(' ', out); quote(out, e->link ? e->link : e->hardlink ? e->hardlink : "-");
-    fputc(' ', out); quote(out, e->group ? e->group : "-"); fputc('\n', out);
+    fputc(' ', out); quote(out, e->group ? e->group : "-");
+    fprintf(out, " %s\n", e->config ? e->mutable ? "config,mutable" : "config" :
+            e->mutable ? "mutable" : "none");
 }
 
 int holy_file_plan_record(const struct holy_file_plan *plan, char **record, size_t *size)

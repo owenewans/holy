@@ -255,11 +255,21 @@ with tempfile.TemporaryDirectory() as scratch:
     run("fetch", "local:" + str(hook_artifact), "--extract", "--output", tmp / "hook-extracted")
     assert (tmp / "hook-extracted/HOLY/foreign/deb/postinst").read_bytes() == hook
     assert not sentinel.exists()
-    convert(foreign("conffiles", order=[("debian-binary", b"2.0\n"),
+    config_artifact = convert(foreign("conffiles", order=[("debian-binary", b"2.0\n"),
         ("control.tar.gz", tar([("control", b"Package: debfixture\nVersion: 1\nArchitecture: all\n", "file"),
                                 ("conffiles", b"/etc/example\n", "file")])),
         ("data.tar.gz", tar([("etc/", b"", "dir"), ("etc/example", b"x", "file")]))]),
-        "conffiles-output", status=3)
+        "conffiles-output")[0]
+    assert 'etc/example mode=0644' in run("manifest", "local:" + str(config_artifact))
+    assert ' config' in run("manifest", "local:" + str(config_artifact))
+    for label, conffile in (("missing", b"/etc/absent\n"),
+                            ("duplicate-conffile", b"/etc/example\n/etc/example\n"),
+                            ("unsafe-conffile", b"/etc/../example\n")):
+        convert(foreign(label, order=[("debian-binary", b"2.0\n"),
+            ("control.tar.gz", tar([("control", b"Package: debfixture\nVersion: 1\nArchitecture: all\n", "file"),
+                                    ("conffiles", conffile, "file")])),
+            ("data.tar.gz", tar([("etc/", b"", "dir"), ("etc/example", b"x", "file")]))]),
+            label + "-output", status=2)
     convert(foreign("duplicate", data=[("usr/", b"", "dir"), ("usr/share/a", b"x", "file"),
                                       ("usr/share/a", b"y", "file")]), "duplicate-output", status=2)
     convert(foreign("traversal", data=[("../outside", b"x", "file")]), "traversal-output", status=2)

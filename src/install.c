@@ -560,7 +560,10 @@ static int check_file(int root, char **v, struct stat *observed)
         !decimal(v[5], 10, &uid) || uid > 0x7fffffff ||
         !decimal(v[6], 10, &gid) || gid > 0x7fffffff ||
         !decimal(v[7], 10, &size) || size > LLONG_MAX ||
-        strcmp(v[9], "none") || strcmp(v[10], "-") ||
+        (strcmp(v[9], "none") && strcmp(v[9], "config") &&
+         strcmp(v[9], "mutable") && strcmp(v[9], "config,mutable")) ||
+        (strcmp(v[9], "none") && (symlink || hardlink || !strcmp(v[0], "dir"))) ||
+        strcmp(v[10], "-") ||
         ((symlink || !strcmp(v[0], "dir")) && strcmp(v[11], "-")) ||
         (hardlink && !strcmp(v[11], "-")))
         return -1;
@@ -845,7 +848,8 @@ static int walk_manifest(int files_fd, int root, int mode,
             if (mode != 2 && mode != 3 && result == 1) result = 0;
             if (mode != 2 && mode != 3) report_changed(v[1], "missing-file");
         } else if (!checked) {
-            report_changed(v[1], "changed-file");
+            report_changed(v[1], !strcmp(v[9], "config") ||
+                           !strcmp(v[9], "config,mutable") ? "changed-config" : "changed-file");
             if (result == 1) result = 0;
         } else if ((mode == 1 || mode == 2) && strcmp(v[0], "dir")) {
             struct stat current;
@@ -854,7 +858,9 @@ static int walk_manifest(int files_fd, int root, int mode,
                 !remove_file(root, v[1], &current)) result = 0;
         }
         if (finding && (checked == 0 || checked == 2) &&
-            !finding(context, v[1], checked == 2 ? "missing-file" : "changed-file", NULL)) result = -1;
+            !finding(context, v[1], checked == 2 ? "missing-file" :
+                     (!strcmp(v[9], "config") || !strcmp(v[9], "config,mutable")) ?
+                     "changed-config" : "changed-file", NULL)) result = -1;
         if (regular && checked == 1 && S_ISREG(row->observed.st_mode)) {
             char *storage = NULL;
             const char *base;
@@ -1104,7 +1110,10 @@ static int transition_matches(int root, const struct holy_manifest_entry *entry,
     v[0] = entry->directory ? "dir" : entry->link ? "symlink" : entry->hardlink ? "hardlink" : "file";
     v[1] = (char *)entry->path; v[2] = numbers[0]; v[3] = v[4] = "-";
     v[5] = numbers[1]; v[6] = numbers[2]; v[7] = numbers[3];
-    v[8] = entry->link || entry->directory ? "-" : hash; v[9] = "none"; v[10] = "-"; v[11] = entry->group ? (char *)entry->group : "-";
+    v[8] = entry->link || entry->directory ? "-" : hash;
+    v[9] = entry->config ? entry->mutable ? "config,mutable" : "config" :
+           entry->mutable ? "mutable" : "none";
+    v[10] = "-"; v[11] = entry->group ? (char *)entry->group : "-";
     v[12] = (char *)(entry->link ? entry->link : entry->hardlink);
     return check_file(root, v, observed);
 }

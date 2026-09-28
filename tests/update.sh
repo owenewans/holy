@@ -26,6 +26,10 @@ package() {
         printf '%s\n' "$label" > "$tree/$label/DATA/usr/share/$path"
     fi
     "$bin" manifest generate "$tree/$label" --output "$tmp/files" > "$tmp/out"
+    if test "${6:-}" = config; then
+        sed '/^file /s/ none - / config - /' "$tmp/files" > "$tmp/config-files"
+        mv "$tmp/config-files" "$tmp/files"
+    fi
     mv "$tmp/files" "$tree/$label/HOLY/files"
     "$bin" pack "$tree/$label" --output "$tmp/$label.holy" > "$tmp/out"
     "$bin" cache stage "local:$tmp/$label.holy" --root "$root" > "$tmp/out"
@@ -229,4 +233,15 @@ expect 0 "$bin" db check --all --root "$root"
 : > "$tmp/config"
 register
 expect 0 "$bin" db check --all --root "$root"
+package config1 settings holy.conf '' file config
+package config2 settings holy.conf '' file config
+config_old=$(hash config1) config_new=$(hash config2)
+install "$config_old"
+expect 0 "$bin" db plan-update "$config_old" "$config_new" --root "$root"
+grep -q ' config$' "$tmp/out"
+printf 'local edit\n' > "$root/usr/share/holy.conf"
+expect 4 "$bin" db check "$config_old" --root "$root" --json
+grep -q 'changed-config' "$tmp/out"
+expect 4 "$bin" db plan-update "$config_old" "$config_new" --root "$root"
+grep -qx 'local edit' "$root/usr/share/holy.conf"
 printf 'update transaction fixtures passed\n'

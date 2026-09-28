@@ -65,8 +65,11 @@ DATA/, one manifest line contains twelve whitespace-separated tokens:
 file PATH MODE OWNER GROUP UID GID SIZE SHA256 FLAGS XATTRS HARDLINK-GROUP
 .fi
 MODE is octal; UID, GID and SIZE are decimal. PATH is relative to DATA. SHA256
-has 64 hexadecimal digits. The current verifier accepts FLAGS=none and
-XATTRS=-. Independent files use HARDLINK-GROUP=-. A symlink uses one additional TARGET token,
+has 64 hexadecimal digits. FLAGS accepts none, config, mutable or
+config,mutable for regular files. The verifier rejects flags on directories,
+symlinks and hardlinks. Installed checks still compare mutable files with their
+manifest; update policy for their local changes is not implemented. XATTRS=-.
+Independent files use HARDLINK-GROUP=-. A symlink uses one additional TARGET token,
 SIZE=0 and SHA256=-. A hardlinked file uses TYPE=hardlink, a group identifier
 in HARDLINK-GROUP and one extra TARGET token naming a regular file in DATA.
 The target file carries the same group identifier. SIZE and SHA256 describe

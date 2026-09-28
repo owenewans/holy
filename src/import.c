@@ -42,7 +42,7 @@ struct foreign_entry {
     char *original;
     char *soname;
     unsigned char hash[32];
-    int metadata, group, hardlink_group;
+    int metadata, group, hardlink_group, config;
 };
 
 struct foreign_group {
@@ -978,6 +978,51 @@ done:
     return ok;
 }
 
+static int mark_deb_conffiles(struct foreign_input *input)
+{
+    struct foreign_entry *list = NULL;
+    char *data = NULL;
+    size_t i, offset = 0;
+    int ok = 0;
+    for (i = 0; i < input->count; ++i)
+        if (!strcmp(input->entries[i].original, "@control/conffiles")) {
+            if (list) return 0;
+            list = &input->entries[i];
+        }
+    if (!list) return 1;
+    if (list->stream.size < 0 || list->stream.size > 16 * 1024 * 1024) goto done;
+    data = malloc((size_t)list->stream.size + 1);
+    if (!data || pread(fileno(input->spool), data, (size_t)list->stream.size,
+                       (off_t)list->stream.offset) != list->stream.size ||
+        memchr(data, 0, (size_t)list->stream.size)) goto done;
+    data[list->stream.size] = 0;
+    while (offset < (size_t)list->stream.size) {
+        char *line = data + offset, *end = strchr(line, '\n');
+        char *canonical;
+        struct foreign_entry *entry = NULL;
+        if (end) { *end = 0; offset = (size_t)(end - data) + 1; }
+        else offset = (size_t)list->stream.size;
+        if (line[0] != '/' || !line[1] || line[strlen(line) - 1] == ' ' ||
+            line[strlen(line) - 1] == '\r') goto done;
+        canonical = normalized(line + 1, 0);
+        if (!canonical) goto done;
+        if (strcmp(canonical, line + 1)) { free(canonical); goto done; }
+        for (i = 0; i < input->count; ++i)
+            if (!input->entries[i].metadata && !strcmp(input->entries[i].original, canonical)) {
+                entry = &input->entries[i]; break;
+            }
+        free(canonical);
+        if (!entry || entry->config || entry->stream.directory ||
+            entry->stream.link || entry->stream.hardlink) goto done;
+        entry->config = 1;
+    }
+    ok = 1;
+done:
+    if (!ok) fputs("holypkg: Debian conffiles do not match regular payload files\n", stderr);
+    free(data);
+    return ok;
+}
+
 static int append_text(struct foreign_input *input, struct holy_stream_entry *entry,
                         const char *path, const char *text, size_t size)
 {
@@ -1005,7 +1050,7 @@ static int write_manifest(FILE *manifest, const struct foreign_input *input,
     fputc(' ', manifest); token(manifest, s->group ? s->group : "-");
     fprintf(manifest, " %lld %lld %lld ", s->uid, s->gid, size);
     if (s->directory || s->link) fputc('-', manifest); else hex_hash(manifest, e->hash);
-    fputs(" none - ", manifest);
+    fprintf(manifest, " %s - ", e->config ? "config" : "none");
     if (e->hardlink_group >= 0) fprintf(manifest, "%s-hardlink-%d", family, e->hardlink_group);
     else fputc('-', manifest);
     if (s->link || s->hardlink) { fputc(' ', manifest); token(manifest, s->link ? s->link : s->hardlink + 5); }
@@ -1670,9 +1715,7 @@ int holy_import_deb_verified(const char *input_path, const char *source, const c
     if (strcmp(metadata.arch, "all") && strcmp(metadata.arch, "amd64") && strcmp(metadata.arch, "i386")) {
         fputs("holypkg: unsupported Debian architecture requires classification\n", stderr); goto done;
     }
-    for (i = 0; i < input.count; ++i) if (!strcmp(input.entries[i].original, "@control/conffiles")) {
-        fputs("holypkg: Debian conffiles require config-manifest support\n", stderr); goto done;
-    }
+    if (!mark_deb_conffiles(&input)) { result = 2; goto done; }
     for (i = 0; i < input.group_count; ++i) {
         const char *arch = input.groups[i].arch;
         if ((!strcmp(metadata.arch, "all") && strcmp(arch, "noarch")) ||

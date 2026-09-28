@@ -377,6 +377,10 @@
   including chains split between installed and new packages.
 - [ ] Handle hooks, service consent, modified configs, overrides, rollback and
   recovery of each interrupted mutation phase.
+- [x] Carry config/mutable flags through verified manifests and installed checks;
+  import Debian conffiles as config files, reject invalid declarations, and
+  report changed-config. Update preservation and .holy-new still need a
+  transaction-aware implementation.
 - [x] Accept an artifact-scoped skip decision for nonempty HOLY/hooks in local
   set installation. Print hook records before the decision, bind the skip to
   plan and journal, retain hooks/transform in installed state, report

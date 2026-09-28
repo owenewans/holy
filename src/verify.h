@@ -13,6 +13,7 @@ struct holy_manifest_entry {
     unsigned int mode;
     long long uid, gid;
     int directory;
+    int config, mutable;
 };
 
 /* borrowed fields remain valid only during the callback; zero aborts traversal. */

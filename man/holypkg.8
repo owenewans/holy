@@ -281,7 +281,10 @@ verifies the APK signature but does not grant a registered source identity.
 data.tar in order, including supported compressed variants. It retains control
 files beneath HOLY/foreign/deb and each control field with its source line in
 HOLY/origin. Debian maintainer scripts remain review-required and never run
-during import. Conffiles require config-manifest support and return status 3.
+during import. Debian conffiles paths must name regular payload files. The
+importer records them with the config manifest flag and rejects missing,
+duplicate or unsafe paths. Modified installed config files report changed-config;
+automatic preservation during update remains open.
 Comma-separated Depends entries become package requirements. OR alternatives
 remain one requirement with version constraints on each branch. The solver
 records the selected branch and provider in the installed graph. Constraints
@@ -1520,8 +1523,9 @@ of passes, failures and unknowns, or one error line on an invalid database, miss
 instance or incomplete transaction. Each artifact includes a findings array
 with code, severity and relative path for each mismatch. Script interpreter
 findings also include target. missing-file identifies
-an absent file, link or directory, including a path below a missing parent; changed-file covers other
-manifest mismatches, including inaccessible or symlinked parents. Paths encode
+an absent file, link or directory, including a path below a missing parent;
+changed-config identifies a modified regular file marked config. changed-file
+covers other manifest mismatches, including inaccessible or symlinked parents. Paths encode
 non-ASCII bytes as \eu00HH; consumers reconstruct the original bytes. Findings
 follow manifest order; intact artifacts have an empty array. The artifact-level
 code names the first finding. Coverage is data-manifest-and-direct-shebang,

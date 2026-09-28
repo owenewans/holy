@@ -19,6 +19,7 @@ struct payload {
     char *hardlink;
     char *group;
     int directory;
+    int config, mutable;
     unsigned char hash[32];
     long long size;
     unsigned int mode;
@@ -189,7 +190,9 @@ static int validate_manifest(const char *path, char *text, size_t size,
             !number(v[6], 10, &gid) || !number(v[7], 10, &length) ||
             ((symlink || directory) ? strcmp(v[8], "-") || length != 0 :
                                      strlen(v[8]) != 64) ||
-            strcmp(v[9], "none") ||
+            (strcmp(v[9], "none") && strcmp(v[9], "config") &&
+             strcmp(v[9], "mutable") && strcmp(v[9], "config,mutable")) ||
+            (strcmp(v[9], "none") && (symlink || directory || hardlink)) ||
             strcmp(v[10], "-") ||
             ((symlink || directory) ? strcmp(v[11], "-") :
              strcmp(v[11], "-") && !valid_group(v[11])) ||
@@ -231,6 +234,8 @@ static int validate_manifest(const char *path, char *text, size_t size,
             found->group = strdup(v[11]);
             if (!found->group) { holy_tokens_free(v, n); return 0; }
         }
+        found->config = !strcmp(v[9], "config") || !strcmp(v[9], "config,mutable");
+        found->mutable = !strcmp(v[9], "mutable") || !strcmp(v[9], "config,mutable");
         found->matched = 1;
         ++seen;
         holy_tokens_free(v, n);
@@ -417,7 +422,7 @@ static int verify_archive(const char *path, int emit,
         const struct holy_manifest_entry entry = {
             files[i].path, files[i].link, files[i].hardlink, files[i].group,
             files[i].hash, files[i].size, files[i].mode, files[i].uid,
-            files[i].gid, files[i].directory
+            files[i].gid, files[i].directory, files[i].config, files[i].mutable
         };
         if (!visitor(context, &entry)) { ok = 0; break; }
     }
@@ -464,6 +469,8 @@ static int print_manifest(void *context, const struct holy_manifest_entry *entry
     print_escaped(entry->path);
     printf(" mode=%04o uid=%lld gid=%lld size=%lld",
            entry->mode, entry->uid, entry->gid, entry->size);
+    if (entry->config) fputs(" config", stdout);
+    if (entry->mutable) fputs(" mutable", stdout);
     if (entry->link || entry->hardlink) {
         fputs(" target=", stdout);
         print_escaped(entry->link ? entry->link : entry->hardlink);
