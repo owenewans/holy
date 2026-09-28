@@ -740,7 +740,7 @@ SOURCE IDENTITIES
      ture.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holygetiso.8 source=holy version=development sha256=963a07fa0bd96be9cdaa729e81c91e031c86e3fb6ac8e3f19ef57b210d68c881
+holygetiso.8 source=holy version=development sha256=f041e39c71a09c76750a0988b5ec856668bc9a8857711d571da4eece0a466888
 HOLYGETISO(8)		      System Administration		   HOLYGETISO(8)
 
 NAME
@@ -816,74 +816,86 @@ CONFIGURATION
 	    mdevd, glibc and musl fields accept local artifacts or ALIAS:PACKAGE
 	    from a pinned source. The builder records the source ID and original
 	    digest, then normalizes each core artifact into a new unsigned  Holy
-	    package.  Doas  and	 storage-tools	fields	require local artifacts.
-	    Added packages must target the image  architecture	or  noarch;  x86
-	    packages  are  also	 accepted  in an x86_64 image. Duplicate package
-	    names fail before plan generation. The package manager  checks  pay-
-	    load ownership and dependencies.
+	    package.  On  an  x86_64  builder targeting i686, the resolver's x86
+	    placement decision is recorded for each selected x86 artifact.  This
+	    does  not  claim  that the host can execute the i686 image. Doas and
+	    storage-tools fields require local artifacts.  Added  packages  must
+	    target  the	 image architecture or noarch; x86 packages are also ac-
+	    cepted in an x86_64 image. Duplicate package names fail before  plan
+	    generation.	 The package manager checks payload ownership and depen-
+	    dencies.
+
+     make source-ready-core accepts OUTPUT,  SOURCE_ALIAS,  SOURCE_URL	and  the
+     five  *_PACKAGE  input  paths.   It copies the bootstrap archives, rebuilds
+     their manifests with root ownership inside a user namespace, and  writes  a
+     sealed unsigned native repository plus core-source.conf for inclusion in an
+     image  config.  build.record links each new artifact digest to its original
+     digest. SOURCE_URL is provenance for this	local  repository;  the	 command
+     does  not publish files at that URL. This step requires user namespaces and
+     does not sign the resulting artifacts.
 
      [resolver]
-	    Optional  "answers	PATH"  selects a holy-answers-1 file with source
-	    decisions keyed by consumer artifact hash and requirement  ID.  "an-
-	    swers-sha256  DIGEST" is required with it. holygetiso checks the di-
-	    gest during config validation, then the builder copies the	file  to
-	    output/inputs/resolver-answers  and	 checks	 the digest again before
-	    using it. The build record and  exported  input  lock  include  that
-	    copy.  An  answer  naming a source that does not offer the exact re-
-	    quirement fails in holypkg; a changed consumer hash cannot reuse  an
+	    Optional "answers PATH" selects a holy-answers-1  file  with  source
+	    decisions  keyed  by consumer artifact hash and requirement ID. "an-
+	    swers-sha256 DIGEST" is required with it. holygetiso checks the  di-
+	    gest  during  config validation, then the builder copies the file to
+	    output/inputs/resolver-answers and checks the  digest  again  before
+	    using  it.	The  build  record  and exported input lock include that
+	    copy. An answer naming a source that does not offer	 the  exact  re-
+	    quirement  fails in holypkg; a changed consumer hash cannot reuse an
 	    old answer. An unresolved choice stops the build with status 3.
 
      [source NAME]
-	    Each  used	native source requires type holy-http or holy-git, "url"
-	    and "index-sha256" with the exact lowercase digest of  the	selected
-	    generation.	  holy-http uses an HTTPS directory URL ending in slash.
+	    Each used native source requires type holy-http or	holy-git,  "url"
+	    and	 "index-sha256"	 with the exact lowercase digest of the selected
+	    generation.	 holy-http uses an HTTPS directory URL ending in  slash.
 	    holy-git also requires "commit" with a full lowercase Git object ID.
-	    The builder records the commit in build.record and	checks	it  when
-	    fetching  or  importing a mirror.  "ca-file" names an optional local
-	    CA file. "mirror PATH" selects an existing sealed  snapshot	 for  an
-	    offline  build.  Its source ID, URL and index must match the config-
-	    ured source and pin. The builder copies  and  revalidates  it  under
-	    output/mirrors.  "embed-mirror  yes" also includes the entire sealed
-	    catalog in the image root at  /var/cache/holypkg/image-mirrors/NAME.
-	    The	 source	 binding  uses	that root-relative location so fetch can
-	    find it after the image boots. The	default	 is  no:  only	selected
-	    packages  enter the image cache, and the user syncs the source after
-	    boot to obtain its current catalog.	 mirror and  ca-file  cannot  be
+	    The	 builder  records  the commit in build.record and checks it when
+	    fetching or importing a mirror.  "ca-file" names an	 optional  local
+	    CA	file.  "mirror	PATH" selects an existing sealed snapshot for an
+	    offline build. Its source ID, URL and index must match  the	 config-
+	    ured  source  and  pin.  The builder copies and revalidates it under
+	    output/mirrors. "embed-mirror yes" also includes the  entire  sealed
+	    catalog  in the image root at /var/cache/holypkg/image-mirrors/NAME.
+	    The source binding uses that root-relative	location  so  fetch  can
+	    find  it  after  the  image	 boots. The default is no: only selected
+	    packages enter the image cache, and the user syncs the source  after
+	    boot  to  obtain  its current catalog.  mirror and ca-file cannot be
 	    combined.	"trust	require"  with	"public-key  PATH"  verifies  an
-	    Ed25519-signed catalog.  holygetiso resolves the PEM  path	relative
-	    to	its containing config file and freezes the raw public key in the
+	    Ed25519-signed  catalog.   holygetiso resolves the PEM path relative
+	    to its containing config file and freezes the raw public key in  the
 	    effective config and source plan. Changing the key bytes changes the
-	    effective config hash. A signed offline mirror must	 carry	a  valid
+	    effective  config  hash.  A signed offline mirror must carry a valid
 	    signature for that key. The key is checked again when a bound mirror
-	    is	queried.   The	image config uses the holy.conf lexer but index-
-	    sha256 is specific to holygetiso. The builder registers  all  listed
+	    is queried.	 The image config uses the holy.conf  lexer  but  index-
+	    sha256  is	specific to holygetiso. The builder registers all listed
 	    sources and keeps the verified mirrors in output/mirrors. Its record
-	    binds  source  IDs	and index digests. An index digest is a pin, not
+	    binds source IDs and index digests. An index digest is  a  pin,  not
 	    publisher signature evidence.
 
      [docs]
 	    Exactly    one    "include	  installed-man-pages"	  and	 "output
-	    /usr/share/holy/llm.txt"  are  required.  holypkg docs reads the in-
+	    /usr/share/holy/llm.txt" are required. holypkg docs	 reads	the  in-
 	    stalled root and generates this file from its selected man pages.
 
 STATUS
-     The command returns 0 after a boot-tested build, 2 for  invalid  config,  6
+     The  command  returns  0 after a boot-tested build, 2 for invalid config, 6
      for missing inputs or host requirements, and 1 for other failures. The out-
      put build.record says "result incomplete" when a build fails after the out-
-     put  directory  is created. If QEMU is missing, or boot-test is build-only,
-     the builder writes "result untested" after producing the image and	 returns
+     put directory is created. If QEMU is missing, or boot-test	 is  build-only,
+     the  builder writes "result untested" after producing the image and returns
      6.	 A successful process exit alone does not certify hardware, a desktop or
      all packages named in the Holy specification.
 
 LIMITS
-     This  bootstrap  command supports holy-http and holy-git sources. For addi-
-     tional packages it uses holypkg's native resolver in a temporary root  with
-     every  pinned mirror bound. The resolver can select a unique exact provider
-     from another source. Explicitly listed packages from other	 sources  become
-     candidate	providers;  unresolved	ambiguity  stops  the build. The builder
-     copies only selected artifacts and their source IDs into the final	 install
-     plan.   Boot core packages may come from a pinned native source. Full pack-
-     age policy and a portable export of build tools remain  open.  The	 command
+     This bootstrap command supports holy-http and holy-git sources.  For  addi-
+     tional  packages it uses holypkg's native resolver in a temporary root with
+     every pinned mirror bound. The resolver can select a unique exact	provider
+     from  another  source. Explicitly listed packages from other sources become
+     candidate providers; unresolved ambiguity	stops  the  build.  The	 builder
+     copies  only selected artifacts and their source IDs into the final install
+     plan.  Boot core packages may come from a pinned native source. Full  pack-
+     age  policy  and  a portable export of build tools remain open. The command
      stays in-tree while the source checkout provides build tools and profiles.
 
 SEE ALSO

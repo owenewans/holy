@@ -640,6 +640,13 @@
   reinstalls libc from cache. The source-stage fixture and x86_64 two-boot
   ext4 QEMU contract pass. These inputs came from a disposable local catalog;
   a public Holy repository and i686 source-backed image remain open.
+- [x] Convert the five existing user-owned bootstrap archives into a sealed,
+  unsigned source-ready catalog with root-owned manifests in a user namespace.
+  Keep the original and converted hashes, source ID, index digest and an
+  includable image config. Fresh namespace resolvers accepted all five
+  x86_64 and i686 packages for read-only install plans. The image source
+  stage records each i686 placement decision and fetched all five i686 core
+  artifacts. Publication, signatures and i686 boot testing remain open.
 - [x] Extend that RAM profile with both dynamic libc packages and separate
   C probes. Boot present, glibc-missing, musl-missing and both-missing images
   under BIOS/TCG and UEFI/TCG. Restore absent payloads and loader links from

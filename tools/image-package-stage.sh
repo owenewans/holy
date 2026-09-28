@@ -95,19 +95,61 @@ while test "$#" -gt 0; do
                 '$1 == "source" && $3 == name && $4 == "active" {print $2}' "$work/source-list")
             test "${#source_id}" -eq 64 || exit 6
             prepare_resolver
-            (
-                set -- "$bin" add "$alias:$package_name" --root "$resolver_root" \
-                    --prepare --noninteractive
-                if test -f "$out/inputs/resolver-answers"; then
-                    set -- "$@" --answers "$out/inputs/resolver-answers"
-                fi
-                while read -r candidate_alias candidate_name; do
-                    if test "$candidate_alias" != "$alias"; then
-                        set -- "$@" --candidate "$candidate_alias:$candidate_name"
+            accepted_arch=
+            while :; do
+                if (
+                    set -- "$bin" add "$alias:$package_name" --root "$resolver_root" \
+                        --prepare --noninteractive
+                    if test -f "$out/inputs/resolver-answers"; then
+                        set -- "$@" --answers "$out/inputs/resolver-answers"
                     fi
-                done < "$work/requested-sources"
-                "$@"
-            ) > "$work/solve-$alias-$package_name.record"
+                    while read -r candidate_alias candidate_name; do
+                        if test "$candidate_alias" != "$alias"; then
+                            set -- "$@" --candidate "$candidate_alias:$candidate_name"
+                        fi
+                    done < "$work/requested-sources"
+                    for accepted in $accepted_arch; do
+                        set -- "$@" --accept-arch "$accepted"
+                    done
+                    "$@"
+                ) > "$work/solve-$alias-$package_name.record" \
+                    2> "$work/solve-$alias-$package_name.error"; then
+                    break
+                else
+                    rc=$?
+                fi
+                if test "$rc" -ne 3; then
+                    cat "$work/solve-$alias-$package_name.error" >&2
+                    exit "$rc"
+                fi
+                awk '$1 == "holypkg:" && $2 == "decision-required" &&
+                     $3 == "architecture" {
+                         hash = ""; target = ""
+                         for (i = 4; i <= NF; ++i) {
+                             if ($i ~ /^artifact=/) hash = substr($i, 10)
+                             if ($i ~ /^target=/) target = $i
+                         }
+                         if (target == "target=x86;") print hash
+                     }' "$work/solve-$alias-$package_name.error" \
+                    > "$work/arch-decisions"
+                new_decision=0
+                while IFS= read -r accepted; do
+                    test "${#accepted}" -eq 64 || exit 6
+                    case "$accepted" in *[!0-9a-f]*) exit 6 ;; esac
+                    case " $accepted_arch " in *" $accepted "*) continue ;; esac
+                    "$bin" info "local:$resolver_root/var/cache/holypkg/objects/sha256/$accepted.holy" \
+                        > "$work/arch-info"
+                    grep -qx 'arch x86' "$work/arch-info" || exit 4
+                    accepted_arch="$accepted_arch $accepted"
+                    new_decision=1
+                    printf 'resolver-architecture image %s artifact %s accepted\n' \
+                        "$arch" "$accepted" >> "$record"
+                done < "$work/arch-decisions"
+                if test "$new_decision" -eq 0; then
+                    cat "$work/solve-$alias-$package_name.error" >&2
+                    exit 3
+                fi
+            done
             if test "$kind" = --core; then
                 root_digest=$(awk '$1 == "plan-set" && $4 == "root" {print $5}' \
                     "$work/solve-$alias-$package_name.record")

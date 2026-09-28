@@ -69,10 +69,22 @@ entries become candidates for the current package; unresolved ambiguity stops
 the build. The busybox, dinit, mdevd, glibc and musl fields accept local
 artifacts or ALIAS:PACKAGE from a pinned source. The builder records the
 source ID and original digest, then normalizes each core artifact into a new
-unsigned Holy package. Doas and storage-tools fields require local artifacts.
+unsigned Holy package. On an x86_64 builder targeting i686, the resolver's
+x86 placement decision is recorded for each selected x86 artifact. This does
+not claim that the host can execute the i686 image. Doas and storage-tools
+fields require local artifacts.
 Added packages must target the image architecture or noarch; x86 packages are
 also accepted in an x86_64 image. Duplicate package names fail before plan
 generation. The package manager checks payload ownership and dependencies.
+.PP
+.B make source-ready-core
+accepts OUTPUT, SOURCE_ALIAS, SOURCE_URL and the five *_PACKAGE input paths.
+It copies the bootstrap archives, rebuilds their manifests with root ownership
+inside a user namespace, and writes a sealed unsigned native repository plus
+core-source.conf for inclusion in an image config. build.record links each new
+artifact digest to its original digest. SOURCE_URL is provenance for this
+local repository; the command does not publish files at that URL. This step
+requires user namespaces and does not sign the resulting artifacts.
 .TP
 .B [resolver]
 Optional "answers PATH" selects a holy-answers-1 file with source decisions

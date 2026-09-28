@@ -18,7 +18,8 @@ mv "$tmp/tree/HOLY/helper-meta" "$tmp/tree/HOLY/meta"
 : > "$tmp/tree/HOLY/deps"
 tar -cf "$tmp/helper.tar" -C "$tmp/tree" HOLY DATA
 lz4 -q "$tmp/helper.tar" "$tmp/repo/helper.holy"
-sed 's/name helper/name busybox/' "$tmp/tree/HOLY/meta" > "$tmp/tree/HOLY/busybox-meta"
+sed -e 's/name helper/name busybox/' -e 's/arch noarch/arch x86/' \
+    "$tmp/tree/HOLY/meta" > "$tmp/tree/HOLY/busybox-meta"
 mv "$tmp/tree/HOLY/busybox-meta" "$tmp/tree/HOLY/meta"
 tar -cf "$tmp/busybox.tar" -C "$tmp/tree" HOLY DATA
 lz4 -q "$tmp/busybox.tar" "$tmp/repo/busybox.holy"
@@ -140,12 +141,14 @@ mkdir -p "$tmp/core-root" "$tmp/core-image/inputs" "$tmp/core-image/packages" "$
 : > "$tmp/core-image/build.record"
 "$bin" db init --root "$tmp/core-root" > "$tmp/result"
 sh tools/image-source-stage.sh "$bin" "$tmp/core-root" "$tmp/core-image" "$tmp/source-input"
-sh tools/image-package-stage.sh "$bin" "$tmp/core-image" x86_64 \
+sh tools/image-package-stage.sh "$bin" "$tmp/core-image" i686 \
     --core busybox fixture busybox --source fixture fixture
 test -f "$tmp/core-image/work/core-busybox.holy"
 cmp "$tmp/core-image/work/core-busybox.holy" "$tmp/repo/busybox.holy"
 test "$(wc -w < "$tmp/core-image/work/additional-packages")" -eq 2
 grep -qx "busybox $source_id" "$tmp/core-image/work/add-sources"
+grep -q '^resolver-architecture image i686 artifact .* accepted$' \
+    "$tmp/core-image/build.record"
 test ! -f "$tmp/core-image/packages/add-0003.holy"
 mkdir -p "$tmp/cross-fixture" "$tmp/cross-other" "$tmp/cross-root" \
     "$tmp/cross-image/work" "$tmp/cross-image/inputs" \
