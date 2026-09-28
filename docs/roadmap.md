@@ -115,7 +115,11 @@
   alpine-baselayout-data 3.7.0-r0 and scdoc 1.11.3-r0 passed. Supported APK v2
   version constraints use a family-specific comparator, checked against 841
   pairs from apk-tools 2.14.12; unrecognized forms remain foreign requirements.
-  APK indexes, publisher signatures and full relation semantics remain open.
+  A rootless APKINDEX.tar.gz parser now retains the original signed or unsigned
+  index, publishes a hash-bound local catalog and answers search/info without
+  installation. An Alpine v3.22 main/x86_64 index with 5647 packages passed
+  manual import and lookup. Registered source sync, package-object verification,
+  publisher signatures and full relation semantics remain open.
 
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.
 - [x] Plan and atomically apply a source identity registry under the database

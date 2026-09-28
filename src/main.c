@@ -20,6 +20,7 @@
 #include "import.h"
 #include "up.h"
 #include "run.h"
+#include "../backends/apk.h"
 
 #include <stdio.h>
 #include <locale.h>
@@ -690,6 +691,17 @@ int main(int argc, char **argv)
     if (argc > 1 && !strcmp(argv[1], "up")) return holy_up_command(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "run")) return holy_run(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "apply")) return holy_apply_command(argc, argv);
+    if (argc > 2 && !strcmp(argv[1], "apk")) {
+        if (argc == 10 && !strcmp(argv[2], "index") && !strcmp(argv[4], "--source") &&
+            !strcmp(argv[6], "--base") && !strcmp(argv[8], "--output"))
+            return holy_apk_index(argv[3], argv[5], argv[7], argv[9]);
+        if (argc == 6 && !strcmp(argv[4], "--catalog")) {
+            if (!strcmp(argv[2], "search")) return holy_apk_query(argv[5], argv[3], 0);
+            if (!strcmp(argv[2], "info")) return holy_apk_query(argv[5], argv[3], 1);
+        }
+        fputs("usage: holypkg apk index FILE --source NAME --base URL --output NEW_DIRECTORY | apk search|info NAME --catalog DIRECTORY\n", stderr);
+        return 2;
+    }
     if (argc > 1 && !strcmp(argv[1], "search") && argc > 2)
         return query_source(argc, argv, 1);
     if (argc > 2 && !strcmp(argv[1], "info") &&

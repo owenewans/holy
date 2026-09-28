@@ -15,4 +15,5 @@
 
 /tests/pacman-helper
 /tests/deb-version-helper
+/tests/apk-version-helper
 /tests/native-version-helper

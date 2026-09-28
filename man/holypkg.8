@@ -12,6 +12,12 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg import INPUT --source NAME --format pacman|deb|slackware|apk --output NEW_DIRECTORY
 .br
+.B holypkg apk index APKINDEX.tar.gz --source NAME --base URL/ --output NEW_DIRECTORY
+.br
+.B holypkg apk search QUERY --catalog DIRECTORY
+.br
+.B holypkg apk info PACKAGE --catalog DIRECTORY
+.br
 .B holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--public-key PUBLIC_KEY.pem] [--ca-file FILE]
 .br
 .B holypkg repo seal DIRECTORY [--key PRIVATE_KEY.pem]
@@ -254,6 +260,22 @@ x86 and x86_64 claims and checks observed ELF machines. It rejects truncated
 gzip members, extra members and unsafe paths. make check-apk covers these
 cases and installs/checks/removes a converted data package in a temporary root.
 make check-apk-version covers comparisons against Alpine apk-tools 2.14.12.
+.PP
+The apk index command snapshots a local APKINDEX.tar.gz, separates its gzip
+signature and data members, and publishes a sorted local catalog with the
+original bytes, source alias, base URL and SHA-256. It checks required package
+identity fields and duplicate name/version/arch slots. The source alias is
+provenance, not a registered source-id. A publisher signature is retained in
+the original input but is not verified; conversion records unverified status.
+Package coverage is complete for the supplied index, while file coverage is
+unavailable. apk search matches a package-name substring and apk info selects
+an exact name; multiple versions require a decision. Queries verify the
+catalog hash recorded at conversion. These commands do not download packages,
+bind a source, install files or modify the system package database.
+The native source sync and foreign APK catalog are separate until source
+binding and package-object verification are implemented. make check-apk-index
+covers signed and unsigned fixtures, duplicate entries, truncated gzip,
+traversal and catalog tampering.
 .PP
 The importer reads .PKGINFO identities, full epoch/version/release strings,
 package relations and original field values. It preserves .PKGINFO, .BUILDINFO,

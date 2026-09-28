@@ -8,6 +8,7 @@
 #include "../backends/pacman.h"
 #include "../backends/deb-version.h"
 #include "../backends/apk-version.h"
+#include "../backends/apk.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -23,7 +24,6 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <zlib.h>
 
 struct foreign_entry {
     struct holy_stream_entry stream;
@@ -405,63 +405,6 @@ done:
     return result;
 }
 
-static int apk_gzip_parts(const char *snapshot, FILE *parts[3], char digests[3][65])
-{
-    unsigned char in[65536], out[65536], digest[32];
-    struct stat st;
-    off_t offset = 0;
-    int fd = open(snapshot, O_RDONLY | O_CLOEXEC), count = 0, ok = 0;
-    if (fd < 0 || fstat(fd, &st) || st.st_size <= 0) goto done;
-    while (offset < st.st_size && count < 3) {
-        z_stream z = {0};
-        EVP_MD_CTX *hash = EVP_MD_CTX_new();
-        unsigned length = 0;
-        uint64_t expanded = 0;
-        off_t begin = offset;
-        int status = Z_OK;
-        parts[count] = tmpfile();
-        if (!parts[count] || !hash || EVP_DigestInit_ex(hash, EVP_sha256(), NULL) != 1 ||
-            inflateInit2(&z, 15 + 16) != Z_OK) {
-            EVP_MD_CTX_free(hash); goto done;
-        }
-        while (status == Z_OK) {
-            ssize_t got = pread(fd, in, sizeof in, offset);
-            size_t used;
-            if (got <= 0) break;
-            z.next_in = in; z.avail_in = (uInt)got;
-            while (z.avail_in && status == Z_OK) {
-                uInt before = z.avail_in;
-                z.next_out = out; z.avail_out = sizeof out;
-                status = inflate(&z, Z_NO_FLUSH);
-                used = before - z.avail_in;
-                if (status != Z_OK && status != Z_STREAM_END) break;
-                if (fwrite(in + (got - before), 1, used, parts[count]) != used ||
-                    EVP_DigestUpdate(hash, in + (got - before), used) != 1) {
-                    status = Z_ERRNO; break;
-                }
-                offset += (off_t)used;
-                expanded += sizeof out - z.avail_out;
-                if (expanded > 4ULL * 1024 * 1024 * 1024 ||
-                    (!used && z.avail_out == sizeof out)) { status = Z_DATA_ERROR; break; }
-            }
-        }
-        inflateEnd(&z);
-        if (status != Z_STREAM_END || offset == begin ||
-            EVP_DigestFinal_ex(hash, digest, &length) != 1 || length != 32 ||
-            fflush(parts[count])) { EVP_MD_CTX_free(hash); goto done; }
-        EVP_MD_CTX_free(hash);
-        {
-            size_t i;
-            for (i = 0; i < 32; ++i) snprintf(digests[count] + i * 2, 3, "%02x", digest[i]);
-        }
-        ++count;
-    }
-    ok = offset == st.st_size && (count == 2 || count == 3);
-done:
-    if (fd >= 0) close(fd);
-    if (!ok) { size_t i; for (i = 0; i < 3; ++i) { if (parts[i]) fclose(parts[i]); parts[i] = NULL; } }
-    return ok ? count : 0;
-}
 
 static void free_input(struct foreign_input *input)
 {
@@ -1500,8 +1443,8 @@ int holy_import_apk(const char *input_path, const char *source, const char *outp
     if (output_fd < 0 || fstat(output_fd, &st) || st.st_uid != geteuid() ||
         (st.st_mode & 0777) != 0700 || !preserve_original(snapshot, output_fd)) goto done;
     result = 2;
-    count = apk_gzip_parts(snapshot, parts, digests);
-    if (!count) goto done;
+    count = holy_apk_gzip_parts(snapshot, parts, digests, 4ULL * 1024 * 1024 * 1024);
+    if (count < 2) goto done;
     control = count - 2;
     for (i = 0; i < (size_t)count; ++i) {
         char descriptor[64];
