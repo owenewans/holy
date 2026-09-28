@@ -880,6 +880,13 @@ static int capture_missing(const struct local_item *consumer, size_t requirement
         break;
     }
     if (!name) {
+        original = consumer->original_requirements[requirement];
+        if (!strncmp(original, "package-or:", 11)) {
+            kind = "package-or";
+            name = original + 11;
+        }
+    }
+    if (!name) {
         for (k = 0; k < consumer->package_edge_count; ++k)
             if (consumer->package_edges[k].requirement == requirement) {
                 kind = consumer->package_edges[k].kind;

@@ -744,11 +744,30 @@ static int indexed_file(const struct object *object, const char *path)
     return 0;
 }
 
+struct or_match { const struct object *object; int found; };
+
+static int indexed_or_branch(void *opaque, const char *name,
+                             const char *relation, const char *version)
+{
+    struct or_match *match = opaque;
+    size_t i;
+    (void)relation; (void)version;
+    if (!strcmp(match->object->identity.name, name)) match->found = 1;
+    for (i = 0; i < match->object->claim_count; ++i)
+        if (!strcmp(match->object->claims[i].kind, "package") &&
+            !strcmp(match->object->claims[i].name, name)) match->found = 1;
+    return 1;
+}
+
 static int indexed_provider(const struct object *object, const char *kind,
                             const char *name, int file_index, int soname_index)
 {
     static const char *const dirs[] = {"usr/bin/", "bin/", "usr/sbin/", "sbin/"};
     size_t i;
+    if (!strcmp(kind, "package-or")) {
+        struct or_match match = {object, 0};
+        return holy_package_or_each(name, indexed_or_branch, &match) && match.found;
+    }
     if (!strcmp(kind, "package") && !strcmp(object->identity.name, name)) return 1;
     if (!strcmp(kind, "soname")) {
         if (!soname_index) return 0;
@@ -1699,7 +1718,9 @@ int holy_repo_has_provider(const char *directory, const char *kind,
                            const char *name)
 {
     int result = 6;
-    if (!holy_provides_kind(kind) || !name || !*name) return 2;
+    if ((!holy_provides_kind(kind) && strcmp(kind, "package-or")) ||
+        !name || !*name ||
+        (!strcmp(kind, "package-or") && !holy_package_or_each(name, NULL, NULL))) return 2;
     if (!list(directory, NULL, NULL, 1, 8, NULL, NULL, kind, name,
               NULL, NULL, 0, &result, NULL, 0, NULL, NULL)) return 6;
     return result;
@@ -1776,9 +1797,10 @@ int holy_repo_stage_provider(const char *directory, const char *kind,
     struct stage_request stage = {root, set, NULL, NULL, 0, 1};
     int result = 6;
     memset(set, 0, sizeof *set);
-    if (!kind || (strcmp(kind, "package") && strcmp(kind, "file") &&
+    if (!kind || (strcmp(kind, "package") && strcmp(kind, "package-or") && strcmp(kind, "file") &&
                   strcmp(kind, "command") && strcmp(kind, "soname")) ||
-        !name || !*name || !root || !*root) return 2;
+        !name || !*name || !root || !*root ||
+        (!strcmp(kind, "package-or") && !holy_package_or_each(name, NULL, NULL))) return 2;
     if (!list(directory, NULL, NULL, 1, 0, NULL, NULL, kind, name,
               NULL, NULL, 0, &result, NULL, 0, &stage, NULL)) {
         holy_repo_set_free(set);

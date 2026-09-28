@@ -249,9 +249,10 @@ use Debian ordering, including epoch, tilde and revision, only against
 providers in the deb version family. Architecture qualifiers, Pre-Depends and
 other unsupported relationships remain attributed foreign requirements that
 require an explicit decision in the current solver.
-The automatic cross-source provider search currently probes the first branch
-of a missing OR group. Supply an artifact or candidate for another branch
-explicitly when it is absent from the active local set.
+The automatic cross-source provider search checks every branch of a missing
+OR group. It stages indexed candidates from the chosen source; the solver
+then checks each branch's version and requests a choice if several providers
+remain valid.
 Simple Provides names and
 exact version claims become package capabilities; an unversioned virtual claim
 does not satisfy a versioned dependency. Unsupported or duplicate claims remain

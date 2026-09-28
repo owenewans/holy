@@ -95,8 +95,8 @@
   architecture claims and install/check/remove for a data package.
   Resolve Depends entries including OR alternatives and exact/unversioned
   Provides claims with Debian version ordering within the deb family.
-  Automatic cross-source discovery still probes only the first missing OR
-  branch; candidates for another branch must be supplied explicitly.
+  Automatic cross-source discovery probes each branch of a missing OR group;
+  the solver checks branch versions after staging candidates.
   Pre-Depends and other unsupported relationships stay foreign requirements; conffiles require
   a decision. Verify listed `control/md5sums` files against the payload before
   conversion; the original MD5 list is not source authentication. A pinned

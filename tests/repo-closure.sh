@@ -9,6 +9,9 @@ build() {
     required=$2
     kind=${3:-package}
     printf 'format holy-package-1\nname %s\nversion 1\nrelease 1\nos linux\narch noarch\nlibc nolibc\n' "$name" > "$tmp/tree/HOLY/meta"
+    if test "$name" = or-root; then
+        printf 'x-version-family deb\n' >> "$tmp/tree/HOLY/meta"
+    fi
     for field in files deps provides hooks origin transform; do : > "$tmp/tree/HOLY/$field"; done
     if test -n "$required"; then
         printf 'require dep-1 %s %s %s any any any - %s metadata\n' \
@@ -40,6 +43,9 @@ build auto-leaf ''
 build auto-file-root /usr/share/auto-file file
 build auto-file ''
 build missing-root absent-package
+build or-root 'or-first@ge@2|or-second@any@-' package-or
+build or-first ''
+build or-second ''
 mkdir -p "$tmp/other-repo"
 mv "$tmp/repo/foreign-dep.holy" "$tmp/other-repo/foreign-dep.holy"
 mv "$tmp/repo/foreign-unused.holy" "$tmp/other-repo/foreign-unused.holy"
@@ -48,6 +54,7 @@ mv "$tmp/repo/external-file.holy" "$tmp/other-repo/external-file.holy"
 mv "$tmp/repo/auto-child.holy" "$tmp/other-repo/auto-child.holy"
 mv "$tmp/repo/auto-leaf.holy" "$tmp/other-repo/auto-leaf.holy"
 mv "$tmp/repo/auto-file.holy" "$tmp/other-repo/auto-file.holy"
+mv "$tmp/repo/or-second.holy" "$tmp/other-repo/or-second.holy"
 case "$(uname -m)" in
     x86_64)
         arch=x86_64
@@ -245,6 +252,10 @@ test -f "$tmp/root/usr/share/auto-child"
 test -f "$tmp/root/usr/share/auto-leaf"
 "$bin" add fixture:auto-file-root --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"
 test -f "$tmp/root/usr/share/auto-file"
+"$bin" add fixture:or-root --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"
+test -f "$tmp/root/usr/share/or-root"
+test -f "$tmp/root/usr/share/or-second"
+test ! -e "$tmp/root/usr/share/or-first"
 "$bin" db check --all --root "$tmp/root" > "$tmp/out"
 "$bin" add fixture:provider-root --candidate-provider other:package:external-package \
     --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"
