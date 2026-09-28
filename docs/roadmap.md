@@ -226,24 +226,28 @@
   confirmation rereads it before mirroring. Store source-id and selection in
   mirror-origin before sealing. Local TLS fixtures cover alias changes,
   unrelated backends, wrong digest, missing CA, changed/malformed pointers and
-  credential-bearing redirects. Publisher signatures, persistent source cache
+  credential-bearing redirects. Publisher signatures, automatic source cache
   and multi-source search remain open.
 - [x] Fetch one SOURCE:PACKAGE from an explicit sealed synced mirror without
   installing it. Check active source ID and URL against mirror provenance,
   verify the complete catalog, reject ambiguous names, and support extraction
-  into a new directory. Persistent source cache discovery remains open.
+  into a new directory. Automatic source cache publication remains open.
 - [x] Install SOURCE:PACKAGE from an explicit sealed holy-http mirror. Stage
   candidate artifacts, resolve dependencies in one set, bind newly selected
   packages to the registered source-id, and bind index digest to the reviewed
   plan and recovery journal. Reject changed catalogs before apply. A faulted
   generation update recovers from the version-5 journal without network access.
-  Persistent source discovery, signed indexes, multi-source ranking and indexed
+  Automatic source cache publication, signed indexes, multi-source ranking and indexed
   on-demand candidate retrieval remain open.
 - [x] Query an active holy-http source through an explicit synced mirror with
   `search QUERY --source ALIAS` and `info ALIAS:PACKAGE`. Verify source identity,
   full catalog and artifacts before returning exact names; report missing and
   ambiguous info queries without mutating the target. Fuzzy/file search and
-  persistent source discovery remain open.
+  automatic source cache publication remain open.
+- [x] Bind a verified synced mirror and index digest to a registered source-id
+  under the target database lock. Resolve add, fetch, search and info without
+  repeating --catalog; reject corrupt bindings and changed mirrors. Keep the
+  binding across alias renames. Automatic sync publication remains open.
 - [ ] Implement remaining foreign binary adapters and file indexes with real
   fixtures: APT indexes, RPM, APK, XBPS, Slackware, eopkg, homebrew and guix.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,

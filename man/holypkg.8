@@ -4,7 +4,7 @@ holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
 .B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
-.B holypkg add SOURCE:PACKAGE --catalog MIRROR [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
+.B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
 .B holypkg import INPUT --source NAME --format pacman|deb --output NEW_DIRECTORY
 .br
@@ -16,6 +16,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg source list --root DIRECTORY
 .br
+.B holypkg source catalog bind ALIAS MIRROR [--root DIRECTORY]
+.br
 .B holypkg sync SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256 INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--ca-file FILE]
 .br
 .B holypkg orphan [--root DIRECTORY] [--json]
@@ -26,9 +28,9 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg info local:FILE
 .br
-.B holypkg info SOURCE:PACKAGE --catalog MIRROR [--root DIRECTORY]
+.B holypkg info SOURCE:PACKAGE [--catalog MIRROR] [--root DIRECTORY]
 .br
-.B holypkg search QUERY --source SOURCE --catalog MIRROR [--root DIRECTORY]
+.B holypkg search QUERY --source SOURCE [--catalog MIRROR] [--root DIRECTORY]
 .br
 .B holypkg verify local:FILE
 .br
@@ -52,7 +54,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg fetch local:FILE --extract --output DIRECTORY
 .br
-.B holypkg fetch SOURCE:PACKAGE --catalog MIRROR --output DIRECTORY [--extract] [--root DIRECTORY]
+.B holypkg fetch SOURCE:PACKAGE [--catalog MIRROR] --output DIRECTORY [--extract] [--root DIRECTORY]
 .br
 .B holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE]
 .br
@@ -673,9 +675,10 @@ may retain staged objects after a declined or unresolved operation. Automatic
 doas escalation, source lookup and script execution are not part of this local
 subset.
 .PP
-add SOURCE:PACKAGE reads one explicitly selected sealed holy-http mirror made
-by sync. --catalog remains required until source snapshots have a persistent
-configured cache location. The active source-id and URL must match the mirror
+add SOURCE:PACKAGE reads one sealed holy-http mirror made by sync. --catalog
+selects a mirror for this invocation; without it the manager reads the mirror
+bound to the active source-id by source catalog bind. The active source-id and
+URL must match the mirror
 record. The manager verifies and stages all indexed packages in the target
 cache, then the set resolver chooses the root and its dependencies. If multiple
 packages share the root name, it returns decision-required (3). Every newly
@@ -1036,7 +1039,7 @@ It requires all seven HOLY metadata members as regular files and rejects
 duplicate members.
 It does not validate the payload manifest, hashes, signatures or installability.
 .PP
-search QUERY --source SOURCE --catalog MIRROR verifies the active source-id and
+search QUERY --source SOURCE verifies the active source-id and
 URL against the sealed mirror record, then checks the complete indexed catalog
 and prints exact package-name matches. A missing name prints a zero-count
 summary. info SOURCE:PACKAGE performs the same checks and prints one package
@@ -1044,7 +1047,8 @@ record with its artifact hash and source-id. No match returns unavailable (6);
 multiple matches return decision-required (3) because this interface has no
 arch/libc selector yet. Both commands read the catalog without installing or
 running package code. The mirror is unsigned local provenance, not publisher
-authentication. Persistent source discovery, fuzzy search, file search and
+authentication. --catalog selects an explicit mirror; without it, the commands
+use the mirror bound by source catalog bind. Fuzzy search, file search and
 multi-source results remain open.
 .PP
 The verify command checks regular DATA files against the supported HOLY/files
@@ -1494,6 +1498,18 @@ definition. Replacement uses a private temporary file, fsync, rename and directo
 fsync. Registry revisions are separate from installed database generations.
 List prints identities and status without endpoint definitions.
 .PP
+source catalog bind ALIAS MIRROR verifies the entire sealed mirror, its index,
+objects, source-id and exact registered URL. It then records the canonical host
+path and index digest in /var/lib/holypkg/catalogs/SOURCE_ID under the target
+root. The file is mode 0600 and replaced with fsync and rename under the
+database writer lock. The command changes neither installed packages nor the
+source registry. A renamed alias with the same source-id keeps its binding;
+an inactive or changed source cannot use it. Queries without --catalog reread
+the binding and reject a missing, changed or corrupt mirror. The stored host
+path is not portable when a target root is moved to another machine. Rebind
+the mirror after such a move. Sync still accepts --output and does not bind a
+mirror as a side effect.
+.PP
 An ID identifies a configured origin; it is not signature evidence. The current
 registry retains inactive origins and supports explicit local-artifact associations
 in set installation and cached slot replacement. The sync command reads one
@@ -1523,9 +1539,8 @@ has a 4 KiB response cap,
 the same HTTPS-only redirect policy and a five-minute deadline. --sha256 and
 --accept-unsigned are mutually exclusive. There is no hidden TTY behavior.
 .PP
-fetch SOURCE:PACKAGE reads an explicitly selected synced holy-http mirror.
---catalog is required until source snapshots have a persistent configured
-cache location. The active source alias must match the mirror's source-id and
+fetch SOURCE:PACKAGE reads a synced holy-http mirror selected by --catalog or
+the binding for its active source-id. The active source alias must match the mirror's source-id and
 exact URL; the mirror's current index and all listed objects are verified before
 the named package is copied into an existing --output directory. --extract
 instead writes a new output directory. More than one package with the same name

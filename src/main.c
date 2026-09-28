@@ -117,7 +117,7 @@ static int fetch_source(int argc, char **argv)
 {
     const char *separator = strchr(argv[2], ':');
     const char *root = "/", *catalog = NULL, *output = NULL;
-    char source_id[65], *alias = NULL;
+    char source_id[65], *alias = NULL, *bound_catalog = NULL;
     int i, extract = 0, root_seen = 0, result = 2;
     if (!separator || separator == argv[2] || !separator[1] ||
         strchr(separator + 1, ':')) goto done;
@@ -139,13 +139,18 @@ static int fetch_source(int argc, char **argv)
         } else if (!strcmp(argv[i], "--extract") && !extract) extract = 1;
         else goto done;
     }
-    if (!catalog || !*catalog || !output || !*output || !*root) goto done;
+    if (!output || !*output || !*root) goto done;
+    if (!catalog) {
+        result = holy_source_catalog_path(root, alias, &bound_catalog);
+        if (result) goto done;
+        catalog = bound_catalog;
+    }
     result = holy_source_catalog(root, alias, catalog, source_id);
     if (!result) result = holy_repo_fetch_name(catalog, separator + 1, output, extract);
 done:
     if (result == 2)
-        fputs("usage: holypkg fetch SOURCE:PACKAGE --catalog MIRROR --output DIRECTORY [--extract] [--root DIRECTORY]\n", stderr);
-    free(alias);
+        fputs("usage: holypkg fetch SOURCE:PACKAGE [--catalog MIRROR] --output DIRECTORY [--extract] [--root DIRECTORY]\n", stderr);
+    free(alias); free(bound_catalog);
     return result;
 }
 
@@ -153,7 +158,7 @@ static int query_source(int argc, char **argv, int search)
 {
     const char *root = "/", *catalog = NULL, *alias = NULL, *name = NULL;
     const char *separator = search ? NULL : strchr(argv[2], ':');
-    char source_id[65], *owned_alias = NULL;
+    char source_id[65], *owned_alias = NULL, *bound_catalog = NULL;
     int i, root_seen = 0, result = 2;
     if (search) name = argv[2];
     else {
@@ -176,8 +181,13 @@ static int query_source(int argc, char **argv, int search)
             root = argv[++i]; root_seen = 1;
         } else goto done;
     }
-    if (!name || !*name || !alias || !*alias || !catalog || !*catalog ||
+    if (!name || !*name || !alias || !*alias ||
         !strcmp(alias, "local")) goto done;
+    if (!catalog) {
+        result = holy_source_catalog_path(root, alias, &bound_catalog);
+        if (result) goto done;
+        catalog = bound_catalog;
+    }
     result = holy_source_catalog(root, alias, catalog, source_id);
     if (!result) {
         result = search ? (holy_repo_search(catalog, name) ? 0 : 6) :
@@ -186,9 +196,9 @@ static int query_source(int argc, char **argv, int search)
     }
 done:
     if (result == 2) fprintf(stderr,
-        search ? "usage: holypkg search QUERY --source SOURCE --catalog MIRROR [--root DIRECTORY]\n" :
-                 "usage: holypkg info SOURCE:PACKAGE --catalog MIRROR [--root DIRECTORY]\n");
-    free(owned_alias);
+        search ? "usage: holypkg search QUERY --source SOURCE [--catalog MIRROR] [--root DIRECTORY]\n" :
+                 "usage: holypkg info SOURCE:PACKAGE [--catalog MIRROR] [--root DIRECTORY]\n");
+    free(owned_alias); free(bound_catalog);
     return result;
 }
 
@@ -199,6 +209,7 @@ static int add_source(int argc, char **argv)
     const char **accepted_arch = NULL, **accepted_privileged = NULL;
     struct holy_repo_set staged = {0}, next = {0};
     char source_id[65], next_id[65], plan[65], answer[16], *alias = NULL;
+    char *bound_catalog = NULL, *next_catalog = NULL;
     size_t arch_count = 0, privileged_count = 0, i;
     int yes = 0, noninteractive = 0, root_seen = 0, result = 2;
     if (!separator || separator == argv[2] || !separator[1] ||
@@ -228,7 +239,11 @@ static int add_source(int argc, char **argv)
         else if (!strcmp(argv[i], "--noninteractive") && !noninteractive) noninteractive = 1;
         else goto done;
     }
-    if (!catalog || !*catalog) goto done;
+    if (!catalog) {
+        result = holy_source_catalog_path(root, alias, &bound_catalog);
+        if (result) goto done;
+        catalog = bound_catalog;
+    }
     result = holy_source_catalog(root, alias, catalog, source_id);
     if (result) goto done;
     result = holy_repo_stage_set(catalog, separator + 1, root, &staged);
@@ -251,6 +266,10 @@ static int add_source(int argc, char **argv)
             result = 3; goto done;
         }
     }
+    if (bound_catalog) {
+        result = holy_source_catalog_path(root, alias, &next_catalog);
+        if (result || strcmp(bound_catalog, next_catalog)) { result = 3; goto done; }
+    }
     result = holy_source_catalog(root, alias, catalog, next_id);
     if (result) { result = 3; goto done; }
     result = holy_repo_stage_set(catalog, separator + 1, root, &next);
@@ -265,9 +284,10 @@ static int add_source(int argc, char **argv)
                                    accepted_privileged, privileged_count, NULL);
 done:
     if (result == 2)
-        fputs("usage: holypkg add SOURCE:PACKAGE --catalog MIRROR [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
+        fputs("usage: holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
     holy_repo_set_free(&staged); holy_repo_set_free(&next);
-    free(alias); free(accepted_arch); free(accepted_privileged);
+    free(alias); free(bound_catalog); free(next_catalog);
+    free(accepted_arch); free(accepted_privileged);
     return result;
 }
 
@@ -302,13 +322,19 @@ int main(int argc, char **argv)
     }
 
     if (argc > 1 && !strcmp(argv[1], "source")) {
+        if (argc == 6 && !strcmp(argv[2], "catalog") &&
+            !strcmp(argv[3], "bind"))
+            return holy_source_bind_catalog("/", argv[4], argv[5]);
+        if (argc == 8 && !strcmp(argv[2], "catalog") &&
+            !strcmp(argv[3], "bind") && !strcmp(argv[6], "--root"))
+            return holy_source_bind_catalog(argv[7], argv[4], argv[5]);
         if (argc == 7 && !strcmp(argv[2], "plan") && !strcmp(argv[3], "--config") && !strcmp(argv[5], "--root"))
             return holy_source_plan(argv[4], argv[6]);
         if (argc == 8 && !strcmp(argv[2], "apply") && !strcmp(argv[4], "--sha256") && !strcmp(argv[6], "--root"))
             return holy_source_apply(argv[3], argv[5], argv[7]);
         if (argc == 5 && !strcmp(argv[2], "list") && !strcmp(argv[3], "--root"))
             return holy_source_list(argv[4]);
-        fputs("usage: holypkg source plan --config FILE --root DIRECTORY | source apply PLAN --sha256 HASH --root DIRECTORY | source list --root DIRECTORY\n", stderr);
+        fputs("usage: holypkg source plan --config FILE --root DIRECTORY | source apply PLAN --sha256 HASH --root DIRECTORY | source list --root DIRECTORY | source catalog bind ALIAS MIRROR [--root DIRECTORY]\n", stderr);
         return 2;
     }
 

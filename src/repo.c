@@ -817,6 +817,19 @@ done:
     return ok;
 }
 
+int holy_repo_catalog_index(const char *directory, char digest[65])
+{
+    int dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int ok = 0;
+    digest[0] = 0;
+    if (dir >= 0 && !flock(dir, LOCK_SH) && read_current(dir, digest) == 1 &&
+        list(directory, NULL, NULL, 1, 0, NULL, NULL, NULL, NULL, NULL,
+             NULL, 0, NULL, NULL, 0, NULL)) ok = 1;
+    if (dir >= 0) close(dir);
+    if (!ok) digest[0] = 0;
+    return ok;
+}
+
 static int seal(const char *directory, const char *expected)
 {
     char temporary[43] = {0}, pointer_temp[43] = {0};

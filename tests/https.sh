@@ -93,6 +93,15 @@ expect 0 "$bin" sync fixture --root "$tmp/source-root" --sha256 "$index" \
     --output "$tmp/source-mirror" --ca-file "$tmp/cert.pem"
 grep -qx "source-id $source_id" "$tmp/source-mirror/mirror-origin"
 cmp "$tmp/serve/current" "$tmp/source-mirror/current"
+expect 0 "$bin" source catalog bind fixture "$tmp/source-mirror" --root "$tmp/source-root"
+grep -qx "catalog-bound $source_id index $index" "$tmp/result"
+binding="$tmp/source-root/var/lib/holypkg/catalogs/$source_id"
+test "$(stat -c %a "$binding")" = 600
+grep -qx "index $index" "$binding"
+expect 0 "$bin" search https-second --source fixture --root "$tmp/source-root"
+grep -qx 'listed 1 packages' "$tmp/result"
+expect 0 "$bin" info fixture:https-second --root "$tmp/source-root"
+grep -q '^package "https-second" ' "$tmp/result"
 expect 0 "$bin" search https-second --source fixture --catalog "$tmp/source-mirror" \
     --root "$tmp/source-root"
 grep -q '^package "https-second" ' "$tmp/result"
@@ -111,13 +120,28 @@ expect 6 "$bin" info fixture:missing --catalog "$tmp/source-mirror" \
 test ! -s "$tmp/result"
 expect 6 "$bin" search https-second --source wrong --catalog "$tmp/source-mirror" \
     --root "$tmp/source-root"
-expect 2 "$bin" info fixture:https-second --root "$tmp/source-root"
+expect 2 "$bin" info fixture:https-second --bogus --root "$tmp/source-root"
 cp -a "$tmp/source-mirror" "$tmp/changed-source-mirror"
 printf broken >> "$tmp/changed-source-mirror/native.holy"
 expect 6 "$bin" search https-second --source fixture --catalog "$tmp/changed-source-mirror" \
     --root "$tmp/source-root"
 expect 6 "$bin" info fixture:https-second --catalog "$tmp/changed-source-mirror" \
     --root "$tmp/source-root"
+expect 6 "$bin" source catalog bind fixture "$tmp/changed-source-mirror" \
+    --root "$tmp/source-root"
+expect 0 "$bin" search https-second --source fixture --root "$tmp/source-root"
+cp "$binding" "$tmp/valid-binding"
+rm "$binding"
+ln -s "$tmp/valid-binding" "$binding"
+expect 6 "$bin" search https-second --source fixture --root "$tmp/source-root"
+rm "$binding"
+cp "$tmp/valid-binding" "$binding"
+expect 0 "$bin" search https-second --source fixture --root "$tmp/source-root"
+cp "$tmp/source-mirror/current" "$tmp/valid-current"
+printf 'sha256 %064d\n' 0 > "$tmp/source-mirror/current"
+expect 6 "$bin" info fixture:https-second --root "$tmp/source-root"
+cp "$tmp/valid-current" "$tmp/source-mirror/current"
+expect 0 "$bin" info fixture:https-second --root "$tmp/source-root"
 mkdir "$tmp/add-root"
 expect 0 "$bin" db init --root "$tmp/add-root"
 expect 0 "$bin" source plan --config "$tmp/source.conf" --root "$tmp/add-root"
@@ -125,12 +149,12 @@ cp "$tmp/result" "$tmp/add-source.plan"
 add_source_plan=$(sha256sum "$tmp/add-source.plan" | cut -d ' ' -f 1)
 expect 0 "$bin" source apply "$tmp/add-source.plan" --sha256 "$add_source_plan" \
     --root "$tmp/add-root"
-expect 3 "$bin" add fixture:https-second --catalog "$tmp/source-mirror" \
-    --root "$tmp/add-root" < /dev/null
+expect 6 "$bin" add fixture:https-second --root "$tmp/add-root" --yes
+expect 0 "$bin" source catalog bind fixture "$tmp/source-mirror" --root "$tmp/add-root"
+expect 3 "$bin" add fixture:https-second --root "$tmp/add-root" < /dev/null
 grep -q 'plan-set .* read-only' "$tmp/result"
 test "$(cat "$tmp/add-root/var/lib/holypkg/generation")" -eq 0
-expect 0 "$bin" add fixture:https-second --catalog "$tmp/source-mirror" \
-    --root "$tmp/add-root" --yes
+expect 0 "$bin" add fixture:https-second --root "$tmp/add-root" --yes
 second_hash=$(sha256sum "$tmp/serve/space?#.holy" | cut -d ' ' -f 1)
 grep -qx "source-id $source_id" "$tmp/add-root/var/lib/holypkg/installed/$digest/state"
 grep -qx "source-id $source_id" "$tmp/add-root/var/lib/holypkg/installed/$second_hash/state"
@@ -176,6 +200,9 @@ C
     expect 0 "$bin" db check --all --root "$tmp/fault-root"
 fi
 mkdir "$tmp/fetched"
+expect 0 "$bin" fetch fixture:https-fixture --output "$tmp/fetched" \
+    --root "$tmp/source-root"
+grep -Fxq "$tmp/fetched/$digest.holy" "$tmp/result"
 expect 0 "$bin" fetch fixture:https-fixture --catalog "$tmp/source-mirror" \
     --output "$tmp/fetched" --root "$tmp/source-root"
 grep -Fxq "$tmp/fetched/$digest.holy" "$tmp/result"
@@ -283,6 +310,11 @@ expect 0 "$bin" sync renamed --root "$tmp/source-root" --sha256 "$index" \
 grep -qx "source-id $source_id" "$tmp/source-renamed/mirror-origin"
 expect 0 "$bin" fetch renamed:https-fixture --catalog "$tmp/source-mirror" \
     --output "$tmp/fetched" --root "$tmp/source-root"
+expect 0 "$bin" info renamed:https-fixture --root "$tmp/source-root"
+grep -qx "source-id $source_id" "$tmp/result"
+expect 0 "$bin" fetch renamed:https-fixture --output "$tmp/fetched" \
+    --root "$tmp/source-root"
+expect 6 "$bin" info fixture:https-fixture --root "$tmp/source-root"
 expect 6 "$bin" fetch fixture:https-fixture --catalog "$tmp/source-mirror" \
     --output "$tmp/fetched" --root "$tmp/source-root"
 expect 6 "$bin" sync fixture --root "$tmp/source-root" --sha256 "$index" \

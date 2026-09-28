@@ -1,4 +1,4 @@
-#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
 #include "source.h"
 #include "config.h"
 #include "state.h"
@@ -523,6 +523,163 @@ done:
         quote(stderr, alias); fputc('\n', stderr);
     }
     free(url); free(data); clear_registry(&registry); close(dir);
+    return result;
+}
+
+static int catalogs_dir(int database, int create)
+{
+    struct stat st;
+    int fd;
+    if (create && mkdirat(database, "catalogs", 0700) && errno != EEXIST)
+        return -1;
+    if (create && fsync(database)) return -1;
+    fd = openat(database, "catalogs", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) return -1;
+    if (fstat(fd, &st) || !S_ISDIR(st.st_mode) ||
+        (st.st_uid != 0 && st.st_uid != geteuid()) || (st.st_mode & 0022)) {
+        close(fd); return -1;
+    }
+    return fd;
+}
+
+static int read_catalog_binding(int database, const char *id,
+                                char index[65], char **path)
+{
+    struct stat st;
+    char *data = NULL, *line, **v = NULL;
+    size_t n = 0;
+    int catalogs = -1, fd = -1, ok = 0;
+    *path = NULL;
+    index[0] = 0;
+    catalogs = catalogs_dir(database, 0);
+    if (catalogs < 0) goto done;
+    fd = openat(catalogs, id, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        (st.st_uid != 0 && st.st_uid != geteuid()) || (st.st_mode & 0022) ||
+        st.st_size > 1024 * 1024) goto done;
+    data = read_fd(fd);
+    if (!data || strncmp(data, "format holy-source-catalog-1\n", 29)) goto done;
+    line = data + 29;
+    {
+        char *end = strchr(line, '\n');
+        if (!end || !tokens(line, (size_t)(end - line), &v, &n) ||
+            n != 2 || strcmp(v[0], "index") || !valid_hash(v[1])) goto done;
+        memcpy(index, v[1], 65);
+        holy_tokens_free(v, n); v = NULL; n = 0;
+        line = end + 1;
+    }
+    {
+        char *end = strchr(line, '\n');
+        if (!end || end[1] || !tokens(line, (size_t)(end - line), &v, &n) ||
+            n != 2 || strcmp(v[0], "path") || v[1][0] != '/') goto done;
+        *path = strdup(v[1]);
+        ok = *path != NULL;
+    }
+done:
+    holy_tokens_free(v, n);
+    free(data);
+    if (fd >= 0) close(fd);
+    if (catalogs >= 0) close(catalogs);
+    if (!ok) { free(*path); *path = NULL; index[0] = 0; }
+    return ok;
+}
+
+int holy_source_bind_catalog(const char *root, const char *alias,
+                             const char *catalog)
+{
+    struct registry registry = {0};
+    char *data = NULL, *url = NULL, *path = NULL, *record = NULL;
+    char index[65], temp_name[43] = {0};
+    size_t i, size = 0, used = 0;
+    unsigned long long generation;
+    FILE *out = NULL;
+    int database = -1, catalogs = -1, temp = -1, result = 1;
+    if (!alias || !*alias || !strcmp(alias, "local") || !catalog || !*catalog)
+        return 2;
+    database = holy_state_lock(root, 1, &generation, &result);
+    if (database < 0) return result;
+    data = load_registry(database, &registry);
+    if (!data) goto done;
+    result = 6;
+    for (i = 0; i < registry.count; ++i)
+        if (registry.items[i].active && !strcmp(registry.items[i].alias, alias)) break;
+    if (i == registry.count) goto done;
+    url = native_endpoint(registry.items[i].definition);
+    path = realpath(catalog, NULL);
+    if (!url || !path || !holy_repo_source_catalog(path, registry.items[i].id, url) ||
+        !holy_repo_catalog_index(path, index)) goto done;
+    result = 1;
+    out = open_memstream(&record, &size);
+    if (!out) goto done;
+    fprintf(out, "format holy-source-catalog-1\nindex %s\npath ", index);
+    quote(out, path);
+    fputc('\n', out);
+    {
+        int failed = ferror(out);
+        if (fclose(out)) failed = 1;
+        out = NULL;
+        if (failed) goto done;
+    }
+    catalogs = catalogs_dir(database, 1);
+    if (catalogs < 0) goto done;
+    temp = holy_temporary_at(catalogs, temp_name);
+    if (temp < 0) goto done;
+    while (used < size) {
+        ssize_t n = write(temp, record + used, size - used);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) goto done;
+        used += (size_t)n;
+    }
+    if (fsync(temp) || renameat(catalogs, temp_name, catalogs,
+                               registry.items[i].id) || fsync(catalogs)) goto done;
+    result = 0;
+    printf("catalog-bound %s index %s\n", registry.items[i].id, index);
+done:
+    if (out) fclose(out);
+    if (temp >= 0) close(temp);
+    if (catalogs >= 0) {
+        if (temp_name[0]) unlinkat(catalogs, temp_name, 0);
+        close(catalogs);
+    }
+    if (database >= 0) close(database);
+    free(data); free(url); free(path); free(record);
+    clear_registry(&registry);
+    if (result) fprintf(stderr, "holypkg: source catalog binding failed (status %d)\n", result);
+    return result;
+}
+
+int holy_source_catalog_path(const char *root, const char *alias, char **path)
+{
+    struct registry registry = {0};
+    char *data = NULL, *url = NULL, *saved = NULL;
+    char expected[65], actual[65];
+    size_t i;
+    unsigned long long generation;
+    int database = -1, result = 1;
+    *path = NULL;
+    if (!alias || !*alias || !strcmp(alias, "local")) return 2;
+    database = holy_state_lock(root, 0, &generation, &result);
+    if (database < 0) return result;
+    data = load_registry(database, &registry);
+    if (!data) goto done;
+    result = 6;
+    for (i = 0; i < registry.count; ++i)
+        if (registry.items[i].active && !strcmp(registry.items[i].alias, alias)) break;
+    if (i == registry.count) goto done;
+    url = native_endpoint(registry.items[i].definition);
+    if (!url || !read_catalog_binding(database, registry.items[i].id,
+                                      expected, &saved) ||
+        !holy_repo_source_catalog(saved, registry.items[i].id, url) ||
+        !holy_repo_catalog_index(saved, actual) || strcmp(expected, actual)) goto done;
+    *path = saved;
+    saved = NULL;
+    result = 0;
+done:
+    if (result) fprintf(stderr, "holypkg: bound catalog unavailable for source ");
+    if (result) { quote(stderr, alias); fputc('\n', stderr); }
+    free(saved); free(url); free(data);
+    clear_registry(&registry);
+    if (database >= 0) close(database);
     return result;
 }
 
