@@ -98,7 +98,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg orphan [--root DIRECTORY] [--json]
 .br
-.B holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--view PUBLIC=PRIVATE ...] -- COMMAND [ARGS...]
+.B holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--auto-view] [--view PUBLIC=PRIVATE ...] -- COMMAND [ARGS...]
 .br
 .B holypkg docs --root DIRECTORY --output FILE
 .br
@@ -2396,7 +2396,7 @@ When the installed manifest owns a matching path under
 /usr/lib/holy/private/ARTIFACT-ID/, run selects it before the public path.
 run prepends the selected package's manifest-owned private bin directories to
 PATH even when the main executable uses a public path. It passes argv
-unchanged and returns the program's exit status through exec. Without --view
+unchanged and returns the program's exit status through exec. Without a path view
 this is a direct launcher. It does not replace shell builtins or intercept
 another process that directly executes the public path. A private
 path still requires an installation transform that places and records the
@@ -2425,6 +2425,15 @@ mismatch is rejected. Directory views require an existing target mountpoint;
 run does not create one in the target root.
 --view changes only the listed paths. With --view and --root, the command
 executes inside the target root rather than at a host-prefixed path.
+.PP
+--auto-view derives regular-file bindings from the selected installed manifest:
+for a private path ending in usr/bin, bin, usr/sbin, sbin or usr/lib, it binds
+that package-owned file over an existing matching public file. It skips absent
+public paths and leaves directory views to explicit --view. Explicit --view
+entries take precedence. Two private files claiming the same public path
+require an explicit choice and return decision-required (3). The same
+namespace, ownership and payload checks apply; the option does not alter
+other processes or persist a provider switch.
 .SS AppImage staging
 appimage inspect accepts a type 2 ELF image, checks its x86 or x86_64 machine type,
 locates one plausible SquashFS superblock and prints its offset and SHA-256.

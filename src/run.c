@@ -30,6 +30,7 @@ struct run_choice {
     const char *command;
     char *relative;
     int private_path;
+    int auto_view;
     struct run_view views[RUN_VIEW_LIMIT];
     size_t view_count;
     char *private_bins[RUN_VIEW_LIMIT];
@@ -37,6 +38,7 @@ struct run_choice {
 };
 
 static int valid_name(const char *name);
+static int view_object(int root, const char *path, struct stat *st);
 
 static int private_bin_order(const void *left, const void *right)
 {
@@ -186,6 +188,85 @@ static int add_view(struct run_choice *choice, const char *spec)
     return 1;
 }
 
+static int collect_auto_views(int files, int root, struct run_choice *choice)
+{
+    static const char prefix[] = "usr/lib/holy/private/";
+    struct stat st;
+    FILE *stream = NULL;
+    char *line = NULL;
+    size_t capacity = 0, number = 0;
+    ssize_t length;
+    int copy = -1, rootfd = -1, result = 1;
+    size_t explicit_views = choice->view_count;
+    if (fstat(files, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+        st.st_size > 16 * 1024 * 1024 || lseek(files, 0, SEEK_SET) < 0) return 1;
+    copy = dup(files);
+    rootfd = openat(root, ".", O_PATH | O_DIRECTORY | O_CLOEXEC);
+    if (copy < 0 || rootfd < 0 || !(stream = fdopen(copy, "r"))) goto done;
+    copy = -1;
+    result = 0;
+    while ((length = getline(&line, &capacity, stream)) >= 0) {
+        char **fields = NULL, *error = NULL;
+        size_t count = 0, i;
+        const char *slash, *suffix;
+        char *public_path = NULL, *private_path = NULL, *spec = NULL;
+        struct stat source_state, target_state;
+        int source = -1, target = -1;
+        ++number;
+        if (memchr(line, 0, (size_t)length) ||
+            !holy_lex(line, (size_t)length, &fields, &count,
+                      "installed/files", number, &error)) {
+            free(error); holy_tokens_free(fields, count); result = 1; goto done;
+        }
+        free(error);
+        if (!count || strcmp(fields[0], "file") || count != 12 ||
+            strncmp(fields[1], prefix, sizeof prefix - 1)) {
+            holy_tokens_free(fields, count); continue;
+        }
+        slash = strchr(fields[1] + sizeof prefix - 1, '/');
+        suffix = slash ? slash + 1 : NULL;
+        if (!suffix || !*suffix) { holy_tokens_free(fields, count); result = 1; goto done; }
+        public_path = join("/", suffix);
+        private_path = join("/", fields[1]);
+        if (!public_path || !private_path) { result = 1; goto row_done; }
+        if (!valid_public_view(public_path)) goto row_done;
+        for (i = 0; i < choice->view_count; ++i)
+            if (!strcmp(choice->views[i].public_path, public_path)) break;
+        if (i < choice->view_count) {
+            if (i >= explicit_views && strcmp(choice->views[i].private_path, private_path))
+                result = 3;
+            goto row_done;
+        }
+        source = view_object(rootfd, private_path, &source_state);
+        if (source < 0) { result = 6; goto row_done; }
+        target = view_object(rootfd, public_path, &target_state);
+        if (target < 0) {
+            if (errno != ENOENT) result = 6;
+            goto row_done;
+        }
+        if (!S_ISREG(source_state.st_mode) || !S_ISREG(target_state.st_mode)) {
+            result = 6; goto row_done;
+        }
+        spec = malloc(strlen(public_path) + strlen(private_path) + 2);
+        if (!spec) { result = 1; goto row_done; }
+        sprintf(spec, "%s=%s", public_path, private_path);
+        if (!add_view(choice, spec)) { result = choice->view_count == RUN_VIEW_LIMIT ? 6 : 1; goto row_done; }
+row_done:
+        if (source >= 0) close(source);
+        if (target >= 0) close(target);
+        free(public_path); free(private_path); free(spec);
+        holy_tokens_free(fields, count);
+        if (result) goto done;
+    }
+    if (ferror(stream) || st.st_size != ftello(stream)) result = 1;
+done:
+    free(line);
+    if (stream) fclose(stream);
+    if (copy >= 0) close(copy);
+    if (rootfd >= 0) close(rootfd);
+    return result;
+}
+
 static int select_path(void *context, int root, int instance, const char *digest)
 {
     static const char *const dirs[] = {"usr/bin/", "bin/", "usr/sbin/", "sbin/"};
@@ -232,6 +313,7 @@ static int select_path(void *context, int root, int instance, const char *digest
             }
             choice->relative = candidate;
             choice->private_path = private_candidate;
+            if (choice->auto_view && (status = collect_auto_views(files, root, choice))) goto done;
             for (i = 0; i < choice->view_count; ++i) {
                 int owned = holy_install_manifest_owns(files, choice->views[i].private_path + 1);
                 if (owned != 1 && owned != 2) { status = owned < 0 ? 1 : 6; goto done; }
@@ -287,7 +369,7 @@ static int view_object(int root, const char *path, struct stat *st)
     fd = (int)syscall(SYS_openat2, root, path + 1, &how, sizeof how);
     if (fd < 0) return -1;
     if (fstat(fd, st) || (!S_ISREG(st->st_mode) && !S_ISDIR(st->st_mode))) {
-        close(fd); return -1;
+        close(fd); errno = EINVAL; return -1;
     }
     return fd;
 }
@@ -379,6 +461,8 @@ int holy_run(int argc, char **argv)
             arch = argv[++i];
         else if (!strcmp(argv[i], "--libc") && i + 1 < argc && !libc)
             libc = argv[++i];
+        else if (!strcmp(argv[i], "--auto-view") && !choice.auto_view)
+            choice.auto_view = 1;
         else if (!strcmp(argv[i], "--view") && i + 1 < argc && add_view(&choice, argv[i + 1])) ++i;
         else goto done;
     }
@@ -419,11 +503,13 @@ int holy_run(int argc, char **argv)
     result = 1;
 done:
     if (result == 2)
-        fputs("usage: holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--view PUBLIC=PRIVATE ...] -- COMMAND [ARGS...]\n", stderr);
+        fputs("usage: holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--auto-view] [--view PUBLIC=PRIVATE ...] -- COMMAND [ARGS...]\n", stderr);
     else if (result == 6 && !choice.relative)
         fputs("holypkg: package command unavailable\n", stderr);
     else if (result == 4)
         fputs("holypkg: installed payload changed\n", stderr);
+    else if (result == 3)
+        fputs("holypkg: private path view is ambiguous; select --view explicitly\n", stderr);
     free(alias); free(name); free(canonical); free(choice.relative); free(path);
     for (i = 0; i < RUN_VIEW_LIMIT; ++i) {
         free(choice.views[i].public_path);

@@ -116,6 +116,36 @@ if "$bin" run local:view-runner --root "$viewroot" \
     --view /usr/bin/helper=/usr/lib/holy/private/fixture/usr/bin/helper \
     -- runner example > "$tmp/out"; then exit 1; else test "$?" -eq 23; fi
 grep -qx "private helper:example:$(id -u)" "$tmp/out"
+if "$bin" run local:view-runner --root "$viewroot" --auto-view \
+    -- runner example > "$tmp/out"; then exit 1; else test "$?" -eq 23; fi
+grep -qx "private helper:example:$(id -u)" "$tmp/out"
+if "$bin" run local:view-runner --root "$viewroot" --auto-view \
+    -- dir-runner example > "$tmp/out"; then exit 1; else test "$?" -eq 23; fi
+grep -qx "private helper:example:$(id -u)" "$tmp/out"
+ambig_tree="$tmp/ambig-tree"
+ambig_root="$tmp/ambig-root"
+cp -a "$viewtree" "$ambig_tree"
+mkdir -p "$ambig_tree/DATA/usr/lib/holy/private/other/usr/bin" \
+    "$ambig_root/usr/bin" "$ambig_root/usr/lib/app-context"
+cp "$viewtree/DATA/usr/lib/holy/private/fixture/usr/bin/helper" \
+    "$ambig_tree/DATA/usr/lib/holy/private/other/usr/bin/helper"
+cp "$viewroot/usr/bin/helper" "$ambig_root/usr/bin/helper"
+cp "$viewroot/usr/lib/app-context/helper" "$ambig_root/usr/lib/app-context/helper"
+"$bin" manifest generate "$ambig_tree" --output "$tmp/ambig-files" > "$tmp/out"
+mv "$tmp/ambig-files" "$ambig_tree/HOLY/files"
+"$bin" pack "$ambig_tree" --output "$tmp/ambig.holy" > "$tmp/out"
+ambig_digest=$(sha256sum "$tmp/ambig.holy" | cut -d ' ' -f 1)
+"$bin" db init --root "$ambig_root" > "$tmp/out"
+"$bin" cache stage "local:$tmp/ambig.holy" --root "$ambig_root" > "$tmp/out"
+"$bin" db plan-set "$ambig_digest" --root "$ambig_root" > "$tmp/out"
+ambig_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+"$bin" db apply-set "$ambig_plan" "$ambig_digest" --root "$ambig_root" > "$tmp/out"
+if "$bin" run local:view-runner --root "$ambig_root" --auto-view \
+    -- runner example > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+if "$bin" run local:view-runner --root "$ambig_root" --auto-view \
+    --view /usr/bin/helper=/usr/lib/holy/private/fixture/usr/bin/helper \
+    -- runner example > "$tmp/out"; then exit 1; else test "$?" -eq 23; fi
+grep -qx "private helper:example:$(id -u)" "$tmp/out"
 if "$bin" run local:view-runner --root "$viewroot" \
     --view /usr/bin/helper=/usr/lib/holy/private/fixture/usr/bin/missing \
     -- runner example > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi

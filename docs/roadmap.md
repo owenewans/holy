@@ -597,7 +597,9 @@
   selected installed manifest, so a public executable can invoke its own
   private helper by name. Explicit directory views bind package-owned private
   trees over existing /usr/lib or /app mountpoints in the child namespace.
-  Automatic conflict mappings remain open.
+  An explicit --auto-view now binds package-owned private regular files over
+  existing matching public paths in the child namespace and refuses ambiguous
+  mappings. Automatic conflict detection during installation remains open.
 
 ## Base system and images
 
