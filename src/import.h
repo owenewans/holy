@@ -8,5 +8,6 @@ int holy_import_deb(const char *input, const char *source, const char *output);
 int holy_import_slackware(const char *input, const char *source, const char *output);
 int holy_import_apk(const char *input, const char *source, const char *output,
                     const char *public_key);
+int holy_import_xbps(const char *input, const char *source, const char *output);
 
 #endif

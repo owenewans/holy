@@ -10,7 +10,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
-.B holypkg import INPUT --source NAME --format pacman|deb|slackware|apk|appimage --output NEW_DIRECTORY [--public-key FILE (apk only)]
+.B holypkg import INPUT --source NAME --format pacman|deb|slackware|apk|xbps|appimage --output NEW_DIRECTORY [--public-key FILE (apk only)]
 .br
 .B holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY
 .br
@@ -228,8 +228,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 .SH DESCRIPTION
-.SS Local pacman, Debian, Slackware and APK binary import
-import snapshots a local pacman tar archive, Debian .deb, Slackware package or APK v2 package, retains its exact bytes as
+.SS Local pacman, Debian, Slackware, APK and XBPS binary import
+import snapshots a local pacman tar archive, Debian .deb, Slackware package, APK v2 or XBPS package, retains its exact bytes as
 NEW_DIRECTORY/original and creates verified LZ4-frame .holy outputs. The output
 directory must not exist. --format selects the adapter explicitly; --source
 records provenance only and grants no registered source identity or trust.
@@ -384,6 +384,19 @@ x86 and x86_64 claims and checks observed ELF machines. It rejects truncated
 gzip members, extra members and unsafe paths. make check-apk covers these
 cases and installs/checks/removes a converted data package in a temporary root.
 make check-apk-version covers comparisons against Alpine apk-tools 2.14.12.
+.PP
+--format xbps reads a Void XBPS tar package, parses props.plist and files.plist
+with libplist, and checks payload file size and SHA-256 against the file list.
+It preserves the original property lists beneath HOLY/foreign/xbps and records
+unverified provenance. Package revision becomes the .holy release. Exact
+shlib-requires become arch/libc-scoped SONAME requirements. Versioned
+run_depends and other XBPS-specific relations remain attributed foreign
+requirements until their semantics are supported. Provides are preserved in
+origin metadata without creating dependencies. INSTALL and REMOVE scripts
+remain review-required. Unknown file-list fields, unsupported architecture,
+and ELF/architecture contradictions stop conversion. make check-xbps-import
+covers a generated package and malformed file lists; it does not test XBPS
+repository sync, signature verification or the full Void package range.
 .PP
 The apk index command snapshots a local APKINDEX.tar.gz, separates its gzip
 signature and data members, and publishes a sorted local catalog with the

@@ -110,6 +110,7 @@ build_configure() (
     make install
 )
 build_configure zlib-1.3.2 --static
+build_configure libplist-2.7.0 --disable-shared --enable-static --without-cython --without-tests
 make -C "$work/lz4-1.10.0/lib" -j"$jobs" BUILD_SHARED=no PREFIX="$out" install
 make -C "$work/zstd-1.5.7/lib" -j"$jobs" CC="$CC" PREFIX="$out" libzstd.a-release
 make -C "$work/zstd-1.5.7/lib" CC="$CC" PREFIX="$out" install-static install-includes install-pc

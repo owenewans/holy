@@ -2,7 +2,7 @@ CC ?= cc
 CPPFLAGS ?=
 CFLAGS ?= -O2
 LDFLAGS ?=
-LDLIBS ?= -larchive -lcrypto -lelf -lcurl -lz
+LDLIBS ?= -larchive -lcrypto -lelf -lcurl -lplist-2.0 -lz
 PREFIX ?= /usr
 DESTDIR ?=
 MANPAGES = $(wildcard man/*.[578])
@@ -126,6 +126,10 @@ check-static-import:
 	@test -x "$(STATIC_HOLYPKG)" || { echo 'STATIC_HOLYPKG is required' >&2; exit 6; }
 	python3 tests/static-import.py "$(STATIC_HOLYPKG)"
 
+.PHONY: check-xbps-import
+check-xbps-import: holypkg
+	python3 tests/xbps-import.py ./holypkg
+
 .PHONY: check-static-network
 check-static-network:
 	python3 tests/static-network.py "$(or $(STATIC_HOLYPKG),./holypkg)" "$(or $(BUSYBOX_PACKAGE),out/busybox-bootstrap/busybox.holy)" "$(or $(REPORT),out/static-network.json)"
@@ -142,7 +146,7 @@ static:
 	@test -n "$(STATIC_DEPS)" || { echo 'STATIC_DEPS must name the musl dependency prefix' >&2; exit 6; }
 	@test -x "$(STATIC_DEPS)/bin/holy-musl-gcc" && grep -qx 'exit 0' "$(STATIC_DEPS)/build.record" || { echo 'static dependency build is incomplete' >&2; exit 6; }
 	$(MAKE) clean
-	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lssl -lcrypto -llz4 -lzstd -llzma -lbz2 -lz -leu -Wl,--end-group -lpthread -ldl" all
+	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lplist-2.0 -lssl -lcrypto -llz4 -lzstd -llzma -lbz2 -lz -leu -Wl,--end-group -lpthread -ldl" all
 
 HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/script.o src/elf.o src/scan.o src/stage.o src/repo.o src/sign.o src/git.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o src/appimage.o src/up.o src/version.o src/run.o backends/pacman.o backends/pacman-version.o backends/deb-version.o backends/apk-version.o backends/apk.o backends/apt.o backends/apt-release.o backends/apt-bind.o
 

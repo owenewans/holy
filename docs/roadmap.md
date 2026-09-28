@@ -456,8 +456,11 @@
   Ed25519 key now rejects unsigned or changed bound catalogs. A rootless
   system-cache workflow remains open.
 - [ ] Implement remaining foreign binary adapters and file indexes with real
-  fixtures: RPM, XBPS, eopkg, homebrew and guix. APT has a pinned local index
+  fixtures: RPM, eopkg, homebrew and guix. APT has a pinned local index
   and HTTPS fetch/import path; APK has a separate index/fetch path.
+  XBPS local binary import parses plist metadata, checks payload hashes and
+  preserves unsupported dependencies for review. Repository sync, fetch,
+  signature verification and the XBPS version comparator remain open.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
   Gentoo and Pacstall recipe conversion with helper environments and split outputs.
 - [ ] Implement Nix closure, Flatpak, Snap, AppImage, Scoop and WinGet imports
