@@ -173,6 +173,40 @@ grep -q 'provider package:auto-child available from other' "$tmp/err"
 grep -q 'provider package:auto-child available from third' "$tmp/err"
 grep -q 'decision-required' "$tmp/err"
 test ! -e "$tmp/root/usr/share/auto-root"
+mkdir -p "$tmp/choice-root"
+"$bin" db init --root "$tmp/choice-root" > "$tmp/out"
+"$bin" source plan --config "$tmp/three-sources" --root "$tmp/choice-root" > "$tmp/choice-plan"
+choice_plan=$(sha256sum "$tmp/choice-plan" | cut -d ' ' -f 1)
+"$bin" source apply "$tmp/choice-plan" --sha256 "$choice_plan" --root "$tmp/choice-root" > "$tmp/out"
+for source in fixture other third; do
+    case "$source" in
+        fixture) catalog=$tmp/repo ;;
+        other) catalog=$tmp/other-repo ;;
+        third) catalog=$tmp/third-repo ;;
+    esac
+    "$bin" source catalog bind "$source" "$catalog" --root "$tmp/choice-root" > "$tmp/out"
+done
+python3 - "$bin" "$tmp/choice-root" <<'PY'
+import os
+import pty
+import subprocess
+import sys
+
+master, slave = pty.openpty()
+process = subprocess.Popen([sys.argv[1], "add", "fixture:auto-root",
+                            "--root", sys.argv[2], "--yes"], stdin=slave,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           text=True)
+os.close(slave)
+os.write(master, b"other\n")
+stdout, stderr = process.communicate(timeout=30)
+os.close(master)
+assert process.returncode == 0, (process.returncode, stdout, stderr)
+assert "Select source for package:auto-child" in stderr
+PY
+test -f "$tmp/choice-root/usr/share/auto-root"
+test -f "$tmp/choice-root/usr/share/auto-child"
+"$bin" db check --all --root "$tmp/choice-root" > "$tmp/out"
 "$bin" source plan --config "$tmp/config" --root "$tmp/root" > "$tmp/plan"
 plan=$(sha256sum "$tmp/plan" | cut -d ' ' -f 1)
 "$bin" source apply "$tmp/plan" --sha256 "$plan" --root "$tmp/root" > "$tmp/out"

@@ -888,8 +888,10 @@ When a set has an unsatisfied exact package, file, command or SONAME edge,
 add probes active bound native catalogs for that edge before staging foreign
 artifacts. One matching source with complete coverage supplies its providers
 and in-source closure. Multiple matching sources, or a match alongside an
-unavailable catalog, return decision-required and list the source aliases;
---candidate-provider names the reviewed choice. The loop stops
+unavailable catalog, list the source aliases and ask for one alias on a TTY.
+Without a TTY or under --noninteractive, add returns decision-required;
+--candidate-provider names the choice in a subsequent command. --yes approves
+the final plan but does not choose an ambiguous source. The loop stops
 when the set is complete or no new artifact is found. It checks installed
 providers first; an inactive origin can still satisfy a new consumer. An
 edge without a catalog match does not hide another missing edge in the same

@@ -993,7 +993,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=532d138736dd0d218ab8e126165235a40332fe919126d56abe1306dcf694c6a7
+holypkg.8 source=holy version=development sha256=024d66161fa57bc7a4f2bcf2fa58c4cd7c47412aa821852babad5620fb31d157
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1856,19 +1856,21 @@ DESCRIPTION
      bound  native  catalogs for that edge before staging foreign artifacts. One
      matching source with complete coverage supplies its providers and in-source
      closure. Multiple matching sources, or a  match  alongside	 an  unavailable
-     catalog, return decision-required and list the source aliases; --candidate-
-     provider names the reviewed choice. The loop stops when the set is complete
-     or	 no new artifact is found. It checks installed providers first; an inac-
-     tive origin can still satisfy a new consumer. An  edge  without  a	 catalog
-     match  does  not hide another missing edge in the same consumer; a required
-     SONAME can still be found after an interpreter or libc path already  satis-
-     fied by an installed package. An unavailable catalog leaves coverage incom-
-     plete  and	 returns  6 when no provider can be found. Older indexes without
-     file or SONAME facts report unavailable coverage  for  those  requirements.
-     Selected  packages	 retain	 their	source	IDs,  and candidate catalogs are
-     checked again before apply. Source preference  ranking,  fuzzy  suggestions
-     and  runtime plugin discovery remain open. Hooks and transforms remain out-
-     side the supported installation subset.
+     catalog, list the source aliases and ask for one alias on a TTY.  Without a
+     TTY  or under --noninteractive, add returns decision-required; --candidate-
+     provider names the choice in a subsequent command. --yes approves the final
+     plan but does not choose an ambiguous source. The loop stops when	the  set
+     is	 complete  or  no  new	artifact is found. It checks installed providers
+     first; an inactive origin can still satisfy a new consumer. An edge without
+     a catalog match does not hide another missing edge in the same consumer;  a
+     required  SONAME  can  still be found after an interpreter or libc path al-
+     ready satisfied by an installed package. An unavailable catalog leaves cov-
+     erage incomplete and returns 6 when no provider can be found. Older indexes
+     without file or SONAME facts report unavailable coverage for those require-
+     ments. Selected packages retain their source IDs,	and  candidate	catalogs
+     are  checked  again  before apply. Source preference ranking, fuzzy sugges-
+     tions and runtime plugin discovery remain open. Hooks and transforms remain
+     outside the supported installation subset.
 
      up SOURCE:PACKAGE finds one installed slot by its immutable source-id, name
      and optional arch/libc. It checks the old artifact	 in  the  target  cache,

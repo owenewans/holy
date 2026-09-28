@@ -425,6 +425,7 @@ static int add_source(int argc, char **argv)
     for (k = 0; k < 10000; ++k) {
         struct holy_missing_requirement missing = {0};
         char **aliases = NULL;
+        unsigned char *offer_flags = NULL;
         size_t alias_count = 0, a, offered = 0;
         const char *winner = NULL;
         int missing_status;
@@ -447,6 +448,13 @@ static int add_source(int argc, char **argv)
         }
         result = holy_source_active_aliases(root, &aliases, &alias_count);
         if (result) { holy_missing_requirement_free(&missing); goto done; }
+        offer_flags = calloc(alias_count ? alias_count : 1, 1);
+        if (!offer_flags) {
+            for (a = 0; a < alias_count; ++a) free(aliases[a]);
+            free(aliases);
+            holy_missing_requirement_free(&missing);
+            result = 1; goto done;
+        }
         for (a = 0; a < alias_count; ++a) {
             char *path = NULL;
             char candidate_id[65];
@@ -458,21 +466,40 @@ static int add_source(int argc, char **argv)
             free(path);
             if (!probe) {
                 ++offered;
+                offer_flags[a] = 1;
                 winner = aliases[a];
                 fprintf(stderr, "holypkg: provider %s:%s available from %s\n",
                         missing.kind, missing.name, aliases[a]);
             } else if (probe == 6) ++unavailable;
             else if (probe != 4) { result = probe; break; }
         }
-        if (result || offered > 1 || (offered && unavailable)) {
-            if (!result) {
+        if (!result && (offered > 1 || (offered && unavailable))) {
+            winner = NULL;
+            if (!noninteractive && isatty(STDIN_FILENO)) {
+                char response[4097];
+                size_t length = 0;
+                fprintf(stderr, "Select source for %s:%s requirement %s (consumer %s), or blank to cancel: ",
+                        missing.kind, missing.name, missing.id, missing.consumer);
+                if (fflush(stderr)) result = 1;
+                if (!result && fgets(response, sizeof response, stdin))
+                    length = strlen(response);
+                if (length && response[length - 1] == '\n') {
+                    response[length - 1] = 0;
+                    for (a = 0; a < alias_count; ++a)
+                        if (offer_flags[a] && !strcmp(response, aliases[a])) winner = aliases[a];
+                }
+            }
+            if (!winner && !result) {
                 fprintf(stderr, "holypkg: decision-required for %s:%s (%zu sources offered, %d unavailable); pass --candidate-provider SOURCE:%s:%s\n",
                         missing.kind, missing.name, offered, unavailable,
                         missing.kind, missing.name);
                 result = 3;
             }
+        }
+        if (result) {
             for (a = 0; a < alias_count; ++a) free(aliases[a]);
             free(aliases);
+            free(offer_flags);
             holy_missing_requirement_free(&missing);
             goto done;
         }
@@ -531,6 +558,7 @@ next_alias:
         }
         for (a = 0; a < alias_count; ++a) free(aliases[a]);
         free(aliases);
+        free(offer_flags);
         if (result) { holy_missing_requirement_free(&missing); goto done; }
         if (progressed) {
             for (i = 0; i < skip_count; ++i) free((void *)skipped[i]);

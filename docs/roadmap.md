@@ -387,10 +387,10 @@
   source before apply and preserve selected source IDs. The add loop now queries
   exact missing package, file, command and SONAME edges across active bound native
   catalogs before staging artifacts. It stages a unique matching source and its
-  local closure, or returns decision-required with source aliases when multiple
-  sources offer the same edge or another catalog has unavailable coverage.
-  An explicit `--candidate-provider` selects the reviewed source. A three-source
-  fixture verifies that ambiguity changes no installed files.
+  local closure. Multiple sources or unavailable coverage require a named alias
+  in the terminal; noninteractive calls return decision-required. An explicit
+  `--candidate-provider` selects the source. A three-source fixture checks both
+  the noninteractive decision and terminal selection, then verifies installed files.
   It probes installed providers first, including inactive origins. Source preference
   ranking, complete coverage diagnostics and plugin discovery remain open. A
   two-catalog ELF fixture now verifies SONAME discovery after installed libc and
