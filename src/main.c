@@ -142,7 +142,7 @@ static int fetch_source(int argc, char **argv)
     }
     if (!output || !*output || !*root) goto done;
     if (!catalog) {
-        result = holy_source_catalog_path(root, alias, &bound_catalog);
+        result = holy_source_catalog_path_fast(root, alias, &bound_catalog);
         if (result) goto done;
         catalog = bound_catalog;
     }
@@ -222,9 +222,7 @@ static int query_source(int argc, char **argv, int search)
         for (j = 0; j < alias_count; ++j) {
             char *path = NULL;
             const char *current = aliases[j];
-            int rc = file_search || fuzzy_search ?
-                holy_source_catalog_path_fast(root, current, &path) :
-                holy_source_catalog_path(root, current, &path);
+            int rc = holy_source_catalog_path_fast(root, current, &path);
             if (!rc) rc = holy_source_catalog(root, current, path, source_id);
             printf("source "); print_source_alias(current);
             if (rc) {
@@ -243,9 +241,7 @@ static int query_source(int argc, char **argv, int search)
         goto done;
     }
     if (!catalog) {
-        result = search && (file_search || fuzzy_search) ?
-                 holy_source_catalog_path_fast(root, alias, &bound_catalog) :
-                 holy_source_catalog_path(root, alias, &bound_catalog);
+        result = holy_source_catalog_path_fast(root, alias, &bound_catalog);
         if (result) goto done;
         catalog = bound_catalog;
     }

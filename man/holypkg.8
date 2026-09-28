@@ -1079,13 +1079,14 @@ the combined search exits 6 when any source is unavailable. An empty active
 registry also exits 6. --catalog requires --source because one mirror cannot
 identify the catalogs of multiple sources. search QUERY --source SOURCE
 verifies the active source-id and
-URL against the sealed mirror record, then checks the complete indexed catalog
-and prints exact package-name matches. A missing name prints a zero-count
+URL against the sealed mirror record, then checks the pinned index and matching
+archives before printing exact package-name matches. A missing name prints a zero-count
 summary. info SOURCE:PACKAGE performs the same checks and prints one package
 record with its artifact hash and source-id. No match returns unavailable (6);
 multiple matches return decision-required (3) because this interface has no
 arch/libc selector yet. Both commands read the catalog without installing or
-running package code. The mirror is unsigned local provenance, not publisher
+running package code. Exact search and info leave unrelated archives unopened;
+source binding still audits the complete catalog. The mirror is unsigned local provenance, not publisher
 authentication. --catalog selects an explicit mirror; without it, the commands
 use the mirror bound by source catalog bind. With --file, QUERY must be an
 absolute path. A native version-3 index records every verified nondirectory
@@ -1614,7 +1615,7 @@ the same HTTPS-only redirect policy and a five-minute deadline. --sha256 and
 .PP
 fetch SOURCE:PACKAGE reads a synced holy-http mirror selected by --catalog or
 the binding for its active source-id. The active source alias must match the mirror's source-id and
-exact URL; the mirror's current index and all listed objects are verified before
+exact URL; the mirror's current index and selected package object are verified before
 the named package is copied into an existing --output directory. --extract
 instead writes a new output directory. More than one package with the same name
 requires a choice (status 3); an absent package or inactive source returns 6.
@@ -1628,8 +1629,7 @@ index digest is an explicit user pin or an accepted unsigned current value;
 the mirror remains unsigned and does not establish publisher identity. The
 recorded source-id is provenance for this
 snapshot, not an installation authority derived from package metadata.
-Signed generation discovery, cache publication under the target root,
-multi-source search and update candidate selection remain unimplemented.
+Publisher signatures and multi-source dependency resolution remain unimplemented.
 Explicit cached
 replacement uses db plan-update and db apply-update. These
 commands do not yet implement JSON output. See holy.conf(5) for identity rules

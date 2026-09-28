@@ -687,6 +687,12 @@ static int list(const char *directory, const char *query,
         if (stage && (stage->index_only ||
             (stage->slot && !same_slot(&objects[i].identity, stage->slot))))
             continue;
+        if (query && (emit == 1 || emit == 3) &&
+            strcmp(query, objects[i].identity.name)) continue;
+        if (fetch_digest && strcmp(fetch_digest, objects[i].identity.digest))
+            continue;
+        if (solve_name && output && !stage &&
+            strcmp(solve_name, objects[i].identity.name)) continue;
         if (emit == 5 && query && fuzzy_rank(query, objects[i].identity.name) < 0)
             continue;
         if (file_query) {

@@ -821,7 +821,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=e465e33584d6dda60c8a076c07a8a4bb726730e3fa111812563d3fea6d446176
+holypkg.8 source=holy version=development sha256=ddcd7f1a43bea3b53852ecacb1ff216b72a787ae8e9d94dbe02cfc058d769094
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1894,30 +1894,31 @@ DESCRIPTION
      active registry also exits 6. --catalog requires --source because one  mir-
      ror cannot identify the catalogs of multiple sources. search QUERY --source
      SOURCE  verifies  the  active  source-id  and URL against the sealed mirror
-     record, then checks the complete indexed catalog and prints exact	package-
-     name matches. A missing name prints a zero-count summary. info SOURCE:PACK-
-     AGE  performs  the same checks and prints one package record with its arti-
-     fact hash and source-id. No match returns unavailable (6); multiple matches
-     return decision-required (3) because this interface has no arch/libc selec-
-     tor yet. Both commands read the catalog without installing or running pack-
-     age code. The mirror is unsigned local provenance, not publisher  authenti-
-     cation.  --catalog selects an explicit mirror; without it, the commands use
-     the mirror bound by source catalog bind. With --file, QUERY must be an  ab-
-     solute  path.  A native version-3 index records every verified nondirectory
-     payload path and declares complete file coverage. The result prints  match-
-     ing  packages, the coverage state, index digest and index timestamp. A miss
-     in a complete index returns zero matches; a legacy index  reports	unavail-
-     able  coverage  and  exits	 6  because  absence cannot be established. File
-     queries verify the digest-pinned index and only matching archives; an unse-
-     lected archive can change without invalidating the query. No  package  code
-     runs.   --fuzzy  returns  ranked suggestions for package names. With --file
-     --fuzzy, QUERY may be a basename or absolute path; only file basenames from
-     a complete index contribute suggestions. A	 suggestion  prints  its  score,
-     matched name or path and package record. Up to 20 suggestions are shown, in
-     score  and index order. Scores prefer ASCII case-insensitive equality, pre-
-     fix, substring, then one or two byte edits. These hints never satisfy a de-
-     pendency or replace an exact SONAME.  File hints from a legacy index report
-     unknown coverage and exit 6.
+     record, then checks the pinned index and matching archives before	printing
+     exact  package-name  matches.  A  missing name prints a zero-count summary.
+     info SOURCE:PACKAGE performs the same checks and prints one package  record
+     with  its	artifact  hash	and source-id. No match returns unavailable (6);
+     multiple matches return decision-required (3) because this interface has no
+     arch/libc selector yet. Both commands read the catalog  without  installing
+     or running package code. Exact search and info leave unrelated archives un-
+     opened; source binding still audits the complete catalog. The mirror is un-
+     signed local provenance, not publisher authentication. --catalog selects an
+     explicit  mirror;	without	 it, the commands use the mirror bound by source
+     catalog bind. With --file, QUERY must be an absolute path.	 A  native  ver-
+     sion-3  index records every verified nondirectory payload path and declares
+     complete file coverage. The result prints matching packages,  the	coverage
+     state, index digest and index timestamp. A miss in a complete index returns
+     zero  matches;  a legacy index reports unavailable coverage and exits 6 be-
+     cause absence cannot be established. File queries verify the  digest-pinned
+     index  and only matching archives; an unselected archive can change without
+     invalidating the query. No package code runs.  --fuzzy returns ranked  sug-
+     gestions for package names. With --file --fuzzy, QUERY may be a basename or
+     absolute path; only file basenames from a complete index contribute sugges-
+     tions.  A	suggestion  prints  its	 score, matched name or path and package
+     record. Up to 20 suggestions are shown, in score and  index  order.  Scores
+     prefer  ASCII case-insensitive equality, prefix, substring, then one or two
+     byte edits. These hints never satisfy a dependency or replace an exact SON-
+     AME.  File hints from a legacy index report unknown coverage and exit 6.
 
      The  verify  command  checks  regular  DATA  files	 against  the  supported
      HOLY/files	 records,  including  size,  mode, numeric owner and SHA-256. It
@@ -2439,61 +2440,60 @@ SOURCE REGISTRATION
 
      fetch SOURCE:PACKAGE reads a synced holy-http mirror selected by  --catalog
      or the binding for its active source-id. The active source alias must match
-     the  mirror's  source-id  and exact URL; the mirror's current index and all
-     listed objects are verified before the named package is copied into an  ex-
-     isting --output directory. --extract instead writes a new output directory.
-     More  than	 one package with the same name requires a choice (status 3); an
-     absent package or inactive source returns 6.  The mirror  record  is  local
-     provenance, not publisher signature evidence.  Neither form installs files,
-     hooks or dependencies into the target root.
+     the  mirror's  source-id  and exact URL; the mirror's current index and se-
+     lected package object are verified before the named package is copied  into
+     an	 existing  --output directory. --extract instead writes a new output di-
+     rectory. More than one package with the same name requires a choice (status
+     3); an absent package or inactive source returns 6.  The mirror  record  is
+     local  provenance, not publisher signature evidence.  Neither form installs
+     files, hooks or dependencies into the target root.
 
-     The  source  registry  is	read  before  network transfer, so a later alias
-     change does not change the snapshot's recorded ID. A  source  with	 another
-     backend,  an  inactive alias or an untrusted TLS certificate is unavailable
-     (6). The index digest is an explicit user pin or an accepted unsigned  cur-
-     rent  value;  the	mirror remains unsigned and does not establish publisher
-     identity. The recorded source-id is provenance for this  snapshot,	 not  an
-     installation  authority  derived  from package metadata.  Signed generation
-     discovery, cache publication under the target root, multi-source search and
-     update candidate selection remain unimplemented.  Explicit cached	replace-
-     ment uses db plan-update and db apply-update. These commands do not yet im-
-     plement  JSON  output. See holy.conf(5) for identity rules and endpoint re-
-     strictions.
+     The source registry is read before	 network  transfer,  so	 a  later  alias
+     change  does  not	change the snapshot's recorded ID. A source with another
+     backend, an inactive alias or an untrusted TLS certificate	 is  unavailable
+     (6).  The index digest is an explicit user pin or an accepted unsigned cur-
+     rent value; the mirror remains unsigned and does  not  establish  publisher
+     identity.	The  recorded  source-id is provenance for this snapshot, not an
+     installation authority derived from package metadata.  Publisher signatures
+     and multi-source  dependency  resolution  remain  unimplemented.	Explicit
+     cached  replacement uses db plan-update and db apply-update. These commands
+     do not yet implement JSON output. See holy.conf(5) for identity  rules  and
+     endpoint restrictions.
 
 ORPHAN PACKAGES
-     orphan reads a consistent installed-state	snapshot  under	 the  database's
-     shared  lock.  The default root is /. It follows saved consumer-to-provider
-     edges from every instance marked explicit and reports dependency  instances
-     outside  that reachable graph. A dependency cycle with no explicit consumer
+     orphan  reads  a  consistent  installed-state snapshot under the database's
+     shared lock. The default root is /. It follows  saved  consumer-to-provider
+     edges  from every instance marked explicit and reports dependency instances
+     outside that reachable graph. A dependency cycle with no explicit	consumer
      is also orphaned.	Only each current instance's own edges participate; ref-
-     erences copied from an older transaction's	 other	consumers  do  not  keep
+     erences  copied  from  an	older  transaction's other consumers do not keep
      packages alive.
 
-     The  command  does	 not  remove files, run package code, fetch artifacts or
-     need the package cache. Each candidate includes its artifact hash,	 package
+     The command does not remove files, run package  code,  fetch  artifacts  or
+     need  the package cache. Each candidate includes its artifact hash, package
      name and the reason unreachable-from-explicit. Names in text output use the
-     metadata  lexer's	byte  escapes.	JSON names preserve valid UTF-8. This is
+     metadata lexer's byte escapes. JSON names preserve	 valid	UTF-8.	This  is
      graph analysis, not a payload or application-health check; use db check for
      file integrity.
 
-     With --json, holy-orphan-1 candidate events contain artifact, name,  reason
-     and  generation.  A final summary contains generation, installed, explicit,
+     With  --json, holy-orphan-1 candidate events contain artifact, name, reason
+     and generation. A final summary contains generation,  installed,  explicit,
      reachable and orphans counts. Candidates are ordered by artifact hash. Out-
-     put is delayed until the complete graph has been  read  and  linked,  so  a
-     missing  provider	never produces a partial orphan list. Errors produce one
-     error event with code and status: invalid-state (1), missing-provider  (4),
-     incomplete-transaction  (5),  or  unknown-installed-graph	(6).  Legacy in-
+     put  is  delayed  until  the  complete graph has been read and linked, so a
+     missing provider never produces a partial orphan list. Errors  produce  one
+     error  event with code and status: invalid-state (1), missing-provider (4),
+     incomplete-transaction (5),  or  unknown-installed-graph  (6).  Legacy  in-
      stalled entries without saved graphs require migration before this analysis
      can prove reachability.
 
 EXIT STATUS
-     0 indicates success under the implemented checks; 1 indicates a failed  lo-
-     cal  fetch,  extraction or check; 2 indicates invalid arguments, configura-
-     tion or package inspection. Diagnostics go to standard error except  --json
+     0	indicates success under the implemented checks; 1 indicates a failed lo-
+     cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
+     tion  or package inspection. Diagnostics go to standard error except --json
      check events, which go to standard output.
 
-     Preview  returns  3  when valid requirements need provider decisions, 4 for
-     path conflicts and 6 when hooks or privileged modes  need	unsupported  re-
+     Preview returns 3 when valid requirements need provider  decisions,  4  for
+     path  conflicts  and  6 when hooks or privileged modes need unsupported re-
      view. It returns 1 on target-root I/O failure.
 
 SEE ALSO

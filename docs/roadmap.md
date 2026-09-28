@@ -210,8 +210,10 @@
 - [x] Read the pinned catalog index for an installed source slot and stage only
   matching name/os/arch/libc versions during update preparation. Verify those
   archives against the index before planning; keep the full catalog validation
-  path for explicit source binding. A corrupt unrelated archive no longer blocks
-  the selected update. Add and general requirement lookup still scan full catalogs.
+  path for explicit source binding. Exact search, info and fetch now also verify
+  only matching archives against the pinned index. A corrupt unrelated archive
+  no longer blocks these operations. Add and general requirement lookup still
+  scan full catalogs.
 - [x] Require a fresh artifact-hash approval when a cached replacement contains
   a setuid executable. The plan, journal, installed state and recovery retain
   the decision; a previous package's approval is not inherited. Fixtures
@@ -231,18 +233,18 @@
   payload and claims before publishing current; retain unsigned URL/digest
   provenance. Fixture TLS covers search/solve/fetch, escaped filenames, empty,
   duplicate/truncated indexes, false claims, bad hashes, missing URLs and limits.
-  Configured source activation and publisher signatures remain open.
+  Publisher signatures remain open.
 - [x] Resolve an active registered holy-http alias to its immutable source-id
   and HTTPS URL, then mirror a pinned index into a new local catalog. An
   unsigned remote current pointer can propose a digest; a separate exact-hash
   confirmation rereads it before mirroring. Store source-id and selection in
   mirror-origin before sealing. Local TLS fixtures cover alias changes,
   unrelated backends, wrong digest, missing CA, changed/malformed pointers and
-  credential-bearing redirects. Publisher signatures and multi-source search
-  remain open.
+  credential-bearing redirects. Publisher signatures and multi-source
+  dependency resolution remain open.
 - [x] Fetch one SOURCE:PACKAGE from an explicit sealed synced mirror without
   installing it. Check active source ID and URL against mirror provenance,
-  verify the complete catalog, reject ambiguous names, and support extraction
+  verify the pinned index and selected archives, reject ambiguous names, and support extraction
   into a new directory.
 - [x] Install SOURCE:PACKAGE from an explicit sealed holy-http mirror. Stage
   candidate artifacts, resolve dependencies in one set, bind newly selected
@@ -253,7 +255,7 @@
   remain open.
 - [x] Query an active holy-http source through an explicit synced mirror with
   `search QUERY --source ALIAS` and `info ALIAS:PACKAGE`. Verify source identity,
-  full catalog and artifacts before returning exact names; report missing and
+  pinned index and matching artifacts before returning exact names; report missing and
   ambiguous info queries without mutating the target. Native repositories also
   index verified nondirectory payload paths and support exact `search --file`
   with complete/unavailable coverage. File queries verify indexed candidates

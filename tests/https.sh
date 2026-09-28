@@ -158,6 +158,18 @@ expect 0 "$bin" search https-second --source fixture --root "$tmp/source-root"
 grep -qx 'listed 1 packages' "$tmp/result"
 expect 0 "$bin" info fixture:https-second --root "$tmp/source-root"
 grep -q '^package "https-second" ' "$tmp/result"
+cp "$tmp/source-mirror/native.holy" "$tmp/bound-native"
+printf corrupt >> "$tmp/source-mirror/native.holy"
+expect 0 "$bin" search https-second --source fixture --root "$tmp/source-root"
+grep -qx 'listed 1 packages' "$tmp/result"
+expect 0 "$bin" info fixture:https-second --root "$tmp/source-root"
+mkdir "$tmp/selected-fetched"
+expect 0 "$bin" fetch fixture:https-second --output "$tmp/selected-fetched" \
+    --root "$tmp/source-root"
+selected_hash=$(sha256sum "$tmp/serve/space?#.holy" | cut -d ' ' -f 1)
+grep -Fxq "$tmp/selected-fetched/$selected_hash.holy" "$tmp/result"
+expect 6 "$bin" search https-fixture --source fixture --root "$tmp/source-root"
+cp "$tmp/bound-native" "$tmp/source-mirror/native.holy"
 expect 0 "$bin" search https-second --source fixture --catalog "$tmp/source-mirror" \
     --root "$tmp/source-root"
 grep -q '^package "https-second" ' "$tmp/result"
@@ -179,9 +191,11 @@ expect 6 "$bin" search https-second --source wrong --catalog "$tmp/source-mirror
 expect 2 "$bin" info fixture:https-second --bogus --root "$tmp/source-root"
 cp -a "$tmp/source-mirror" "$tmp/changed-source-mirror"
 printf broken >> "$tmp/changed-source-mirror/native.holy"
-expect 6 "$bin" search https-second --source fixture --catalog "$tmp/changed-source-mirror" \
+expect 0 "$bin" search https-second --source fixture --catalog "$tmp/changed-source-mirror" \
     --root "$tmp/source-root"
-expect 6 "$bin" info fixture:https-second --catalog "$tmp/changed-source-mirror" \
+expect 0 "$bin" info fixture:https-second --catalog "$tmp/changed-source-mirror" \
+    --root "$tmp/source-root"
+expect 6 "$bin" search https-fixture --source fixture --catalog "$tmp/changed-source-mirror" \
     --root "$tmp/source-root"
 expect 6 "$bin" source catalog bind fixture "$tmp/changed-source-mirror" \
     --root "$tmp/source-root"

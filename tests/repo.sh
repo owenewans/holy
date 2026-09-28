@@ -203,7 +203,9 @@ printf 'wrong\n' > "$tmp/repo/variant.holy"
 grep -qx 'suggested 1 of 1 packages' "$tmp/out"
 if "$bin" repo list "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
-if "$bin" repo search "$tmp/repo" fixture > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+"$bin" repo search "$tmp/repo" fixture > "$tmp/out"
+grep -qx 'listed 1 packages' "$tmp/out"
+if "$bin" repo search "$tmp/repo" 'fixture two' > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 if "$bin" repo providers "$tmp/repo" command helper > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
@@ -214,8 +216,8 @@ test "$(wc -l < "$tmp/out")" -eq 1
 grep -Fqx '{"schema":"holy-repo-candidates-1","type":"summary","count":1}' "$tmp/out"
 "$bin" repo providers "$tmp/repo" command absent --json > "$tmp/out"
 grep -Fqx '{"schema":"holy-repo-candidates-1","type":"summary","count":0}' "$tmp/out"
-if "$bin" repo fetch "$tmp/repo" "$hash" --output "$tmp/fetched" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
-test ! -s "$tmp/out"
+"$bin" repo fetch "$tmp/repo" "$hash" --output "$tmp/fetched" > "$tmp/out"
+grep -Fxq "$tmp/fetched/$hash.holy" "$tmp/out"
 cp "$tmp/variant-original" "$tmp/repo/variant.holy"
 cp "$tmp/repo/index" "$tmp/previous"
 printf 'bad archive\n' > "$tmp/repo/bad.holy"
