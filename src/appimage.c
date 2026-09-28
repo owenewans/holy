@@ -141,7 +141,7 @@ done:
 
 struct scan_state {
     FILE *report;
-    size_t files, elfs, scripts, unknown, links;
+    size_t files, elfs, scripts, unknown, links, needed, path_views;
 };
 
 static void quoted(FILE *out, const char *value)
@@ -179,8 +179,36 @@ static int classify_file(int parent, const char *name, const char *path, struct 
     parsed = holy_elf_read_fd(fd, &elf);
     if (!parsed) {
         const char *arch = holy_elf_machine(&elf), *libc = holy_elf_runtime(&elf);
+        size_t i;
         fputs("elf ", scan->report); quoted(scan->report, path);
         fprintf(scan->report, " %s %s %s\n", arch, libc, holy_elf_isa(&elf));
+        if (elf.interpreter) {
+            fputs("interpreter ", scan->report); quoted(scan->report, path);
+            fputc(' ', scan->report); quoted(scan->report, elf.interpreter); fputc('\n', scan->report);
+        }
+        if (elf.soname) {
+            fputs("soname ", scan->report); quoted(scan->report, path);
+            fputc(' ', scan->report); quoted(scan->report, elf.soname); fputc('\n', scan->report);
+        }
+        if (elf.rpath) {
+            fputs("rpath ", scan->report); quoted(scan->report, path);
+            fputc(' ', scan->report); quoted(scan->report, elf.rpath); fputc('\n', scan->report);
+        }
+        if (elf.runpath) {
+            fputs("runpath ", scan->report); quoted(scan->report, path);
+            fputc(' ', scan->report); quoted(scan->report, elf.runpath); fputc('\n', scan->report);
+        }
+        for (i = 0; i < elf.needed_count; ++i) {
+            fputs("needed ", scan->report); quoted(scan->report, path);
+            fputc(' ', scan->report); quoted(scan->report, elf.needed[i]); fputc('\n', scan->report);
+            ++scan->needed;
+        }
+        for (i = 0; i < elf.version_count; ++i) {
+            if (elf.versions[i].weak) continue;
+            fputs("version-required ", scan->report); quoted(scan->report, path);
+            fputc(' ', scan->report); quoted(scan->report, elf.versions[i].provider);
+            fputc(' ', scan->report); quoted(scan->report, elf.versions[i].name); fputc('\n', scan->report);
+        }
         ++scan->elfs;
         if (!strcmp(arch, "unknown") || !strcmp(libc, "unknown")) ++scan->unknown;
     } else if (parsed == 2 || (got >= 8 && !memcmp(head, "!<arch>\n", 8)) ||
@@ -246,11 +274,12 @@ static int classify_tree(int parent, const char *prefix, struct scan_state *scan
                 capacity *= 2;
             }
             if (ok) {
-                fputs(target[0] != '/' && holy_safe_link(path, target) ?
-                      "symlink " : "path-view-required ", scan->report);
+                int path_view = target[0] == '/' || !holy_safe_link(path, target);
+                fputs(path_view ? "path-view-required " : "symlink ", scan->report);
                 quoted(scan->report, path); fputc(' ', scan->report);
                 quoted(scan->report, target); fputc('\n', scan->report);
                 ++scan->links;
+                scan->path_views += path_view;
             }
             free(target);
         } else {
@@ -269,6 +298,7 @@ static int classify_tree(int parent, const char *prefix, struct scan_state *scan
 static int classify_appdir(int output)
 {
     struct scan_state scan = {0};
+    struct stat entrypoint;
     int appdir = openat(output, "AppDir", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     int report = -1, ok = 0;
     if (appdir < 0) return 0;
@@ -278,9 +308,16 @@ static int classify_appdir(int output)
     if (!scan.report) goto done;
     report = -1;
     fputs("format holy-appimage-classification-1\n", scan.report);
+    if (fstatat(appdir, "AppRun", &entrypoint, AT_SYMLINK_NOFOLLOW) ||
+        !(S_ISREG(entrypoint.st_mode) || S_ISLNK(entrypoint.st_mode)) ||
+        (S_ISREG(entrypoint.st_mode) && !(entrypoint.st_mode & 0111)))
+        fputs("entrypoint missing-or-nonexecutable\n", scan.report);
+    else if (S_ISLNK(entrypoint.st_mode)) fputs("entrypoint link-review-required\n", scan.report);
+    else fputs("entrypoint AppRun\n", scan.report);
     if (!classify_tree(appdir, "", &scan, 0)) goto done;
-    fprintf(scan.report, "summary files %zu elf %zu scripts %zu links %zu unknown %zu\n",
-            scan.files, scan.elfs, scan.scripts, scan.links, scan.unknown);
+    fprintf(scan.report, "summary files %zu elf %zu scripts %zu links %zu needed %zu path-views %zu unknown %zu\n",
+            scan.files, scan.elfs, scan.scripts, scan.links, scan.needed, scan.path_views, scan.unknown);
+    fputs("runtime-probes plugins dlopen services graphics audio unknown\n", scan.report);
     if (fflush(scan.report) || fsync(fileno(scan.report)) || fclose(scan.report)) {
         scan.report = NULL; goto done;
     }
@@ -294,7 +331,7 @@ done:
     return ok;
 }
 
-int holy_appimage_extract(const char *input, const char *output)
+static int extract_image(const char *input, const char *output, const char *source)
 {
     char *path = NULL, *original = NULL, *appdir = NULL, hash[65], copied_hash[65];
     const char *arch = NULL;
@@ -339,7 +376,9 @@ int holy_appimage_extract(const char *input, const char *output)
         if (receipt < 0) goto done;
         file = fdopen(receipt, "w");
         if (!file) { close(receipt); goto done; }
-        fprintf(file, "format holy-appimage-extract-1\noriginal-sha256 %s\narch %s\nsquashfs-offset %lld\nmode extract\nstate extracted-unclassified\n", hash, arch, (long long)offset);
+        fprintf(file, "format holy-appimage-extract-1\nconverter holy-appimage-1\noriginal-sha256 %s\narch %s\nsquashfs-offset %lld\nmode extract\nverification unverified\n", hash, arch, (long long)offset);
+        if (source) { fputs("source-name ", file); quoted(file, source); fputc('\n', file); }
+        fputs("state extracted-unclassified\n", file);
         if (fflush(file) || fsync(fileno(file))) { fclose(file); goto done; }
         if (fclose(file) || fsync(dir)) goto done;
     }
@@ -352,4 +391,23 @@ done:
     free(original); free(appdir);
     if (path) { unlink(path); free(path); }
     return result;
+}
+
+int holy_appimage_extract(const char *input, const char *output)
+{
+    return extract_image(input, output, NULL);
+}
+
+int holy_import_appimage(const char *input, const char *source, const char *output)
+{
+    size_t i;
+    int result;
+    if (!source || !*source || !strcmp(source, "local")) return 2;
+    for (i = 0; source[i]; ++i)
+        if ((unsigned char)source[i] <= 32 || source[i] == ':' ||
+            source[i] == '/' || source[i] == '@') return 2;
+    result = extract_image(input, output, source);
+    if (result) return result;
+    fputs("holypkg: AppImage requires dependency and path review before .holy emission\n", stderr);
+    return 3;
 }

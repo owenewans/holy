@@ -10,7 +10,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
-.B holypkg import INPUT --source NAME --format pacman|deb|slackware|apk --output NEW_DIRECTORY [--public-key FILE (apk only)]
+.B holypkg import INPUT --source NAME --format pacman|deb|slackware|apk|appimage --output NEW_DIRECTORY [--public-key FILE (apk only)]
 .br
 .B holypkg appimage inspect INPUT
 .br
@@ -2023,11 +2023,19 @@ appimage extract copies the exact image to a new private output directory and
 invokes unsquashfs with the recorded offset. It requires an unprivileged user and
 an available unsquashfs command. The output contains original, AppDir, a
 classification report and a conversion receipt with state extracted-unclassified.
-The report lists ELF arch/libc/ISA, shebang scripts, links that need a path view
-and unknown executables without following symlinks. No .holy is produced and
+The report lists ELF arch/libc/ISA, interpreter, DT_NEEDED, loader search paths,
+strong symbol versions, shebang scripts, links that need a path view and unknown
+executables without following symlinks. It reports the AppRun entrypoint and
+runtime probes that static inspection cannot close. No .holy is produced and
 no package is installed. The extracted AppDir still needs ELF, dependency,
 path and launcher classification before native import. This operation does not
 claim that the extracted program can run.
+.PP
+import INPUT --source NAME --format appimage --output NEW_DIRECTORY uses
+the same extraction and records NAME as unverified provenance. It returns
+status 3 after writing the reviewable output because no native .holy can be
+issued until dependency and path decisions are complete. NAME does not grant
+a registered source identity.
 .SH EXIT STATUS
 0 indicates success under the implemented checks; 1 indicates a failed local
 fetch, extraction or check; 2 indicates invalid arguments, configuration or
