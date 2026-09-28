@@ -127,7 +127,14 @@ expect 0 "$bin" db check "$soname_next" --root "$root"
 expect 0 "$bin" db rm "$soname_next" --root "$root"
 printf 'int alias_fixture(void) { return 0; }\n' > "$tmp/alias-library.c"
 printf 'extern int alias_fixture(void); int main(void) { return alias_fixture(); }\n' > "$tmp/alias-main.c"
-gcc -shared -fPIC -Wl,-soname,libaliasfixture.so.1 -o "$tmp/libalias.so" "$tmp/alias-library.c" \
+printf 'ALIAS_1 { global: alias_fixture; };\n' > "$tmp/alias-map"
+printf 'ALIAS_1 { global: unrelated_fixture; };\n' > "$tmp/alias-wrong-map"
+gcc -shared -fPIC -Wl,-soname,libaliasfixture.so.1 \
+    -Wl,--version-script="$tmp/alias-map" -o "$tmp/libalias.so" "$tmp/alias-library.c" \
+    -Wl,--no-as-needed -lc
+printf 'int unrelated_fixture(void) { return 0; }\n' > "$tmp/alias-wrong.c"
+gcc -shared -fPIC -Wl,-soname,libaliasfixture.so.1 -o "$tmp/libalias-wrong.so" \
+    "$tmp/alias-wrong.c" -Wl,--version-script="$tmp/alias-wrong-map" \
     -Wl,--no-as-needed -lc
 gcc -o "$tmp/alias-probe" "$tmp/alias-main.c" "$tmp/libalias.so"
 new alias-provider
@@ -137,6 +144,13 @@ patchelf --replace-needed libc.so.6 "$libc" "$tree/DATA$runtime/libaliasfixture.
 ln -s libaliasfixture.so.1.2 "$tree/DATA$runtime/libaliasfixture.so.1"
 pack alias-provider
 alias_provider=$(hash alias-provider)
+new alias-wrong
+mkdir -p "$tree/DATA$runtime"
+cp "$tmp/libalias-wrong.so" "$tree/DATA$runtime/libaliasfixture.so.1.3"
+patchelf --replace-needed libc.so.6 "$libc" "$tree/DATA$runtime/libaliasfixture.so.1.3"
+ln -s libaliasfixture.so.1.3 "$tree/DATA$runtime/libaliasfixture.so.1"
+pack alias-wrong
+alias_wrong=$(hash alias-wrong)
 new alias-probe
 mkdir -p "$tree/DATA/usr/bin"
 cp "$tmp/alias-probe" "$tree/DATA/usr/bin/alias-probe"
@@ -144,30 +158,41 @@ patchelf --set-interpreter "$loader" --set-rpath "$runtime" \
     --replace-needed libc.so.6 "$libc" "$tree/DATA/usr/bin/alias-probe"
 pack alias-probe
 alias_probe=$(hash alias-probe)
-mkdir "$tmp/consumer-repo" "$tmp/provider-repo"
+mkdir "$tmp/consumer-repo" "$tmp/provider-repo" "$tmp/wrong-repo"
 cp "$tmp/alias-probe.holy" "$tmp/consumer-repo/alias-probe.holy"
 cp "$tmp/alias-provider.holy" "$tmp/provider-repo/alias-provider.holy"
+cp "$tmp/alias-wrong.holy" "$tmp/wrong-repo/alias-wrong.holy"
 expect 0 "$bin" repo index "$tmp/consumer-repo"
 expect 0 "$bin" repo seal "$tmp/consumer-repo"
 expect 0 "$bin" repo index "$tmp/provider-repo"
 expect 0 "$bin" repo seal "$tmp/provider-repo"
-printf '[source consumer]\ntype holy-http\nurl https://consumer.example/holy/\n[source provider]\ntype holy-http\nurl https://provider.example/holy/\n' > "$tmp/sources.conf"
+expect 0 "$bin" repo index "$tmp/wrong-repo"
+expect 0 "$bin" repo seal "$tmp/wrong-repo"
+printf '[source consumer]\ntype holy-http\nurl https://consumer.example/holy/\n[source wrong]\ntype holy-http\nurl https://wrong.example/holy/\n[source provider]\ntype holy-http\nurl https://provider.example/holy/\n' > "$tmp/sources.conf"
 "$bin" source plan --config "$tmp/sources.conf" --root "$root" > "$tmp/source-plan"
 source_plan=$(sha256sum "$tmp/source-plan" | cut -d ' ' -f 1)
 expect 0 "$bin" source apply "$tmp/source-plan" --sha256 "$source_plan" --root "$root"
 "$bin" source list --root "$root" > "$tmp/source-list"
 consumer_id=$(sed -n 's/^source \([0-9a-f]*\) "consumer" active$/\1/p' "$tmp/source-list")
 provider_id=$(sed -n 's/^source \([0-9a-f]*\) "provider" active$/\1/p' "$tmp/source-list")
+wrong_id=$(sed -n 's/^source \([0-9a-f]*\) "wrong" active$/\1/p' "$tmp/source-list")
 consumer_index=$(sed -n 's/^sha256 //p' "$tmp/consumer-repo/current")
 provider_index=$(sed -n 's/^sha256 //p' "$tmp/provider-repo/current")
+wrong_index=$(sed -n 's/^sha256 //p' "$tmp/wrong-repo/current")
 printf 'format holy-mirror-1\nurl "https://consumer.example/holy/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
     "$consumer_index" "$consumer_id" > "$tmp/consumer-repo/mirror-origin"
 printf 'format holy-mirror-1\nurl "https://provider.example/holy/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
     "$provider_index" "$provider_id" > "$tmp/provider-repo/mirror-origin"
+printf 'format holy-mirror-1\nurl "https://wrong.example/holy/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$wrong_index" "$wrong_id" > "$tmp/wrong-repo/mirror-origin"
 expect 0 "$bin" source catalog bind consumer "$tmp/consumer-repo" --root "$root"
 expect 0 "$bin" source catalog bind provider "$tmp/provider-repo" --root "$root"
+expect 0 "$bin" source catalog bind wrong "$tmp/wrong-repo" --root "$root"
 expect 0 "$bin" add consumer:alias-probe --root "$root" --yes
+grep -q 'provider soname:libaliasfixture.so.1 available from provider' "$tmp/err"
+if grep -q 'available from wrong' "$tmp/err"; then cat "$tmp/err"; exit 1; fi
 grep -q "$provider_id" "$root/var/lib/holypkg/installed/$alias_provider/source"
+test ! -e "$root/var/lib/holypkg/installed/$alias_wrong"
 expect 0 "$bin" db check "$alias_probe" --root "$root"
 rm "$root$runtime/libaliasfixture.so.1"
 ln -s missing.so "$root$runtime/libaliasfixture.so.1"

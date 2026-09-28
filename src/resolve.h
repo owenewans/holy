@@ -16,7 +16,7 @@ struct holy_resolution {
 };
 
 struct holy_missing_requirement {
-    char *consumer, *id, *kind, *name;
+    char *consumer, *id, *kind, *name, *path;
 };
 
 /* returns 4 with one exact missing edge, 0 when solved, or another CLI status.

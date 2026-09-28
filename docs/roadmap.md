@@ -416,8 +416,10 @@
   noninteractive add; duplicate and stale answers fail before rootfs changes.
   It probes installed providers first, including inactive origins. Source preference
   ranking, complete coverage diagnostics and plugin discovery remain open. A
-  two-catalog ELF fixture now verifies SONAME discovery after installed libc and
-  interpreter paths, selected source identity, and installed check.
+  three-catalog ELF fixture verifies SONAME discovery after installed libc and
+  interpreter paths, selected source identity, and installed check. The source
+  probe rejects a same-SONAME candidate without the consumer's version-attributed
+  imported symbol.
 - [x] Query an active holy-http source through an explicit synced mirror with
   `search QUERY --source ALIAS` and `info ALIAS:PACKAGE`. Verify source identity,
   pinned index and matching artifacts before returning exact names; report missing and
@@ -441,8 +443,8 @@
   per-library defined version names and checks strong ELF version needs before
   staging SONAME candidates. A targeted payload scan now rejects a matching
   SONAME/version candidate missing a strong imported symbol before staging.
-  The resolver rechecks selected archives. Indexing individual symbol exports
-  and cross-source lookup remain open.
+  Cross-source offers apply the same consumer ELF probe. The resolver rechecks
+  selected archives. Indexing individual symbol exports remains open.
 - [x] Bind a verified synced mirror and index digest to a registered source-id
   under the target database lock. Resolve add, fetch, search and info without
   repeating --catalog; reject corrupt bindings and changed mirrors. Keep the

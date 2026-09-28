@@ -1003,7 +1003,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=72201350fc167c3683856cee6f369b8e3e8026039a4af814f81e7bd831654c5f
+holypkg.8 source=holy version=development sha256=87db98f29a715a3c7a121c96f9ea45d1f60c65fc967a8c1f720331b71b560e45
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1964,21 +1964,26 @@ DESCRIPTION
      bound  native  catalogs for that edge before staging foreign artifacts. One
      matching source with complete coverage supplies its providers and in-source
      closure. Multiple matching sources, or a  match  alongside	 an  unavailable
-     catalog, list the source aliases and ask for one alias on a TTY.  Without a
-     TTY  or under --noninteractive, add returns decision-required; --candidate-
-     provider names the choice in a subsequent command. --yes approves the final
-     plan but does not choose an ambiguous source. The loop stops when	the  set
-     is	 complete  or  no  new	artifact is found. It checks installed providers
-     first; an inactive origin can still satisfy a new consumer. An edge without
-     a catalog match does not hide another missing edge in the same consumer;  a
-     required  SONAME  can  still be found after an interpreter or libc path al-
-     ready satisfied by an installed package. An unavailable catalog leaves cov-
-     erage incomplete and returns 6 when no provider can be found. Older indexes
-     without file or SONAME facts report unavailable coverage for those require-
-     ments. Selected packages retain their source IDs,	and  candidate	catalogs
-     are  checked  again  before apply. Source preference ranking, fuzzy sugges-
-     tions and runtime plugin discovery remain open. Hooks and transforms remain
-     outside the supported installation subset.
+     catalog,  list  the  source  aliases and ask for one alias on a TTY.  For a
+     scanned ELF SONAME edge, the source probe checks  the  consumer's	machine,
+     runtime,  strong  version	needs  and  provider-attributed imported symbols
+     against each indexed candidate. A same-name library missing such  a  symbol
+     is not offered.  An explicit SONAME metadata requirement without a consumer
+     ELF  path	uses exact indexed-name lookup.	 Without a TTY or under --nonin-
+     teractive, add returns decision-required;	--candidate-provider  names  the
+     choice  in a subsequent command. --yes approves the final plan but does not
+     choose an ambiguous source. The loop stops when the set is complete  or  no
+     new  artifact  is	found.	It checks installed providers first; an inactive
+     origin can still satisfy a new consumer. An edge without  a  catalog  match
+     does  not hide another missing edge in the same consumer; a required SONAME
+     can still be found after an interpreter or libc path already  satisfied  by
+     an installed package. An unavailable catalog leaves coverage incomplete and
+     returns 6 when no provider can be found. Older indexes without file or SON-
+     AME  facts	 report	 unavailable  coverage	for those requirements. Selected
+     packages retain their source IDs, and candidate catalogs are checked  again
+     before apply. Source preference ranking, fuzzy suggestions and runtime plu-
+     gin  discovery  remain  open.  Hooks and transforms remain outside the sup-
+     ported installation subset.
 
      For add SOURCE:PACKAGE, --answers FILE supplies source decisions by  stable
      consumer  artifact	 hash  and  requirement-id.  The file uses the holy.conf

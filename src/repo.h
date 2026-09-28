@@ -45,6 +45,10 @@ int holy_repo_providers(const char *directory, const char *kind,
 /* checks exact indexed provider coverage without staging package artifacts. */
 int holy_repo_has_provider(const char *directory, const char *kind,
                            const char *name);
+/* probes the missing consumer's recorded ELF edge before offering a source. */
+int holy_repo_has_compatible_soname(const char *directory, const char *name,
+                                    const char *root, const char *consumer_digest,
+                                    const char *consumer_path);
 /* returns shell-style status; validates a sealed local catalog before solve. */
 int holy_repo_solve(const char *directory, const char *name,
                     const char *choice, int json);

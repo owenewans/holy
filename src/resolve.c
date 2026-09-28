@@ -851,13 +851,14 @@ static int capture_missing(const struct local_item *consumer, size_t requirement
 {
     size_t k;
     const char *id = consumer->requirement_ids[requirement];
-    const char *kind = NULL, *name = NULL, *original;
+    const char *kind = NULL, *name = NULL, *path = NULL, *original;
     for (k = 0; k < consumer->edge_count; ++k) {
         const struct elf_edge *edge = &consumer->edges[k];
         if (edge->requirement != requirement) continue;
         kind = !strcmp(edge->kind, "soname") ? "soname" :
                !strcmp(edge->kind, "symbol") ? NULL : "file";
         name = edge->target;
+        if (!strcmp(edge->kind, "soname")) path = edge->path;
         break;
     }
     if (!name) {
@@ -887,7 +888,9 @@ static int capture_missing(const struct local_item *consumer, size_t requirement
     missing->id = strdup(id);
     missing->kind = strdup(kind);
     missing->name = strdup(name);
-    if (missing->consumer && missing->id && missing->kind && missing->name)
+    if (path) missing->path = strdup(path);
+    if (missing->consumer && missing->id && missing->kind && missing->name &&
+        (!path || missing->path))
         return 1;
     holy_missing_requirement_free(missing);
     return 0;
@@ -1254,6 +1257,7 @@ void holy_missing_requirement_free(struct holy_missing_requirement *missing)
     free(missing->id);
     free(missing->kind);
     free(missing->name);
+    free(missing->path);
     memset(missing, 0, sizeof *missing);
 }
 

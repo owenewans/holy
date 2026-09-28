@@ -1022,11 +1022,38 @@ done:
     return result;
 }
 
+static int object_soname_matches(int dir, const struct object *object,
+                                 const struct holy_scanned_file *consumer,
+                                 const char *needed)
+{
+    size_t j, k;
+    for (j = 0; j < object->soname_count; ++j) {
+        const struct soname_fact *fact = &object->sonames[j];
+        int compatible = 1, symbols;
+        if (strcmp(fact->name, needed) ||
+            strcmp(fact->arch, holy_elf_machine(&consumer->elf)) ||
+            strcmp(fact->libc, consumer->runtime)) continue;
+        for (k = 0; k < consumer->elf.version_count; ++k) {
+            const struct holy_elf_version *want = &consumer->elf.versions[k];
+            size_t n;
+            if (want->weak || strcmp(want->provider, needed)) continue;
+            for (n = 0; n < object->version_count; ++n)
+                if (!strcmp(object->versions[n].path, fact->path) &&
+                    !strcmp(object->versions[n].name, want->name)) break;
+            if (n == object->version_count) { compatible = 0; break; }
+        }
+        if (!compatible) continue;
+        symbols = candidate_symbols(dir, object, fact, consumer, needed);
+        if (symbols) return symbols;
+    }
+    return 0;
+}
+
 static int closure_soname(int dir, const struct object *objects, struct closure *closure,
                           const struct holy_scanned_file *consumer,
                           const char *needed)
 {
-    size_t low = 0, high = closure->provider_count, i, j, k;
+    size_t low = 0, high = closure->provider_count, i;
     while (low < high) {
         size_t middle = low + (high - low) / 2;
         const struct provider_key *key = &closure->providers[middle];
@@ -1039,27 +1066,9 @@ static int closure_soname(int dir, const struct object *objects, struct closure 
         const struct provider_key *key = &closure->providers[i];
         const struct object *object = &objects[key->index];
         if (strcmp(key->kind, "soname") || strcmp(key->name, needed)) break;
-        for (j = 0; j < object->soname_count; ++j) {
-            const struct soname_fact *fact = &object->sonames[j];
-            int compatible = 1;
-            if (strcmp(fact->name, needed) ||
-                strcmp(fact->arch, holy_elf_machine(&consumer->elf)) ||
-                strcmp(fact->libc, consumer->runtime)) continue;
-            for (k = 0; k < consumer->elf.version_count; ++k) {
-                const struct holy_elf_version *want = &consumer->elf.versions[k];
-                size_t n;
-                if (want->weak || strcmp(want->provider, needed)) continue;
-                for (n = 0; n < object->version_count; ++n)
-                    if (!strcmp(object->versions[n].path, fact->path) &&
-                        !strcmp(object->versions[n].name, want->name)) break;
-                if (n == object->version_count) { compatible = 0; break; }
-            }
-            if (compatible) {
-                int symbols = candidate_symbols(dir, object, fact, consumer, needed);
-                if (symbols < 0) return 0;
-                if (symbols) { if (!closure_add(closure, key->index)) return 0; break; }
-            }
-        }
+        int matches = object_soname_matches(dir, object, consumer, needed);
+        if (matches < 0) return 0;
+        if (matches && !closure_add(closure, key->index)) return 0;
     }
     return 1;
 }
@@ -1135,14 +1144,14 @@ static int mirror_object(struct mirror *mirror, int dir, const struct object *ob
     return ok;
 }
 
-static int list(const char *directory, const char *query,
+static int list_probe(const char *directory, const char *query,
                  const char *forced_index, int lock, int emit,
                  const char *fetch_digest, const char *output,
                  const char *provider_kind, const char *provider_name,
                  const char *solve_name, const char *solve_choice,
                   int solve_json, int *solve_rc, struct mirror *mirror,
                   int extract_name, const struct stage_request *stage,
-                  const char *file_query)
+                  const char *file_query, const struct holy_scanned_file *probe)
 {
     struct object *objects = NULL;
     char **candidate_snapshots = NULL;
@@ -1306,6 +1315,7 @@ static int list(const char *directory, const char *query,
     if (emit == 8 && (((!strcmp(provider_kind, "file") ||
                         !strcmp(provider_kind, "command")) && !file_index) ||
                       (!strcmp(provider_kind, "soname") && !soname_index) ||
+                      (probe && !version_index) ||
                       !strcmp(provider_kind, "symbol-version"))) {
         *solve_rc = 6;
         ok = 1;
@@ -1379,6 +1389,12 @@ static int list(const char *directory, const char *query,
                                  file_index, soname_index) :
                 !strcmp(provider_kind, "package") &&
                 !strcmp(provider_name, objects[i].identity.name);
+            if (emit == 8 && probe && objects[i].provider_match) {
+                int match = object_soname_matches(dir, &objects[i], probe,
+                                                   provider_name);
+                if (match < 0) goto done;
+                objects[i].provider_match = match;
+            }
             if (emit == 8) {
                 if (!objects[i].provider_match) continue;
             } else if (soname_index && !strcmp(provider_kind, "soname")) {
@@ -1687,6 +1703,21 @@ done:
     return ok;
 }
 
+static int list(const char *directory, const char *query,
+                const char *forced_index, int lock, int emit,
+                const char *fetch_digest, const char *output,
+                const char *provider_kind, const char *provider_name,
+                const char *solve_name, const char *solve_choice,
+                int solve_json, int *solve_rc, struct mirror *mirror,
+                int extract_name, const struct stage_request *stage,
+                const char *file_query)
+{
+    return list_probe(directory, query, forced_index, lock, emit,
+                      fetch_digest, output, provider_kind, provider_name,
+                      solve_name, solve_choice, solve_json, solve_rc, mirror,
+                      extract_name, stage, file_query, NULL);
+}
+
 int holy_repo_list(const char *directory)
 {
     return list(directory, NULL, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, NULL);
@@ -1771,6 +1802,39 @@ int holy_repo_has_provider(const char *directory, const char *kind,
         (!strcmp(kind, "package-or") && !holy_package_or_each(name, NULL, NULL))) return 2;
     if (!list(directory, NULL, NULL, 1, 8, NULL, NULL, kind, name,
               NULL, NULL, 0, &result, NULL, 0, NULL, NULL)) return 6;
+    return result;
+}
+
+int holy_repo_has_compatible_soname(const char *directory, const char *name,
+                                    const char *root, const char *consumer_digest,
+                                    const char *consumer_path)
+{
+    struct holy_scan_result scan = {0};
+    const struct holy_scanned_file *consumer = NULL;
+    char *snapshot;
+    size_t i, j;
+    int result = 6;
+    if (!directory || !name || !*name || strchr(name, '/') || !root ||
+        !consumer_digest || strlen(consumer_digest) != 64 || !consumer_path)
+        return 2;
+    snapshot = holy_cache_snapshot(consumer_digest, root);
+    if (!snapshot) return 6;
+    if (!holy_scan_collect(snapshot, &scan)) goto done;
+    for (i = 0; i < scan.count; ++i) {
+        const struct holy_scanned_file *file = &scan.files[i];
+        if (strcmp(file->path, consumer_path)) continue;
+        for (j = 0; j < file->elf.needed_count; ++j)
+            if (!strcmp(file->elf.needed[j], name)) break;
+        if (j == file->elf.needed_count || consumer) goto done;
+        consumer = file;
+    }
+    if (!consumer) goto done;
+    if (!list_probe(directory, NULL, NULL, 1, 8, NULL, NULL, "soname", name,
+                    NULL, NULL, 0, &result, NULL, 0, NULL, NULL, consumer)) result = 6;
+done:
+    holy_scan_free(&scan);
+    unlink(snapshot);
+    free(snapshot);
     return result;
 }
 

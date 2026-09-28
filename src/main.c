@@ -563,7 +563,10 @@ static int add_source(int argc, char **argv)
             if (!strcmp(aliases[a], alias)) continue;
             probe = holy_source_catalog_path_fast(root, aliases[a], &path);
             if (!probe) probe = holy_source_catalog(root, aliases[a], path, candidate_id);
-            if (!probe) probe = holy_repo_has_provider(path, missing.kind, missing.name);
+            if (!probe) probe = !strcmp(missing.kind, "soname") && missing.path ?
+                holy_repo_has_compatible_soname(path, missing.name, root,
+                                                missing.consumer, missing.path) :
+                holy_repo_has_provider(path, missing.kind, missing.name);
             free(path);
             if (!probe) {
                 ++offered;

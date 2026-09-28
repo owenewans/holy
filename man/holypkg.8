@@ -999,6 +999,11 @@ add probes active bound native catalogs for that edge before staging foreign
 artifacts. One matching source with complete coverage supplies its providers
 and in-source closure. Multiple matching sources, or a match alongside an
 unavailable catalog, list the source aliases and ask for one alias on a TTY.
+For a scanned ELF SONAME edge, the source probe checks the consumer's machine,
+runtime, strong version needs and provider-attributed imported symbols against
+each indexed candidate. A same-name library missing such a symbol is not offered.
+An explicit SONAME metadata requirement without a consumer ELF path uses
+exact indexed-name lookup.
 Without a TTY or under --noninteractive, add returns decision-required;
 --candidate-provider names the choice in a subsequent command. --yes approves
 the final plan but does not choose an ambiguous source. The loop stops
