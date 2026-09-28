@@ -11,9 +11,15 @@ dos=$(realpath "$3")
 e2=$(realpath "$4")
 limine_archive=$(realpath "$5")
 prefix=$(realpath "$6")
+arch=${ARCH:-x86_64}
+case "$arch" in
+    x86_64) package_arch=x86_64 ;;
+    i686) package_arch=x86 ;;
+    *) echo 'ARCH must be i686 or x86_64' >&2; exit 2 ;;
+esac
 test "$(id -u)" != 0 && test "$(uname -m)" = x86_64 || exit 6
 test -x "$bin" && test -x "$prefix/bin/holy-musl-gcc" &&
-    grep -qx 'arch x86_64' "$prefix/build.record" &&
+    grep -qx "arch $package_arch" "$prefix/build.record" &&
     grep -qx 'exit 0' "$prefix/build.record" || exit 6
 test "$(git -C "$util" rev-parse HEAD)" = d76cbf8f13e65ff657344f7f6a90042cf755ba59
 test "$(git -C "$dos" rev-parse HEAD)" = 697f7692c951173c1b732901e13f72bd3182d575
@@ -38,7 +44,7 @@ finish() {
 trap finish EXIT
 trap 'exit 1' HUP INT TERM
 exec > "$out/build.log" 2>&1
-printf 'format holy-storage-bootstrap-1\narch x86_64\n' > "$out/build.record"
+printf 'format holy-storage-bootstrap-1\narch %s\n' "$package_arch" > "$out/build.record"
 for name in util-linux dosfstools e2fsprogs; do mkdir "$work/$name"; done
 git -C "$util" archive HEAD | tar -xf - -C "$work/util-linux"
 git -C "$dos" archive HEAD | tar -xf - -C "$work/dosfstools"
@@ -91,7 +97,7 @@ for name in sfdisk mkfs.fat mke2fs limine; do
     "$bin" elf "$tree/DATA/usr/bin/$name" > "$out/$name.elf"
     grep -qx 'runtime nolibc' "$out/$name.elf"
     grep -qx 'e_type 2' "$out/$name.elf"
-    grep -qx 'machine x86_64' "$out/$name.elf"
+    grep -qx "machine $package_arch" "$out/$name.elf"
 done
 ln -s ../man-common "$work/util-linux/disk-utils/man-common"
 asciidoctor -a release-version=2.42.4 -b manpage \
@@ -105,13 +111,13 @@ cp "$work/util-linux/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/
 cp "$work/dosfstools/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/dosfstools-COPYING"
 cp "$work/e2fsprogs/NOTICE" "$tree/DATA/usr/share/licenses/holy-storage-tools/e2fsprogs-NOTICE"
 cp "$work/e2fsprogs/lib/uuid/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/e2fsprogs-uuid-COPYING"
-cat > "$tree/HOLY/meta" <<'EOF'
+cat > "$tree/HOLY/meta" <<EOF
 format holy-package-1
 name holy-storage-tools
 version 1
 release 1
 os linux
-arch x86_64
+arch $package_arch
 libc nolibc
 summary "static disk preparation tools for Holy installer"
 EOF

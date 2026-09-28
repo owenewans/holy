@@ -57,14 +57,21 @@ boot_state=${LIBC_BOOT_STATE:-present}
 storage=${ROOT_STORAGE:-ram}
 network_recovery=${NETWORK_RECOVERY:-off}
 install_test=${INSTALL_TEST:-0}
-install_firmware=${INSTALL_FIRMWARE:-both}
+if test "$arch" = i686; then
+    install_firmware=${INSTALL_FIRMWARE:-bios}
+else
+    install_firmware=${INSTALL_FIRMWARE:-both}
+fi
 case "$install_test:$storage:$profile:$boot_state:$arch" in
     0:*) ;;
-    1:ram:static-core:present:x86_64) ;;
-    *) echo 'INSTALL_TEST=1 requires x86_64 static-core RAM ISO' >&2; exit 2 ;;
+    1:ram:static-core:present:x86_64|1:ram:static-core:present:i686) ;;
+    *) echo 'INSTALL_TEST=1 requires static-core RAM ISO' >&2; exit 2 ;;
 esac
 if test "$install_test" = 1; then
-    case "$install_firmware" in bios|both) ;; *) echo 'INSTALL_FIRMWARE must be bios or both' >&2; exit 2 ;; esac
+    case "$arch:$install_firmware" in
+        x86_64:bios|x86_64:both|i686:bios) ;;
+        *) echo 'INSTALL_FIRMWARE requires BIOS for i686, BIOS or both for x86_64' >&2; exit 2 ;;
+    esac
     doas_package=$(realpath "${DOAS_PACKAGE:?DOAS_PACKAGE required}")
     test -f "$doas_package" || exit 6
 fi
@@ -172,6 +179,14 @@ for name in busybox dinit mdevd $extra_packages; do
     parent=${parent%% *}
     "$bin" fetch "local:$out/inputs/$name.holy" --extract --output "$tree"
     test ! -s "$tree/HOLY/transform" || exit 6
+    if test "$name" = busybox && test "$install_test" = 1; then
+        for applet in chown login getty su passwd adduser addgroup; do
+            "$tree/DATA/usr/bin/busybox" --list | grep -qx "$applet" || {
+                echo "BusyBox applet $applet required for install test" >&2
+                exit 6
+            }
+        done
+    fi
     if test "$name" = busybox && test -f "$tree/DATA/usr/share/licenses/musl/COPYRIGHT"; then
         mv "$tree/DATA/usr/share/licenses/musl/COPYRIGHT" "$tree/DATA/usr/share/licenses/busybox/musl.COPYRIGHT"
         printf '\nbootstrap-file-mapping usr/share/licenses/musl/COPYRIGHT usr/share/licenses/busybox/musl.COPYRIGHT\n' >> "$tree/HOLY/origin"
@@ -237,7 +252,7 @@ pack holyinstall
 if test "$install_test" = 1; then
     "$bin" info "local:$doas_package" > "$work/doas-info"
     grep -qx 'name doas' "$work/doas-info"
-    grep -qx 'arch x86_64' "$work/doas-info"
+    grep -qx "arch $package_arch" "$work/doas-info"
     grep -qx 'libc nolibc' "$work/doas-info"
     cp "$doas_package" "$out/packages/doas.holy"
     doas_digest=$(sha256sum "$out/packages/doas.holy")
@@ -408,7 +423,7 @@ if test "$install_test" = 1; then
     storage_tools=$(realpath "${STORAGE_TOOLS_PACKAGE:?STORAGE_TOOLS_PACKAGE required}")
     "$bin" info "local:$storage_tools" > "$work/storage-info"
     grep -qx 'name holy-storage-tools' "$work/storage-info"
-    grep -qx 'arch x86_64' "$work/storage-info"
+    grep -qx "arch $package_arch" "$work/storage-info"
     grep -qx 'libc nolibc' "$work/storage-info"
     cp "$storage_tools" "$out/inputs/holy-storage-tools.holy"
     storage_parent=$(sha256sum "$out/inputs/holy-storage-tools.holy")
@@ -425,6 +440,9 @@ if test "$install_test" = 1; then
         "$storage_digest" "$storage_parent" >> "$record"
     "$bin" cache stage "local:$out/packages/holy-storage-tools.holy" --root "$root"
     printf '[install]\nroot "%s"\nartifact %s\n' "$root" "$storage_digest" > "$work/storage.conf"
+    if test "$arch" = i686; then
+        printf 'accept-arch %s\n' "$storage_digest" >> "$work/storage.conf"
+    fi
     "$installer" --config "$work/storage.conf" --plan "$out/storage.plan" \
         --holypkg "$bin" > "$out/storage.preview"
     "$installer" --apply "$out/storage.plan" --holypkg "$bin" > "$out/storage.apply"
@@ -698,7 +716,9 @@ else
 fi
 printf 'result boot-tested-%s\n' "$profile" >> "$record"
 if test "$storage" = ram; then printf 'not-tested libc-recovery-reboot\n' >> "$record"; fi
-if test "$network_recovery" = fixture; then
+if test "$install_test" = 1; then
+    printf 'not-tested installer-interactive-menu pam-nss network graphics\n' >> "$record"
+elif test "$network_recovery" = fixture; then
     printf 'not-tested installer-full-flow public-network-dns graphics\n' >> "$record"
 else
     printf 'not-tested installer-full-flow network graphics\n' >> "$record"

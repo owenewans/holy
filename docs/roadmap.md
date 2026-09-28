@@ -5,8 +5,8 @@
 - [x] Boot the x86_64 live ISO, prepare a blank GPT guest disk in holyinstall,
   install the target root, then boot the installed disk through BIOS and UEFI
   under QEMU/TCG. The installed guest checks dinit, holypkg, package repair
-  and local password login; a wrong password is rejected. The two VM reports
-  use the same fixture image and do not establish i686 installer support.
+  and local password login; a wrong password is rejected. A separate i686
+  BIOS install-to-disk gate is recorded below.
 - [x] Install a static OpenDoas package in the same artifact-approved
   holyinstall set transaction as the base system. BIOS and UEFI boots authenticate the
   local account and then run the scoped BusyBox UID command through doas;
@@ -409,6 +409,11 @@
   its FAT boot partition, restores both libc packages, writes a boot-partition
   witness and verifies that witness plus package state after reboot. i686 UEFI
   and the interactive installer remain separate acceptance gates.
+- [x] Install the i686 static core from a BIOS live ISO onto a disposable GPT
+  disk under QEMU/TCG. The guest formats FAT32 and ext4, applies the reviewed
+  package set, creates a login account and boots the installed disk separately.
+  The second guest checks dinit, holypkg, authenticated login and doas. The
+  account menu, PAM/NSS, network and i686 UEFI remain untested by this gate.
 - [x] Boot a dual-libc RAM image with both libc archives absent from its cache
   and fetch their native artifacts over HTTPS from a QEMU fixture in a private
   network namespace. The guest uses static BusyBox ip and holypkg, verifies the

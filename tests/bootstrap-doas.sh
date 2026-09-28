@@ -19,24 +19,28 @@ mkdir -p "$root/usr/bin" "$root/usr/share/man/man1" \
 "$bin" cache stage "local:$package" --root "$root" > "$tmp/out"
 digest=$(sha256sum "$package")
 digest=${digest%% *}
-if "$bin" db plan-set "$digest" --root "$root" > "$tmp/out" 2> "$tmp/error"; then
+set -- "$digest"
+if "$bin" info "local:$package" | grep -qx 'arch x86' && test "$(uname -m)" = x86_64; then
+    set -- "$@" --accept-arch "$digest"
+fi
+if "$bin" db plan-set "$@" --root "$root" > "$tmp/out" 2> "$tmp/error"; then
     printf 'unapproved setuid package was accepted\n' >&2
     exit 1
 else
     test "$?" -eq 3
 fi
 grep -q 'decision-required privileged' "$tmp/error"
-"$bin" db plan-set "$digest" --accept-privileged "$digest" --root "$root" > "$tmp/out"
+"$bin" db plan-set "$@" --accept-privileged "$digest" --root "$root" > "$tmp/out"
 plan=$(sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
 test "${#plan}" -eq 64
-if "$bin" db apply-set "$plan" "$digest" --root "$root" > "$tmp/out" 2> "$tmp/error"; then
+if "$bin" db apply-set "$plan" "$@" --root "$root" > "$tmp/out" 2> "$tmp/error"; then
     printf 'unapproved setuid plan was applied\n' >&2
     exit 1
 else
     test "$?" -eq 3
 fi
 test ! -e "$root/usr/bin/doas"
-"$bin" db apply-set "$plan" "$digest" --accept-privileged "$digest" --root "$root" > "$tmp/out"
+"$bin" db apply-set "$plan" "$@" --accept-privileged "$digest" --root "$root" > "$tmp/out"
 test "$(stat -c '%a %u:%g' "$root/usr/bin/doas")" = '4755 0:0'
 grep -qx "privileged $digest" "$root/var/lib/holypkg/installed/$digest/state"
 "$bin" elf "$root/usr/bin/doas" > "$tmp/elf"

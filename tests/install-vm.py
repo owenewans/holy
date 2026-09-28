@@ -81,11 +81,13 @@ def boot(qemu, accel, run, overlay, iso, stage, expected, seconds,
     return {'result': 'pass' if reason == 'markers-complete' and code == 0 else 'fail',
             'reason': reason, 'exit': code, 'elapsed_seconds': time.monotonic() - started,
             'argv': args, 'serial': str(serial), 'serial_sha256': digest(serial),
+            'observed_markers': sorted(expected & lines),
             'missing_markers': sorted(expected - lines)}
 
 
 def main():
-    require(os.environ.get('ARCH') == 'x86_64', 'x86_64 target required', 2)
+    arch = os.environ.get('ARCH', 'x86_64')
+    require(arch in ('i686', 'x86_64'), 'ARCH must be i686 or x86_64', 2)
     iso = Path(os.environ.get('ISO', ''))
     report_dir = Path(os.environ.get('REPORT_DIR', ''))
     plan = os.environ.get('BOOT_PLAN', '')
@@ -93,11 +95,12 @@ def main():
             'ISO and report directory required')
     require(len(plan) == 64 and all(c in '0123456789abcdef' for c in plan),
             'BOOT_PLAN must be SHA-256', 2)
-    qemu = shutil.which('qemu-system-x86_64')
+    qemu = shutil.which('qemu-system-i386' if arch == 'i686' else 'qemu-system-x86_64')
     qemu_img = shutil.which('qemu-img')
     require(qemu and qemu_img, 'QEMU and qemu-img required')
-    firmware = os.environ.get('INSTALL_FIRMWARE', 'both')
-    require(firmware in ('bios', 'both'), 'INSTALL_FIRMWARE must be bios or both', 2)
+    firmware = os.environ.get('INSTALL_FIRMWARE') or ('bios' if arch == 'i686' else 'both')
+    require(firmware in (('bios',) if arch == 'i686' else ('bios', 'both')),
+            'i686 supports BIOS; x86_64 supports BIOS or both', 2)
     code = Path(os.environ.get('UEFI_CODE') or '/usr/share/qemu/edk2-x86_64-code.fd')
     variables = Path(os.environ.get('UEFI_VARS') or '/usr/share/qemu/edk2-i386-vars.fd')
     if firmware == 'both':
@@ -168,7 +171,35 @@ def main():
     unchanged = digest(disk) == base_hash
     result = ('pass' if unchanged and guest_disk_plan and second and second['result'] == 'pass' and
               (firmware == 'bios' or third and third['result'] == 'pass') else 'fail')
-    report = {'schema': 'holy-install-vm-6', 'result': result, 'arch': 'x86_64',
+    not_tested = ['account-menu', 'pam-nss', 'network']
+    if arch == 'i686':
+        not_tested += ['i686-uefi-installed-boot', 'x86_64-installed-boot']
+    else:
+        not_tested += ['i686-installed-boot']
+        if firmware == 'bios':
+            not_tested += ['uefi-installed-boot']
+    observed_install = set(first['observed_markers'])
+    observed_boot = set(second['observed_markers']) if second else set()
+    coverage = []
+    for check, marker in (
+            ('live-iso', 'HOLY-INSTALL-1 devices target-and-media'),
+            ('guest-partitioning', 'HOLY-INSTALL-1 disk prepared'),
+            ('guest-filesystems', 'HOLY-INSTALL-1 root mounted'),
+            ('guest-limine-bios-install', 'HOLY-INSTALL-1 disk prepared'),
+            ('guest-root-package-set', 'HOLY-INSTALL-1 package-set committed'),
+            ('guest-esp-files', 'HOLY-INSTALL-1 esp files-and-package-state')):
+        if marker in observed_install:
+            coverage.append(check)
+    for check, marker in (
+            ('guest-user-password-login', 'HOLY-BOOT-1 user-login authenticated'),
+            ('guest-doas-password-root-uid', 'HOLY-BOOT-1 doas password-and-root-uid')):
+        if marker in observed_boot:
+            coverage.append(check)
+    if second and second['result'] == 'pass':
+        coverage.append('bios-installed-disk-boot')
+    if third and third['result'] == 'pass':
+        coverage.append('uefi-installed-disk-boot')
+    report = {'schema': 'holy-install-vm-7', 'result': result, 'arch': arch,
               'accelerator': accel, 'boot_plan': plan,
               'inputs': {'iso_sha256': digest(frozen_iso), 'target_base_sha256': base_hash,
                          'guest_disk_plan_sha256': guest_disk_plan},
@@ -177,14 +208,8 @@ def main():
                            'code_sha256': digest(code_copy) if third else None,
                            'vars_input_sha256': digest(variables) if third else None},
               'install': first, 'installed_boot': second, 'uefi_boot': third,
-              'coverage': ['live-iso', 'guest-partitioning', 'guest-filesystems',
-                           'guest-limine-bios-install', 'guest-root-package-set',
-                           'guest-esp-files', 'guest-user-password-login',
-                           'guest-doas-password-root-uid',
-                           'bios-installed-disk-boot'] +
-                          (['uefi-installed-disk-boot'] if third and third['result'] == 'pass' else []),
-              'not_tested': ['i686-installed-boot', 'account-menu', 'pam-nss', 'network'] +
-                            (['uefi-installed-boot'] if firmware == 'bios' else [])}
+              'coverage': coverage,
+              'not_tested': not_tested}
     (run / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     print('holy-install-vm:', result, 'report', run / 'report.json')
     return 0 if result == 'pass' else 4

@@ -1,4 +1,4 @@
-holy-image.7 source=holy version=development sha256=9f59e78ff59e384fa7870daf0412fb2e6cf51a64f4a38014f81cb8841ca5ae0f
+holy-image.7 source=holy version=development sha256=62821231f3b5b9f39419d01053e60c617df7894b4d48a7b8bcbaa06ca6091e9d
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
 NAME
@@ -201,15 +201,19 @@ INSTALLER VM FIXTURE
      count and scoped doas.conf are only present when INSTALL_TEST=1.  The  UEFI
      boot uses fresh writable firmware variables.
 
-     The  holy-install-vm-6 report records each QEMU command, serial hashes, ISO
-     and disk hashes, the guest disk-plan hash, base-image integrity and missing
-     markers. It lists i686 installed boot, the account menu, PAM/NSS  and  net-
-     work  as untested. INSTALL_FIRMWARE=bios runs only BIOS and records UEFI as
-     untested; the default both mode requires UEFI_CODE and UEFI_VARS, which de-
-     fault to the local QEMU edk2 images. This fixture verifies package	 instal-
-     lation  and boot from a separate disk; it does not claim the whole interac-
-     tive installer acceptance matrix. Run an existing	fixture	 ISO  with  make
-     check-install-vm ISO=FILE BOOT_PLAN=SHA256.
+     The  holy-install-vm-7 report records each QEMU command, observed and miss-
+     ing serial markers, serial hashes, ISO and disk hashes, the guest disk-plan
+     hash, base-image integrity and checks reached by the guest. The  i686  BIOS
+     install-to-disk fixture passed under QEMU/TCG. Its report lists the account
+     menu,  PAM/NSS,  network  and  i686 UEFI as untested. INSTALL_FIRMWARE=bios
+     runs only BIOS and records UEFI as untested; the x86_64 default  both  mode
+     requires  UEFI_CODE and UEFI_VARS, which default to the local QEMU edk2 im-
+     ages. This fixture verifies package installation and boot from  a	separate
+     disk;  it does not claim the whole interactive installer acceptance matrix.
+     Run an existing fixture ISO with make check-install-vm  ARCH=i686	ISO=FILE
+     BOOT_PLAN=SHA256  for  i686, or omit ARCH for x86_64. The i686 install fix-
+     ture requires a BusyBox package with chown, login, getty, su,  passwd,  ad-
+     duser and addgroup applets.
 
 QEMU
      make  check-qemu  ARCH=x86_64 ISO=FILE BOOT_PLAN=SHA256 runs the test sepa-

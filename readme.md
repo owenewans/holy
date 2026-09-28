@@ -33,8 +33,8 @@ directories. It does not test a booted system.
 `make check-install` exercises [holyinstall(8)](man/holyinstall.8) text menu,
 package plan/apply and disposable GPT image preparation. The optional
 `INSTALL_TEST=1` ISO fixture partitions a blank guest disk, formats it,
-installs packages and boots it through BIOS and UEFI. Its disposable account
-fixture checks password rejection and authenticated user login.
+installs packages and boots it through BIOS on i686 or BIOS and UEFI on x86_64.
+Its disposable account fixture checks password rejection and authenticated login.
 `make check-qemu-gate` runs negative BIOS/TCG fixtures.
 `make bootstrap-busybox INPUTS=DIR OUTPUT=DIR` builds a pinned musl-static
 BusyBox package. See [holypkg(8)](man/holypkg.8) for inputs and its chroot test.

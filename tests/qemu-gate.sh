@@ -46,6 +46,13 @@ for arch in i686 x86_64; do
     fi
 done
 truncate -s 1048576 "$tmp/blank.iso"
+if ARCH=i686 ISO="$tmp/blank.iso" BOOT_PLAN="$plan" REPORT_DIR="$tmp" \
+   INSTALL_FIRMWARE=both python3 tests/install-vm.py > "$tmp/out" 2> "$tmp/err"; then
+    exit 1
+else
+    test "$?" -eq 2
+fi
+grep -q 'i686 supports BIOS' "$tmp/err"
 if ARCH=x86_64 ISO="$tmp/blank.iso" BOOT_PLAN="$plan" \
    LIBC_BOOT_STATE=remove-both REPORT_DIR="$tmp" sh tests/qemu.sh \
    > "$tmp/out" 2> "$tmp/err"; then

@@ -52,11 +52,11 @@ check-bootstrap-glibc:
 
 .PHONY: bootstrap-image
 bootstrap-image: holypkg llm.txt
-	ARCH="$(or $(ARCH),x86_64)" ROOT_STORAGE="$(or $(ROOT_STORAGE),ram)" IMAGE_PROFILE="$(or $(IMAGE_PROFILE),dual-libc)" LIBC_BOOT_STATE="$(or $(LIBC_BOOT_STATE),present)" INSTALL_TEST="$(or $(INSTALL_TEST),0)" INSTALL_FIRMWARE="$(or $(INSTALL_FIRMWARE),both)" STORAGE_TOOLS_PACKAGE="$(STORAGE_TOOLS_PACKAGE)" DOAS_PACKAGE="$(DOAS_PACKAGE)" UEFI_CODE="$(UEFI_CODE)" UEFI_VARS="$(UEFI_VARS)" NETWORK_RECOVERY="$(or $(NETWORK_RECOVERY),off)" GLIBC_PACKAGE="$(GLIBC_PACKAGE)" MUSL_PACKAGE="$(MUSL_PACKAGE)" GLIBC_CC="$(or $(GLIBC_CC),gcc)" MUSL_CC="$(MUSL_CC)" STATIC_HOLYINSTALL="$(STATIC_HOLYINSTALL)" sh tools/bootstrap-image.sh ./holypkg "$(STATIC_HOLYPKG)" "$(STATIC_CC)" "$(BUSYBOX_PACKAGE)" "$(DINIT_PACKAGE)" "$(MDEVD_PACKAGE)" "$(KERNEL_IMAGE)" "$(KERNEL_VERSION)" "$(LIMINE_DIR)" "$(OUTPUT)"
+	ARCH="$(or $(ARCH),x86_64)" ROOT_STORAGE="$(or $(ROOT_STORAGE),ram)" IMAGE_PROFILE="$(or $(IMAGE_PROFILE),dual-libc)" LIBC_BOOT_STATE="$(or $(LIBC_BOOT_STATE),present)" INSTALL_TEST="$(or $(INSTALL_TEST),0)" INSTALL_FIRMWARE="$(or $(INSTALL_FIRMWARE),$(if $(filter i686,$(ARCH)),bios,both))" STORAGE_TOOLS_PACKAGE="$(STORAGE_TOOLS_PACKAGE)" DOAS_PACKAGE="$(DOAS_PACKAGE)" UEFI_CODE="$(UEFI_CODE)" UEFI_VARS="$(UEFI_VARS)" NETWORK_RECOVERY="$(or $(NETWORK_RECOVERY),off)" GLIBC_PACKAGE="$(GLIBC_PACKAGE)" MUSL_PACKAGE="$(MUSL_PACKAGE)" GLIBC_CC="$(or $(GLIBC_CC),gcc)" MUSL_CC="$(MUSL_CC)" STATIC_HOLYINSTALL="$(STATIC_HOLYINSTALL)" sh tools/bootstrap-image.sh ./holypkg "$(STATIC_HOLYPKG)" "$(STATIC_CC)" "$(BUSYBOX_PACKAGE)" "$(DINIT_PACKAGE)" "$(MDEVD_PACKAGE)" "$(KERNEL_IMAGE)" "$(KERNEL_VERSION)" "$(LIMINE_DIR)" "$(OUTPUT)"
 
 .PHONY: bootstrap-storage
 bootstrap-storage: holypkg
-	sh tools/bootstrap-storage.sh ./holypkg "$(UTIL_LINUX_SOURCE)" "$(DOSFSTOOLS_SOURCE)" "$(E2FSPROGS_SOURCE)" "$(LIMINE_BINARY)" "$(STATIC_PREFIX)" "$(or $(OUTPUT),out/storage-bootstrap)"
+	ARCH="$(or $(ARCH),x86_64)" sh tools/bootstrap-storage.sh ./holypkg "$(UTIL_LINUX_SOURCE)" "$(DOSFSTOOLS_SOURCE)" "$(E2FSPROGS_SOURCE)" "$(LIMINE_BINARY)" "$(STATIC_PREFIX)" "$(or $(OUTPUT),out/storage-bootstrap)"
 
 .PHONY: check-bootstrap-storage
 check-bootstrap-storage: holypkg
@@ -64,7 +64,7 @@ check-bootstrap-storage: holypkg
 
 .PHONY: bootstrap-doas
 bootstrap-doas: holypkg
-	sh tools/bootstrap-doas.sh ./holypkg "$(DOAS_SOURCE)" "$(STATIC_PREFIX)" "$(or $(OUTPUT),out/doas-bootstrap)"
+	ARCH="$(or $(ARCH),x86_64)" sh tools/bootstrap-doas.sh ./holypkg "$(DOAS_SOURCE)" "$(STATIC_PREFIX)" "$(or $(OUTPUT),out/doas-bootstrap)"
 
 .PHONY: check-bootstrap-doas
 check-bootstrap-doas: holypkg
@@ -208,7 +208,7 @@ check-install: holyinstall holypkg
 .PHONY: check-install-vm
 check-install-vm:
 	@test -n "$(ISO)" && test -n "$(BOOT_PLAN)" || { echo 'ISO and BOOT_PLAN required' >&2; exit 6; }
-	ARCH=x86_64 ISO="$(ISO)" BOOT_PLAN="$(BOOT_PLAN)" REPORT_DIR="$(or $(REPORT_DIR),/tmp)" INSTALL_FIRMWARE="$(or $(INSTALL_FIRMWARE),both)" UEFI_CODE="$(UEFI_CODE)" UEFI_VARS="$(UEFI_VARS)" python3 tests/install-vm.py
+	ARCH="$(or $(ARCH),x86_64)" ISO="$(ISO)" BOOT_PLAN="$(BOOT_PLAN)" REPORT_DIR="$(or $(REPORT_DIR),/tmp)" INSTALL_FIRMWARE="$(or $(INSTALL_FIRMWARE),$(if $(filter i686,$(ARCH)),bios,both))" UEFI_CODE="$(UEFI_CODE)" UEFI_VARS="$(UEFI_VARS)" python3 tests/install-vm.py
 
 check-qemu:
 	ARCH="$(ARCH)" ISO="$(or $(ISO),out/holy-$(ARCH).iso)" BOOT_PLAN="$(BOOT_PLAN)" QEMU_TIMEOUT="$(or $(QEMU_TIMEOUT),120)" sh tests/qemu.sh

@@ -14,7 +14,15 @@ umask 022
 bin=$(realpath "$1")
 source=$(realpath "$2")
 prefix=$(realpath "$3")
-test -x "$bin" && test -x "$prefix/bin/holy-musl-gcc" || exit 6
+arch=${ARCH:-x86_64}
+case "$arch" in
+    x86_64) package_arch=x86_64 ;;
+    i686) package_arch=x86 ;;
+    *) echo 'ARCH must be i686 or x86_64' >&2; exit 2 ;;
+esac
+test -x "$bin" && test -x "$prefix/bin/holy-musl-gcc" &&
+    grep -qx "arch $package_arch" "$prefix/build.record" &&
+    grep -qx 'exit 0' "$prefix/build.record" || exit 6
 test "$(git -C "$source" rev-parse HEAD)" = 7f0205fe2f06221d76243342d299851f48c2b83c || exit 6
 for tool in git tar make yacc sha256sum; do
     command -v "$tool" >/dev/null || { echo "$tool required" >&2; exit 6; }
@@ -34,8 +42,8 @@ finish() {
 trap finish EXIT
 trap 'exit 1' HUP INT TERM
 exec > "$out/build.log" 2>&1
-printf 'format holy-doas-bootstrap-1\narch x86_64\nsource-commit %s\n' \
-    7f0205fe2f06221d76243342d299851f48c2b83c > "$out/build.record"
+printf 'format holy-doas-bootstrap-1\narch %s\nsource-commit %s\n' \
+    "$package_arch" 7f0205fe2f06221d76243342d299851f48c2b83c > "$out/build.record"
 git -C "$source" archive HEAD | tar -xf - -C "$work"
 (
     cd "$work"
@@ -46,7 +54,7 @@ git -C "$source" archive HEAD | tar -xf - -C "$work"
 "$bin" elf "$work/doas" > "$out/doas.elf"
 grep -qx 'runtime nolibc' "$out/doas.elf"
 grep -qx 'e_type 2' "$out/doas.elf"
-grep -qx 'machine x86_64' "$out/doas.elf"
+grep -qx "machine $package_arch" "$out/doas.elf"
 tree="$work/package"
 mkdir -p "$tree/HOLY" "$tree/DATA/usr/bin" \
     "$tree/DATA/usr/share/man/man1" "$tree/DATA/usr/share/man/man5" \
@@ -56,13 +64,13 @@ chmod 4755 "$tree/DATA/usr/bin/doas"
 cp "$work/doas.1" "$tree/DATA/usr/share/man/man1/"
 cp "$work/doas.conf.5" "$tree/DATA/usr/share/man/man5/"
 cp "$work/LICENSE" "$tree/DATA/usr/share/licenses/doas/"
-cat > "$tree/HOLY/meta" <<'EOF'
+cat > "$tree/HOLY/meta" <<EOF
 format holy-package-1
 name doas
 version 6.8.2
 release 1
 os linux
-arch x86_64
+arch $package_arch
 libc nolibc
 summary "static OpenDoas with shadow authentication"
 EOF
