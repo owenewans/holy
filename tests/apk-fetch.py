@@ -51,7 +51,6 @@ with tempfile.TemporaryDirectory() as scratch:
     (serve / "APKINDEX.tar.gz").write_bytes((tmp / "APKINDEX.tar.gz").read_bytes())
     signed_dir = serve / "signed"
     signed_dir.mkdir()
-    (signed_dir / "fixture-1.2-r0.apk").write_bytes(package)
     signing_key = tmp / "index.key"
     signing_pub = tmp / "fixture.rsa.pub"
     subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt",
@@ -59,11 +58,20 @@ with tempfile.TemporaryDirectory() as scratch:
                    capture_output=True, check=True)
     subprocess.run(["openssl", "pkey", "-in", str(signing_key), "-pubout",
                     "-out", str(signing_pub)], capture_output=True, check=True)
+    (tmp / "control.gz").write_bytes(control)
+    package_signature = subprocess.run(
+        ["openssl", "dgst", "-sha256", "-sign", str(signing_key),
+         str(tmp / "control.gz")], capture_output=True, check=True).stdout
+    signed_package = member([(".SIGN.RSA256.fixture.rsa.pub", package_signature)]) + package
+    (signed_dir / "fixture-1.2-r0.apk").write_bytes(signed_package)
+    signed_rows = (f"C:{checksum}\nP:fixture\nV:1.2-r0\nA:x86_64\n"
+                   f"S:{len(signed_package)}\n\n").encode()
+    (tmp / "signed-index-payload.gz").write_bytes(member([("APKINDEX", signed_rows)]))
     signature = subprocess.run(["openssl", "dgst", "-sha256", "-sign",
-                                str(signing_key), str(tmp / "APKINDEX.tar.gz")],
+                                str(signing_key), str(tmp / "signed-index-payload.gz")],
                                capture_output=True, check=True).stdout
     signed_bytes = member([(".SIGN.RSA256.fixture.rsa.pub", signature)]) + (
-        tmp / "APKINDEX.tar.gz").read_bytes()
+        tmp / "signed-index-payload.gz").read_bytes()
     (signed_dir / "APKINDEX.tar.gz").write_bytes(signed_bytes)
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                     "-days", "1", "-keyout", str(tmp / "key.pem"), "-out",
@@ -222,12 +230,48 @@ with tempfile.TemporaryDirectory() as scratch:
         (tmp / "signed-catalog/conversion").write_text(saved_conversion)
         run("apk", "fetch", "fixture", "1.2-r0", "x86_64", "--source",
             "signed", "--repo", "main", "--root", signed_root, "--output",
-            tmp / "signed-package", "--ca-file", tmp / "cert.pem")
+            tmp / "signed-package", "--ca-file", tmp / "cert.pem", "--public-key",
+            signing_pub)
         assert "index-verification rsa-sha256" in (
             tmp / "signed-package/selection").read_text()
+        assert "verification rsa-sha256" in (
+            tmp / "signed-package/selection").read_text()
+        assert (tmp / "signed-package/original").read_bytes() == signed_package
+        run("apk", "fetch", "fixture", "1.2-r0", "x86_64", "--source",
+            "signed", "--repo", "main", "--root", signed_root, "--output",
+            tmp / "missing-package-key", "--ca-file", tmp / "cert.pem", status=6)
+        run("apk", "fetch", "fixture", "1.2-r0", "x86_64", "--source",
+            "signed", "--repo", "main", "--root", signed_root, "--output",
+            tmp / "wrong-package-key", "--ca-file", tmp / "cert.pem",
+            "--public-key", wrong_key_dir / signing_pub.name, status=6)
+        (tmp / "wrong-control.gz").write_bytes(data)
+        wrong_signature = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-sign", str(signing_key),
+             str(tmp / "wrong-control.gz")], capture_output=True, check=True).stdout
+        bad_package = member([(".SIGN.RSA256.fixture.rsa.pub", wrong_signature)]) + package
+        bad_rows = (f"C:{checksum}\nP:fixture\nV:1.2-r0\nA:x86_64\n"
+                    f"S:{len(bad_package)}\n\n").encode()
+        bad_payload = tmp / "bad-package-index.gz"
+        bad_payload.write_bytes(member([("APKINDEX", bad_rows)]))
+        bad_index_sig = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-sign", str(signing_key),
+             str(bad_payload)], capture_output=True, check=True).stdout
+        (signed_dir / "APKINDEX.tar.gz").write_bytes(
+            member([(".SIGN.RSA256.fixture.rsa.pub", bad_index_sig)]) +
+            bad_payload.read_bytes())
+        (signed_dir / "fixture-1.2-r0.apk").write_bytes(bad_package)
+        bad_package_sync = list(signed_sync)
+        bad_package_sync[bad_package_sync.index("--output") + 1] = tmp / "bad-package-catalog"
+        run(*bad_package_sync, "--public-key", signing_pub)
+        run("apk", "fetch", "fixture", "1.2-r0", "x86_64", "--source",
+            "signed", "--repo", "main", "--root", signed_root, "--output",
+            tmp / "bad-package", "--ca-file", tmp / "cert.pem", "--public-key",
+            signing_pub, status=4)
+        assert not (tmp / "bad-package").exists()
         changed_index = bytearray(signed_bytes)
         changed_index[-13] ^= 1
         (signed_dir / "APKINDEX.tar.gz").write_bytes(changed_index)
+        (signed_dir / "fixture-1.2-r0.apk").write_bytes(signed_package)
         changed_sync = list(signed_sync)
         changed_sync[changed_sync.index("--output") + 1] = tmp / "changed-signed-index"
         run(*changed_sync, "--public-key", signing_pub, status=4)
@@ -235,7 +279,12 @@ with tempfile.TemporaryDirectory() as scratch:
         (signed_dir / "APKINDEX.tar.gz").write_bytes(signed_bytes)
         nohash_control = member([(".PKGINFO",
                                   b"pkgname = fixture\npkgver = 1.2-r0\narch = x86_64\n")])
-        nohash_package = nohash_control + data
+        (tmp / "nohash-control.gz").write_bytes(nohash_control)
+        nohash_package_signature = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-sign", str(signing_key),
+             str(tmp / "nohash-control.gz")], capture_output=True, check=True).stdout
+        nohash_package = member([(".SIGN.RSA256.fixture.rsa.pub",
+                                  nohash_package_signature)]) + nohash_control + data
         nohash_checksum = "Q1" + base64.b64encode(
             hashlib.sha1(nohash_control).digest()).decode()
         nohash_rows = (f"C:{nohash_checksum}\nP:fixture\nV:1.2-r0\nA:x86_64\n"
@@ -254,7 +303,8 @@ with tempfile.TemporaryDirectory() as scratch:
         run(*nohash_sync, "--public-key", signing_pub)
         run("apk", "fetch", "fixture", "1.2-r0", "x86_64", "--source",
             "signed", "--repo", "main", "--root", signed_root, "--output",
-            tmp / "nohash-package", "--ca-file", tmp / "cert.pem", status=4)
+            tmp / "nohash-package", "--ca-file", tmp / "cert.pem", "--public-key",
+            signing_pub, status=4)
         assert not (tmp / "nohash-package").exists()
 
         fetch("bad-hash", status=4, extra=("--sha256", "0" * 64))

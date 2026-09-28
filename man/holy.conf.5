@@ -99,5 +99,6 @@ entries. holypkg apk sync names the repo, obtains its APKINDEX.tar.gz and writes
 a source-id-bearing catalog and target-root binding. public-key points to an RSA
 PEM public key for APK sources; source plan freezes its SHA-256 fingerprint.
 trust require needs that key and a valid APKINDEX signature. The matching key
-file is supplied to apk sync through --public-key. The APK package signature
-remains unverified. See holypkg(8) for the digest confirmation and fetch sequence.
+file is supplied to apk sync and apk fetch through --public-key. Fetch verifies
+the bound APK package signature with the same registered key. See holypkg(8)
+for the digest confirmation and fetch sequence.

@@ -24,7 +24,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apk info PACKAGE [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY]
 .br
-.B holypkg apk fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE]
+.B holypkg apk fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE] [--public-key FILE]
 .br
 .B holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--public-key PUBLIC_KEY.pem] [--ca-file FILE]
 .br
@@ -283,8 +283,11 @@ HTTPS, checks its recorded size and Q1 SHA-1 compressed-control checksum, then
 compares .PKGINFO identity and optional datahash with the compressed data
 member. --sha256 adds a full artifact digest supplied by the caller. The output
 contains the original APK and a selection receipt with index/catalog hashes.
-Package publisher signatures are not checked by apk fetch; its receipt records
-the separate index-verification status and marks the package signature unverified.
+For a bound source with a configured RSA key, apk fetch requires --public-key,
+checks its fingerprint against the registered key, and verifies the APK
+signature over the compressed control member. The receipt records index and
+package verification separately. Direct fetch without a bound keyed source
+records the package signature as unverified.
 apk sync reads an active type apk source and named repo from the registered
 source definitions. It fetches APKINDEX.tar.gz over HTTPS. A configured RSA
 public-key freezes the key fingerprint in the source registry. Sync requires
@@ -314,11 +317,11 @@ not install files. The APK binding is separate from the native catalog and
 general dependency resolver. make check-apk-index
 covers signed and unsigned fixtures, duplicate entries, truncated gzip,
 traversal and catalog tampering.
-make check-apk-fetch covers HTTPS, full digest, size and control checksum.
-The verified index still identifies packages through APK v2 Q1 SHA-1 checksums;
-the separate package signature is not part of this check. For a package selected
-from a verified index, fetch requires .PKGINFO datahash and checks it against
-the compressed data member.
+make check-apk-fetch covers HTTPS, full digest, size, control checksum and
+package signatures. The verified index identifies packages through APK v2 Q1
+SHA-1 checksums. For a package selected from a verified index, fetch requires
+.PKGINFO datahash and checks it against the compressed data member. A bound
+keyed source also requires the package signature and matching public-key filename.
 .PP
 The importer reads .PKGINFO identities, full epoch/version/release strings,
 package relations and original field values. It preserves .PKGINFO, .BUILDINFO,

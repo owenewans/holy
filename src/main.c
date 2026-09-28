@@ -754,6 +754,7 @@ int main(int argc, char **argv)
         if (argc >= 10 && !(argc & 1) && !strcmp(argv[2], "fetch")) {
             const char *catalog = NULL, *output = NULL, *sha256 = NULL;
             const char *ca_file = NULL, *root = NULL, *source_alias = NULL, *repo = NULL;
+            const char *public_key = NULL;
             char *bound = NULL;
             int i, result;
             for (i = 6; i < argc; i += 2) {
@@ -762,6 +763,7 @@ int main(int argc, char **argv)
                 else if (!strcmp(argv[i], "--repo") && !repo) repo = argv[i + 1];
                 else if (!strcmp(argv[i], "--sha256") && !sha256) sha256 = argv[i + 1];
                 else if (!strcmp(argv[i], "--ca-file") && !ca_file) ca_file = argv[i + 1];
+                else if (!strcmp(argv[i], "--public-key") && !public_key) public_key = argv[i + 1];
                 else if (!strcmp(argv[i], "--root") && !root) root = argv[i + 1];
                 else if (!strcmp(argv[i], "--source") && !source_alias) source_alias = argv[i + 1];
                 else break;
@@ -775,12 +777,12 @@ int main(int argc, char **argv)
                     catalog = bound;
                 }
                 result = holy_apk_fetch(catalog, argv[3], argv[4], argv[5], output,
-                                        sha256, ca_file, root, source_alias);
+                                        sha256, ca_file, root, source_alias, public_key);
                 free(bound);
                 return result;
             }
         }
-        fputs("usage: holypkg apk verify-index FILE --public-key FILE | apk sync SOURCE REPO --root DIRECTORY --output NEW_DIRECTORY [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] [--public-key FILE] | apk bind SOURCE REPO CATALOG --root DIRECTORY [--accept-unsigned HASH] [--public-key FILE] | apk index FILE --source NAME --base URL --output NEW_DIRECTORY | apk search|info NAME [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] | apk fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE]\n", stderr);
+        fputs("usage: holypkg apk verify-index FILE --public-key FILE | apk sync SOURCE REPO --root DIRECTORY --output NEW_DIRECTORY [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] [--public-key FILE] | apk bind SOURCE REPO CATALOG --root DIRECTORY [--accept-unsigned HASH] [--public-key FILE] | apk index FILE --source NAME --base URL --output NEW_DIRECTORY | apk search|info NAME [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] | apk fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE] [--public-key FILE]\n", stderr);
         return 2;
     }
     if (argc > 1 && !strcmp(argv[1], "search") && argc > 2)

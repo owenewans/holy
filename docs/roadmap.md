@@ -132,8 +132,11 @@
   fingerprint. A `trust require` Alpine v3.22 main index with 5647 packages
   passed using the key extracted from `alpine-keys` 2.5-r0. That extraction
   tests signature mechanics; it does not establish the key's out-of-band
-  authenticity. Package signatures,
-  feeding foreign candidates into the general resolver and full relation
+  authenticity. Keyed fetch now verifies the APK package signature over the
+  compressed control member and records its result separately from the index.
+  A signed Alpine scdoc 1.11.3-r0 fetch passed; local HTTPS fixtures reject
+  missing keys, wrong keys and altered package signatures. Feeding foreign
+  candidates into the general resolver and full relation
   semantics remain open.
 
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.

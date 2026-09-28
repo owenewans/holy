@@ -1074,7 +1074,8 @@ done:
 
 int holy_apk_fetch(const char *catalog, const char *name, const char *version,
                    const char *arch, const char *output, const char *sha256,
-                   const char *ca_file, const char *root, const char *source_alias)
+                   const char *ca_file, const char *root, const char *source_alias,
+                   const char *public_key)
 {
     struct apk_selection selection = {0};
     FILE *parts[3] = {0}, *receipt = NULL;
@@ -1083,11 +1084,13 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
     char *url = NULL, *filename = NULL, *downloaded = NULL;
     char *registered_base = NULL, *registered_trust = NULL;
     char *bound_catalog = NULL, *canonical_catalog = NULL;
-    char registered_id[65], registered_key[65];
+    char *key_snapshot = NULL;
+    char registered_id[65] = {0}, registered_key[65] = {0}, checked_key[65];
+    char package_verification[16] = "unverified";
     int dir = -1, temp = 0, count, result = 1, i;
     size_t length;
     if (!catalog || !name || !version || !arch || !output ||
-        (source_alias && !root) ||
+        (source_alias && !root) || (public_key && !root) ||
         !package_name(name) || !package_name(version) || !package_name(arch) ||
         (sha256 && !hex_digest(sha256))) return 2;
     result = select_package(catalog, name, version, arch, &selection);
@@ -1106,6 +1109,11 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
             (!registered_key[0] && !strcmp(registered_trust, "require"))) {
             result = 6; goto done;
         }
+        if (registered_key[0]) {
+            if (!public_key || !(key_snapshot = holy_stage_local(public_key, "holy-apk-key")) ||
+                !holy_apk_key_fingerprint(key_snapshot, checked_key) ||
+                strcmp(checked_key, registered_key)) { result = 6; goto done; }
+        } else if (public_key) { result = 2; goto done; }
         result = holy_apk_catalog_path(root,
                                        source_alias ? source_alias : selection.source,
                                        selection.repo, &bound_catalog);
@@ -1136,6 +1144,15 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
         !control_identity(parts[count - 2], name, version, arch, digests[count - 1],
                           strcmp(selection.verification, "unverified") != 0)) {
         result = 4; goto done;
+    }
+    if (registered_key[0] && root) {
+        const char *keyname = strrchr(public_key, '/');
+        keyname = keyname ? keyname + 1 : public_key;
+        if (count != 3 || !verify_signature_member(parts[0], parts[1],
+                                                     key_snapshot, keyname,
+                                                     package_verification)) {
+            result = 4; goto done;
+        }
     }
     if (root) {
         char refreshed_id[65];
@@ -1187,8 +1204,11 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
     fprintf(receipt, "\nindex-sha256 %s\ncatalog-sha256 %s\nindex-verification %s\n",
             selection.index_hash, selection.catalog_hash, selection.verification);
     if (selection.key_hash[0]) fprintf(receipt, "index-key-sha256 %s\n", selection.key_hash);
-    fprintf(receipt, "original-sha256 %s\ncontrol-checksum %s\nverification unverified\nstate complete\n",
-            digest, selection.checksum);
+    fprintf(receipt, "original-sha256 %s\ncontrol-checksum %s\nverification %s\n",
+            digest, selection.checksum, package_verification);
+    if (registered_key[0] && root)
+        fprintf(receipt, "package-key-sha256 %s\n", registered_key);
+    fputs("state complete\n", receipt);
     {
         int failed = ferror(receipt);
         if (fflush(receipt) || fsync(fileno(receipt))) failed = 1;
@@ -1207,6 +1227,7 @@ done:
     free(downloaded); free(url); free(filename);
     free(registered_base); free(registered_trust);
     free(bound_catalog); free(canonical_catalog);
+    if (key_snapshot) { unlink(key_snapshot); free(key_snapshot); }
     free_selection(&selection);
     return result;
 }
