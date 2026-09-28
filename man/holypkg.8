@@ -4,7 +4,7 @@ holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
 .B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--associate SHA256=ALIAS ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
-.B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
+.B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--candidate-local SOURCE=FILE.holy ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
 .B holypkg up SOURCE:PACKAGE [--prepare] [--output NEW_FILE] [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
@@ -1116,6 +1116,15 @@ requires a native index with complete dependency, file and SONAME records;
 an unavailable index returns status 6 and a complete index without a match
 returns status 4. Multiple matching packages remain
 candidates for the reviewed provider choice.
+.B --candidate-local SOURCE=FILE.holy
+adds a verified local artifact to the same resolver and set plan as the native
+root package. SOURCE must be an active registered alias; the option records
+the user's explicit source association and does not infer trust from the
+artifact metadata. This accepts outputs from foreign import, including APK.
+The manager stages the artifact by hash, binds its source-id in the plan, and
+rechecks the source and local file before apply. Dependencies and ownership
+are checked by the usual set engine. Further foreign dependencies need
+additional candidate inputs until a source adapter can discover them.
 When a set has an unsatisfied exact package, file, command or SONAME edge,
 add probes active bound native catalogs for that edge before staging foreign
 artifacts. One matching source with complete coverage supplies its providers

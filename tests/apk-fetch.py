@@ -324,6 +324,50 @@ with tempfile.TemporaryDirectory() as scratch:
         run("check", "signed:fixture", "--root", signed_root)
         run("rm", "signed:fixture", "--root", signed_root, "--yes")
         assert not (signed_root / "usr/share/fixture").exists()
+        native_tree = tmp / "native-tree"
+        native_meta = native_tree / "HOLY"
+        native_data = native_tree / "DATA/usr/share"
+        native_meta.mkdir(parents=True)
+        native_data.mkdir(parents=True)
+        (native_meta / "meta").write_text(
+            "format holy-package-1\nname consumer\nversion 1\nrelease 1\n"
+            "os linux\narch noarch\nlibc nolibc\n")
+        (native_meta / "deps").write_text(
+            "require dep-1 consumer package fixture any any any - fixture metadata\n")
+        for field in ("provides", "hooks", "origin", "transform"):
+            (native_meta / field).write_text("")
+        (native_data / "consumer").write_bytes(b"consumer\n")
+        native_files = tmp / "native-files"
+        run("manifest", "generate", native_tree, "--output", native_files)
+        native_files.rename(native_meta / "files")
+        native_repo = tmp / "native-repo"
+        native_repo.mkdir()
+        run("pack", native_tree, "--output", native_repo / "consumer.holy")
+        run("repo", "index", native_repo)
+        run("repo", "seal", native_repo)
+        signed_conf.write_text(signed_conf.read_text() +
+                               "[source native]\ntype holy-http\n"
+                               "url \"https://native.example/\"\n")
+        native_plan = run("source", "plan", "--config", signed_conf,
+                          "--root", signed_root).stdout
+        (tmp / "native.plan").write_text(native_plan)
+        run("source", "apply", tmp / "native.plan", "--sha256",
+            hashlib.sha256(native_plan.encode()).hexdigest(), "--root", signed_root)
+        native_id = next(line.split()[1] for line in
+                         run("source", "list", "--root", signed_root).stdout.splitlines()
+                         if '"native" active' in line)
+        index_hash = (native_repo / "current").read_text().split()[1]
+        (native_repo / "mirror-origin").write_text(
+            "format holy-mirror-1\nurl \"https://native.example/\"\n"
+            f"index-sha256 {index_hash}\nverification digest-pinned-unsigned\n"
+            f"source-id {native_id}\n")
+        run("source", "catalog", "bind", "native", native_repo,
+            "--root", signed_root)
+        run("add", "native:consumer", "--candidate-local",
+            "signed=" + str(signed_native), "--root", signed_root, "--yes")
+        assert (signed_root / "usr/share/consumer").read_bytes() == b"consumer\n"
+        assert (signed_root / "usr/share/fixture").read_bytes() == b"payload\n"
+        run("check", "--root", signed_root)
         run("apk", "fetch", "fixture", "1.2-r0", "x86_64", "--source",
             "signed", "--repo", "main", "--root", signed_root, "--output",
             tmp / "missing-package-key", "--ca-file", tmp / "cert.pem", status=6)

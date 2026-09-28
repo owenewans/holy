@@ -318,6 +318,11 @@ struct source_candidate {
     int provider;
 };
 
+struct source_local_candidate {
+    char *alias, *path;
+    char source_id[65], digest[65];
+};
+
 struct source_answer {
     char *consumer, *requirement, *alias;
 };
@@ -446,11 +451,13 @@ static int add_source(int argc, char **argv)
     const char **accepted_arch = NULL, **accepted_privileged = NULL;
     const char **digests = NULL, **bindings = NULL, **skipped = NULL;
     struct source_candidate *extras = NULL;
+    struct source_local_candidate *locals = NULL;
     struct source_answer *answers = NULL;
     struct holy_repo_set staged = {0}, next = {0};
     char source_id[65], next_id[65], plan[65], answer[16], *alias = NULL;
     char *bound_catalog = NULL, *next_catalog = NULL;
-    size_t arch_count = 0, privileged_count = 0, extra_count = 0, answer_count = 0;
+    size_t arch_count = 0, privileged_count = 0, extra_count = 0, local_count = 0;
+    size_t answer_count = 0;
     size_t digest_count = 0, binding_count = 0, skip_count = 0, i, j, k;
     int unavailable_seen = 0;
     int yes = 0, noninteractive = 0, root_seen = 0, result = 2;
@@ -461,10 +468,11 @@ static int add_source(int argc, char **argv)
     accepted_privileged = calloc((size_t)argc, sizeof *accepted_privileged);
     if (argc > 10000) goto done;
     extras = calloc(10000, sizeof *extras);
+    locals = calloc((size_t)argc, sizeof *locals);
     digests = calloc(10000, sizeof *digests);
     bindings = calloc(10000, sizeof *bindings);
     skipped = calloc(10000, sizeof *skipped);
-    if (!alias || !accepted_arch || !accepted_privileged || !extras ||
+    if (!alias || !accepted_arch || !accepted_privileged || !extras || !locals ||
         !digests || !bindings || !skipped) { result = 1; goto done; }
     memcpy(alias, argv[2], (size_t)(separator - argv[2]));
     alias[separator - argv[2]] = 0;
@@ -481,7 +489,9 @@ static int add_source(int argc, char **argv)
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) answers_path = argv[++i];
         else if (!strcmp(argv[i], "--candidate") && i + 1 < (size_t)argc) {
             const char *ref = argv[++i], *colon = strchr(ref, ':');
-            struct source_candidate *item = &extras[extra_count];
+            struct source_candidate *item;
+            if (extra_count == 10000) goto done;
+            item = &extras[extra_count];
             if (!colon || colon == ref || !colon[1] || strchr(colon + 1, ':')) goto done;
             item->alias = malloc((size_t)(colon - ref) + 1);
             if (item->alias) {
@@ -496,7 +506,9 @@ static int add_source(int argc, char **argv)
         }
         else if (!strcmp(argv[i], "--candidate-provider") && i + 1 < (size_t)argc) {
             const char *ref = argv[++i], *first = strchr(ref, ':'), *second;
-            struct source_candidate *item = &extras[extra_count];
+            struct source_candidate *item;
+            if (extra_count == 10000) goto done;
+            item = &extras[extra_count];
             if (!first || first == ref || !(second = strchr(first + 1, ':')) ||
                 second == first + 1 || !second[1]) goto done;
             item->alias = malloc((size_t)(first - ref) + 1);
@@ -513,6 +525,20 @@ static int add_source(int argc, char **argv)
                  strcmp(item->kind, "command") && strcmp(item->kind, "soname"))) goto done;
             item->provider = 1;
             ++extra_count;
+        }
+        else if (!strcmp(argv[i], "--candidate-local") && i + 1 < (size_t)argc) {
+            const char *spec = argv[++i], *equal = strchr(spec, '=');
+            struct source_local_candidate *item = &locals[local_count];
+            if (!equal || equal == spec || !equal[1]) goto done;
+            item->alias = malloc((size_t)(equal - spec) + 1);
+            if (item->alias) {
+                memcpy(item->alias, spec, (size_t)(equal - spec));
+                item->alias[equal - spec] = 0;
+            }
+            item->path = copy_text(equal + 1);
+            ++local_count;
+            if (!item->alias || !item->path) { result = 1; goto done; }
+            if (!strcmp(item->alias, "local")) goto done;
         }
         else if (!strcmp(argv[i], "--accept-arch") && i + 1 < (size_t)argc &&
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2))
@@ -539,6 +565,26 @@ static int add_source(int argc, char **argv)
     if (result) goto done;
     if (staged.count > 10000) { result = 2; goto done; }
     for (i = 0; i < staged.count; ++i) digests[digest_count++] = staged.digests[i];
+    for (i = 0; i < local_count; ++i) {
+        struct source_local_candidate *item = &locals[i];
+        char *binding;
+        if (digest_count == 10000) { result = 2; goto done; }
+        result = holy_source_active_id(root, item->alias, item->source_id);
+        if (result) goto done;
+        if (!holy_cache_stage_local_digest(item->path, root, item->digest)) {
+            result = 6; goto done;
+        }
+        for (j = 0; j < digest_count; ++j)
+            if (!strcmp(digests[j], item->digest)) {
+                fprintf(stderr, "holypkg: duplicate local candidate artifact %s\n", item->digest);
+                result = 3; goto done;
+            }
+        binding = malloc(130);
+        if (!binding) { result = 1; goto done; }
+        snprintf(binding, 130, "%s=%s", item->digest, item->source_id);
+        bindings[binding_count++] = binding;
+        digests[digest_count++] = item->digest;
+    }
     for (i = 0; i < extra_count; ++i) {
         struct source_candidate *item = &extras[i];
         result = holy_source_catalog_path_fast(root, item->alias, &item->catalog);
@@ -804,6 +850,15 @@ next_alias:
                 result = 3; goto done;
             }
     }
+    for (i = 0; i < local_count; ++i) {
+        char refreshed_id[65], refreshed_hash[65];
+        result = holy_source_active_id(root, locals[i].alias, refreshed_id);
+        if (result || strcmp(refreshed_id, locals[i].source_id) ||
+            !holy_cache_stage_local_digest(locals[i].path, root, refreshed_hash) ||
+            strcmp(refreshed_hash, locals[i].digest)) {
+            result = 3; goto done;
+        }
+    }
     result = holy_state_set_source_bindings(digests, digest_count,
                                             source_id, staged.index, bindings,
                                             binding_count, choice, plan, root,
@@ -811,7 +866,7 @@ next_alias:
                                             accepted_privileged, privileged_count, NULL);
 done:
     if (result == 2)
-        fputs("usage: holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
+        fputs("usage: holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--candidate-local SOURCE=FILE.holy ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
     for (i = 0; i < binding_count; ++i) free((void *)bindings[i]);
     for (i = 0; i < skip_count; ++i) free((void *)skipped[i]);
     for (i = 0; extras && i <= extra_count && i < 10000; ++i) {
@@ -820,6 +875,10 @@ done:
         holy_repo_set_free(&extras[i].staged);
         holy_repo_set_free(&extras[i].next);
     }
+    for (i = 0; i < local_count; ++i) {
+        free(locals[i].alias); free(locals[i].path);
+    }
+    free(locals);
     free(extras); free(digests); free(bindings); free(skipped);
     holy_repo_set_free(&staged); holy_repo_set_free(&next);
     free(alias); free(bound_catalog); free(next_catalog);

@@ -33,6 +33,8 @@ build foreign-root foreign-dep
 build reuse-root foreign-dep
 build foreign-dep ''
 build foreign-unused ''
+build local-root local-dep
+build local-dep ''
 build provider-root external-package
 build external-package ''
 build external-file-root /usr/share/external-file file
@@ -49,6 +51,8 @@ build or-second ''
 mkdir -p "$tmp/other-repo"
 mv "$tmp/repo/foreign-dep.holy" "$tmp/other-repo/foreign-dep.holy"
 mv "$tmp/repo/foreign-unused.holy" "$tmp/other-repo/foreign-unused.holy"
+mkdir -p "$tmp/local-artifacts"
+mv "$tmp/repo/local-dep.holy" "$tmp/local-artifacts/local-dep.holy"
 mv "$tmp/repo/external-package.holy" "$tmp/other-repo/external-package.holy"
 mv "$tmp/repo/external-file.holy" "$tmp/other-repo/external-file.holy"
 mv "$tmp/repo/auto-child.holy" "$tmp/other-repo/auto-child.holy"
@@ -172,6 +176,28 @@ test -f "$tmp/root/usr/share/foreign-root"
 test -f "$tmp/root/usr/share/foreign-dep"
 test ! -e "$tmp/root/usr/share/foreign-unused"
 grep -q "$other_id" "$tmp/root/var/lib/holypkg/installed/$foreign_hash/source"
+if "$bin" add fixture:local-root \
+    --candidate-local "other=$tmp/local-artifacts/local-dep.holy" \
+    --root "$tmp/root" > "$tmp/out" 2> "$tmp/err" < /dev/null; then
+    exit 1
+else
+    test "$?" -eq 3
+fi
+test ! -e "$tmp/root/usr/share/local-root"
+if "$bin" add fixture:local-root \
+    --candidate-local "absent=$tmp/local-artifacts/local-dep.holy" \
+    --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"; then
+    exit 1
+else
+    test "$?" -eq 6
+fi
+"$bin" add fixture:local-root \
+    --candidate-local "other=$tmp/local-artifacts/local-dep.holy" \
+    --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"
+test -f "$tmp/root/usr/share/local-root"
+test -f "$tmp/root/usr/share/local-dep"
+local_hash=$(sha256sum "$tmp/local-artifacts/local-dep.holy" | cut -d ' ' -f 1)
+grep -q "$other_id" "$tmp/root/var/lib/holypkg/installed/$local_hash/source"
 "$bin" db check --all --root "$tmp/root" > "$tmp/out"
 mkdir -p "$tmp/third-repo"
 cp "$tmp/other-repo/auto-child.holy" "$tmp/third-repo/auto-child.holy"

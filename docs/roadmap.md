@@ -170,6 +170,10 @@
   `apk fetch-provider` now chooses a unique candidate by SONAME and architecture,
   verifies its payload, and returns decision-required when the index lists
   multiple candidates. The general resolver does not invoke this path yet.
+  A native `add SOURCE:PACKAGE` can take `--candidate-local ALIAS=FILE.holy`
+  for an explicitly associated imported output. The shared set resolver and
+  installed graph check it alongside native packages; automatic foreign
+  candidate discovery remains open.
   Feeding foreign candidates into the general resolver and full relation
   semantics remain open.
 
