@@ -48,6 +48,7 @@ struct claim {
 
 struct indexed_requirement { char *fields[10]; };
 struct soname_fact { char *name, *arch, *libc, *path; };
+struct version_fact { char *path, *name; };
 
 struct object {
     char *filename;
@@ -59,6 +60,8 @@ struct object {
     size_t requirement_count;
     struct soname_fact *sonames;
     size_t soname_count;
+    struct version_fact *versions;
+    size_t version_count;
     char **files;
     size_t file_count;
 };
@@ -250,6 +253,39 @@ static int soname_order(const void *left, const void *right)
     return cmp ? cmp : strcmp(a->name, b->name);
 }
 
+static void free_versions(struct object *object)
+{
+    size_t i;
+    for (i = 0; i < object->version_count; ++i) {
+        free(object->versions[i].path);
+        free(object->versions[i].name);
+    }
+    free(object->versions);
+}
+
+static int version_order(const void *left, const void *right)
+{
+    const struct version_fact *a = left, *b = right;
+    int order = strcmp(a->path, b->path);
+    return order ? order : strcmp(a->name, b->name);
+}
+
+static int add_version(struct object *object, const char *path, const char *name)
+{
+    struct version_fact fact = {0}, *next;
+    if (object->version_count >= 100000) return 0;
+    fact.path = strdup(path); fact.name = strdup(name);
+    if (!fact.path || !fact.name) goto fail;
+    next = realloc(object->versions, (object->version_count + 1) * sizeof *next);
+    if (!next) goto fail;
+    object->versions = next;
+    object->versions[object->version_count++] = fact;
+    return 1;
+fail:
+    free(fact.path); free(fact.name);
+    return 0;
+}
+
 static int collect_sonames(const char *snapshot, struct object *object)
 {
     struct holy_scan_result scan = {0};
@@ -258,19 +294,30 @@ static int collect_sonames(const char *snapshot, struct object *object)
     for (i = 0; ok && i < scan.count; ++i) {
         const struct holy_scanned_file *file = &scan.files[i];
         if (file->elf.type == ET_DYN && !(file->elf.flags1 & DF_1_PIE) &&
-            file->elf.soname)
+            file->elf.soname) {
+            size_t j;
             ok = add_soname(object, file->elf.soname,
                             holy_elf_machine(&file->elf), file->runtime,
                             file->path);
+            for (j = 0; ok && j < file->elf.defined_version_count; ++j)
+                ok = add_version(object, file->path,
+                                 file->elf.defined_versions[j].name);
+        }
     }
     holy_scan_free(&scan);
     if (ok && object->soname_count)
         qsort(object->sonames, object->soname_count,
               sizeof *object->sonames, soname_order);
+    if (ok && object->version_count) {
+        qsort(object->versions, object->version_count,
+              sizeof *object->versions, version_order);
+        for (i = 1; i < object->version_count; ++i)
+            if (!version_order(&object->versions[i - 1], &object->versions[i])) return 0;
+    }
     return ok;
 }
 
-static int compare_sonames(const char *snapshot, struct object *object)
+static int compare_sonames(const char *snapshot, struct object *object, int versions)
 {
     struct object actual = {0};
     size_t i;
@@ -281,7 +328,12 @@ static int compare_sonames(const char *snapshot, struct object *object)
         ok = !strcmp(a->name, b->name) && !strcmp(a->arch, b->arch) &&
              !strcmp(a->libc, b->libc) && !strcmp(a->path, b->path);
     }
+    if (versions && actual.version_count != object->version_count) ok = 0;
+    for (i = 0; ok && versions && i < actual.version_count; ++i)
+        ok = !strcmp(actual.versions[i].path, object->versions[i].path) &&
+             !strcmp(actual.versions[i].name, object->versions[i].name);
     free_sonames(&actual);
+    free_versions(&actual);
     return ok;
 }
 
@@ -381,6 +433,14 @@ static int soname_record(FILE *fp, const struct object *object,
     for (i = 0; i < 4; ++i)
         if (fputc(' ', fp) == EOF || !quote(fp, values[i])) return 0;
     return fputc('\n', fp) != EOF;
+}
+
+static int version_record(FILE *fp, const struct object *object,
+                          const struct version_fact *fact)
+{
+    return fprintf(fp, "elf-version %s ", object->identity.digest) >= 0 &&
+           quote(fp, fact->path) && fputc(' ', fp) != EOF &&
+           quote(fp, fact->name) && fputc('\n', fp) != EOF;
 }
 
 static int file_record(FILE *fp, const struct object *object, const char *path)
@@ -512,7 +572,7 @@ int holy_repo_index(const char *directory)
     stream = fdopen(temp, "w");
     if (!stream) goto done;
     temp = -1;
-    if (fputs("format holy-index-prototype-5\ncoverage files complete\ncoverage dependencies complete\ncoverage elf-sonames complete\n", stream) == EOF) goto done;
+    if (fputs("format holy-index-prototype-6\ncoverage files complete\ncoverage dependencies complete\ncoverage elf-sonames complete\ncoverage elf-versions complete\n", stream) == EOF) goto done;
     for (i = 0; i < count; ++i) {
         if (!record(stream, &objects[i])) goto done;
         for (j = 0; j < objects[i].claim_count; ++j)
@@ -521,6 +581,8 @@ int holy_repo_index(const char *directory)
             if (!requirement_record(stream, &objects[i], &objects[i].requirements[j])) goto done;
         for (j = 0; j < objects[i].soname_count; ++j)
             if (!soname_record(stream, &objects[i], &objects[i].sonames[j])) goto done;
+        for (j = 0; j < objects[i].version_count; ++j)
+            if (!version_record(stream, &objects[i], &objects[i].versions[j])) goto done;
         for (j = 0; j < objects[i].file_count; ++j)
             if (!file_record(stream, &objects[i], objects[i].files[j])) goto done;
     }
@@ -544,6 +606,7 @@ done:
         free_claims(&objects[i]);
         free_requirements(&objects[i]);
         free_sonames(&objects[i]);
+        free_versions(&objects[i]);
         free_files(&objects[i]);
     }
     free(objects);
@@ -649,6 +712,23 @@ static int parse_soname(char **v, size_t n, struct object *object)
         soname_order(&object->sonames[object->soname_count - 1], &current) >= 0)
         return 0;
     return add_soname(object, v[2], v[3], v[4], v[5]);
+}
+
+static int parse_version(char **v, size_t n, struct object *object)
+{
+    struct version_fact current;
+    size_t i;
+    if (n != 4 || strcmp(v[0], "elf-version") ||
+        strcmp(v[1], object->identity.digest) ||
+        !safe_target_path(v[2]) || !v[3][0]) return 0;
+    for (i = 0; i < object->soname_count; ++i)
+        if (!strcmp(object->sonames[i].path, v[2])) break;
+    if (i == object->soname_count) return 0;
+    current.path = v[2]; current.name = v[3];
+    if (object->version_count &&
+        version_order(&object->versions[object->version_count - 1], &current) >= 0)
+        return 0;
+    return add_version(object, v[2], v[3]);
 }
 
 static int indexed_file(const struct object *object, const char *path)
@@ -840,9 +920,47 @@ static int closure_provider(struct closure *closure, const char *kind,
     return 1;
 }
 
+static int closure_soname(const struct object *objects, struct closure *closure,
+                          const struct holy_scanned_file *consumer,
+                          const char *needed)
+{
+    size_t low = 0, high = closure->provider_count, i, j, k;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2;
+        const struct provider_key *key = &closure->providers[middle];
+        int order = strcmp(key->kind, "soname");
+        if (!order) order = strcmp(key->name, needed);
+        if (order < 0) low = middle + 1;
+        else high = middle;
+    }
+    for (i = low; i < closure->provider_count; ++i) {
+        const struct provider_key *key = &closure->providers[i];
+        const struct object *object = &objects[key->index];
+        if (strcmp(key->kind, "soname") || strcmp(key->name, needed)) break;
+        for (j = 0; j < object->soname_count; ++j) {
+            const struct soname_fact *fact = &object->sonames[j];
+            int compatible = 1;
+            if (strcmp(fact->name, needed) ||
+                strcmp(fact->arch, holy_elf_machine(&consumer->elf)) ||
+                strcmp(fact->libc, consumer->runtime)) continue;
+            for (k = 0; k < consumer->elf.version_count; ++k) {
+                const struct holy_elf_version *want = &consumer->elf.versions[k];
+                size_t n;
+                if (want->weak || strcmp(want->provider, needed)) continue;
+                for (n = 0; n < object->version_count; ++n)
+                    if (!strcmp(object->versions[n].path, fact->path) &&
+                        !strcmp(object->versions[n].name, want->name)) break;
+                if (n == object->version_count) { compatible = 0; break; }
+            }
+            if (compatible) { if (!closure_add(closure, key->index)) return 0; break; }
+        }
+    }
+    return 1;
+}
+
 static int closure_expand(const struct object *objects,
                           struct closure *closure, size_t index,
-                          const char *snapshot)
+                          const char *snapshot, int version_index)
 {
     const struct object *o = &objects[index];
     struct holy_scan_result scan = {0};
@@ -859,7 +977,9 @@ static int closure_expand(const struct object *objects,
         if (elf->interpreter && elf->interpreter[0] == '/')
             ok = closure_provider(closure, "file", elf->interpreter);
         for (j = 0; j < elf->needed_count && ok; ++j)
-            ok = closure_provider(closure,
+            ok = version_index && elf->needed[j][0] != '/' ?
+                 closure_soname(objects, closure, &scan.files[i], elf->needed[j]) :
+                 closure_provider(closure,
                                   elf->needed[j][0] == '/' ? "file" : "soname",
                                   elf->needed[j]);
     }
@@ -919,7 +1039,7 @@ static int list(const char *directory, const char *query,
     size_t capacity = 0, count = 0, i, j, number = 0, cursor;
     ssize_t length;
     int dir = -1, fd = -1, ok = 0, indexed = 0, file_index = 0;
-    int dependency_index = 0, soname_index = 0;
+    int dependency_index = 0, soname_index = 0, version_index = 0;
 
     dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dir < 0 || (lock && flock(dir, LOCK_SH) < 0)) goto done;
@@ -958,15 +1078,20 @@ static int list(const char *directory, const char *query,
                          !strcmp(v[1], "holy-index-prototype-2") ||
                          !strcmp(v[1], "holy-index-prototype-3") ||
                          !strcmp(v[1], "holy-index-prototype-4") ||
-                         !strcmp(v[1], "holy-index-prototype-5"));
+                         !strcmp(v[1], "holy-index-prototype-5") ||
+                         !strcmp(v[1], "holy-index-prototype-6"));
             if (valid) {
                 indexed = strcmp(v[1], "holy-index-prototype-1") != 0;
                 file_index = !strcmp(v[1], "holy-index-prototype-3") ||
                              !strcmp(v[1], "holy-index-prototype-4") ||
-                             !strcmp(v[1], "holy-index-prototype-5");
+                             !strcmp(v[1], "holy-index-prototype-5") ||
+                             !strcmp(v[1], "holy-index-prototype-6");
                 dependency_index = !strcmp(v[1], "holy-index-prototype-4") ||
-                                   !strcmp(v[1], "holy-index-prototype-5");
-                soname_index = !strcmp(v[1], "holy-index-prototype-5");
+                                   !strcmp(v[1], "holy-index-prototype-5") ||
+                                   !strcmp(v[1], "holy-index-prototype-6");
+                soname_index = !strcmp(v[1], "holy-index-prototype-5") ||
+                               !strcmp(v[1], "holy-index-prototype-6");
+                version_index = !strcmp(v[1], "holy-index-prototype-6");
             }
             holy_tokens_free(v, n);
             if (!valid) goto done;
@@ -993,10 +1118,18 @@ static int list(const char *directory, const char *query,
             if (!valid) goto done;
             continue;
         }
+        if (version_index && number == 5) {
+            int valid = n == 3 && !strcmp(v[0], "coverage") &&
+                        !strcmp(v[1], "elf-versions") && !strcmp(v[2], "complete");
+            holy_tokens_free(v, n);
+            if (!valid) goto done;
+            continue;
+        }
         if (indexed && n && !strcmp(v[0], "claim")) {
             int valid = count && !objects[count - 1].file_count &&
                         !objects[count - 1].requirement_count &&
                         !objects[count - 1].soname_count &&
+                        !objects[count - 1].version_count &&
                         parse_claim(v, n, &objects[count - 1]);
             holy_tokens_free(v, n);
             if (!valid) goto done;
@@ -1005,6 +1138,7 @@ static int list(const char *directory, const char *query,
         if (dependency_index && n && !strcmp(v[0], "require")) {
             int valid = count && !objects[count - 1].file_count &&
                         !objects[count - 1].soname_count &&
+                        !objects[count - 1].version_count &&
                         parse_requirement(v, n, &objects[count - 1]);
             holy_tokens_free(v, n);
             if (!valid) goto done;
@@ -1012,7 +1146,15 @@ static int list(const char *directory, const char *query,
         }
         if (soname_index && n && !strcmp(v[0], "soname")) {
             int valid = count && !objects[count - 1].file_count &&
+                        !objects[count - 1].version_count &&
                         parse_soname(v, n, &objects[count - 1]);
+            holy_tokens_free(v, n);
+            if (!valid) goto done;
+            continue;
+        }
+        if (version_index && n && !strcmp(v[0], "elf-version")) {
+            int valid = count && !objects[count - 1].file_count &&
+                        parse_version(v, n, &objects[count - 1]);
             holy_tokens_free(v, n);
             if (!valid) goto done;
             continue;
@@ -1044,7 +1186,8 @@ static int list(const char *directory, const char *query,
     }
     if (ferror(index) || !number || (file_index && number < 2) ||
         (dependency_index && number < 3) ||
-        (soname_index && number < 4)) goto done;
+        (soname_index && number < 4) ||
+        (version_index && number < 5)) goto done;
     if (mirror) {
         for (i = 0; i < count; ++i)
             if (!mirror_object(mirror, dir, &objects[i])) goto done;
@@ -1151,7 +1294,7 @@ static int list(const char *directory, const char *query,
                 goto done;
             }
         }
-        if (soname_index && !compare_sonames(snapshot, &objects[i])) {
+        if (soname_index && !compare_sonames(snapshot, &objects[i], version_index)) {
             unlink(snapshot);
             free(snapshot);
             goto done;
@@ -1166,7 +1309,7 @@ static int list(const char *directory, const char *query,
             }
         }
         if (closure.selected &&
-            !closure_expand(objects, &closure, i, snapshot)) {
+            !closure_expand(objects, &closure, i, snapshot, version_index)) {
             unlink(snapshot);
             free(snapshot);
             goto done;
@@ -1362,6 +1505,7 @@ done:
         free_claims(&objects[i]);
         free_requirements(&objects[i]);
         free_sonames(&objects[i]);
+        free_versions(&objects[i]);
         free_files(&objects[i]);
     }
     free(objects);

@@ -56,6 +56,35 @@ if test -n "$arch"; then
     "$bin" manifest generate "$tmp/tree" --output "$tmp/files" > "$tmp/out"
     mv "$tmp/files" "$tmp/tree/HOLY/files"
     "$bin" pack "$tmp/tree" --output "$tmp/repo/script.holy" > "$tmp/out"
+    cat > "$tmp/foo.c" <<'C'
+int foo(void) { return 2; }
+C
+    cat > "$tmp/good.map" <<'MAP'
+GOOD_1 { global: foo; };
+MAP
+    cat > "$tmp/bad.map" <<'MAP'
+BAD_1 { global: foo; };
+MAP
+    printf 'extern int foo(void); int consumer(void) { return foo(); }\n' > "$tmp/consumer.c"
+    "${CC:-cc}" -shared -fPIC -o "$tmp/libgood.so" "$tmp/foo.c" \
+        -Wl,-soname,libchoice.so.1 -Wl,--version-script="$tmp/good.map" \
+        -Wl,--no-as-needed -lc
+    "${CC:-cc}" -shared -fPIC -o "$tmp/libbad.so" "$tmp/foo.c" \
+        -Wl,-soname,libchoice.so.1 -Wl,--version-script="$tmp/bad.map" \
+        -Wl,--no-as-needed -lc
+    "${CC:-cc}" -shared -fPIC -o "$tmp/libconsumer.so" "$tmp/consumer.c" \
+        -L"$tmp" -lgood -Wl,--no-as-needed -lc
+    for name in good bad consumer; do
+        rm -rf "$tmp/tree/DATA"
+        mkdir -p "$tmp/tree/DATA/usr/lib/holy/${arch}-linux-gnu"
+        printf 'format holy-package-1\nname %s\nversion 1\nrelease 1\nos linux\narch %s\nlibc glibc\n' \
+            "$name" "$arch" > "$tmp/tree/HOLY/meta"
+        for field in files deps provides hooks origin transform; do : > "$tmp/tree/HOLY/$field"; done
+        cp "$tmp/lib$name.so" "$tmp/tree/DATA/usr/lib/holy/${arch}-linux-gnu/lib$name.so"
+        "$bin" manifest generate "$tmp/tree" --output "$tmp/files" > "$tmp/out"
+        mv "$tmp/files" "$tmp/tree/HOLY/files"
+        "$bin" pack "$tmp/tree" --output "$tmp/repo/$name.holy" > "$tmp/out"
+    done
 fi
 "$bin" repo index "$tmp/repo" > "$tmp/out"
 "$bin" repo seal "$tmp/repo" > "$tmp/out"
@@ -70,6 +99,19 @@ source_id=$(sed -n 's/^source \([0-9a-f]*\) "fixture" active$/\1/p' "$tmp/out")
 printf 'format holy-mirror-1\nurl "https://fixture.example/holy/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
     "$index" "$source_id" > "$tmp/repo/mirror-origin"
 "$bin" source catalog bind fixture "$tmp/repo" --root "$tmp/root" > "$tmp/out"
+if test -n "$arch"; then
+    grep -q '"GOOD_1"' "$tmp/repo/index"
+    grep -q '"BAD_1"' "$tmp/repo/index"
+    bad=$(sha256sum "$tmp/repo/bad.holy" | cut -d ' ' -f 1)
+    good=$(sha256sum "$tmp/repo/good.holy" | cut -d ' ' -f 1)
+    cp "$tmp/repo/bad.holy" "$tmp/bad.saved"
+    printf 'corrupt\n' > "$tmp/repo/bad.holy"
+    if "$bin" add fixture:consumer --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+    if grep -q 'invalid or stale repository index' "$tmp/err"; then cat "$tmp/err"; exit 1; fi
+    test -f "$tmp/root/var/cache/holypkg/objects/sha256/$good.holy"
+    test ! -e "$tmp/root/var/cache/holypkg/objects/sha256/$bad.holy"
+    cp "$tmp/bad.saved" "$tmp/repo/bad.holy"
+fi
 cp "$tmp/repo/dep.holy" "$tmp/dep.saved"
 printf 'corrupt\n' > "$tmp/repo/dep.holy"
 if "$bin" add fixture:root --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"; then exit 1; fi

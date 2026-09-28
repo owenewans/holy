@@ -6,10 +6,11 @@ trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 mkdir "$tmp/empty"
 "$bin" repo index "$tmp/empty" > "$tmp/out"
 grep -qx 'indexed 0 packages' "$tmp/out"
-grep -qx 'format holy-index-prototype-5' "$tmp/empty/index"
+grep -qx 'format holy-index-prototype-6' "$tmp/empty/index"
 grep -qx 'coverage files complete' "$tmp/empty/index"
 grep -qx 'coverage dependencies complete' "$tmp/empty/index"
 grep -qx 'coverage elf-sonames complete' "$tmp/empty/index"
+grep -qx 'coverage elf-versions complete' "$tmp/empty/index"
 if "$bin" repo list "$tmp/empty" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 "$bin" repo seal "$tmp/empty" > "$tmp/out"
@@ -35,10 +36,11 @@ grep -qx 'indexed 1 packages' "$tmp/out"
 hash=$(sha256sum "$tmp/repo/fixture.holy")
 hash=${hash%% *}
 size=$(stat -c %s "$tmp/repo/fixture.holy")
-grep -qx 'format holy-index-prototype-5' "$tmp/repo/index"
+grep -qx 'format holy-index-prototype-6' "$tmp/repo/index"
 grep -qx 'coverage files complete' "$tmp/repo/index"
 grep -qx 'coverage dependencies complete' "$tmp/repo/index"
 grep -qx 'coverage elf-sonames complete' "$tmp/repo/index"
+grep -qx 'coverage elf-versions complete' "$tmp/repo/index"
 grep -qx "package \"fixture\" \"1.0\" \"1\" \"linux\" \"noarch\" \"nolibc\" \"fixture.holy\" $hash $size" "$tmp/repo/index"
 if "$bin" repo list "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
@@ -63,9 +65,16 @@ grep -qx 'listed 0 candidates' "$tmp/out"
 grep -Fqx '{"schema":"holy-repo-candidates-1","type":"summary","count":0}' "$tmp/out"
 "$bin" repo requirements "$tmp/repo" fixture > "$tmp/out"
 grep -qx 'requirements 0' "$tmp/out"
+mkdir "$tmp/v5"
+cp "$tmp/repo/fixture.holy" "$tmp/v5/fixture.holy"
+sed '/^coverage elf-versions /d;s/holy-index-prototype-6/holy-index-prototype-5/' \
+    "$tmp/repo/index" > "$tmp/v5/index"
+"$bin" repo seal "$tmp/v5" > "$tmp/out"
+"$bin" repo list "$tmp/v5" > "$tmp/out"
+grep -qx 'listed 1 packages' "$tmp/out"
 mkdir "$tmp/legacy"
 cp "$tmp/repo/fixture.holy" "$tmp/legacy/fixture.holy"
-sed '/^coverage /d;s/holy-index-prototype-5/holy-index-prototype-1/' "$tmp/repo/index" > "$tmp/legacy/index"
+sed '/^coverage /d;s/holy-index-prototype-6/holy-index-prototype-1/' "$tmp/repo/index" > "$tmp/legacy/index"
 legacy_hash=$(sha256sum "$tmp/legacy/index")
 legacy_hash=${legacy_hash%% *}
 cp "$tmp/legacy/index" "$tmp/legacy/index.$legacy_hash"

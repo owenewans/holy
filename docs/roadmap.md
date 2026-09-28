@@ -263,7 +263,7 @@
   only matching archives against the pinned index. A corrupt unrelated archive
   no longer blocks these operations. Older native indexes still require a full
   candidate scan during add.
-- [x] Select the add candidate pool from a v5 native index by walking declared
+- [x] Select the add candidate pool from v5/v6 native indexes by walking declared
   package/file/command/SONAME requirements and scanned interpreter, DT_NEEDED,
   shebang and symlink paths. Verify and stage only reachable archives; a corrupt
   unrelated object no longer blocks add, while a corrupt selected provider does.
@@ -340,8 +340,10 @@
   open.
 - [x] Add scanned DT_SONAME facts to index generation 5. Exact provider lookup
   uses actual ET_DYN payload facts, then verifies selected archives; a forged
-  HOLY/provides SONAME claim cannot become a candidate. Full symbol-version
-  indexing and on-demand dependency closure remain open.
+  HOLY/provides SONAME claim cannot become a candidate. Generation 6 adds
+  per-library defined version names and checks strong ELF version needs before
+  staging SONAME candidates. Selected archives are still rescanned for symbol
+  exports. Indexing individual symbol exports and cross-source lookup remain open.
 - [x] Bind a verified synced mirror and index digest to a registered source-id
   under the target database lock. Resolve add, fetch, search and info without
   repeating --catalog; reject corrupt bindings and changed mirrors. Keep the
