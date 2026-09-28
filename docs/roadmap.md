@@ -161,8 +161,8 @@
   records algorithm and key fingerprint in each output origin. `apk fetch
   --import` now converts the verified download into `.holy`, rechecks the
   package hash and signature, and records the selected index hash and URL in
-  output origin. An optional exact SONAME requirement checks converted ELF
-  claims before the fetch receipt becomes complete. The signed HTTPS fixture
+  output origin. Optional exact SONAME and file requirements check converted
+  payload claims before the fetch receipt becomes complete. The signed HTTPS fixture
   installs, checks and removes an associated output in a disposable root.
   Feeding foreign candidates into the general resolver and full relation
   semantics remain open.

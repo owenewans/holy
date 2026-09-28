@@ -50,7 +50,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apk info PACKAGE [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY]
 .br
-.B holypkg apk fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE] [--public-key FILE] [--import] [--require-soname SONAME]
+.B holypkg apk fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE] [--public-key FILE] [--import] [--require-soname SONAME] [--require-file /PATH]
 .br
 .B holypkg xbps index REPODATA --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--public-key FILE]
 .br
@@ -529,7 +529,9 @@ are verified again during import. The output origin records the selected index
 hash and source URL; its verification field describes the package signature,
 not the index signature. --require-soname requires --import and checks exact
 SONAME claims derived from the imported ELF payload. An index claim alone
-cannot satisfy it. Import failure leaves the original and an incomplete output
+cannot satisfy it. --require-file checks one exact nondirectory payload path
+from the converted manifest. Both requirements need --import and can be
+combined. Import failure leaves the original and an incomplete output
 without a complete selection receipt. The APK binding is separate from the native catalog and
 general dependency resolver. make check-apk-index
 covers signed and unsigned fixtures, duplicate entries, truncated gzip,

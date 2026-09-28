@@ -128,6 +128,14 @@ with tempfile.TemporaryDirectory() as scratch:
               extra=("--import", "--require-soname", "libfixture.so.1"))
         assert not (tmp / "false-soname/selection").exists()
         assert list((tmp / "false-soname/converted").glob("*.holy"))
+        fetch("file-present", extra=("--import", "--require-file", "/usr/share/fixture"))
+        assert "file-provider verified-payload\n" in (tmp / "file-present/selection").read_text()
+        fetch("file-absent", status=4,
+              extra=("--import", "--require-file", "/usr/share/missing"))
+        assert not (tmp / "file-absent/selection").exists()
+        fetch("invalid-file", status=2,
+              extra=("--import", "--require-file", "/usr/../fixture"))
+        assert not (tmp / "invalid-file").exists()
         library = tmp / "libfixture.so.1"
         subprocess.run(["cc", "-shared", "-fPIC", "-x", "c", "-",
                         "-Wl,-soname,libfixture.so.1", "-o", str(library)],
@@ -150,7 +158,8 @@ with tempfile.TemporaryDirectory() as scratch:
             "--base", base + "elf/", "--output", elf_catalog)
         run("apk", "fetch", "fixturelib", "1.0-r0", "x86_64", "--catalog",
             elf_catalog, "--output", tmp / "verified-soname", "--ca-file",
-            tmp / "cert.pem", "--import", "--require-soname", "libfixture.so.1")
+            tmp / "cert.pem", "--import", "--require-soname", "libfixture.so.1",
+            "--require-file", "/usr/lib/libfixture.so.1")
         assert "soname-provider verified-payload\n" in (
             tmp / "verified-soname/selection").read_text()
 

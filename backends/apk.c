@@ -8,6 +8,7 @@
 #include "../src/import.h"
 #include "../src/package.h"
 #include "../src/provides.h"
+#include "../src/verify.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -1084,13 +1085,41 @@ static int imported_arch_matches(const char *source, const char *output)
     return !strcmp(source, "x86") && !strcmp(output, "x86");
 }
 
+struct required_path { const char *path; int found; };
+
+static int imported_path(void *opaque, const struct holy_manifest_entry *entry)
+{
+    struct required_path *required = opaque;
+    if (!entry->directory && !strcmp(entry->path, required->path)) required->found = 1;
+    return 1;
+}
+
+static int safe_required_path(const char *path)
+{
+    const char *part, *end;
+    if (!path || path[0] != '/' || !path[1] || strlen(path) > 1024 ||
+        path[strlen(path) - 1] == '/') return 0;
+    for (part = path + 1; *part; part = end + 1) {
+        size_t i, length;
+        end = strchr(part, '/');
+        length = end ? (size_t)(end - part) : strlen(part);
+        if (!length || (length == 1 && part[0] == '.') ||
+            (length == 2 && part[0] == '.' && part[1] == '.')) return 0;
+        for (i = 0; i < length; ++i)
+            if ((unsigned char)part[i] < 32 || (unsigned char)part[i] == 127) return 0;
+        if (!end) break;
+    }
+    return 1;
+}
+
 static int imported_claim(const char *directory, const char *name, const char *version,
-                          const char *arch, const char *soname)
+                          const char *arch, const char *soname, const char *required_file)
 {
     DIR *dir = opendir(directory);
     struct dirent *entry;
     size_t count = 0;
     int found = 0, ok = 0;
+    struct required_path required = {required_file ? required_file + 1 : NULL, 0};
     if (!dir) return 0;
     errno = 0;
     while ((entry = readdir(dir))) {
@@ -1106,7 +1135,8 @@ static int imported_claim(const char *directory, const char *name, const char *v
             strcmp(identity.name, name) || strcmp(identity.version, version) ||
             strcmp(identity.release, "1") ||
             !imported_arch_matches(arch, identity.arch) ||
-            (soname && !holy_provides_match(path, "soname", soname, &matched))) {
+            (soname && !holy_provides_match(path, "soname", soname, &matched)) ||
+            (required_file && !holy_verify_visit(path, imported_path, &required))) {
             holy_package_identity_free(&identity); free(path); goto done;
         }
         if (matched) found = 1;
@@ -1114,7 +1144,8 @@ static int imported_claim(const char *directory, const char *name, const char *v
         ++count;
         errno = 0;
     }
-    ok = count && !errno && (!soname || found);
+    ok = count && !errno && (!soname || found) &&
+         (!required_file || required.found);
 done:
     closedir(dir);
     return ok;
@@ -1123,7 +1154,8 @@ done:
 int holy_apk_fetch(const char *catalog, const char *name, const char *version,
                    const char *arch, const char *output, const char *sha256,
                    const char *ca_file, const char *root, const char *source_alias,
-                   const char *public_key, int import, const char *required_soname)
+                   const char *public_key, int import, const char *required_soname,
+                   const char *required_file)
 {
     struct apk_selection selection = {0};
     FILE *parts[3] = {0}, *receipt = NULL;
@@ -1142,6 +1174,7 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
         !package_name(name) || !package_name(version) || !package_name(arch) ||
         (required_soname && (!import || strlen(required_soname) > 255 ||
                              !package_name(required_soname))) ||
+        (required_file && (!import || !safe_required_path(required_file))) ||
         (sha256 && !hex_digest(sha256))) return 2;
     result = select_package(catalog, name, version, arch, &selection);
     if (result) goto done;
@@ -1244,9 +1277,12 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
                                           selection.index_hash, selection.base);
         free(original);
         if (result) goto done;
-        if (!imported_claim(converted, name, version, arch, required_soname)) {
+        if (!imported_claim(converted, name, version, arch, required_soname,
+                            required_file)) {
             if (required_soname)
                 fprintf(stderr, "holypkg: APK payload does not provide SONAME %s\n", required_soname);
+            if (required_file)
+                fprintf(stderr, "holypkg: APK payload does not contain %s\n", required_file);
             result = 4; goto done;
         }
     }
@@ -1279,6 +1315,10 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
     if (registered_key[0] && root)
         fprintf(receipt, "package-key-sha256 %s\n", registered_key);
     if (required_soname) fprintf(receipt, "required-soname %s\nsoname-provider verified-payload\n", required_soname);
+    if (required_file) {
+        fputs("required-file ", receipt); quote(receipt, required_file);
+        fputs("\nfile-provider verified-payload\n", receipt);
+    }
     fprintf(receipt, "imported %s\n", import ? "yes" : "no");
     fputs("state complete\n", receipt);
     {
