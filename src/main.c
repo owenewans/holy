@@ -149,6 +149,85 @@ done:
     return result;
 }
 
+static int add_source(int argc, char **argv)
+{
+    const char *separator = strchr(argv[2], ':');
+    const char *root = "/", *catalog = NULL, *choice = NULL;
+    const char **accepted_arch = NULL, **accepted_privileged = NULL;
+    struct holy_repo_set staged = {0}, next = {0};
+    char source_id[65], next_id[65], plan[65], answer[16], *alias = NULL;
+    size_t arch_count = 0, privileged_count = 0, i;
+    int yes = 0, noninteractive = 0, root_seen = 0, result = 2;
+    if (!separator || separator == argv[2] || !separator[1] ||
+        strchr(separator + 1, ':')) goto done;
+    alias = malloc((size_t)(separator - argv[2]) + 1);
+    accepted_arch = calloc((size_t)argc, sizeof *accepted_arch);
+    accepted_privileged = calloc((size_t)argc, sizeof *accepted_privileged);
+    if (!alias || !accepted_arch || !accepted_privileged) { result = 1; goto done; }
+    memcpy(alias, argv[2], (size_t)(separator - argv[2]));
+    alias[separator - argv[2]] = 0;
+    if (!strcmp(alias, "local")) goto done;
+    for (i = 3; i < (size_t)argc; ++i) {
+        if (!strcmp(argv[i], "--catalog") && !catalog && i + 1 < (size_t)argc &&
+            argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) catalog = argv[++i];
+        else if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < (size_t)argc &&
+                 argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) {
+            root = argv[++i]; root_seen = 1;
+        } else if (!strcmp(argv[i], "--choose") && !choice && i + 1 < (size_t)argc &&
+                   argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) choice = argv[++i];
+        else if (!strcmp(argv[i], "--accept-arch") && i + 1 < (size_t)argc &&
+                 argv[i + 1][0] && strncmp(argv[i + 1], "--", 2))
+            accepted_arch[arch_count++] = argv[++i];
+        else if (!strcmp(argv[i], "--accept-privileged") && i + 1 < (size_t)argc &&
+                 argv[i + 1][0] && strncmp(argv[i + 1], "--", 2))
+            accepted_privileged[privileged_count++] = argv[++i];
+        else if (!strcmp(argv[i], "--yes") && !yes) yes = 1;
+        else if (!strcmp(argv[i], "--noninteractive") && !noninteractive) noninteractive = 1;
+        else goto done;
+    }
+    if (!catalog || !*catalog) goto done;
+    result = holy_source_catalog(root, alias, catalog, source_id);
+    if (result) goto done;
+    result = holy_repo_stage_set(catalog, separator + 1, root, &staged);
+    if (result) goto done;
+    result = holy_state_set_source((const char *const *)staged.digests, staged.count,
+                                   source_id, staged.index, choice, NULL, root,
+                                   accepted_arch, arch_count,
+                                   accepted_privileged, privileged_count, plan);
+    if (result) goto done;
+    if (!yes) {
+        if (noninteractive || !isatty(STDIN_FILENO)) {
+            fprintf(stderr, "holypkg: decision-required plan=%s; rerun with --yes after review\n", plan);
+            result = 3; goto done;
+        }
+        if (fflush(stdout) || fprintf(stderr, "Apply plan %s to %s? [y/N] ", plan, root) < 0 ||
+            fflush(stderr)) { result = 1; goto done; }
+        if (!fgets(answer, sizeof answer, stdin) ||
+            (strcmp(answer, "y\n") && strcmp(answer, "Y\n") &&
+             strcmp(answer, "yes\n") && strcmp(answer, "YES\n"))) {
+            result = 3; goto done;
+        }
+    }
+    result = holy_source_catalog(root, alias, catalog, next_id);
+    if (result) { result = 3; goto done; }
+    result = holy_repo_stage_set(catalog, separator + 1, root, &next);
+    if (result) { result = 3; goto done; }
+    if (strcmp(source_id, next_id) || strcmp(staged.index, next.index) ||
+        staged.count != next.count) { result = 3; goto done; }
+    for (i = 0; i < staged.count; ++i)
+        if (strcmp(staged.digests[i], next.digests[i])) { result = 3; goto done; }
+    result = holy_state_set_source((const char *const *)staged.digests, staged.count,
+                                   source_id, staged.index, choice, plan, root,
+                                   accepted_arch, arch_count,
+                                   accepted_privileged, privileged_count, NULL);
+done:
+    if (result == 2)
+        fputs("usage: holypkg add SOURCE:PACKAGE --catalog MIRROR [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
+    holy_repo_set_free(&staged); holy_repo_set_free(&next);
+    free(alias); free(accepted_arch); free(accepted_privileged);
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     struct holy_config config = {0};
@@ -158,7 +237,11 @@ int main(int argc, char **argv)
 
     setlocale(LC_CTYPE, "");
 
-    if (argc > 1 && !strcmp(argv[1], "add")) return add_local(argc, argv);
+    if (argc > 1 && !strcmp(argv[1], "add")) {
+        if (argc > 2 && strncmp(argv[2], "local:", 6))
+            return add_source(argc, argv);
+        return add_local(argc, argv);
+    }
 
     if (argc > 1 && !strcmp(argv[1], "import")) {
         if (argc == 9 && !strcmp(argv[3], "--source") && !strcmp(argv[5], "--format") &&

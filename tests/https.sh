@@ -93,6 +93,63 @@ expect 0 "$bin" sync fixture --root "$tmp/source-root" --sha256 "$index" \
     --output "$tmp/source-mirror" --ca-file "$tmp/cert.pem"
 grep -qx "source-id $source_id" "$tmp/source-mirror/mirror-origin"
 cmp "$tmp/serve/current" "$tmp/source-mirror/current"
+mkdir "$tmp/add-root"
+expect 0 "$bin" db init --root "$tmp/add-root"
+expect 0 "$bin" source plan --config "$tmp/source.conf" --root "$tmp/add-root"
+cp "$tmp/result" "$tmp/add-source.plan"
+add_source_plan=$(sha256sum "$tmp/add-source.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" source apply "$tmp/add-source.plan" --sha256 "$add_source_plan" \
+    --root "$tmp/add-root"
+expect 3 "$bin" add fixture:https-second --catalog "$tmp/source-mirror" \
+    --root "$tmp/add-root" < /dev/null
+grep -q 'plan-set .* read-only' "$tmp/result"
+test "$(cat "$tmp/add-root/var/lib/holypkg/generation")" -eq 0
+expect 0 "$bin" add fixture:https-second --catalog "$tmp/source-mirror" \
+    --root "$tmp/add-root" --yes
+second_hash=$(sha256sum "$tmp/serve/space?#.holy" | cut -d ' ' -f 1)
+grep -qx "source-id $source_id" "$tmp/add-root/var/lib/holypkg/installed/$digest/state"
+grep -qx "source-id $source_id" "$tmp/add-root/var/lib/holypkg/installed/$second_hash/state"
+expect 0 "$bin" db check --all --root "$tmp/add-root"
+if readelf -l "$bin" | grep -q INTERP; then
+    mkdir "$tmp/fault-root"
+    expect 0 "$bin" db init --root "$tmp/fault-root"
+    expect 0 "$bin" source plan --config "$tmp/source.conf" --root "$tmp/fault-root"
+    cp "$tmp/result" "$tmp/fault-source.plan"
+    fault_source_plan=$(sha256sum "$tmp/fault-source.plan" | cut -d ' ' -f 1)
+    expect 0 "$bin" source apply "$tmp/fault-source.plan" --sha256 "$fault_source_plan" \
+        --root "$tmp/fault-root"
+    cat > "$tmp/fault.c" <<'C'
+#define _POSIX_C_SOURCE 200809L
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+int renameat(int olddir, const char *oldpath, int newdir, const char *newpath)
+{
+    int (*real_renameat)(int, const char *, int, const char *);
+    void *symbol = dlsym(RTLD_NEXT, "renameat");
+    memcpy(&real_renameat, &symbol, sizeof real_renameat);
+    if (!real_renameat) abort();
+    if (!strcmp(newpath, "generation")) { errno = ENOSPC; return -1; }
+    return real_renameat(olddir, oldpath, newdir, newpath);
+}
+C
+    gcc -shared -fPIC -o "$tmp/fault.so" "$tmp/fault.c" -ldl
+    expect 5 env LD_PRELOAD="$tmp/fault.so" "$bin" add fixture:https-second \
+        --catalog "$tmp/source-mirror" --root "$tmp/fault-root" --yes
+    journal="$tmp/fault-root/var/lib/holypkg/transactions/set-journal"
+    grep -qx 'format holy-set-journal-5' "$journal"
+    grep -qx "catalog-index $index" "$journal"
+    grep -qx "binding $digest=$source_id" "$journal"
+    grep -qx "binding $second_hash=$source_id" "$journal"
+    cp "$journal" "$tmp/valid-journal"
+    sed "s/catalog-index $index/catalog-index $(printf '%064d' 0)/" \
+        "$tmp/valid-journal" > "$journal"
+    expect 5 "$bin" db recover --finish-set --root "$tmp/fault-root"
+    cp "$tmp/valid-journal" "$journal"
+    expect 0 "$bin" db recover --finish-set --root "$tmp/fault-root"
+    expect 0 "$bin" db check --all --root "$tmp/fault-root"
+fi
 mkdir "$tmp/fetched"
 expect 0 "$bin" fetch fixture:https-fixture --catalog "$tmp/source-mirror" \
     --output "$tmp/fetched" --root "$tmp/source-root"

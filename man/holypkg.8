@@ -4,6 +4,8 @@ holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
 .B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
+.B holypkg add SOURCE:PACKAGE --catalog MIRROR [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
+.br
 .B holypkg import INPUT --source NAME --format pacman|deb --output NEW_DIRECTORY
 .br
 .B holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--ca-file FILE]
@@ -666,6 +668,22 @@ Architecture and setuid decisions require their exact-hash flags. The cache
 may retain staged objects after a declined or unresolved operation. Automatic
 doas escalation, source lookup and script execution are not part of this local
 subset.
+.PP
+add SOURCE:PACKAGE reads one explicitly selected sealed holy-http mirror made
+by sync. --catalog remains required until source snapshots have a persistent
+configured cache location. The active source-id and URL must match the mirror
+record. The manager verifies and stages all indexed packages in the target
+cache, then the set resolver chooses the root and its dependencies. If multiple
+packages share the root name, it returns decision-required (3). Every newly
+selected catalog package receives the registered source-id; reused installed
+providers retain their existing source. The reviewed plan binds the catalog
+index digest and selected artifact hashes. Before apply the manager rechecks
+the source and catalog; changes require a new decision. The transaction journal
+retains source bindings and index digest for recovery without network access.
+The mirror record is unsigned local provenance, not publisher authentication.
+The current implementation scans every object in the selected mirror and does
+not combine candidates from multiple sources. Hooks and transforms remain
+outside the supported installation subset.
 .PP
 The db plan command reads the prepared reservation at the current database
 generation. It verifies a private snapshot of the cached artifact, checks

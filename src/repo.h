@@ -1,6 +1,14 @@
 #ifndef HOLY_REPO_H
 #define HOLY_REPO_H
 
+#include <stddef.h>
+
+struct holy_repo_set {
+    char **digests;
+    size_t count;
+    char index[65];
+};
+
 /* materialize a pinned HTTPS catalog in a new directory; CLI status result. */
 int holy_repo_mirror(const char *base, const char *digest, const char *output,
                      const char *ca_file);
@@ -26,5 +34,9 @@ int holy_repo_fetch_name(const char *directory, const char *name,
 /* verifies the sealed mirror's recorded source and exact registered URL. */
 int holy_repo_source_catalog(const char *directory, const char *source_id,
                              const char *url);
+/* stages all verified catalog candidates, root first, into the target cache. */
+int holy_repo_stage_set(const char *directory, const char *name,
+                        const char *root, struct holy_repo_set *set);
+void holy_repo_set_free(struct holy_repo_set *set);
 
 #endif

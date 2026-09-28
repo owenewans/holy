@@ -44,6 +44,14 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
                    const char *const *accepted_arch, size_t accepted_count,
                    const char *const *accepted_privileged, size_t privileged_count,
                    char plan_hash[65]);
+/* binds newly selected catalog artifacts to one active registered source. */
+int holy_state_set_source(const char *const *digests, size_t count,
+                          const char *source_id, const char *catalog_index,
+                          const char *choice,
+                          const char *approved, const char *root_path,
+                          const char *const *accepted_arch, size_t accepted_count,
+                          const char *const *accepted_privileged, size_t privileged_count,
+                          char plan_hash[65]);
 int holy_state_finish_set(const char *root_path);
 int holy_state_continue_set(const char *root_path);
 

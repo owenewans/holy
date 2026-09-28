@@ -232,6 +232,13 @@
   installing it. Check active source ID and URL against mirror provenance,
   verify the complete catalog, reject ambiguous names, and support extraction
   into a new directory. Persistent source cache discovery remains open.
+- [x] Install SOURCE:PACKAGE from an explicit sealed holy-http mirror. Stage
+  candidate artifacts, resolve dependencies in one set, bind newly selected
+  packages to the registered source-id, and bind index digest to the reviewed
+  plan and recovery journal. Reject changed catalogs before apply. A faulted
+  generation update recovers from the version-5 journal without network access.
+  Persistent source discovery, signed indexes, multi-source ranking and indexed
+  on-demand candidate retrieval remain open.
 - [ ] Implement remaining foreign binary adapters and file indexes with real
   fixtures: APT indexes, RPM, APK, XBPS, Slackware, eopkg, homebrew and guix.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
