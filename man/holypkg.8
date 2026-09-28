@@ -10,7 +10,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
-.B holypkg import INPUT --source NAME --format pacman|deb|slackware|apk --output NEW_DIRECTORY
+.B holypkg import INPUT --source NAME --format pacman|deb|slackware|apk --output NEW_DIRECTORY [--public-key FILE (apk only)]
 .br
 .B holypkg apk index APKINDEX.tar.gz --source NAME --base URL/ --output NEW_DIRECTORY
 .br
@@ -207,8 +207,9 @@ import snapshots a local pacman tar archive, Debian .deb, Slackware package or A
 NEW_DIRECTORY/original and creates verified LZ4-frame .holy outputs. The output
 directory must not exist. --format selects the adapter explicitly; --source
 records provenance only and grants no registered source identity or trust.
-The command does not install files, execute package code or verify a publisher
-signature. Each output records verification=unverified.
+The command does not install files or execute package code. Without an explicit
+APK public key, each output records verification=unverified. An explicit key
+verifies the APK signature but does not grant a registered source identity.
 .PP
 --format deb reads the Debian ar members debian-binary, control.tar and
 data.tar in order, including supported compressed variants. It retains control
@@ -254,8 +255,13 @@ outputs and install/check/remove of a converted data package.
 --format apk reads two or three concatenated gzip members from an APK v2
 package. It retains .PKGINFO, optional signatures and control scripts beneath
 HOLY/foreign/apk. When .PKGINFO contains datahash, the importer checks its
-SHA-256 against the compressed data member before creating outputs. Publisher
-signatures remain unverified. Unversioned package, so:SONAME and cmd:COMMAND
+SHA-256 against the compressed data member before creating outputs. With
+--public-key FILE, the importer snapshots an RSA PEM key, requires datahash and
+a signature member, and verifies the signature over the compressed control
+member. The key filename must match the .SIGN key name. The conversion receipt
+and each output origin record the algorithm and public-key SHA-256. The caller
+must establish the key's authenticity outside the import command. Unversioned
+package, so:SONAME and cmd:COMMAND
 dependencies become exact requirements. Package constraints using the supported
 APK v2 number, letter, suffix and revision grammar use APK version ordering
 only against APK-family providers. Unknown version forms, namespaced versioned

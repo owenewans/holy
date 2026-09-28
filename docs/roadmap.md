@@ -135,7 +135,9 @@
   authenticity. Keyed fetch now verifies the APK package signature over the
   compressed control member and records its result separately from the index.
   A signed Alpine scdoc 1.11.3-r0 fetch passed; local HTTPS fixtures reject
-  missing keys, wrong keys and altered package signatures. Feeding foreign
+  missing keys, wrong keys and altered package signatures. Local APK import
+  accepts an explicit RSA public key, verifies the package signature, and
+  records algorithm and key fingerprint in each output origin. Feeding foreign
   candidates into the general resolver and full relation
   semantics remain open.
 

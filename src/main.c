@@ -797,9 +797,13 @@ int main(int argc, char **argv)
             if (!strcmp(argv[6], "pacman")) return holy_import_pacman(argv[2], argv[4], argv[8]);
             if (!strcmp(argv[6], "deb")) return holy_import_deb(argv[2], argv[4], argv[8]);
             if (!strcmp(argv[6], "slackware")) return holy_import_slackware(argv[2], argv[4], argv[8]);
-            if (!strcmp(argv[6], "apk")) return holy_import_apk(argv[2], argv[4], argv[8]);
+            if (!strcmp(argv[6], "apk")) return holy_import_apk(argv[2], argv[4], argv[8], NULL);
         }
-        fputs("usage: holypkg import INPUT --source NAME --format pacman|deb|slackware|apk --output DIRECTORY\n", stderr);
+        if (argc == 11 && !strcmp(argv[3], "--source") && !strcmp(argv[5], "--format") &&
+            !strcmp(argv[6], "apk") && !strcmp(argv[7], "--output") &&
+            !strcmp(argv[9], "--public-key"))
+            return holy_import_apk(argv[2], argv[4], argv[8], argv[10]);
+        fputs("usage: holypkg import INPUT --source NAME --format pacman|deb|slackware|apk --output DIRECTORY [--public-key FILE (apk only)]\n", stderr);
         return 2;
     }
 

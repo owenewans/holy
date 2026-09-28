@@ -103,6 +103,46 @@ with tempfile.TemporaryDirectory() as scratch:
     assert '"foreign" "virtual-helper"' in requirements
     run("solve", "local:" + str(signed), status=6)
 
+    private_key = tmp / "signing.pem"
+    public_key = tmp / "fixture.rsa.pub"
+    subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt",
+                    "rsa_keygen_bits:2048", "-out", str(private_key)],
+                   capture_output=True, check=True)
+    subprocess.run(["openssl", "pkey", "-in", str(private_key), "-pubout",
+                    "-out", str(public_key)], capture_output=True, check=True)
+    signed_data = tar([("usr/share/verified", b"verified\n", "file")])
+    signed_info = (b"pkgname = verified\npkgver = 1.0-r0\narch = noarch\n"
+                   + b"datahash = " + hashlib.sha256(signed_data).hexdigest().encode() + b"\n")
+    signed_control = tar([(".PKGINFO", signed_info, "file")])
+    (tmp / "control.gz").write_bytes(signed_control)
+    signature = subprocess.run(["openssl", "dgst", "-sha256", "-sign",
+                                str(private_key), str(tmp / "control.gz")],
+                               capture_output=True, check=True).stdout
+    signature_member = tar([(".SIGN.RSA256.fixture.rsa.pub", signature, "file")])
+    signed_input = tmp / "verified.apk"
+    signed_input.write_bytes(signature_member + signed_control + signed_data)
+    signed_output = tmp / "verified-output"
+    run("import", signed_input, "--source", "alpine", "--format", "apk",
+        "--output", signed_output, "--public-key", public_key)
+    receipt = (signed_output / "conversion").read_text()
+    assert "verification rsa-sha256" in receipt
+    assert "public-key-sha256 " in receipt
+    verified_artifact = next(signed_output.glob("*.holy"))
+    run("verify", "local:" + str(verified_artifact))
+    run("fetch", "local:" + str(verified_artifact), "--extract", "--output",
+        tmp / "verified-extract")
+    assert "verification rsa-sha256" in (
+        tmp / "verified-extract/HOLY/origin").read_text()
+    bad_input = tmp / "bad-signature.apk"
+    bad_input.write_bytes(signature_member + signed_control + signed_data + b"bad")
+    run("import", bad_input, "--source", "alpine", "--format", "apk",
+        "--output", tmp / "bad-signed-output", "--public-key", public_key, status=2)
+    bad_signature = tar([(".SIGN.RSA256.fixture.rsa.pub", b"wrong", "file")])
+    bad_input.write_bytes(bad_signature + signed_control + signed_data)
+    run("import", bad_input, "--source", "alpine", "--format", "apk",
+        "--output", tmp / "wrong-signature-output", "--public-key", public_key,
+        status=4)
+
     old = convert(package("library-old.apk", pkgname=b"library", pkgver=b"1.2-r0"), "library-old")
     new = convert(package("library-new.apk", pkgname=b"library", pkgver=b"1.2-r2"), "library-new")
     app = convert(package("versioned.apk", pkgname=b"versioned",

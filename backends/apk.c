@@ -240,9 +240,9 @@ done:
     return ok;
 }
 
-static int verify_signature_member(FILE *signature, FILE *payload,
-                                   const char *public_key, const char *keyname,
-                                   char algorithm[16])
+int holy_apk_verify_signature(FILE *signature, FILE *payload,
+                              const char *public_key, const char *keyname,
+                              char algorithm[16])
 {
     struct archive *archive = archive_read_new();
     struct archive_entry *entry;
@@ -353,7 +353,7 @@ static int verify_index_key(const char *input, const char *public_key,
     count = holy_apk_gzip_parts(snapshot, parts, digests, 64ULL * 1024 * 1024);
     if (count != 2 || !read_index_tar(parts[0], 1, &bytes, &size) ||
         !read_index_tar(parts[1], 0, &bytes, &size) ||
-        !verify_signature_member(parts[0], parts[1], public_key, keyname,
+        !holy_apk_verify_signature(parts[0], parts[1], public_key, keyname,
                                  algorithm)) goto done;
     result = 0;
 done:
@@ -1148,7 +1148,7 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
     if (registered_key[0] && root) {
         const char *keyname = strrchr(public_key, '/');
         keyname = keyname ? keyname + 1 : public_key;
-        if (count != 3 || !verify_signature_member(parts[0], parts[1],
+        if (count != 3 || !holy_apk_verify_signature(parts[0], parts[1],
                                                      key_snapshot, keyname,
                                                      package_verification)) {
             result = 4; goto done;

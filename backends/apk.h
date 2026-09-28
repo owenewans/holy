@@ -12,6 +12,10 @@ int holy_apk_index(const char *input, const char *source, const char *base,
                    const char *output);
 int holy_apk_verify_index(const char *input, const char *public_key);
 int holy_apk_key_fingerprint(const char *public_key, char digest[65]);
+/* borrowed members and key path; returns 1 only for a valid matching signature. */
+int holy_apk_verify_signature(FILE *signature, FILE *control,
+                              const char *public_key, const char *keyname,
+                              char algorithm[16]);
 int holy_apk_query(const char *catalog, const char *query, int info);
 int holy_apk_fetch(const char *catalog, const char *name, const char *version,
                    const char *arch, const char *output, const char *sha256,

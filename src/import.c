@@ -966,7 +966,9 @@ done:
 static int write_output(struct foreign_input *input, const struct holy_pacman_metadata *meta,
                          const struct deb_metadata *deb, const struct slack_metadata *slack,
                          const struct apk_metadata *apk,
-                         const char *source, const char *hash, const char *output, int output_fd, FILE *receipt, int group)
+                         const char *source, const char *hash, const char *output, int output_fd,
+                         FILE *receipt, int group, const char *verification,
+                         const char *key_hash)
 {
     static const char *const names[] = {
         "HOLY/meta", "HOLY/files", "HOLY/deps", "HOLY/provides", "HOLY/hooks", "HOLY/origin", "HOLY/transform"
@@ -993,8 +995,10 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
     }
     fprintf(files[5], "format holy-import-origin-1\nfamily %s\nsource-name ", family);
     token(files[5], source);
-    fprintf(files[5], "\noriginal-sha256 %s\nverification unverified\nconverter holy-%s-1\noriginal-version ", hash, family);
+    fprintf(files[5], "\noriginal-sha256 %s\nverification %s\nconverter holy-%s-1\noriginal-version ",
+            hash, verification ? verification : "unverified", family);
     token(files[5], version); fputc('\n', files[5]);
+    if (key_hash && fprintf(files[5], "public-key-sha256 %s\n", key_hash) < 0) goto done;
     if (input->group_count > 1) {
         fprintf(files[6], "split %s %s %s %s\n", family, hash, arch, libc);
         for (i = 0; i < input->group_count; ++i) {
@@ -1242,7 +1246,8 @@ int holy_import_pacman(const char *input_path, const char *source, const char *o
     fprintf(receipt, "format holy-import-record-1\nfamily pacman\nconverter holy-pacman-1\noriginal-sha256 %s\nsource-name ", hash);
     token(receipt, source); fputs("\nverification unverified\n", receipt);
     for (i = 0; i < input.group_count; ++i)
-        if (!write_output(&input, &metadata, NULL, NULL, NULL, source, hash, output, output_fd, receipt, (int)i)) goto done;
+        if (!write_output(&input, &metadata, NULL, NULL, NULL, source, hash, output, output_fd,
+                          receipt, (int)i, NULL, NULL)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
     if (fclose(receipt)) { receipt = NULL; goto done; }
@@ -1317,7 +1322,8 @@ int holy_import_deb(const char *input_path, const char *source, const char *outp
     fprintf(receipt, "format holy-import-record-1\nfamily deb\nconverter holy-deb-1\noriginal-sha256 %s\nsource-name ", hash);
     token(receipt, source); fputs("\nverification unverified\n", receipt);
     for (i = 0; i < input.group_count; ++i)
-        if (!write_output(&input, NULL, &metadata, NULL, NULL, source, hash, output, output_fd, receipt, (int)i)) goto done;
+        if (!write_output(&input, NULL, &metadata, NULL, NULL, source, hash, output, output_fd,
+                          receipt, (int)i, NULL, NULL)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
     if (fclose(receipt)) { receipt = NULL; goto done; }
@@ -1401,7 +1407,7 @@ int holy_import_slackware(const char *input_path, const char *source, const char
     token(receipt, source); fputs("\nverification unverified\n", receipt);
     for (i = 0; i < input.group_count; ++i)
         if (!write_output(&input, NULL, NULL, &metadata, NULL, source, hash,
-                          output, output_fd, receipt, (int)i)) goto done;
+                          output, output_fd, receipt, (int)i, NULL, NULL)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
     if (fclose(receipt)) { receipt = NULL; goto done; }
@@ -1419,13 +1425,16 @@ done:
     return result;
 }
 
-int holy_import_apk(const char *input_path, const char *source, const char *output)
+int holy_import_apk(const char *input_path, const char *source, const char *output,
+                    const char *public_key)
 {
     struct foreign_input input = {0};
     struct apk_metadata metadata = {0};
     struct stat st;
     FILE *parts[3] = {0}, *receipt = NULL;
-    char digests[3][65] = {{0}}, *snapshot = NULL, hash[65], temporary[43] = {0};
+    char digests[3][65] = {{0}}, *snapshot = NULL, *key_snapshot = NULL;
+    char hash[65], key_hash[65] = {0}, verification[16] = "unverified";
+    char temporary[43] = {0};
     int input_fd = -1, output_fd = -1, count, control, result = 1, common;
     size_t i;
     if (!*source || !strcmp(source, "local")) return 2;
@@ -1467,6 +1476,18 @@ int holy_import_apk(const char *input_path, const char *source, const char *outp
             result = 2; goto done;
         }
     }
+    if (public_key) {
+        const char *keyname = strrchr(public_key, '/');
+        keyname = keyname ? keyname + 1 : public_key;
+        if (count != 3 || !metadata.datahash ||
+            !(key_snapshot = holy_stage_local(public_key, "holy-apk-key")) ||
+            !holy_apk_key_fingerprint(key_snapshot, key_hash) ||
+            !holy_apk_verify_signature(parts[0], parts[1], key_snapshot,
+                                       keyname, verification)) {
+            fputs("holypkg: APK package signature verification failed\n", stderr);
+            result = 4; goto done;
+        }
+    }
     result = 3;
     if (input.unknown) {
         fputs("holypkg: unknown APK payload ABI or executable format requires classification\n", stderr);
@@ -1501,10 +1522,13 @@ int holy_import_apk(const char *input_path, const char *source, const char *outp
     }
     fprintf(receipt, "format holy-import-record-1\nfamily apk\nconverter holy-apk-1\noriginal-sha256 %s\nsource-name ", hash);
     token(receipt, source);
-    fprintf(receipt, "\nverification unverified\ndata-sha256 %s\n", digests[count - 1]);
+    fprintf(receipt, "\nverification %s\ndata-sha256 %s\n",
+            verification, digests[count - 1]);
+    if (key_hash[0]) fprintf(receipt, "public-key-sha256 %s\n", key_hash);
     for (i = 0; i < input.group_count; ++i)
         if (!write_output(&input, NULL, NULL, NULL, &metadata, source, hash,
-                          output, output_fd, receipt, (int)i)) goto done;
+                          output, output_fd, receipt, (int)i, verification,
+                          key_hash[0] ? key_hash : NULL)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
     if (fclose(receipt)) { receipt = NULL; goto done; }
@@ -1519,6 +1543,7 @@ done:
     if (output_fd >= 0) { if (*temporary) unlinkat(output_fd, temporary, 0); close(output_fd); }
     if (input_fd >= 0) close(input_fd);
     if (snapshot) { unlink(snapshot); free(snapshot); }
+    if (key_snapshot) { unlink(key_snapshot); free(key_snapshot); }
     free_apk(&metadata); free_input(&input);
     return result;
 }
