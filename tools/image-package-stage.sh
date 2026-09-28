@@ -88,6 +88,9 @@ while test "$#" -gt 0; do
             (
                 set -- "$bin" add "$alias:$package_name" --root "$resolver_root" \
                     --prepare --noninteractive
+                if test -f "$out/inputs/resolver-answers"; then
+                    set -- "$@" --answers "$out/inputs/resolver-answers"
+                fi
                 while read -r candidate_alias candidate_name; do
                     if test "$candidate_alias" != "$alias"; then
                         set -- "$@" --candidate "$candidate_alias:$candidate_name"

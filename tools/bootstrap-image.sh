@@ -147,6 +147,18 @@ if test -n "${HOLY_IMAGE_CONFIG_SHA256:-}"; then
         exit 3
     }
 fi
+if test -n "${HOLY_IMAGE_ANSWERS:-}"; then
+    expected_answers=${HOLY_IMAGE_ANSWERS_SHA256:-}
+    case "$expected_answers" in *[!0-9a-f]*|'') exit 2 ;; esac
+    test "${#expected_answers}" -eq 64 || exit 2
+    cp "$HOLY_IMAGE_ANSWERS" "$out/inputs/resolver-answers"
+    answers_hash=$(sha256sum "$out/inputs/resolver-answers")
+    test "${answers_hash%% *}" = "$expected_answers" || {
+        echo 'resolver answers changed after validation' >&2
+        exit 3
+    }
+    printf 'resolver-answers-sha256 %s\n' "$expected_answers" >> "$record"
+fi
 printf 'network-recovery %s\n' "$network_recovery" >> "$record"
 printf 'install-test %s\n' "$install_test" >> "$record"
 if test "$install_test" = 1; then printf 'install-firmware %s\n' "$install_firmware" >> "$record"; fi

@@ -72,6 +72,16 @@ Holy packages. Added packages must target the image architecture or noarch; x86 
 also accepted in an x86_64 image. Duplicate package names fail before plan
 generation. The package manager checks payload ownership and dependencies.
 .TP
+.B [resolver]
+Optional "answers PATH" selects a holy-answers-1 file with source decisions
+keyed by consumer artifact hash and requirement ID. "answers-sha256 DIGEST"
+is required with it. holygetiso checks the digest during config validation,
+then the builder copies the file to output/inputs/resolver-answers and checks
+the digest again before using it. The build record and exported input lock
+include that copy. An answer naming a source that does not offer the exact
+requirement fails in holypkg; a changed consumer hash cannot reuse an old
+answer. An unresolved choice stops the build with status 3.
+.TP
 .B [source NAME]
 Each used native source requires type holy-http or holy-git, "url" and
 "index-sha256" with the exact lowercase digest of the selected generation.

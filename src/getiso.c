@@ -61,6 +61,8 @@ static struct option options[] = {
     {"packages", "musl", NULL, 0, 1},
     {"packages", "doas", NULL, 0, 1},
     {"packages", "storage-tools", NULL, 0, 1},
+    {"resolver", "answers", NULL, 0, 1},
+    {"resolver", "answers-sha256", NULL, 0, 0},
     {"docs", "output", NULL, 0, 0}
 };
 
@@ -82,6 +84,31 @@ static int digest_valid(const char *s)
         if (!((s[i] >= '0' && s[i] <= '9') ||
               (s[i] >= 'a' && s[i] <= 'f'))) return 0;
     return 1;
+}
+
+static int file_digest_matches(const char *path, const char *expected)
+{
+    struct stat st;
+    if (stat(path, &st) || !S_ISREG(st.st_mode)) return 0;
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    FILE *input = fopen(path, "rb");
+    unsigned char buffer[8192], digest[32];
+    char actual[65];
+    unsigned length;
+    size_t count, i;
+    int ok = ctx && input && EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) == 1;
+    while (ok && (count = fread(buffer, 1, sizeof buffer, input)) > 0)
+        ok = EVP_DigestUpdate(ctx, buffer, count) == 1;
+    if (ok && ferror(input)) ok = 0;
+    if (ok) ok = EVP_DigestFinal_ex(ctx, digest, &length) == 1 && length == sizeof digest;
+    if (ok) {
+        for (i = 0; i < sizeof digest; ++i)
+            snprintf(actual + i * 2, 3, "%02x", digest[i]);
+        ok = !strcmp(actual, expected);
+    }
+    if (input) fclose(input);
+    EVP_MD_CTX_free(ctx);
+    return ok;
 }
 
 static int alias_valid(const char *s)
@@ -240,6 +267,7 @@ static int parse_file(const char *path, const struct input_frame *parent, size_t
                 rc = die(path, number, "invalid section");
             else if (!strcmp(tokens[0], "[image]")) section = "image";
             else if (!strcmp(tokens[0], "[packages]")) section = "packages";
+            else if (!strcmp(tokens[0], "[resolver]")) section = "resolver";
             else if (!strcmp(tokens[0], "[docs]")) section = "docs";
             else rc = die(path, number, "unsupported section");
         } else if (!section || count != 2 || !tokens[1][0]) {
@@ -315,6 +343,12 @@ static int parse(const char *path)
     if (!docs_count || !get("docs", "output") ||
         strcmp(get("docs", "output"), "/usr/share/holy/llm.txt"))
         return die(path, 0, "[docs] requires installed-man-pages and /usr/share/holy/llm.txt");
+    if (!!get("resolver", "answers") != !!get("resolver", "answers-sha256") ||
+        (get("resolver", "answers-sha256") &&
+         (!digest_valid(get("resolver", "answers-sha256")) ||
+          !file_digest_matches(get("resolver", "answers"),
+                               get("resolver", "answers-sha256")))))
+        return die(path, 0, "resolver answers require a matching SHA-256 pin");
     if (strcmp(get("image", "arch"), "x86_64") && strcmp(get("image", "arch"), "i686"))
         return die(path, 0, "arch must be x86_64 or i686");
     if (strchr(get("image", "output"), '\n') ||
@@ -447,8 +481,9 @@ static int effective_config(const char *dir, char **result, char hash[65])
     int ok = 1;
     *result = NULL;
     if (!path || !(out = fopen(path, "wx"))) { free(path); return 0; }
-    for (j = 0; j < 2 && ok; ++j) {
-        const char *section = j ? "packages" : "image";
+    for (j = 0; j < 3 && ok; ++j) {
+        const char *section = j == 0 ? "image" : j == 1 ? "packages" : "resolver";
+        if (j == 2 && !get("resolver", "answers")) continue;
         if (fprintf(out, "[%s]\n", section) < 0) { ok = 0; break; }
         for (i = 0; i < sizeof options / sizeof options[0]; ++i)
             if (!strcmp(options[i].section, section) && options[i].value &&
@@ -668,6 +703,8 @@ int main(int argc, char **argv)
         !env("MUSL_CC", get("image", "musl-cc")) ||
         !env("HOLY_IMAGE_CONFIG_SHA256", hash) ||
         !env("HOLY_IMAGE_CONFIG_FILE", effective) ||
+        !env("HOLY_IMAGE_ANSWERS", get("resolver", "answers")) ||
+        !env("HOLY_IMAGE_ANSWERS_SHA256", get("resolver", "answers-sha256")) ||
         !env("HOLY_IMAGE_SOURCE_DIR", source_count ? source_dir : NULL)) {
         perror("setenv"); remove_source_inputs(source_dir); free(source_dir);
         free(effective); free(config); return 1;

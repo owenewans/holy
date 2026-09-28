@@ -735,7 +735,7 @@ SOURCE IDENTITIES
      ture.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holygetiso.8 source=holy version=development sha256=ed8e100c675d8c69d4cc92244b29eda664dd7c43a435dd263a5837b7e28fdc29
+holygetiso.8 source=holy version=development sha256=bea090754867d0e1f3f5bb319ded582d80dfd09d78dd10fa996641a13d19e7ac
 HOLYGETISO(8)		      System Administration		   HOLYGETISO(8)
 
 NAME
@@ -813,6 +813,17 @@ CONFIGURATION
 	    get the image architecture or noarch; x86 packages are also accepted
 	    in an x86_64 image. Duplicate package names fail before plan genera-
 	    tion. The package manager checks payload ownership and dependencies.
+
+     [resolver]
+	    Optional "answers PATH" selects a holy-answers-1  file  with  source
+	    decisions  keyed  by consumer artifact hash and requirement ID. "an-
+	    swers-sha256 DIGEST" is required with it. holygetiso checks the  di-
+	    gest  during  config validation, then the builder copies the file to
+	    output/inputs/resolver-answers and checks the  digest  again  before
+	    using  it.	The  build  record  and exported input lock include that
+	    copy. An answer naming a source that does not offer	 the  exact  re-
+	    quirement  fails in holypkg; a changed consumer hash cannot reuse an
+	    old answer. An unresolved choice stops the build with status 3.
 
      [source NAME]
 	    Each used native source requires type holy-http or	holy-git,  "url"

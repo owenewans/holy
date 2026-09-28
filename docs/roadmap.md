@@ -21,8 +21,11 @@
   `holyinstall`; no package is installed in the resolver root. A real x86_64
   ext4 ISO with only `add fixture:cross-root` selected `other:helper`, passed
   two QEMU/TCG boots with both libc runtimes removed and restored, and its
-  exported inputs passed SHA-256 verification. Image-level ambiguity remains
-  to be tested for this path.
+  exported inputs passed SHA-256 verification. Pinned resolver answers now
+  select a source by consumer hash and requirement ID when two catalogs offer
+  the same provider. A three-source fixture rejects the unanswered choice;
+  a second full ISO with the pinned answer passed two QEMU/TCG boots and its
+  exported inputs passed SHA-256 verification.
 - [x] Fetch pinned bootstrap inputs over HTTPS into an explicit directory,
   verify SHA-256 before publication, and reject altered cached files. On
   x86_64, local builds produced musl 1.2.5, static BusyBox 1.37.0,

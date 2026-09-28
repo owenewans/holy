@@ -79,6 +79,15 @@ test "$config_hash" != "$changed_hash"
 sed 's/boot-test required/boot-test build-only/' "$tmp/config-parts/image.conf" \
     > "$tmp/config-parts/restored.conf"
 mv "$tmp/config-parts/restored.conf" "$tmp/config-parts/image.conf"
+printf 'format holy-answers-1\n' > "$tmp/image-answers"
+answer_hash=$(sha256sum "$tmp/image-answers")
+cp "$tmp/image.conf" "$tmp/answer-image.conf"
+printf '\n[resolver]\nanswers "%s"\nanswers-sha256 %s\n' \
+    "$tmp/image-answers" "${answer_hash%% *}" >> "$tmp/answer-image.conf"
+./holygetiso --check "$tmp/answer-image.conf" > "$tmp/result"
+printf '#changed\n' >> "$tmp/image-answers"
+if ./holygetiso --check "$tmp/answer-image.conf" > "$tmp/result" 2> "$tmp/error"; then exit 1; fi
+grep -q 'matching SHA-256 pin' "$tmp/error"
 printf 'include "config-parts/cycle.conf"\n' > "$tmp/cycle.conf"
 printf 'include "../cycle.conf"\n' > "$tmp/config-parts/cycle.conf"
 if ./holygetiso --check "$tmp/cycle.conf" > "$tmp/result" 2> "$tmp/error"; then exit 1; fi
@@ -155,7 +164,13 @@ test "$(wc -l < "$tmp/cross-image/work/add-sources")" -eq 2
 grep -q " $other_id$" "$tmp/cross-image/work/add-sources"
 grep -q '^selected ' "$tmp/cross-image/work/solve-fixture-fixture.record"
 test ! -e "$tmp/cross-image/work/resolver-root/var/lib/holypkg/installed"/*/meta
-if "$bin" solve "local:$tmp/cross-image/inputs/add-0001.holy" \
+fixture_label=
+for label in add-0001 add-0002; do
+    "$bin" info "local:$tmp/cross-image/inputs/$label.holy" > "$tmp/result"
+    if grep -qx 'name fixture' "$tmp/result"; then fixture_label=$label; fi
+done
+test -n "$fixture_label"
+if "$bin" solve "local:$tmp/cross-image/inputs/$fixture_label.holy" \
     > "$tmp/result" 2> "$tmp/error"; then exit 1; else test "$?" -eq 4; fi
 printf '[install]\nroot "%s"\n' "$tmp/cross-root" > "$tmp/cross-install.conf"
 for label in add-0001 add-0002; do
@@ -181,6 +196,49 @@ sh tools/image-package-stage.sh "$bin" "$tmp/explicit-image" x86_64 \
     --source fixture fixture --source other helper
 test "$(wc -w < "$tmp/explicit-image/work/additional-packages")" -eq 2
 test "$(wc -l < "$tmp/explicit-image/work/add-sources")" -eq 2
+mkdir -p "$tmp/ambiguous-root" "$tmp/ambiguous-image/inputs" \
+    "$tmp/ambiguous-image/packages" "$tmp/ambiguous-image/work"
+cp -R "$tmp/cross-image/mirrors" "$tmp/ambiguous-image/mirrors"
+cp -R "$tmp/cross-other" "$tmp/ambiguous-image/mirrors/third"
+printf '[source third]\ntype holy-http\nurl "https://third.example/holy/"\n' \
+    >> "$tmp/cross-sources.conf"
+cp "$tmp/cross-sources.conf" "$tmp/ambiguous-image/inputs/sources.conf"
+printf 'fixture\nother\nthird\n' > "$tmp/ambiguous-image/inputs/source-aliases"
+"$bin" db init --root "$tmp/ambiguous-root" > "$tmp/result"
+"$bin" source plan --config "$tmp/cross-sources.conf" --root "$tmp/ambiguous-root" \
+    > "$tmp/ambiguous-source.plan"
+ambiguous_plan=$(sha256sum "$tmp/ambiguous-source.plan")
+"$bin" source apply "$tmp/ambiguous-source.plan" --sha256 "${ambiguous_plan%% *}" \
+    --root "$tmp/ambiguous-root" > "$tmp/result"
+"$bin" source list --root "$tmp/ambiguous-root" \
+    > "$tmp/ambiguous-image/work/source-list"
+third_id=$(sed -n 's/^source \([0-9a-f]*\) "third" active$/\1/p' \
+    "$tmp/ambiguous-image/work/source-list")
+test "${#third_id}" -eq 64
+printf 'format holy-mirror-1\nurl "https://third.example/holy/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$other_index" "$third_id" > "$tmp/ambiguous-image/mirrors/third/mirror-origin"
+: > "$tmp/ambiguous-image/build.record"
+if sh tools/image-package-stage.sh "$bin" "$tmp/ambiguous-image" x86_64 \
+    --source fixture fixture > "$tmp/result" 2> "$tmp/error"; then exit 1; else
+    test "$?" -eq 3
+fi
+grep -q 'decision-required' "$tmp/error"
+fixture_hash=$(sha256sum "$tmp/cross-fixture/fixture.holy")
+printf 'format holy-answers-1\nsource %s helper-1 other\n' \
+    "${fixture_hash%% *}" > "$tmp/ambiguous-answers"
+cp "$tmp/ambiguous-answers" "$tmp/ambiguous-image/inputs/resolver-answers"
+mkdir -p "$tmp/answered-image/inputs" "$tmp/answered-image/packages" "$tmp/answered-image/work"
+cp -R "$tmp/ambiguous-image/mirrors" "$tmp/answered-image/mirrors"
+cp "$tmp/ambiguous-image/inputs/sources.conf" \
+    "$tmp/ambiguous-image/inputs/source-aliases" \
+    "$tmp/ambiguous-image/inputs/resolver-answers" "$tmp/answered-image/inputs/"
+cp "$tmp/ambiguous-image/work/source-list" "$tmp/answered-image/work/source-list"
+: > "$tmp/answered-image/build.record"
+sh tools/image-package-stage.sh "$bin" "$tmp/answered-image" x86_64 \
+    --source fixture fixture
+test "$(wc -l < "$tmp/answered-image/work/add-sources")" -eq 2
+grep -q " $other_id$" "$tmp/answered-image/work/add-sources"
+if grep -q " $third_id$" "$tmp/answered-image/work/add-sources"; then exit 1; fi
 printf 'fixture build plan\n' > "$tmp/image/plan"
 printf 'fixture install plan\n' > "$tmp/image/install.plan"
 python3 tools/image-host-tools.py "$tmp/image/host-tools.jsonl" sh python3
