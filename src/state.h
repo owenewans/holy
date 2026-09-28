@@ -27,6 +27,8 @@ int holy_state_apply(const char *root_path);
 int holy_state_abort_empty(const char *root_path);
 /* compare one or --all installed data manifests; no repair. */
 int holy_state_check(const char *digest, const char *root_path, int json);
+/* list paths from the installed manifest, independent of current payload drift. */
+int holy_state_files(const char *digest, const char *root_path);
 /* remove one intact installed instance; accepted broken edges remain visible. */
 int holy_state_remove(const char *digest, const char *root_path, int accept_broken);
 /* finish a removing journal if remaining listed files are unchanged. */

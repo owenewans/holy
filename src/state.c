@@ -51,6 +51,7 @@ static int commit_remove_record(int transactions, const char *digest,
 static char *update_record(int dir, const char *name);
 static int installed_fields(int item, const char *const *keys,
                              const char *const *values, size_t fields);
+static int valid_owner_path(const char *path);
 
 static int native_architecture(const char *host, const char *target)
 {
@@ -1917,6 +1918,93 @@ done:
     if (installed >= 0) close(installed);
     if (dir >= 0) close(dir);
     if (root >= 0) close(root);
+    return result;
+}
+
+static int compare_installed_path(const void *left, const void *right)
+{
+    const char *const *a = left, *const *b = right;
+    return strcmp(*a, *b);
+}
+
+int holy_state_files(const char *digest, const char *root_path)
+{
+    unsigned long long generation;
+    char **paths = NULL, *line = NULL;
+    size_t count = 0, capacity = 0, length = 0, number = 0, i;
+    int database = -1, installed = -1, item = -1, fd = -1, result = 1;
+    struct stat st;
+    FILE *input = NULL;
+    ssize_t got;
+    if (!valid_digest(digest)) return 2;
+    database = holy_state_lock(root_path, 0, &generation, &result);
+    if (database < 0) return result;
+    result = 1;
+    if (!installed_valid(database) ||
+        (installed = child_dir(database, "installed", 0)) < 0 ||
+        (item = child_dir(installed, digest, 0)) < 0) {
+        if (item < 0 && installed >= 0 && errno == ENOENT) result = 6;
+        goto done;
+    }
+    fd = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size < 0 || st.st_size > 16 * 1024 * 1024) goto done;
+    input = fdopen(fd, "r");
+    if (!input) goto done;
+    fd = -1;
+    while ((got = getline(&line, &length, input)) >= 0) {
+        char **fields = NULL, *error = NULL, *copy;
+        size_t fields_count = 0;
+        ++number;
+        if (memchr(line, '\0', (size_t)got) ||
+            !holy_lex(line, (size_t)got, &fields, &fields_count,
+                      "installed/files", number, &error)) {
+            free(error); holy_tokens_free(fields, fields_count); goto done;
+        }
+        if (fields_count) {
+            int link = !strcmp(fields[0], "symlink") ||
+                       !strcmp(fields[0], "hardlink");
+            if ((link && fields_count != 13) ||
+                (!link && fields_count != 12) ||
+                (!link && strcmp(fields[0], "dir") && strcmp(fields[0], "file")) ||
+                !valid_owner_path(fields[1]) || count >= 100000) {
+                holy_tokens_free(fields, fields_count); goto done;
+            }
+            copy = strdup(fields[1]);
+            if (!copy) { holy_tokens_free(fields, fields_count); goto done; }
+            if (count == capacity) {
+                size_t next = capacity ? capacity * 2 : 32;
+                char **grown = realloc(paths, next * sizeof *grown);
+                if (!grown) { free(copy); holy_tokens_free(fields, fields_count); goto done; }
+                paths = grown; capacity = next;
+            }
+            paths[count++] = copy;
+        }
+        holy_tokens_free(fields, fields_count);
+    }
+    if (ferror(input) || ftello(input) != st.st_size) goto done;
+    qsort(paths, count, sizeof *paths, compare_installed_path);
+    for (i = 1; i < count; ++i) if (!strcmp(paths[i - 1], paths[i])) goto done;
+    for (i = 0; i < count; ++i) {
+        char *absolute = malloc(strlen(paths[i]) + 2);
+        if (!absolute) goto done;
+        absolute[0] = '/';
+        strcpy(absolute + 1, paths[i]);
+        print_check_string(absolute);
+        putchar('\n');
+        free(absolute);
+    }
+    if (ferror(stdout)) goto done;
+    result = 0;
+done:
+    if (result) fprintf(stderr, "holypkg: installed file list failed (status %d)\n", result);
+    for (i = 0; i < count; ++i) free(paths[i]);
+    free(paths); free(line);
+    if (input) fclose(input);
+    if (fd >= 0) close(fd);
+    if (item >= 0) close(item);
+    if (installed >= 0) close(installed);
+    if (database >= 0) close(database);
     return result;
 }
 

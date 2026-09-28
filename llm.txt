@@ -983,7 +983,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=26017acd195d865f0ccdadf42d7a2bb906a7cc8c5cdb9f0e4e1499df851a6017
+holypkg.8 source=holy version=development sha256=f9344f737ad4f4e4df61b8ba14b7a14a5431d56534d336be9b186a40e91ab88b
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1042,6 +1042,11 @@ SYNOPSIS
      holypkg manifest generate DIRECTORY --output FILE
      holypkg check local:FILE --root DIRECTORY
      holypkg check local:FILE --root DIRECTORY --json
+     holypkg check [SOURCE:PACKAGE] [--root  DIRECTORY]	 [--arch  ARCH]	 [--libc
+     LIBC] [--json]
+     holypkg files SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC]
+     holypkg  rm  SOURCE:PACKAGE  [--root DIRECTORY] [--arch ARCH] [--libc LIBC]
+     [--yes] [--accept-broken]
      holypkg elf FILE
      holypkg scan local:FILE
      holypkg preview local:FILE --root DIRECTORY
@@ -1626,6 +1631,19 @@ DESCRIPTION
      covery  uses that record if removal stopped after the instance left the in-
      stalled directory, and retains the decision when it completes.  Grouped re-
      moval remains pending.
+
+     check  without  a	reference  inspects  all  installed   instances.   check
+     SOURCE:PACKAGE  finds  the installed slot using its recorded source ID, in-
+     cluding a source that is now inactive. files prints sorted	 absolute  paths
+     from  that	 slot's installed manifest even when a live file has changed. It
+     does not require the cached archive. When arch/libc variants make the  ref-
+     erence  ambiguous,	 these	commands return decision-required status 3 until
+     --arch or --libc selects one.  rm SOURCE:PACKAGE resolves the same slot and
+     shows its artifact hash before confirmation. Without a terminal it	 returns
+     decision-required	status	3; --yes confirms removal of that selected arti-
+     fact. --accept-broken separately  permits	removal	 despite  dependent  in-
+     stalled  packages. The database engine rechecks files, dependency edges and
+     journal state under its writer lock.
 
      add local:FILE stages a verified native artifact in  the  selected	 target-
      root  cache,  builds  a  read-only	 package-set plan and shows its selected

@@ -76,6 +76,12 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg check local:FILE --root DIRECTORY --json
 .br
+.B holypkg check [SOURCE:PACKAGE] [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--json]
+.br
+.B holypkg files SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC]
+.br
+.B holypkg rm SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--yes] [--accept-broken]
+.br
 .B holypkg elf FILE
 .br
 .B holypkg scan local:FILE
@@ -667,6 +673,18 @@ before the database generation changes. Recovery uses that record if removal
 stopped after the instance left the installed directory, and retains the
 decision when it completes.
 Grouped removal remains pending.
+.PP
+check without a reference inspects all installed instances. check SOURCE:PACKAGE
+finds the installed slot using its recorded source ID, including a source that
+is now inactive. files prints sorted absolute paths from that slot's installed
+manifest even when a live file has changed. It does not require the cached
+archive. When arch/libc variants make the reference ambiguous, these commands
+return decision-required status 3 until --arch or --libc selects one.
+rm SOURCE:PACKAGE resolves the same slot and shows its artifact hash before
+confirmation. Without a terminal it returns decision-required status 3;
+--yes confirms removal of that selected artifact. --accept-broken separately
+permits removal despite dependent installed packages. The database engine
+rechecks files, dependency edges and journal state under its writer lock.
 .PP
 add local:FILE stages a verified native artifact in the selected target-root
 cache, builds a read-only package-set plan and shows its selected packages,

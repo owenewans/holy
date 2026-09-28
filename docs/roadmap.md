@@ -156,6 +156,11 @@
   slots with compatible ownership and reject a second active version of one slot.
   Same-name glibc/musl executables run in the dual-libc chroot fixture. Multiple
   installed instances of the same artifact remain open.
+- [x] Expose installed-slot check, manifest files and confirmed removal by
+  SOURCE:PACKAGE. Resolve the recorded source ID through renamed or inactive
+  aliases, require arch/libc selection for ambiguous slots, and keep files
+  available when the live payload drifts. Source-instance fixtures cover the
+  CLI and removal journal path.
 - [x] Install a resolved cached static/data set with one writer lock, plan hash
   and generation change; persist reasons/edges, reject referenced-provider removal,
   and recover completed sets or resume untouched remaining packages after failure.

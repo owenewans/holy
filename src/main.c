@@ -351,6 +351,76 @@ done:
     return result;
 }
 
+static int installed_ref(int argc, char **argv, int operation)
+{
+    const char *reference = argc > 2 ? argv[2] : NULL;
+    const char *separator = reference ? strchr(reference, ':') : NULL;
+    const char *root = "/", *arch = NULL, *libc = NULL;
+    char source_id[65], digest[65], answer[16], *alias = NULL;
+    int root_seen = 0, json = 0, yes = 0, accept_broken = 0;
+    int remove_package = operation == 1, list_files = operation == 2;
+    int result = 2, i;
+    if (!remove_package && !list_files && (argc == 2 ||
+        (argc > 2 && !strncmp(argv[2], "--", 2)))) {
+        for (i = 2; i < argc; ++i) {
+            if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < argc)
+                root = argv[++i], root_seen = 1;
+            else if (!strcmp(argv[i], "--json") && !json) json = 1;
+            else goto done;
+        }
+        return holy_state_check("--all", root, json);
+    }
+    if (!separator || separator == reference || !separator[1] ||
+        strchr(separator + 1, ':') || !strncmp(reference, "local:", 6)) goto done;
+    alias = malloc((size_t)(separator - reference) + 1);
+    if (!alias) { result = 1; goto done; }
+    memcpy(alias, reference, (size_t)(separator - reference));
+    alias[separator - reference] = 0;
+    for (i = 3; i < argc; ++i) {
+        if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < argc)
+            root = argv[++i], root_seen = 1;
+        else if (!strcmp(argv[i], "--arch") && !arch && i + 1 < argc)
+            arch = argv[++i];
+        else if (!strcmp(argv[i], "--libc") && !libc && i + 1 < argc)
+            libc = argv[++i];
+        else if (!remove_package && !list_files && !strcmp(argv[i], "--json") && !json) json = 1;
+        else if (remove_package && !strcmp(argv[i], "--yes") && !yes) yes = 1;
+        else if (remove_package && !strcmp(argv[i], "--accept-broken") && !accept_broken)
+            accept_broken = 1;
+        else goto done;
+    }
+    if (!*root || (arch && !*arch) || (libc && !*libc)) goto done;
+    result = holy_source_known_id(root, alias, source_id);
+    if (result) goto done;
+    result = holy_state_find_slot(root, source_id, separator + 1, arch, libc, digest);
+    if (result) goto done;
+    if (list_files) { result = holy_state_files(digest, root); goto done; }
+    if (!remove_package) { result = holy_state_check(digest, root, json); goto done; }
+    if (!yes) {
+        if (!isatty(STDIN_FILENO)) {
+            fprintf(stderr, "holypkg: decision-required remove %s:%s artifact %s; use --yes after review\n",
+                    alias, separator + 1, digest);
+            result = 3; goto done;
+        }
+        fprintf(stderr, "Remove %s:%s artifact %s from %s? [y/N] ",
+                alias, separator + 1, digest, root);
+        if (fflush(stderr) || !fgets(answer, sizeof answer, stdin) ||
+            (strcmp(answer, "y\n") && strcmp(answer, "Y\n") &&
+             strcmp(answer, "yes\n") && strcmp(answer, "YES\n"))) {
+            result = 3; goto done;
+        }
+    }
+    result = holy_state_remove(digest, root, accept_broken);
+done:
+    if (result == 2)
+        fprintf(stderr, "usage: holypkg %s %s [--root DIRECTORY] [--arch ARCH] [--libc LIBC] %s\n",
+                remove_package ? "rm" : list_files ? "files" : "check",
+                remove_package || list_files ? "SOURCE:PACKAGE" : "[SOURCE:PACKAGE]",
+                remove_package ? "[--yes] [--accept-broken]" : list_files ? "" : "[--json]");
+    free(alias);
+    return result;
+}
+
 int main(int argc, char **argv)
 {
     struct holy_config config = {0};
@@ -751,6 +821,14 @@ set_done:
         !strcmp(argv[2], "owner") && !strcmp(argv[4], "--root"))
         return holy_state_owner(argv[3], argv[5]);
 
+    if (argc > 1 && !strcmp(argv[1], "rm"))
+        return installed_ref(argc, argv, 1);
+    if (argc > 1 && !strcmp(argv[1], "files"))
+        return installed_ref(argc, argv, 2);
+    if (argc > 1 && !strcmp(argv[1], "check") &&
+        (argc == 2 || (argc > 2 && strncmp(argv[2], "local:", 6))))
+        return installed_ref(argc, argv, 0);
+
     if (argc == 3 && !strcmp(argv[1], "info") &&
         !strncmp(argv[2], "local:", 6) && argv[2][6])
         return holy_package_info(argv[2] + 6) ? 0 : 2;
@@ -794,7 +872,7 @@ set_done:
         return 2;
     }
     if (argc != 4 || strcmp(argv[1], "config") || strcmp(argv[2], "check")) {
-        fprintf(stderr, "usage: holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] -- COMMAND [ARGS...] | holypkg add local:FILE [--candidate local:FILE...] [--choose ID=SHA256] [--root DIRECTORY] [--yes] [--noninteractive] | holypkg config check FILE | holypkg info|verify|manifest|scan local:FILE | holypkg manifest generate DIRECTORY --output FILE | holypkg requirements|provides local:FILE [--json] | holypkg solve local:ROOT [local:CANDIDATE...] [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE] | holypkg pack DIRECTORY --output FILE.holy | holypkg check|preview local:FILE --root DIRECTORY [--json] | holypkg cache stage local:FILE --root DIRECTORY | holypkg cache verify SHA256 --root DIRECTORY | holypkg db init|status|cancel|recover|preflight|plan|recheck|apply --root DIRECTORY | holypkg db recover --abort-empty|--continue|--finish-apply --root DIRECTORY | holypkg db check SHA256|--all --root DIRECTORY [--json] | holypkg db rm SHA256 [--accept-broken] --root DIRECTORY | holypkg db owner PATH --root DIRECTORY | holypkg db status|preflight --root DIRECTORY --json | holypkg db reserve SHA256 --root DIRECTORY | holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID...] [--accept-arch SHA256...] [--accept-privileged SHA256...] --root DIRECTORY | holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID...] [--accept-arch SHA256...] [--accept-privileged SHA256...] --root DIRECTORY | holypkg db recover --finish-set|--continue-set|--repair --root DIRECTORY | holypkg db plan-update OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY | holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY | holypkg db recover --update --root DIRECTORY | holypkg db repair-plan SHA256 --root DIRECTORY | holypkg db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY | holypkg db approve PLAN_SHA256 --root DIRECTORY | holypkg elf FILE | holypkg repo index|list|seal DIRECTORY | holypkg repo requirements DIRECTORY NAME | holypkg repo search DIRECTORY NAME [--fuzzy] | holypkg repo search-file DIRECTORY NAME_OR_PATH [--fuzzy] | holypkg repo solve DIRECTORY NAME [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg repo providers DIRECTORY KIND NAME [--json] | holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY\n");
+        fprintf(stderr, "usage: holypkg check [SOURCE:PACKAGE] [--root DIRECTORY] [--json] | holypkg files SOURCE:PACKAGE [--root DIRECTORY] | holypkg rm SOURCE:PACKAGE [--root DIRECTORY] [--yes] [--accept-broken] | holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] -- COMMAND [ARGS...] | holypkg add local:FILE [--candidate local:FILE...] [--choose ID=SHA256] [--root DIRECTORY] [--yes] [--noninteractive] | holypkg config check FILE | holypkg info|verify|manifest|scan local:FILE | holypkg manifest generate DIRECTORY --output FILE | holypkg requirements|provides local:FILE [--json] | holypkg solve local:ROOT [local:CANDIDATE...] [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE] | holypkg pack DIRECTORY --output FILE.holy | holypkg check|preview local:FILE --root DIRECTORY [--json] | holypkg cache stage local:FILE --root DIRECTORY | holypkg cache verify SHA256 --root DIRECTORY | holypkg db init|status|cancel|recover|preflight|plan|recheck|apply --root DIRECTORY | holypkg db recover --abort-empty|--continue|--finish-apply --root DIRECTORY | holypkg db check SHA256|--all --root DIRECTORY [--json] | holypkg db rm SHA256 [--accept-broken] --root DIRECTORY | holypkg db owner PATH --root DIRECTORY | holypkg db status|preflight --root DIRECTORY --json | holypkg db reserve SHA256 --root DIRECTORY | holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID...] [--accept-arch SHA256...] [--accept-privileged SHA256...] --root DIRECTORY | holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID...] [--accept-arch SHA256...] [--accept-privileged SHA256...] --root DIRECTORY | holypkg db recover --finish-set|--continue-set|--repair --root DIRECTORY | holypkg db plan-update OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY | holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY | holypkg db recover --update --root DIRECTORY | holypkg db repair-plan SHA256 --root DIRECTORY | holypkg db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY | holypkg db approve PLAN_SHA256 --root DIRECTORY | holypkg elf FILE | holypkg repo index|list|seal DIRECTORY | holypkg repo requirements DIRECTORY NAME | holypkg repo search DIRECTORY NAME [--fuzzy] | holypkg repo search-file DIRECTORY NAME_OR_PATH [--fuzzy] | holypkg repo solve DIRECTORY NAME [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg repo providers DIRECTORY KIND NAME [--json] | holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY\n");
         return 2;
     }
     path = argv[3];
