@@ -1,4 +1,4 @@
-holy-image.7 source=holy version=development sha256=d489d70f684684ba670b6b4bc2111434c82b37360c17b0b0f5c2e803c32a12dd
+holy-image.7 source=holy version=development sha256=98e063774e26d7941e3cc5c2159b6984ac0b19da031af156db4f98951a799579
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
 NAME
@@ -251,10 +251,12 @@ QEMU
      persistent dual-libc test. An external qcow2 backing chain is rejected. The
      runner  copies  the  input to a read-only base, creates a qcow2 overlay and
      attaches only that overlay through virtio-blk. It verifies the copied  base
-     hash  after QEMU exits and retains the overlay and its hash. Copying a live
-     input is marked unverified for  consistency;  the	caller	must  provide  a
-     stopped  image or stable snapshot for a precise trial. ROOT_IMAGE alone re-
-     mains an optional report input and does not attach a disk.
+     hash after QEMU exits and records the overlay hash. QEMU_KEEP=1 retains the
+     overlay  and copied inputs for inspection. The default removes those tempo-
+     rary files after writing the report and serial log. Copying a live input is
+     marked unverified for consistency; the caller must provide a stopped  image
+     or	 stable	 snapshot  for	a precise trial. ROOT_IMAGE alone remains an op-
+     tional report input and does not attach a disk.
 
      The guest verifies that / is  ext4,  completes  recovery  and  its	 package
      probes,  records  the  plan  ID under /var/lib/holy-boot-test/reboot, calls
@@ -284,12 +286,13 @@ QEMU
      Each  run	retains	 serial.log,  QEMU output, a text report and report.json
      (holy-qemu-report-2). Reports include argv,  accelerator,	firmware,  input
      hashes,  elapsed  time, stage deadlines, exit reason and per-marker status.
-     Persistent tests additionally record both boot results, the first-boot com-
-     pletion time, root storage type and whether the read-only base  stayed  in-
-     tact.   The  probe list records each stage's elapsed time and pass/fail/un-
-     known status.  Optional KERNEL_IMAGE, INITRAMFS and ROOT_IMAGE  inputs  add
-     their  hashes.  They identify caller-supplied files, not guest measurements
-     of running code.
+     The report records whether temporary inputs and the  writable  overlay  re-
+     main.   Persistent	 tests additionally record both boot results, the first-
+     boot completion time, root storage type  and  whether  the	 read-only  base
+     stayed  intact.   The  probe  list	 records  each	stage's elapsed time and
+     pass/fail/unknown status.	Optional KERNEL_IMAGE, INITRAMFS and  ROOT_IMAGE
+     inputs  add  their	 hashes.  They identify caller-supplied files, not guest
+     measurements of running code.
 
    Retained recovery matrix
      make check-recovery-matrix REPORT=NEW_FILE REPORTS="REPORT_PATHS" validates

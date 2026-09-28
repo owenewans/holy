@@ -78,6 +78,14 @@ else
     test "$?" -eq 2
 fi
 grep -q 'remove-both requires persistent root' "$tmp/err"
+if ARCH=x86_64 ISO="$tmp/blank.iso" BOOT_PLAN="$plan" \
+   QEMU_KEEP=invalid REPORT_DIR="$tmp" sh tests/qemu.sh \
+   > "$tmp/out" 2> "$tmp/err"; then
+    exit 1
+else
+    test "$?" -eq 2
+fi
+grep -q 'QEMU_KEEP must be 0 or 1' "$tmp/err"
 for arch in i686 x86_64; do
     if ARCH="$arch" ISO="$tmp/blank.iso" BOOT_PLAN="$plan" \
        QEMU_TIMEOUT=2 REPORT_DIR="$tmp" sh tests/qemu.sh \
@@ -120,10 +128,30 @@ assert report['inputs']['root_disk']['format'] == 'qcow2'
 assert report['inputs']['root_disk']['sha256'] == sys.argv[2]
 assert report['overlay']['base_unchanged']
 assert report['overlay']['backing_format'] == 'qcow2'
+assert report['overlay']['retained'] is False
+assert report['temporary_inputs_retained'] is False
+assert not pathlib.Path(report['overlay']['path']).exists()
+assert not (pathlib.Path(sys.argv[1]).parent / 'root-base.qcow2').exists()
 assert report['probe_timeout_seconds'] == 1
 assert report['probes'] == []
 PY
 test "$(sha256sum "$tmp/base.qcow2" | cut -d ' ' -f 1)" = "$base_hash"
+if ARCH=x86_64 ISO="$tmp/blank.iso" ROOT_DISK="$tmp/base.qcow2" \
+   BOOT_PLAN="$plan" REPORT_DIR="$tmp" QEMU_TIMEOUT=2 QEMU_KEEP=1 \
+   sh tests/qemu.sh > "$tmp/out" 2> "$tmp/err"; then
+    exit 1
+else
+    test "$?" -eq 4
+fi
+report=$(sed -n 's/^holy-qemu: fail report //p' "$tmp/out")
+python3 - "$report.json" <<'PY'
+import json, pathlib, sys
+report = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert report['overlay']['retained'] is True
+assert report['temporary_inputs_retained'] is True
+assert pathlib.Path(report['overlay']['path']).is_file()
+assert (pathlib.Path(sys.argv[1]).parent / 'root-base.qcow2').is_file()
+PY
 ARCH=x86_64 ISO="$tmp/blank.iso" BOOT_PLAN="$plan" REPORT_DIR="$tmp" \
     QEMU_TIMEOUT=5 QEMU_PROBE_TIMEOUT=1 python3 - <<'PY'
 import json, os, pathlib, subprocess, time

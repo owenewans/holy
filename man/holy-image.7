@@ -238,7 +238,9 @@ ROOT_DISK supplies a self-contained regular raw or qcow2 disk image for the
 persistent dual-libc test. An external qcow2 backing chain is rejected. The
 runner copies the input to a read-only base, creates a qcow2 overlay and
 attaches only that overlay through virtio-blk. It verifies the copied base
-hash after QEMU exits and retains the overlay and its hash. Copying a live
+hash after QEMU exits and records the overlay hash. QEMU_KEEP=1 retains the
+overlay and copied inputs for inspection. The default removes those temporary
+files after writing the report and serial log. Copying a live
 input is marked unverified for consistency; the caller must provide a stopped
 image or stable snapshot for a precise trial. ROOT_IMAGE
 alone remains an optional report input and does not attach a disk.
@@ -271,6 +273,7 @@ exit status alone cannot pass a boot test.
 Each run retains serial.log, QEMU output, a text report and report.json
 (holy-qemu-report-2). Reports include argv, accelerator, firmware, input
 hashes, elapsed time, stage deadlines, exit reason and per-marker status.
+The report records whether temporary inputs and the writable overlay remain.
 Persistent tests additionally record both boot results, the first-boot
 completion time, root storage type and whether the read-only base stayed intact.
 The probe list records each stage's elapsed time and pass/fail/unknown status.

@@ -712,7 +712,9 @@
   timeouts/result channels. The runner now accepts self-contained raw and
   qcow2 input disks, copies either to a read-only base and boots a separate
   qcow2 overlay. Guest stage markers get independent configurable deadlines
-  and per-stage reports. Live input copy consistency remains unverified;
+  and per-stage reports. The default removes copied boot inputs and writable
+  overlays after reporting; QEMU_KEEP=1 retains them for inspection.
+  Live input copy consistency remains unverified;
   full `holypkg test PLAN` integration and the Holy hardware gate remain open.
 - [ ] Boot both target architectures in QEMU and prove PID 1, shell, package
   install/removal and recovery after removing either or both dynamic libc runtimes.

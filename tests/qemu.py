@@ -166,6 +166,10 @@ def main():
     qemu_img = shutil.which('qemu-img')
     if disk_path and (profile != 'dual-libc' or not Path(disk_path).is_file() or not qemu_img):
         error('disk recovery requires dual-libc, a regular ROOT_DISK and qemu-img', 6)
+    keep_value = os.environ.get('QEMU_KEEP', '0')
+    if keep_value not in ('0', '1'):
+        error('QEMU_KEEP must be 0 or 1', 2)
+    keep = keep_value == '1'
     firmware_files = {}
     if firmware == 'uefi':
         for field in ('UEFI_CODE', 'UEFI_VARS'):
@@ -507,12 +511,18 @@ def main():
     if disk_path:
         report['overlay'] = {'path': str(run / 'root.qcow2'), 'sha256': digest(run / 'root.qcow2'),
                              'base_unchanged': base_unchanged,
-                             'backing_format': inputs['root_disk']['format']}
+                             'backing_format': inputs['root_disk']['format'],
+                             'retained': keep}
+    report['temporary_inputs_retained'] = keep
     (run / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     (run / 'report').write_text(
         f'format holy-qemu-report-2\narch {arch}\nboot-media {media}\niso-sha256 {inputs.get("iso", {}).get("sha256", "none")}\n'
         f'plan {plan}\naccelerator {accel}\nfirmware {firmware}\nexit {code}\n'
         f'reason {reason}\nresult {result}\n')
+    if not keep:
+        for temporary in ('root.qcow2', 'root-base.raw', 'root-base.qcow2',
+                          'uefi_code.fd', 'uefi_vars.fd', 'input.iso'):
+            (run / temporary).unlink(missing_ok=True)
     print(f'holy-qemu: {result} report {run}/report')
     return 0 if result == 'pass' else 4
 
