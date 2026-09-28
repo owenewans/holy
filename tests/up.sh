@@ -186,4 +186,33 @@ revised=$(sha256sum "$tmp/native-revision.plan" | cut -d ' ' -f 1)
 expect 0 "$bin" apply "$tmp/native-revision.plan" --sha256 "$revised" --root "$root"
 grep -qx 'version 5' "$root/usr/share/update-fixture"
 expect 0 "$bin" db check --all --root "$root"
+package 6 holy
+seal
+expect 0 "$bin" source catalog bind fixture "$repo" --root "$root"
+expect 2 "$bin" up fixture:update-fixture --prepare --output "$tmp/invalid.plan" --yes --root "$root"
+test ! -e "$tmp/invalid.plan"
+expect 0 "$bin" up fixture:update-fixture --prepare --root "$root"
+temporary=$(awk '$1 == "prepared" {print $3}' "$tmp/out")
+test -f "$temporary"
+test "$(stat -c '%a' "$temporary")" = 600
+rm "$temporary"
+rmdir "$(dirname "$temporary")"
+expect 0 "$bin" up fixture:update-fixture --yes --root "$root"
+applied_temp=$(awk '$1 == "prepared" {print $3}' "$tmp/out")
+test ! -e "$applied_temp"
+test ! -d "$(dirname "$applied_temp")"
+grep -qx 'version 6' "$root/usr/share/update-fixture"
+expect 0 "$bin" db check --all --root "$root"
+package 7 holy
+seal
+expect 0 "$bin" source catalog bind fixture "$repo" --root "$root"
+expect 3 "$bin" up fixture:update-fixture --noninteractive --output "$tmp/review.plan" --root "$root"
+grep -q 'decision-required plan=' "$tmp/err"
+expect 3 "$bin" up fixture:update-fixture --output "$tmp/implicit.plan" --root "$root"
+cmp "$tmp/review.plan" "$tmp/implicit.plan"
+grep -qx 'version 6' "$root/usr/share/update-fixture"
+review=$(sha256sum "$tmp/review.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" apply "$tmp/review.plan" --sha256 "$review" --root "$root"
+grep -qx 'version 7' "$root/usr/share/update-fixture"
+expect 0 "$bin" db check --all --root "$root"
 printf 'source update preparation and apply fixtures passed\n'

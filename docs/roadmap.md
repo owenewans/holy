@@ -267,6 +267,11 @@
   the selected digest against the pinned index and installed slot before changing
   rootfs; a forged but internally consistent plan for an unlisted cached artifact
   fails. Grouped updates and trial execution remain open.
+- [x] Apply a single-slot `up SOURCE:PACKAGE` in one invocation through the
+  same hashed plan and checked apply path. Print the full plan, require a
+  terminal decision or scoped --yes, and retain it for noninteractive review.
+  The direct path tests both approval and decision-required behavior; updating
+  all installed slots together remains open.
 - [x] Read the pinned catalog index for an installed source slot and stage only
   matching name/os/arch/libc versions during update preparation. Verify those
   archives against the index before planning; keep the full catalog validation

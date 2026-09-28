@@ -6,7 +6,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
-.B holypkg up SOURCE:PACKAGE --prepare --output NEW_FILE [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--root DIRECTORY]
+.B holypkg up SOURCE:PACKAGE [--prepare] [--output NEW_FILE] [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
@@ -792,7 +792,7 @@ catalogs are checked again before apply. Source preference ranking, fuzzy
 suggestions and runtime plugin discovery remain open. Hooks and
 transforms remain outside the supported installation subset.
 .PP
-up SOURCE:PACKAGE --prepare finds one installed slot by its immutable source-id,
+up SOURCE:PACKAGE finds one installed slot by its immutable source-id,
 name and optional arch/libc. It checks the old artifact in the target cache,
 verifies the pinned catalog index, and stages only indexed versions in the
 same name/os/arch/libc slot. The selected archives are checked against their
@@ -803,6 +803,14 @@ mixed comparator families require --choose SHA256. The chosen digest can
 explicitly select a rebuild or older
 version. No newer candidate leaves the system unchanged and writes no plan.
 An absent old artifact, missing source slot or changed catalog is reported.
+Without --prepare, up prints the full proposed plan, saves it, then asks for
+approval before applying the exact file and hash through the same apply command.
+--yes approves only that plan; it does not choose an ambiguous version or approve
+architecture and privileged-file decisions. Without a terminal or with
+--noninteractive, missing approval returns 3 and leaves the plan file for review.
+--output selects its path; otherwise up creates a private temporary plan path.
+Successful direct application removes that temporary file. --prepare only
+writes the plan and retains its temporary path; --yes is invalid with it.
 .PP
 Preparation writes a new mode-0600 plan file with the source-id, catalog path
 and index digest, old/new artifact hashes, exact version decisions and the

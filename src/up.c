@@ -127,12 +127,13 @@ int holy_up_command(int argc, char **argv)
     const char *choice = NULL, *arch = NULL, *libc = NULL;
     const char *accepted_arch = NULL, *accepted_privileged = NULL;
     char *alias = NULL, *bound = NULL, *canonical = NULL, *old_snapshot = NULL;
-    char *inner = NULL, *plan = NULL;
+    char *inner = NULL, *plan = NULL, *temporary_dir = NULL, *temporary_plan = NULL;
     struct holy_package_identity old = {0}, selected = {0};
     struct holy_repo_set staged = {0};
-    char source_id[65], actual_id[65], old_hash[65], inner_hash[65], plan_hash[65];
+    char source_id[65], actual_id[65], old_hash[65], inner_hash[65], plan_hash[65], answer[16];
     size_t i, size = 0, compatible = 0, ambiguous = 0;
-    int dir = -1, result = 2, prepared = 0, root_seen = 0, old_present = 0;
+    int dir = -1, result = 2, prepared = 0, yes = 0, noninteractive = 0;
+    int root_seen = 0, old_present = 0, plan_written = 0;
     FILE *stream = NULL;
     if (argc < 3 || !(separator = strchr(argv[2], ':')) ||
         separator == argv[2] || !separator[1] || strchr(separator + 1, ':')) goto done;
@@ -157,11 +158,14 @@ int holy_up_command(int argc, char **argv)
             accepted_arch = argv[++i];
         else if (!strcmp(argv[i], "--accept-privileged") && !accepted_privileged && i + 1 < (size_t)argc)
             accepted_privileged = argv[++i];
+        else if (!strcmp(argv[i], "--yes") && !yes) yes = 1;
+        else if (!strcmp(argv[i], "--noninteractive") && !noninteractive) noninteractive = 1;
         else if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < (size_t)argc) {
             root = argv[++i]; root_seen = 1;
         } else goto done;
     }
-    if (!prepared || !output || !*output || !*root ||
+    if ((prepared && yes) ||
+        (output && !*output) || !*root ||
         (catalog && !*catalog) || (arch && !*arch) || (libc && !*libc) ||
         (choice && !digest_valid(choice)) ||
         (accepted_arch && !digest_valid(accepted_arch)) ||
@@ -254,6 +258,14 @@ int holy_up_command(int argc, char **argv)
                                        accepted_arch, accepted_privileged,
                                        root, inner_hash, &inner);
     if (result) goto done;
+    if (!output) {
+        temporary_dir = strdup("/tmp/holypkg-up-XXXXXX");
+        if (!temporary_dir || !mkdtemp(temporary_dir)) { result = 1; goto done; }
+        temporary_plan = malloc(strlen(temporary_dir) + 6);
+        if (!temporary_plan) { result = 1; goto done; }
+        sprintf(temporary_plan, "%s/plan", temporary_dir);
+        output = temporary_plan;
+    }
     stream = open_memstream(&plan, &size);
     if (!stream) { result = 1; goto done; }
     fprintf(stream, "format holy-up-plan-1\nsource-id %s\nalias ", source_id);
@@ -271,20 +283,50 @@ int holy_up_command(int argc, char **argv)
         stream = NULL;
         if (failed || !digest_bytes(plan, size, plan_hash) ||
             !write_plan(output, plan, size)) { result = 1; goto done; }
+        plan_written = 1;
     }
     printf("prepared %s %s old %s new %s index %s\n",
            plan_hash, output, old_hash, selected.digest, staged.index);
+    if (!prepared) {
+        char *apply_argv[] = {"holypkg", "apply", (char *)output, "--sha256",
+                              plan_hash, "--root", (char *)root, NULL};
+        if (fwrite(plan, 1, size, stdout) != size || fflush(stdout)) {
+            result = 1; goto done;
+        }
+        if (!yes) {
+            if (noninteractive || !isatty(STDIN_FILENO)) {
+                fprintf(stderr, "holypkg: decision-required plan=%s file=%s; apply the reviewed file with its SHA-256\n",
+                        plan_hash, output);
+                result = 3; goto done;
+            }
+            if (fprintf(stderr, "Apply plan %s to %s? [y/N] ", plan_hash, root) < 0 ||
+                fflush(stderr) || !fgets(answer, sizeof answer, stdin) ||
+                (strcmp(answer, "y\n") && strcmp(answer, "Y\n") &&
+                 strcmp(answer, "yes\n") && strcmp(answer, "YES\n"))) {
+                result = 3; goto done;
+            }
+        }
+        if (dir >= 0) { close(dir); dir = -1; }
+        result = holy_apply_command(7, apply_argv);
+        if (!result && temporary_plan) {
+            unlink(temporary_plan);
+            rmdir(temporary_dir);
+        }
+        if (result) goto done;
+    }
     result = 0;
 done:
     if (result == 2)
-        fputs("usage: holypkg up SOURCE:PACKAGE --prepare --output NEW_FILE [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--root DIRECTORY]\n", stderr);
+        fputs("usage: holypkg up SOURCE:PACKAGE [--prepare] [--output NEW_FILE] [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
     if (stream) fclose(stream);
     if (dir >= 0) close(dir);
     if (old_snapshot) { unlink(old_snapshot); free(old_snapshot); }
     holy_package_identity_free(&old);
     holy_package_identity_free(&selected);
     holy_repo_set_free(&staged);
+    if (temporary_dir && !plan_written) rmdir(temporary_dir);
     free(alias); free(bound); free(canonical); free(inner); free(plan);
+    free(temporary_plan); free(temporary_dir);
     return result;
 }
 
