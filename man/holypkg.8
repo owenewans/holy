@@ -10,7 +10,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
-.B holypkg import INPUT --source NAME --format pacman|deb|slackware --output NEW_DIRECTORY
+.B holypkg import INPUT --source NAME --format pacman|deb|slackware|apk --output NEW_DIRECTORY
 .br
 .B holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--public-key PUBLIC_KEY.pem] [--ca-file FILE]
 .br
@@ -188,8 +188,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 .SH DESCRIPTION
-.SS Local pacman, Debian and Slackware binary import
-import snapshots a local pacman tar archive, Debian .deb or Slackware package, retains its exact bytes as
+.SS Local pacman, Debian, Slackware and APK binary import
+import snapshots a local pacman tar archive, Debian .deb, Slackware package or APK v2 package, retains its exact bytes as
 NEW_DIRECTORY/original and creates verified LZ4-frame .holy outputs. The output
 directory must not exist. --format selects the adapter explicitly; --source
 records provenance only and grants no registered source identity or trust.
@@ -237,6 +237,18 @@ family has no automatic comparator yet, so update choice requires review.
 make check-slackware covers codecs, links, scripts, path rejection, mixed ELF
 outputs and install/check/remove of a converted data package.
 .PP
+--format apk reads two or three concatenated gzip members from an APK v2
+package. It retains .PKGINFO, optional signatures and control scripts beneath
+HOLY/foreign/apk. When .PKGINFO contains datahash, the importer checks its
+SHA-256 against the compressed data member before creating outputs. Publisher
+signatures remain unverified. Dependencies and versioned provides retain their
+original expressions as foreign requirements until APK relation comparison is
+implemented; packages that need them require a decision. Scripts remain
+review-required and do not run during import. The importer accepts noarch,
+x86 and x86_64 claims and checks observed ELF machines. It rejects truncated
+gzip members, extra members and unsafe paths. make check-apk covers these
+cases and installs/checks/removes a converted data package in a temporary root.
+.PP
 The importer reads .PKGINFO identities, full epoch/version/release strings,
 package relations and original field values. It preserves .PKGINFO, .BUILDINFO,
 \&.MTREE, .INSTALL and .CHANGELOG beneath HOLY/foreign/pacman. Numeric and symbolic
@@ -269,7 +281,7 @@ are not overwritten. Origin metadata records the format-specific converter ident
 executable build attestation and publisher verification remain unimplemented.
 .PP
 Libarchive supplies tar and built-in gzip, bzip2, XZ, Zstandard and LZ4 codecs
-when available in the selected build. A missing codec returns status 6 and does
+when available in the selected build. APK v2 member boundaries use zlib. A missing codec returns status 6 and does
 not invoke an external decoder. The static dependency profile builds all five codecs with musl and rejects a
 libarchive configuration missing any of them. Import uses anonymous spool files instead of extracting
 foreign paths on the host. It rejects duplicate paths, unsafe links, non-directory

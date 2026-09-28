@@ -2,7 +2,7 @@ CC ?= cc
 CPPFLAGS ?=
 CFLAGS ?= -O2
 LDFLAGS ?=
-LDLIBS ?= -larchive -lcrypto -lelf -lcurl
+LDLIBS ?= -larchive -lcrypto -lelf -lcurl -lz
 PREFIX ?= /usr
 DESTDIR ?=
 MANPAGES = $(wildcard man/*.[578])
@@ -162,7 +162,7 @@ src/%.o: src/%.c $(wildcard src/*.h) $(wildcard backends/*.h) .build-config
 check-init: holy-init
 	@./holy-init >/dev/null 2>&1; test $$? -eq 2
 
-check: check-pacman check-deb check-slackware check-native-version holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
+check: check-pacman check-deb check-slackware check-apk check-native-version holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg
@@ -205,6 +205,10 @@ check-deb: holypkg
 .PHONY: check-slackware
 check-slackware: holypkg
 	python3 tests/import-slackware.py ./holypkg
+
+.PHONY: check-apk
+check-apk: holypkg
+	python3 tests/import-apk.py ./holypkg
 
 .PHONY: check-native-version
 check-native-version: tests/native-version-helper

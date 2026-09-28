@@ -22,6 +22,7 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <zlib.h>
 
 struct foreign_entry {
     struct holy_stream_entry stream;
@@ -46,7 +47,8 @@ struct foreign_input {
 };
 
 enum foreign_archive_kind { FOREIGN_PACMAN, FOREIGN_DEB_CONTROL, FOREIGN_DEB_DATA,
-                            FOREIGN_SLACKWARE };
+                            FOREIGN_SLACKWARE, FOREIGN_APK_SIGNATURE,
+                            FOREIGN_APK_CONTROL, FOREIGN_APK_DATA };
 
 struct deb_field { char *key, *value; size_t line; };
 struct deb_metadata {
@@ -56,6 +58,13 @@ struct deb_metadata {
 };
 
 struct slack_metadata { char *name, *version, *arch, *build; int lzma; };
+
+struct apk_field { char *key, *value; size_t line; };
+struct apk_metadata {
+    char *name, *version, *arch, *datahash;
+    struct apk_field *fields;
+    size_t count;
+};
 
 static void token(FILE *out, const char *value)
 {
@@ -176,7 +185,8 @@ static int collect_archive(const char *snapshot, struct foreign_input *input,
             (type != AE_IFREG && type != AE_IFDIR && type != AE_IFLNK && !(hardlink && type == 0))) {
             result = 6; goto done;
         }
-        if (kind == FOREIGN_DEB_CONTROL && (type != AE_IFREG || hardlink)) goto done;
+        if ((kind == FOREIGN_DEB_CONTROL || kind == FOREIGN_APK_CONTROL ||
+             kind == FOREIGN_APK_SIGNATURE) && (type != AE_IFREG || hardlink)) goto done;
         if ((type == AE_IFDIR || type == AE_IFLNK || hardlink) && size) goto done;
         if (input->count == input->capacity) {
             size_t capacity = input->capacity ? input->capacity * 2 : 64;
@@ -188,8 +198,12 @@ static int collect_archive(const char *snapshot, struct foreign_input *input,
         memset(e, 0, sizeof *e); e->group = -1; e->hardlink_group = -1;
         e->original = normalized(name, type == AE_IFDIR);
         if (!e->original) goto done;
-        if (kind == FOREIGN_DEB_CONTROL && strchr(e->original, '/')) goto done;
-        e->metadata = kind == FOREIGN_DEB_CONTROL ||
+        if ((kind == FOREIGN_DEB_CONTROL || kind == FOREIGN_APK_CONTROL ||
+             kind == FOREIGN_APK_SIGNATURE) && strchr(e->original, '/')) goto done;
+        if (kind == FOREIGN_APK_SIGNATURE && strncmp(e->original, ".SIGN.", 6)) goto done;
+        if (kind == FOREIGN_APK_CONTROL && e->original[0] != '.') goto done;
+        e->metadata = kind == FOREIGN_DEB_CONTROL || kind == FOREIGN_APK_CONTROL ||
+                      kind == FOREIGN_APK_SIGNATURE ||
                       (kind == FOREIGN_PACMAN && metadata_path(e->original)) ||
                       (kind == FOREIGN_SLACKWARE &&
                        (!strcmp(e->original, "install") || !strncmp(e->original, "install/", 8)));
@@ -200,7 +214,9 @@ static int collect_archive(const char *snapshot, struct foreign_input *input,
             e->stream.path = joined("HOLY/foreign/deb", original);
             e->original = joined("@control", original);
             free(original);
-        } else if (kind == FOREIGN_SLACKWARE && e->metadata)
+        } else if (kind == FOREIGN_APK_CONTROL || kind == FOREIGN_APK_SIGNATURE)
+            e->stream.path = joined("HOLY/foreign/apk", e->original);
+        else if (kind == FOREIGN_SLACKWARE && e->metadata)
             e->stream.path = joined("HOLY/foreign/slackware",
                                     !strcmp(e->original, "install") ? "" : e->original + 8);
         else e->stream.path = e->metadata ?
@@ -262,7 +278,8 @@ static int collect_archive(const char *snapshot, struct foreign_input *input,
             holy_elf_free(&info); fclose(elf);
             if (e->group < 0) input->unknown = 1;
         }
-        if ((kind == FOREIGN_PACMAN && !strcmp(e->original, ".PKGINFO")) ||
+        if (((kind == FOREIGN_PACMAN || kind == FOREIGN_APK_CONTROL) &&
+             !strcmp(e->original, ".PKGINFO")) ||
             (kind == FOREIGN_DEB_CONTROL && !strcmp(e->original, "@control/control"))) {
             if (input->pkginfo || size > 1024 * 1024 || fflush(input->spool)) goto done;
             input->pkginfo = malloc((size_t)size + 1);
@@ -272,7 +289,8 @@ static int collect_archive(const char *snapshot, struct foreign_input *input,
         }
     }
     if (status != ARCHIVE_EOF ||
-        ((kind == FOREIGN_PACMAN || kind == FOREIGN_DEB_CONTROL) && !input->pkginfo) ||
+        ((kind == FOREIGN_PACMAN || kind == FOREIGN_DEB_CONTROL ||
+          kind == FOREIGN_APK_CONTROL) && !input->pkginfo) ||
         fflush(input->spool) || fsync(fileno(input->spool))) goto done;
     result = 0;
 done:
@@ -386,6 +404,64 @@ done:
     return result;
 }
 
+static int apk_gzip_parts(const char *snapshot, FILE *parts[3], char digests[3][65])
+{
+    unsigned char in[65536], out[65536], digest[32];
+    struct stat st;
+    off_t offset = 0;
+    int fd = open(snapshot, O_RDONLY | O_CLOEXEC), count = 0, ok = 0;
+    if (fd < 0 || fstat(fd, &st) || st.st_size <= 0) goto done;
+    while (offset < st.st_size && count < 3) {
+        z_stream z = {0};
+        EVP_MD_CTX *hash = EVP_MD_CTX_new();
+        unsigned length = 0;
+        uint64_t expanded = 0;
+        off_t begin = offset;
+        int status = Z_OK;
+        parts[count] = tmpfile();
+        if (!parts[count] || !hash || EVP_DigestInit_ex(hash, EVP_sha256(), NULL) != 1 ||
+            inflateInit2(&z, 15 + 16) != Z_OK) {
+            EVP_MD_CTX_free(hash); goto done;
+        }
+        while (status == Z_OK) {
+            ssize_t got = pread(fd, in, sizeof in, offset);
+            size_t used;
+            if (got <= 0) break;
+            z.next_in = in; z.avail_in = (uInt)got;
+            while (z.avail_in && status == Z_OK) {
+                uInt before = z.avail_in;
+                z.next_out = out; z.avail_out = sizeof out;
+                status = inflate(&z, Z_NO_FLUSH);
+                used = before - z.avail_in;
+                if (status != Z_OK && status != Z_STREAM_END) break;
+                if (fwrite(in + (got - before), 1, used, parts[count]) != used ||
+                    EVP_DigestUpdate(hash, in + (got - before), used) != 1) {
+                    status = Z_ERRNO; break;
+                }
+                offset += (off_t)used;
+                expanded += sizeof out - z.avail_out;
+                if (expanded > 4ULL * 1024 * 1024 * 1024 ||
+                    (!used && z.avail_out == sizeof out)) { status = Z_DATA_ERROR; break; }
+            }
+        }
+        inflateEnd(&z);
+        if (status != Z_STREAM_END || offset == begin ||
+            EVP_DigestFinal_ex(hash, digest, &length) != 1 || length != 32 ||
+            fflush(parts[count])) { EVP_MD_CTX_free(hash); goto done; }
+        EVP_MD_CTX_free(hash);
+        {
+            size_t i;
+            for (i = 0; i < 32; ++i) snprintf(digests[count] + i * 2, 3, "%02x", digest[i]);
+        }
+        ++count;
+    }
+    ok = offset == st.st_size && (count == 2 || count == 3);
+done:
+    if (fd >= 0) close(fd);
+    if (!ok) { size_t i; for (i = 0; i < 3; ++i) { if (parts[i]) fclose(parts[i]); parts[i] = NULL; } }
+    return ok ? count : 0;
+}
+
 static void free_input(struct foreign_input *input)
 {
     size_t i;
@@ -403,6 +479,46 @@ static void free_deb(struct deb_metadata *meta)
     size_t i;
     for (i = 0; i < meta->count; ++i) { free(meta->fields[i].key); free(meta->fields[i].value); }
     free(meta->fields);
+}
+
+static void free_apk(struct apk_metadata *meta)
+{
+    size_t i;
+    for (i = 0; i < meta->count; ++i) { free(meta->fields[i].key); free(meta->fields[i].value); }
+    free(meta->fields);
+}
+
+static int parse_apk(const char *data, size_t size, struct apk_metadata *meta)
+{
+    size_t offset = 0, line = 0;
+    if (memchr(data, 0, size)) return 0;
+    while (offset < size) {
+        const char *start = data + offset, *end = memchr(start, '\n', size - offset), *separator;
+        size_t length = end ? (size_t)(end - start) : size - offset, i;
+        struct apk_field *field, *grown;
+        ++line; offset += length + (end != NULL);
+        if (!length || *start == '#') continue;
+        separator = memchr(start, '=', length);
+        if (!separator || separator < start + 2 || separator[-1] != ' ' ||
+            separator + 1 >= start + length || separator[1] != ' ' ||
+            meta->count == 4096) return 0;
+        for (i = 0; i < (size_t)(separator - start - 1); ++i)
+            if (!isalnum((unsigned char)start[i]) && start[i] != '_' && start[i] != '-') return 0;
+        grown = realloc(meta->fields, (meta->count + 1) * sizeof *grown);
+        if (!grown) return 0;
+        meta->fields = grown; field = &meta->fields[meta->count++];
+        field->key = strndup(start, (size_t)(separator - start - 1));
+        field->value = strndup(separator + 2, (size_t)(start + length - separator - 2));
+        field->line = line;
+        if (!field->key || !field->value || !*field->value) return 0;
+        if (!strcmp(field->key, "pkgname")) { if (meta->name) return 0; meta->name = field->value; }
+        if (!strcmp(field->key, "pkgver")) { if (meta->version) return 0; meta->version = field->value; }
+        if (!strcmp(field->key, "arch")) { if (meta->arch) return 0; meta->arch = field->value; }
+        if (!strcmp(field->key, "datahash")) { if (meta->datahash) return 0; meta->datahash = field->value; }
+    }
+    if (!meta->name || !meta->version || !meta->arch) return 0;
+    if (strspn(meta->name, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+_.-") != strlen(meta->name)) return 0;
+    return 1;
 }
 
 static int parse_deb(const char *control, size_t length, struct deb_metadata *meta)
@@ -854,6 +970,7 @@ done:
 
 static int write_output(struct foreign_input *input, const struct holy_pacman_metadata *meta,
                          const struct deb_metadata *deb, const struct slack_metadata *slack,
+                         const struct apk_metadata *apk,
                          const char *source, const char *hash, const char *output, int output_fd, FILE *receipt, int group)
 {
     static const char *const names[] = {
@@ -865,10 +982,10 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
     struct holy_stream_entry *entries = NULL;
     int ok = 0, aggregate = input->group_count == 1 || group == (int)input->group_count - 1;
     const char *arch = input->groups[group].arch, *libc = input->groups[group].libc;
-    const char *family = slack ? "slackware" : deb ? "deb" : "pacman";
-    const char *name = slack ? slack->name : deb ? deb->name : meta->name;
-    const char *version = slack ? slack->version : deb ? deb->version : meta->version;
-    const char *source_arch = slack ? slack->arch : deb ? deb->arch : meta->arch;
+    const char *family = apk ? "apk" : slack ? "slackware" : deb ? "deb" : "pacman";
+    const char *name = apk ? apk->name : slack ? slack->name : deb ? deb->name : meta->name;
+    const char *version = apk ? apk->version : slack ? slack->version : deb ? deb->version : meta->version;
+    const char *source_arch = apk ? apk->arch : slack ? slack->arch : deb ? deb->arch : meta->arch;
     for (i = 0; i < 7; ++i) if (!(files[i] = open_memstream(&text[i], &sizes[i]))) goto done;
     fputs("format holy-package-1\nname ", files[0]); token(files[0], name);
     fputs("\nversion ", files[0]); token(files[0], version);
@@ -893,7 +1010,7 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
                         input->groups[i].libc, "any", "-", name, "import-output");
         }
     }
-    for (i = 0; !deb && !slack && i < meta->count; ++i) {
+    for (i = 0; !deb && !slack && !apk && i < meta->count; ++i) {
         const struct holy_pacman_field *field = &meta->fields[i];
         char id[64];
         fputs("pkginfo ", files[5]); token(files[5], field->key); fputc(' ', files[5]);
@@ -934,6 +1051,19 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
         requirement(files[2], id, name, "foreign", field->value, "any", "any", "any", "-",
                     field->value, field->key);
     }
+    for (i = 0; apk && i < apk->count; ++i) {
+        const struct apk_field *field = &apk->fields[i];
+        char id[64];
+        fputs("pkginfo ", files[5]); token(files[5], field->key); fputc(' ', files[5]);
+        token(files[5], field->value); fprintf(files[5], " %zu\n", field->line);
+        if (!aggregate) continue;
+        if (!strcmp(field->key, "depend") || !strcmp(field->key, "install_if") ||
+            !strcmp(field->key, "replaces") || !strcmp(field->key, "provides")) {
+            snprintf(id, sizeof id, "apk-%zu", field->line);
+            requirement(files[2], id, name, "foreign", field->value, "any", "any", "any", "-",
+                        field->value, field->key);
+        }
+    }
     if (slack) {
         fputs("package-filename ", files[5]); token(files[5], name);
         fputc(' ', files[5]); token(files[5], version);
@@ -947,10 +1077,24 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
         const struct foreign_entry *e = &input->entries[i];
         if (!belongs(input, i, group)) continue;
         if (!e->metadata && !write_manifest(files[1], input, i, family)) goto done;
-        if (aggregate && !strcmp(e->original, ".INSTALL")) {
+        if (!apk && !deb && !slack && aggregate && !strcmp(e->original, ".INSTALL")) {
             fputs("foreign-script pacman /bin/sh HOLY/foreign/pacman/INSTALL sha256 ", files[4]);
             hex_hash(files[4], e->hash);
             fputs(" review-required\n", files[4]);
+        }
+        if (apk && aggregate && e->metadata && strcmp(e->original, ".PKGINFO") &&
+            strncmp(e->original, ".SIGN.", 6)) {
+            if (strstr(e->original, "install") || strstr(e->original, "upgrade") ||
+                strstr(e->original, "deinstall")) {
+                fputs("foreign-script apk /bin/sh ", files[4]); token(files[4], e->stream.path);
+                fputs(" sha256 ", files[4]); hex_hash(files[4], e->hash);
+                fputs(" review-required\n", files[4]);
+            } else {
+                char id[64];
+                snprintf(id, sizeof id, "apk-control-%zu", i);
+                requirement(files[2], id, name, "foreign", e->original, "any", "any", "any", "-",
+                            e->original, "apk-control-file");
+            }
         }
         if (slack && aggregate && !strcmp(e->original, "install/doinst.sh")) {
             fputs("foreign-script slackware /bin/sh HOLY/foreign/slackware/doinst.sh sha256 ", files[4]);
@@ -987,7 +1131,8 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
         if (failed || !append_text(input, &entries[count++], names[i], text[i], sizes[i])) goto done;
     }
     entries[count++] = (struct holy_stream_entry){"HOLY/foreign", NULL, NULL, "root", "root", 0, 0, 0, 0, 0755, 1};
-    entries[count++] = (struct holy_stream_entry){slack ? "HOLY/foreign/slackware" :
+    entries[count++] = (struct holy_stream_entry){apk ? "HOLY/foreign/apk" :
+                                                   slack ? "HOLY/foreign/slackware" :
                                                    deb ? "HOLY/foreign/deb" : "HOLY/foreign/pacman",
                                                    NULL, NULL, "root", "root", 0, 0, 0, 0, 0755, 1};
     for (i = 0; i < input->count; ++i)
@@ -1100,7 +1245,7 @@ int holy_import_pacman(const char *input_path, const char *source, const char *o
     fprintf(receipt, "format holy-import-record-1\nfamily pacman\nconverter holy-pacman-1\noriginal-sha256 %s\nsource-name ", hash);
     token(receipt, source); fputs("\nverification unverified\n", receipt);
     for (i = 0; i < input.group_count; ++i)
-        if (!write_output(&input, &metadata, NULL, NULL, source, hash, output, output_fd, receipt, (int)i)) goto done;
+        if (!write_output(&input, &metadata, NULL, NULL, NULL, source, hash, output, output_fd, receipt, (int)i)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
     if (fclose(receipt)) { receipt = NULL; goto done; }
@@ -1175,7 +1320,7 @@ int holy_import_deb(const char *input_path, const char *source, const char *outp
     fprintf(receipt, "format holy-import-record-1\nfamily deb\nconverter holy-deb-1\noriginal-sha256 %s\nsource-name ", hash);
     token(receipt, source); fputs("\nverification unverified\n", receipt);
     for (i = 0; i < input.group_count; ++i)
-        if (!write_output(&input, NULL, &metadata, NULL, source, hash, output, output_fd, receipt, (int)i)) goto done;
+        if (!write_output(&input, NULL, &metadata, NULL, NULL, source, hash, output, output_fd, receipt, (int)i)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
     if (fclose(receipt)) { receipt = NULL; goto done; }
@@ -1258,7 +1403,7 @@ int holy_import_slackware(const char *input_path, const char *source, const char
     fprintf(receipt, "format holy-import-record-1\nfamily slackware\nconverter holy-slackware-1\noriginal-sha256 %s\nsource-name ", hash);
     token(receipt, source); fputs("\nverification unverified\n", receipt);
     for (i = 0; i < input.group_count; ++i)
-        if (!write_output(&input, NULL, NULL, &metadata, source, hash,
+        if (!write_output(&input, NULL, NULL, &metadata, NULL, source, hash,
                           output, output_fd, receipt, (int)i)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
@@ -1274,5 +1419,109 @@ done:
     if (input_fd >= 0) close(input_fd);
     if (snapshot) { unlink(snapshot); free(snapshot); }
     free_slack(&metadata); free_input(&input);
+    return result;
+}
+
+int holy_import_apk(const char *input_path, const char *source, const char *output)
+{
+    struct foreign_input input = {0};
+    struct apk_metadata metadata = {0};
+    struct stat st;
+    FILE *parts[3] = {0}, *receipt = NULL;
+    char digests[3][65] = {{0}}, *snapshot = NULL, hash[65], temporary[43] = {0};
+    int input_fd = -1, output_fd = -1, count, control, result = 1, common;
+    size_t i;
+    if (!*source || !strcmp(source, "local")) return 2;
+    for (i = 0; source[i]; ++i)
+        if ((unsigned char)source[i] <= 32 || source[i] == ':' ||
+            source[i] == '/' || source[i] == '@') return 2;
+    input_fd = open(input_path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (input_fd < 0 || fstat(input_fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size < 0 || st.st_size > 1024LL * 1024 * 1024) {
+        result = 6; goto done;
+    }
+    snapshot = holy_stage_fd(input_fd, "holy-import");
+    if (!snapshot || !input_hash(snapshot, hash) || mkdir(output, 0700)) goto done;
+    output_fd = open(output, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (output_fd < 0 || fstat(output_fd, &st) || st.st_uid != geteuid() ||
+        (st.st_mode & 0777) != 0700 || !preserve_original(snapshot, output_fd)) goto done;
+    result = 2;
+    count = apk_gzip_parts(snapshot, parts, digests);
+    if (!count) goto done;
+    control = count - 2;
+    for (i = 0; i < (size_t)count; ++i) {
+        char descriptor[64];
+        enum foreign_archive_kind kind = (int)i < control ? FOREIGN_APK_SIGNATURE :
+                                         (int)i == control ? FOREIGN_APK_CONTROL : FOREIGN_APK_DATA;
+        if (fstat(fileno(parts[i]), &st) ||
+            (kind != FOREIGN_APK_DATA && st.st_size > 16 * 1024 * 1024)) goto done;
+        snprintf(descriptor, sizeof descriptor, "/proc/self/fd/%d", fileno(parts[i]));
+        result = collect_archive(descriptor, &input, kind, 0);
+        if (result) goto done;
+    }
+    if (!validate_paths(&input) || !parse_apk(input.pkginfo, input.pkginfo_size, &metadata)) {
+        result = 2; goto done;
+    }
+    if (metadata.datahash) {
+        if (strlen(metadata.datahash) != 64 ||
+            strspn(metadata.datahash, "0123456789abcdefABCDEF") != 64 ||
+            strcasecmp(metadata.datahash, digests[count - 1])) {
+            fputs("holypkg: APK datahash differs from compressed data member\n", stderr);
+            result = 2; goto done;
+        }
+    }
+    result = 3;
+    if (input.unknown) {
+        fputs("holypkg: unknown APK payload ABI or executable format requires classification\n", stderr);
+        goto done;
+    }
+    if (strcmp(metadata.arch, "noarch") && strcmp(metadata.arch, "x86_64") &&
+        strcmp(metadata.arch, "x86")) {
+        fputs("holypkg: unsupported APK architecture requires classification\n", stderr);
+        goto done;
+    }
+    for (i = 0; i < input.group_count; ++i) {
+        const char *arch = input.groups[i].arch;
+        if ((!strcmp(metadata.arch, "noarch") && strcmp(arch, "noarch")) ||
+            (!strcmp(metadata.arch, "x86_64") && strcmp(arch, "x86_64") && strcmp(arch, "x86")) ||
+            (!strcmp(metadata.arch, "x86") && strcmp(arch, "x86"))) {
+            fputs("holypkg: APK architecture differs from payload ELF\n", stderr);
+            goto done;
+        }
+    }
+    if (!input.group_count) common = add_group(&input, "noarch", "nolibc");
+    else if (input.group_count == 1) common = 0;
+    else common = add_group(&input, "noarch", "nolibc");
+    if (common < 0) { result = 6; goto done; }
+    for (i = 0; i < input.count; ++i)
+        if (input.entries[i].group < 0) input.entries[i].group = common;
+    result = 1;
+    {
+        int fd = holy_temporary_at(output_fd, temporary);
+        if (fd < 0) goto done;
+        receipt = fdopen(fd, "w");
+        if (!receipt) { close(fd); goto done; }
+    }
+    fprintf(receipt, "format holy-import-record-1\nfamily apk\nconverter holy-apk-1\noriginal-sha256 %s\nsource-name ", hash);
+    token(receipt, source);
+    fprintf(receipt, "\nverification unverified\ndata-sha256 %s\n", digests[count - 1]);
+    for (i = 0; i < input.group_count; ++i)
+        if (!write_output(&input, NULL, NULL, NULL, &metadata, source, hash,
+                          output, output_fd, receipt, (int)i)) goto done;
+    fputs("state complete\n", receipt);
+    if (fflush(receipt) || fsync(fileno(receipt))) goto done;
+    if (fclose(receipt)) { receipt = NULL; goto done; }
+    receipt = NULL;
+    if (linkat(output_fd, temporary, output_fd, "conversion", 0) || fsync(output_fd)) goto done;
+    result = 0;
+done:
+    if (result)
+        fprintf(stderr, "holypkg: APK import incomplete (status %d); no installed state changed\n", result);
+    if (receipt) fclose(receipt);
+    for (i = 0; i < 3; ++i) if (parts[i]) fclose(parts[i]);
+    if (output_fd >= 0) { if (*temporary) unlinkat(output_fd, temporary, 0); close(output_fd); }
+    if (input_fd >= 0) close(input_fd);
+    if (snapshot) { unlink(snapshot); free(snapshot); }
+    free_apk(&metadata); free_input(&input);
     return result;
 }

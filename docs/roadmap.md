@@ -105,6 +105,15 @@
   discovery, publisher signatures and dependency metadata beyond the archive
   remain open.
 
+- [x] Import local APK v2 binary packages with bounded gzip member parsing.
+  Preserve control files and unverified signatures, check .PKGINFO datahash
+  against the compressed data member, split observed ELF ABIs and keep
+  unsupported dependency expressions as attributed foreign requirements.
+  Offline fixtures cover two/three members, script review, data install,
+  truncated/extra streams and unsafe paths. Manual imports of Alpine v3.22
+  alpine-baselayout-data 3.7.0-r0 and scdoc 1.11.3-r0 passed. APK indexes,
+  publisher signatures, APK version ordering and relation semantics remain open.
+
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.
 - [x] Plan and atomically apply a source identity registry under the database
   writer lock. Preserve IDs across alias changes and retain inactive origin
