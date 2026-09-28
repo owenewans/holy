@@ -355,13 +355,13 @@ static int installed_ref(int argc, char **argv, int operation)
 {
     const char *reference = argc > 2 ? argv[2] : NULL;
     const char *separator = reference ? strchr(reference, ':') : NULL;
-    const char *root = "/", *arch = NULL, *libc = NULL;
+    const char *root = "/", *arch = NULL, *libc = NULL, *plan = NULL;
     char source_id[65], digest[65], answer[16], *alias = NULL;
     int root_seen = 0, json = 0, yes = 0, accept_broken = 0;
     int remove_package = operation == 1, list_files = operation == 2;
-    int explain = operation == 3;
+    int explain = operation == 3, repair = operation == 4;
     int result = 2, i;
-    if (!remove_package && !list_files && !explain && (argc == 2 ||
+    if (!remove_package && !list_files && !explain && !repair && (argc == 2 ||
         (argc > 2 && !strncmp(argv[2], "--", 2)))) {
         for (i = 2; i < argc; ++i) {
             if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < argc)
@@ -384,7 +384,9 @@ static int installed_ref(int argc, char **argv, int operation)
             arch = argv[++i];
         else if (!strcmp(argv[i], "--libc") && !libc && i + 1 < argc)
             libc = argv[++i];
-        else if (!remove_package && !list_files && !strcmp(argv[i], "--json") && !json) json = 1;
+        else if (!remove_package && !list_files && !repair && !strcmp(argv[i], "--json") && !json) json = 1;
+        else if (repair && !strcmp(argv[i], "--plan") && !plan && i + 1 < argc)
+            plan = argv[++i];
         else if (remove_package && !strcmp(argv[i], "--yes") && !yes) yes = 1;
         else if (remove_package && !strcmp(argv[i], "--accept-broken") && !accept_broken)
             accept_broken = 1;
@@ -397,6 +399,7 @@ static int installed_ref(int argc, char **argv, int operation)
     if (result) goto done;
     if (list_files) { result = holy_state_files(digest, root); goto done; }
     if (explain) { result = holy_why(digest, root, json); goto done; }
+    if (repair) { result = holy_state_repair(digest, plan, root); goto done; }
     if (!remove_package) { result = holy_state_check(digest, root, json); goto done; }
     if (!yes) {
         if (!isatty(STDIN_FILENO)) {
@@ -416,9 +419,9 @@ static int installed_ref(int argc, char **argv, int operation)
 done:
     if (result == 2)
         fprintf(stderr, "usage: holypkg %s %s [--root DIRECTORY] [--arch ARCH] [--libc LIBC] %s\n",
-                remove_package ? "rm" : list_files ? "files" : explain ? "why" : "check",
-                remove_package || list_files || explain ? "SOURCE:PACKAGE" : "[SOURCE:PACKAGE]",
-                remove_package ? "[--yes] [--accept-broken]" : list_files ? "" : "[--json]");
+                remove_package ? "rm" : list_files ? "files" : explain ? "why" : repair ? "repair" : "check",
+                remove_package || list_files || explain || repair ? "SOURCE:PACKAGE" : "[SOURCE:PACKAGE]",
+                remove_package ? "[--yes] [--accept-broken]" : repair ? "[--plan PLAN_SHA256]" : list_files ? "" : "[--json]");
     free(alias);
     return result;
 }
@@ -823,8 +826,18 @@ set_done:
         !strcmp(argv[2], "owner") && !strcmp(argv[4], "--root"))
         return holy_state_owner(argv[3], argv[5]);
 
+    if (argc > 1 && !strcmp(argv[1], "owner")) {
+        if (argc == 3) return holy_state_owner(argv[2], "/");
+        if (argc == 5 && !strcmp(argv[3], "--root"))
+            return holy_state_owner(argv[2], argv[4]);
+        fputs("usage: holypkg owner PATH [--root DIRECTORY]\n", stderr);
+        return 2;
+    }
+
     if (argc > 1 && !strcmp(argv[1], "rm"))
         return installed_ref(argc, argv, 1);
+    if (argc > 1 && !strcmp(argv[1], "repair"))
+        return installed_ref(argc, argv, 4);
     if (argc > 1 && !strcmp(argv[1], "files"))
         return installed_ref(argc, argv, 2);
     if (argc > 1 && !strcmp(argv[1], "why"))

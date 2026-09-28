@@ -178,7 +178,9 @@
   automatic path conversion still require implementation.
 - [x] Plan and journal missing-only repair from the verified artifact cache.
   Preserve changed/partial files, reject stale plans and resume recorded repair
-  after injected write failure. General reinstall and config merge remain open.
+  after injected write failure. Resolve installed `SOURCE:PACKAGE` for plan and
+  apply; expose exact path ownership through `owner`. General reinstall and
+  config merge remain open.
 - [x] Discover installed providers through package names and literal ELF paths;
   scan cached archives of the resulting candidate closure. Reuse intact version-2/3
   instances without changing their state, reason, graph or payload. Bind reused

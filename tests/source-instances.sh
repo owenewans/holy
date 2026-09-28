@@ -95,6 +95,8 @@ expect 0 "$bin" check second:lib --root "$root" --json
 grep -q "\"artifact\":\"$lib\"" "$tmp/out"
 expect 0 "$bin" files renamed:app --root "$root"
 grep -qx '"/usr/share/app"' "$tmp/out"
+expect 0 "$bin" owner /usr/share/app --root "$root"
+grep -q "$app" "$tmp/out"
 expect 0 "$bin" why renamed:app --root "$root"
 grep -qx "path 0 $app \"app\" reason=explicit" "$tmp/out"
 expect 0 "$bin" why second:lib --root "$root" --json
@@ -214,10 +216,11 @@ gcc -shared -fPIC -o "$tmp/fault.so" "$tmp/fault.c" -ldl
     cp "$tmp/interrupted-journal" "$db/transactions/set-journal"
     expect 0 "$bin" db recover --finish-set --root "$root"
     rm "$root/usr/share/app"
-    expect 0 "$bin" db repair-plan "$app" --root "$root"
+    expect 0 "$bin" repair first:app --root "$root"
     repair=$(sed -n 's/^repair-plan .* sha256 \([0-9a-f]*\) missing-only read-only$/\1/p' "$tmp/out")
     test "${#repair}" -eq 64
-    expect 0 "$bin" db repair "$app" --plan "$repair" --root "$root"
+    expect 3 "$bin" repair first:app --plan "$(printf '0%.0s' $(seq 1 64))" --root "$root"
+    expect 0 "$bin" repair first:app --plan "$repair" --root "$root"
     grep -qx "source-id $one" "$db/installed/$app/state"
     expect 0 "$bin" db check --all --root "$root"
 fi

@@ -82,6 +82,10 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg why SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--json]
 .br
+.B holypkg owner PATH [--root DIRECTORY]
+.br
+.B holypkg repair SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--plan PLAN_SHA256]
+.br
 .B holypkg rm SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--yes] [--accept-broken]
 .br
 .B holypkg elf FILE
@@ -1030,6 +1034,11 @@ the artifact, stored graph, database generation and root device/inode. Its scope
 is all absent files in that artifact, including files removed after preparation.
 Changed or partial files are preserved and require manual review. Declared
 missing directories are restored; existing directory metadata must remain intact. Repair does not run hooks or change providers.
+.B holypkg repair SOURCE:PACKAGE
+resolves an installed source slot and prints the same read-only plan. Passing
+--plan PLAN_SHA256 applies that exact plan. An inactive source alias remains
+resolvable through its recorded source ID. When multiple arch/libc slots match,
+--arch and --libc select the intended slot.
 .PP
 Repair records stage repairing before writing files, verifies restored contents
 and increments the generation once. An interrupted operation remains pending.
@@ -1092,6 +1101,7 @@ list the same directory. If multiple records claim one regular file or symlink, 
 command returns conflict status 4 without listing an arbitrary owner. An
 absent path returns 6. It holds a shared database lock and does not require
 the path to exist in the live rootfs; db check compares actual contents.
+The top-level owner command calls this database lookup for the selected root.
 .PP
 Database rm removes one intact supported installed instance by artifact
 SHA-256. It verifies all listed files before mutation, refuses changed files
