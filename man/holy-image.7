@@ -218,7 +218,8 @@ REPORT_DIR chooses an existing report parent directory, defaulting to the
 system temporary directory. QEMU_TIMEOUT bounds each boot in seconds (1..600,
 default 120). QEMU_PROBE_TIMEOUT bounds each guest stage (1..600, defaulting
 to QEMU_TIMEOUT). The guest emits stage-start markers; a repeated marker does
-not renew its deadline. The report names the stage that timed out.
+not renew its deadline. The runner tracks repeated stages within each boot;
+the report names the boot and stage that ran or timed out.
 QEMU_ACCEL=auto selects usable KVM or TCG; kvm and tcg force
 the accelerator, with unavailable KVM returning 6.
 .PP

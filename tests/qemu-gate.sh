@@ -172,7 +172,7 @@ try:
         time.sleep(0.02)
     assert serial is not None
     with serial.open('a') as stream:
-        stream.write('HOLY-BOOT-1 stage identity\n')
+        stream.write('HOLY-BOOT-1 stage identity\nHOLY-BOOT-1 stage identity\n')
         stream.flush()
         os.fsync(stream.fileno())
     output, stderr = runner.communicate(timeout=10)
@@ -181,6 +181,9 @@ try:
     report = json.loads(pathlib.Path(report_path + '.json').read_text())
     assert report['reason'] == 'probe-timeout', report['reason']
     assert report['timed_out_probe'] == 'identity'
+    assert report['timed_out_boot'] == 1
+    assert len(report['probes']) == 1
+    assert report['probes'][0]['boot'] == 1
     assert report['probes'][0]['stage'] == 'identity'
     assert report['probes'][0]['status'] == 'unknown'
 finally:

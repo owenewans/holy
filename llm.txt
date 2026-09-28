@@ -1,4 +1,4 @@
-holy-image.7 source=holy version=development sha256=98e063774e26d7941e3cc5c2159b6984ac0b19da031af156db4f98951a799579
+holy-image.7 source=holy version=development sha256=f825ab3f3d1492bc1be33851d036da7a1775db0009ebf11f1baa9237a8c731f4
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
 NAME
@@ -230,9 +230,10 @@ QEMU
      rectory.  QEMU_TIMEOUT  bounds  each boot in seconds (1..600, default 120).
      QEMU_PROBE_TIMEOUT	 bounds	 each  guest  stage   (1..600,	 defaulting   to
      QEMU_TIMEOUT).  The guest emits stage-start markers; a repeated marker does
-     not renew its  deadline.  The  report  names  the	stage  that  timed  out.
-     QEMU_ACCEL=auto  selects usable KVM or TCG; kvm and tcg force the accelera-
-     tor, with unavailable KVM returning 6.
+     not renew its deadline. The runner tracks repeated stages within each boot;
+     the report names the boot and stage that ran or timed out.	 QEMU_ACCEL=auto
+     selects usable KVM or TCG; kvm and tcg force the accelerator, with unavail-
+     able KVM returning 6.
 
      FIRMWARE=bios  is	the  default.  FIRMWARE=uefi  requires	 UEFI_CODE   and
      UEFI_VARS.	  The  runner  copies both firmware inputs and gives the guest a

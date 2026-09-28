@@ -370,6 +370,8 @@ def main():
     probe_history = []
     active_probe = None
     probe_deadline = None
+    probe_boot = 1
+    started_stages = set()
     deadline = started + int(limit)
     with tempfile.TemporaryDirectory(prefix='holy-qmp-') as control:
         qmp = Path(control) / 'control'
@@ -391,6 +393,13 @@ def main():
                             break
                         now = time.monotonic()
                         for line in lines[len(serial_lines):]:
+                            if line == 'HOLY-BOOT-1 boot 2':
+                                if active_probe:
+                                    active_probe['duration_seconds'] = now - active_probe['started_at']
+                                    active_probe['status'] = 'pass'
+                                active_probe = None
+                                probe_deadline = None
+                                probe_boot = 2
                             if not line.startswith('HOLY-BOOT-1 stage '):
                                 continue
                             name = line.removeprefix('HOLY-BOOT-1 stage ')
@@ -401,10 +410,14 @@ def main():
                                             'reboot', 'result'):
                                 reason = 'invalid-probe-stage'
                                 break
+                            if (probe_boot, name) in started_stages:
+                                continue
+                            started_stages.add((probe_boot, name))
                             if active_probe:
                                 active_probe['duration_seconds'] = now - active_probe['started_at']
                                 active_probe['status'] = 'pass'
-                            active_probe = {'stage': name, 'started_at': now,
+                            active_probe = {'boot': probe_boot, 'stage': name,
+                                            'started_at': now,
                                             'duration_seconds': None, 'status': 'unknown'}
                             probe_history.append(active_probe)
                             probe_deadline = now + int(probe_limit)
@@ -492,11 +505,12 @@ def main():
               'elapsed_seconds': time.monotonic() - started,
               'boot_timeout_seconds': int(limit), 'probe_timeout_seconds': int(probe_limit),
               'shutdown_timeout_seconds': 5,
-              'probes': [{'stage': probe['stage'],
+              'probes': [{'boot': probe['boot'], 'stage': probe['stage'],
                           'started_seconds': probe['started_at'] - started,
                           'duration_seconds': probe['duration_seconds'],
                           'status': probe['status']} for probe in probe_history],
               'timed_out_probe': active_probe['stage'] if reason == 'probe-timeout' else None,
+              'timed_out_boot': active_probe['boot'] if reason == 'probe-timeout' else None,
               'root_storage': 'ext4-overlay' if disk_path else 'ram', 'boots': boots,
               'boot_media': media,
               'first_boot_completed_seconds': first_completed,
