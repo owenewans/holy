@@ -53,6 +53,54 @@ static int cache_directory(const char *root_path, int create)
     return -1;
 }
 
+static int unavailable_dir(int cache, int create)
+{
+    struct stat st;
+    int dir;
+    if (create && mkdirat(cache, ".unavailable", 0700) && errno != EEXIST) return -1;
+    dir = openat(cache, ".unavailable", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir < 0) return -1;
+    if (fstat(dir, &st) || (st.st_uid != geteuid() && st.st_uid != 0) ||
+        (st.st_mode & 0022)) { close(dir); errno = EPERM; return -1; }
+    return dir;
+}
+
+static int clear_unavailable(int cache, const char *digest)
+{
+    int dir = unavailable_dir(cache, 0), ok;
+    if (dir < 0) return errno == ENOENT;
+    ok = !unlinkat(dir, digest, 0) || errno == ENOENT;
+    if (ok) ok = !fsync(dir);
+    close(dir);
+    return ok;
+}
+
+static int mark_unavailable(int cache, const char *digest)
+{
+    char record[120];
+    size_t length = (size_t)snprintf(record, sizeof record,
+                                    "format holy-cache-unavailable-1\nartifact %s\n", digest);
+    struct stat st;
+    int dir = unavailable_dir(cache, 1), fd, ok = 0;
+    if (dir < 0 || length >= sizeof record) return 0;
+    fd = openat(dir, digest, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0 && errno == EEXIST) {
+        char existing[120];
+        fd = openat(dir, digest, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+        if (fd >= 0 && !fstat(fd, &st) && S_ISREG(st.st_mode) &&
+            st.st_size == (off_t)length && !(st.st_mode & 0022) &&
+            (st.st_uid == geteuid() || st.st_uid == 0) &&
+            pread(fd, existing, length, 0) == (ssize_t)length &&
+            !memcmp(existing, record, length)) ok = 1;
+    } else if (fd >= 0) {
+        ok = write(fd, record, length) == (ssize_t)length && !fsync(fd);
+    }
+    if (fd >= 0) close(fd);
+    if (ok) ok = !fsync(dir);
+    close(dir);
+    return ok;
+}
+
 int holy_cache_stage_local_digest(const char *source, const char *root_path,
                                    char output[65])
 {
@@ -72,7 +120,7 @@ int holy_cache_stage_local_digest(const char *source, const char *root_path,
     if (!holy_fetch_at(snapshot, current, identity.digest, name) ||
         fstatat(current, name, &st, AT_SYMLINK_NOFOLLOW) ||
         !S_ISREG(st.st_mode) || st.st_uid != geteuid() ||
-        (st.st_mode & 0022)) goto done;
+        (st.st_mode & 0022) || !clear_unavailable(current, identity.digest)) goto done;
     printf("%s/var/cache/holypkg/objects/sha256/%s\n", root_path, name);
     if (output) memcpy(output, identity.digest, 65);
     ok = 1;
@@ -158,13 +206,21 @@ static int cache_name(const char *name)
     return 1;
 }
 
+static int unavailable_name(const char *name)
+{
+    char object[70];
+    if (strlen(name) != 64) return 0;
+    snprintf(object, sizeof object, "%s.holy", name);
+    return cache_name(object);
+}
+
 static int name_order(const void *left, const void *right)
 {
     const char *const *a = left, *const *b = right;
     return strcmp(*a, *b);
 }
 
-static int cache_names(int dir, char ***output, size_t *count)
+static int cache_names(int dir, char ***output, size_t *count, int unavailable)
 {
     DIR *list = NULL;
     struct dirent *entry;
@@ -178,8 +234,10 @@ static int cache_names(int dir, char ***output, size_t *count)
     while ((entry = readdir(list))) {
         struct stat st;
         char **grown;
-        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-        if (!cache_name(entry->d_name) || used == 100000 ||
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..") ||
+            (!unavailable && !strcmp(entry->d_name, ".unavailable"))) continue;
+        if (!(unavailable ? unavailable_name(entry->d_name) : cache_name(entry->d_name)) ||
+            used == 100000 ||
             fstatat(dir, entry->d_name, &st, AT_SYMLINK_NOFOLLOW) ||
             !S_ISREG(st.st_mode) || (st.st_mode & 0022)) goto done;
         grown = realloc(names, (used + 1) * sizeof *grown);
@@ -250,13 +308,13 @@ int holy_cache_list(const char *root_path)
     char **names = NULL;
     size_t count = 0, i;
     unsigned long long generation;
-    int status = 1, state = -1, installed = -1, cache = -1, result = 1;
+    int status = 1, state = -1, installed = -1, cache = -1, unavailable = -1, result = 1;
     state = holy_state_lock(root_path, 0, &generation, &status);
     if (state < 0) return status;
     installed = openat(state, "installed", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     cache = cache_directory(root_path, 0);
     if (installed < 0 || cache < 0 || flock(cache, LOCK_SH) ||
-        !cache_names(cache, &names, &count)) goto done;
+        !cache_names(cache, &names, &count, 0)) goto done;
     for (i = 0; i < count; ++i) {
         struct stat st, used;
         char digest[65];
@@ -269,23 +327,40 @@ int holy_cache_list(const char *root_path)
             printf("cache %s size %ju retained\n", digest, (uintmax_t)st.st_size);
         else goto done;
     }
+    for (i = 0; i < count; ++i) free(names[i]);
+    free(names); names = NULL; count = 0;
+    unavailable = unavailable_dir(cache, 0);
+    if (unavailable >= 0) {
+        if (!cache_names(unavailable, &names, &count, 1)) goto done;
+        for (i = 0; i < count; ++i) {
+            struct stat st;
+            char object[70];
+            snprintf(object, sizeof object, "%s.holy", names[i]);
+            if (fstatat(cache, object, &st, AT_SYMLINK_NOFOLLOW) == 0) continue;
+            if (errno != ENOENT) goto done;
+            printf("cache %s unavailable\n", names[i]);
+        }
+    } else if (errno != ENOENT) goto done;
     result = ferror(stdout) ? 1 : 0;
 done:
     for (i = 0; i < count; ++i) free(names[i]);
     free(names);
+    if (unavailable >= 0) close(unavailable);
     if (cache >= 0) close(cache);
     if (installed >= 0) close(installed);
     if (state >= 0) close(state);
     return result;
 }
 
-int holy_cache_clean(const char *digest, const char *root_path, int yes)
+int holy_cache_clean(const char *digest, const char *root_path, int yes,
+                     int accept_unavailable)
 {
     char name[70];
     struct stat st, installed_st;
     unsigned long long generation;
     int status = 1, state = -1, installed = -1, transactions = -1;
-    int cache = -1, result = 1, refs;
+    int cache = -1, result = 1, refs, installed_ref = 0;
+    if (accept_unavailable && !yes) return 2;
     if (!digest || strlen(digest) != 64) return 2;
     snprintf(name, sizeof name, "%s.holy", digest);
     if (!cache_name(name)) return 2;
@@ -301,23 +376,24 @@ int holy_cache_clean(const char *digest, const char *root_path, int yes)
     }
     if (!S_ISREG(st.st_mode) || (st.st_mode & 0022)) goto done;
     if (!fstatat(installed, digest, &installed_st, AT_SYMLINK_NOFOLLOW)) {
-        fprintf(stderr, "holypkg: cache object belongs to an installed package: %s\n", digest);
-        result = 4; goto done;
-    }
-    if (errno != ENOENT) goto done;
+        if (!S_ISDIR(installed_st.st_mode)) goto done;
+        installed_ref = 1;
+    } else if (errno != ENOENT) goto done;
     refs = transaction_refs(transactions, digest, 0);
     if (refs < 0) goto done;
-    if (refs) {
-        fprintf(stderr, "holypkg: cache object is retained by a transaction: %s\n", digest);
-        result = 4; goto done;
-    }
     if (!yes) {
-        printf("cache-clean-plan %s size %ju generation %llu read-only\n",
-               digest, (uintmax_t)st.st_size, generation);
+        printf("cache-clean-plan %s size %ju generation %llu installed %d transactions %d read-only\n",
+               digest, (uintmax_t)st.st_size, generation, installed_ref, refs);
         result = 0; goto done;
     }
+    if ((installed_ref || refs) && !accept_unavailable) {
+        fprintf(stderr, "holypkg: decision-required cache object %s installed=%d transactions=%d; use --accept-unavailable after review\n",
+                digest, installed_ref, refs);
+        result = 3; goto done;
+    }
+    if (!mark_unavailable(cache, digest)) goto done;
     if (unlinkat(cache, name, 0) || fsync(cache)) goto done;
-    printf("cache-cleaned %s\n", digest);
+    printf("cache-cleaned %s unavailable\n", digest);
     result = 0;
 done:
     if (cache >= 0) close(cache);

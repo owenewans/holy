@@ -184,8 +184,10 @@
 - [x] List native cache objects and require an explicit `cache clean SHA256 --yes`
   before deleting an unreferenced object. Hold database/cache locks, protect
   installed instances and hashes retained in transaction records, and reject
-  incomplete transactions. Per-object unavailable markers and rollback-aware
-  forced deletion remain open.
+  incomplete transactions. `--accept-unavailable` permits reviewed removal of
+  a referenced object, records its unavailable hash, and later staging clears
+  the marker. Listing reports unavailable objects. Recovery of arbitrary
+  external rollback references remains open.
 - [x] Discover installed providers through package names and literal ELF paths;
   scan cached archives of the resulting candidate closure. Reuse intact version-2/3
   instances without changing their state, reason, graph or payload. Bind reused

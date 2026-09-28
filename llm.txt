@@ -983,7 +983,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=a56e0714a8d6fb53a5679319e07de31e5e10282f9cbd6f86bf959ac1ddfa1cf5
+holypkg.8 source=holy version=development sha256=0e3966419bc39826cc19abdecda999cb8ccb77a468c1390ffcebea2f0ac6742e
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1059,7 +1059,7 @@ SYNOPSIS
      holypkg cache stage local:FILE --root DIRECTORY
      holypkg cache verify SHA256 --root DIRECTORY
      holypkg cache list --root DIRECTORY
-     holypkg cache clean SHA256 --root DIRECTORY [--yes]
+     holypkg cache clean SHA256 --root DIRECTORY [--yes [--accept-unavailable]]
      holypkg db init --root DIRECTORY
      holypkg db status --root DIRECTORY
      holypkg db status --root DIRECTORY --json
@@ -2461,14 +2461,17 @@ DESCRIPTION
      the  verified  name,  arch	 and libc. It does not mutate the cache or prove
      that other package dependencies can be satisfied.	cache list reads SHA-256
      objects in name order and reports size and current	 installed-slot	 status.
-     It	 requires  an  intact database and does not verify payload bytes.  cache
-     clean SHA256 prints a read-only deletion preview. --yes removes  the  exact
-     object  after  rechecking it under the database writer lock and cache lock.
-     Installed artifacts and hashes found in retained  transaction  records  are
-     protected.	 An  incomplete	 transaction  blocks deletion. Unknown cache en-
-     tries, unsafe file types and transaction records too large to inspect cause
-     an error instead of deletion.  The command does not remove installed  files
-     or rewrite transaction history.
+     It	 also  shows  hashes  marked unavailable after explicit deletion. It re-
+     quires an intact database and does not verify payload bytes.   cache  clean
+     SHA256  prints a read-only deletion preview. --yes removes the exact object
+     after rechecking it under the database writer lock and cache lock. The pre-
+     view reports whether an installed instance or retained  transaction  refers
+     to the hash.  Such a deletion requires both --yes and --accept-unavailable.
+     The  manager records the hash as unavailable; staging the same verified ob-
+     ject clears that marker.  An incomplete transaction  blocks  deletion.  Un-
+     known cache entries, unsafe file types and transaction records too large to
+     inspect cause an error instead of deletion. The command does not remove in-
+     stalled files or rewrite transaction history.
 
      Database  init creates an empty ROOT/var/lib/holypkg with installed, trans-
      actions and index directories, and a  generation  file  containing	 0.   It

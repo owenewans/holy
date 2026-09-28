@@ -689,13 +689,17 @@ int main(int argc, char **argv)
         return holy_cache_list(argv[4]);
     if (argc == 6 && !strcmp(argv[1], "cache") &&
         !strcmp(argv[2], "clean") && !strcmp(argv[4], "--root"))
-        return holy_cache_clean(argv[3], argv[5], 0);
+        return holy_cache_clean(argv[3], argv[5], 0, 0);
     if (argc == 7 && !strcmp(argv[1], "cache") &&
         !strcmp(argv[2], "clean") && !strcmp(argv[4], "--root") &&
         !strcmp(argv[6], "--yes"))
-        return holy_cache_clean(argv[3], argv[5], 1);
+        return holy_cache_clean(argv[3], argv[5], 1, 0);
+    if (argc == 8 && !strcmp(argv[1], "cache") &&
+        !strcmp(argv[2], "clean") && !strcmp(argv[4], "--root") &&
+        !strcmp(argv[6], "--yes") && !strcmp(argv[7], "--accept-unavailable"))
+        return holy_cache_clean(argv[3], argv[5], 1, 1);
     if (argc > 1 && !strcmp(argv[1], "cache")) {
-        fputs("usage: holypkg cache stage local:FILE --root DIRECTORY | cache verify SHA256 --root DIRECTORY | cache list --root DIRECTORY | cache clean SHA256 --root DIRECTORY [--yes]\n", stderr);
+        fputs("usage: holypkg cache stage local:FILE --root DIRECTORY | cache verify SHA256 --root DIRECTORY | cache list --root DIRECTORY | cache clean SHA256 --root DIRECTORY [--yes [--accept-unavailable]]\n", stderr);
         return 2;
     }
     if (argc == 7 && !strcmp(argv[1], "db") && !strcmp(argv[2], "plan-update") &&

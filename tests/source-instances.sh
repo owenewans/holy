@@ -89,7 +89,7 @@ expect 0 "$bin" db status --root "$root"
 expect 0 "$bin" db check --all --root "$root"
 expect 0 "$bin" cache list --root "$root"
 grep -q "^cache $app size [0-9][0-9]* installed$" "$tmp/out"
-expect 4 "$bin" cache clean "$app" --root "$root" --yes
+expect 3 "$bin" cache clean "$app" --root "$root" --yes
 expect 0 "$bin" check --root "$root" --json
 grep -q '"type":"summary"' "$tmp/out"
 expect 0 "$bin" check renamed:app --root "$root"
@@ -142,10 +142,12 @@ grep -qx 'source-id -' "$db/installed/$extra/state"
 test ! -e "$db/installed/$extra/source"
 expect 6 "$bin" db plan-set "$unused" --source "$unused=$one" --root "$root"
 expect 0 "$bin" cache clean "$unused" --root "$root"
-grep -q "^cache-clean-plan $unused size [0-9][0-9]* generation [0-9][0-9]* read-only$" "$tmp/out"
+grep -q "^cache-clean-plan $unused size [0-9][0-9]* generation [0-9][0-9]* installed 0 transactions 0 read-only$" "$tmp/out"
 expect 0 "$bin" cache verify "$unused" --root "$root"
 expect 0 "$bin" cache clean "$unused" --root "$root" --yes
 expect 6 "$bin" cache clean "$unused" --root "$root"
+expect 0 "$bin" cache list --root "$root"
+grep -qx "cache $unused unavailable" "$tmp/out"
 cp "$db/installed/$app/source" "$tmp/saved-source"
 printf corrupt > "$db/installed/$app/source"
 expect 1 "$bin" db status --root "$root"
@@ -231,6 +233,15 @@ gcc -shared -fPIC -o "$tmp/fault.so" "$tmp/fault.c" -ldl
     expect 0 "$bin" repair first:app --plan "$repair" --root "$root"
     grep -qx "source-id $one" "$db/installed/$app/state"
     expect 0 "$bin" db check --all --root "$root"
+    expect 0 "$bin" cache clean "$app" --root "$root"
+    grep -q "installed 1 transactions [0-9][0-9]* read-only$" "$tmp/out"
+    expect 0 "$bin" cache clean "$app" --root "$root" --yes --accept-unavailable
+    expect 0 "$bin" cache list --root "$root"
+    grep -qx "cache $app unavailable" "$tmp/out"
+    expect 0 "$bin" cache stage "local:$tmp/app.holy" --root "$root"
+    expect 0 "$bin" cache list --root "$root"
+    grep -q "^cache $app size [0-9][0-9]* installed$" "$tmp/out"
+    if grep -qx "cache $app unavailable" "$tmp/out"; then exit 1; fi
 fi
 root="$tmp/slots"
 db="$root/var/lib/holypkg"

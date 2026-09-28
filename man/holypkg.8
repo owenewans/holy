@@ -102,7 +102,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg cache list --root DIRECTORY
 .br
-.B holypkg cache clean SHA256 --root DIRECTORY [--yes]
+.B holypkg cache clean SHA256 --root DIRECTORY [--yes [--accept-unavailable]]
 .br
 .B holypkg db init --root DIRECTORY
 .br
@@ -1485,14 +1485,18 @@ verified name, arch and libc. It does not mutate the cache or prove that
 other package dependencies can be satisfied.
 .B cache list
 reads SHA-256 objects in name order and reports size and current installed-slot
-status. It requires an intact database and does not verify payload bytes.
+status. It also shows hashes marked unavailable after explicit deletion. It
+requires an intact database and does not verify payload bytes.
 .B cache clean SHA256
 prints a read-only deletion preview. --yes removes the exact object after
-rechecking it under the database writer lock and cache lock. Installed artifacts
-and hashes found in retained transaction records are protected. An incomplete
-transaction blocks deletion. Unknown cache entries, unsafe file types and
-transaction records too large to inspect cause an error instead of deletion.
-The command does not remove installed files or rewrite transaction history.
+rechecking it under the database writer lock and cache lock. The preview reports
+whether an installed instance or retained transaction refers to the hash.
+Such a deletion requires both --yes and --accept-unavailable. The manager records
+the hash as unavailable; staging the same verified object clears that marker.
+An incomplete transaction blocks deletion. Unknown cache entries, unsafe file
+types and transaction records too large to inspect cause an error instead of
+deletion. The command does not remove installed files or rewrite transaction
+history.
 .PP
 Database init creates an empty ROOT/var/lib/holypkg with installed,
 transactions and index directories, and a generation file containing 0.
