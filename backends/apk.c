@@ -1,9 +1,10 @@
-#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
 #include "apk.h"
 #include "../src/config.h"
 #include "../src/stage.h"
 #include "../src/fetch.h"
 #include "../src/source.h"
+#include "../src/state.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -574,7 +575,7 @@ static int select_package(const char *directory, const char *name,
             n != 8 || strcmp(v[0], "package")) {
             free(error); holy_tokens_free(v, n); goto done;
         }
-        if (!strcmp(v[1], name) && !strcmp(v[2], version) && !strcmp(v[3], arch)) {
+        if (name && !strcmp(v[1], name) && !strcmp(v[2], version) && !strcmp(v[3], arch)) {
             char *end;
             if (++matches > 1) { free(error); holy_tokens_free(v, n); goto done; }
             selection->checksum = strdup(v[4]);
@@ -587,13 +588,221 @@ static int select_package(const char *directory, const char *name,
         free(error); holy_tokens_free(v, n);
     }
     if (ferror(file)) goto done;
-    result = matches == 1 ? 0 : 4;
+    result = !name || matches == 1 ? 0 : 4;
 done:
     if (file) fclose(file);
     if (fd >= 0) close(fd);
     if (dir >= 0) close(dir);
     if (snapshot) { unlink(snapshot); free(snapshot); }
     free(line);
+    return result;
+}
+
+static int binding_name(const char *id, const char *repo, char name[130])
+{
+    unsigned char digest[32];
+    unsigned size;
+    size_t i;
+    if (!hex_digest(id) || EVP_Digest(repo, strlen(repo), digest, &size,
+                                      EVP_sha256(), NULL) != 1 || size != 32) return 0;
+    memcpy(name, id, 64);
+    name[64] = '.';
+    for (i = 0; i < 32; ++i) snprintf(name + 65 + 2 * i, 3, "%02x", digest[i]);
+    return 1;
+}
+
+static int binding_directory(int database, int create)
+{
+    struct stat st;
+    int dir;
+    if (create && mkdirat(database, "apk-catalogs", 0700) && errno != EEXIST) return -1;
+    dir = openat(database, "apk-catalogs", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir < 0) return -1;
+    if (fstat(dir, &st) || !S_ISDIR(st.st_mode) ||
+        (st.st_uid != geteuid() && st.st_uid != 0) || (st.st_mode & 0022)) {
+        close(dir); return -1;
+    }
+    return dir;
+}
+
+int holy_apk_bind(const char *root, const char *source, const char *repo,
+                  const char *catalog, const char *accepted)
+{
+    struct apk_selection selected = {0};
+    char id[65], name[130], temporary[43] = {0};
+    char *base = NULL, *trust = NULL, *path = NULL, *root_path = NULL, *record = NULL;
+    unsigned long long generation;
+    size_t size = 0, used = 0;
+    FILE *stream = NULL;
+    int database = -1, dir = -1, fd = -1, result;
+    if (!root || !source || !repo || !catalog || (accepted && !hex_digest(accepted))) return 2;
+    result = holy_source_apk_repo(root, source, repo, id, &base, &trust);
+    if (result) goto done;
+    if (!strcmp(trust, "require")) { result = 6; goto done; }
+    path = realpath(catalog, NULL);
+    if (!path) { result = 6; goto done; }
+    result = select_package(path, NULL, NULL, NULL, &selected);
+    if (result || strcmp(selected.source_id, id) ||
+        strcmp(selected.repo, repo) || strcmp(selected.base, base)) {
+        result = 6; goto done;
+    }
+    if (accepted && strcmp(accepted, selected.index_hash)) { result = 4; goto done; }
+    if (!accepted && strcmp(trust, "ignore")) {
+        fprintf(stderr, "holypkg: decision-required unsigned APK index source=%s repo=%s sha256=%s; --accept-unsigned %s confirms binding\n",
+                id, repo, selected.index_hash, selected.index_hash);
+        result = 3; goto done;
+    }
+    if (!binding_name(id, repo, name)) { result = 2; goto done; }
+    root_path = realpath(root, NULL);
+    if (!root_path) { result = 6; goto done; }
+    stream = open_memstream(&record, &size);
+    if (!stream) { result = 1; goto done; }
+    fprintf(stream, "format holy-apk-binding-1\nsource-id %s\nrepo ", id);
+    quote(stream, repo);
+    fprintf(stream, "\nindex-sha256 %s\ncatalog-sha256 %s\n%s ",
+            selected.index_hash, selected.catalog_hash,
+            strcmp(root_path, "/") && !strncmp(path, root_path, strlen(root_path)) &&
+            path[strlen(root_path)] == '/' ? "root-path" : "path");
+    quote(stream, strcmp(root_path, "/") && !strncmp(path, root_path, strlen(root_path)) &&
+          path[strlen(root_path)] == '/' ? path + strlen(root_path) : path);
+    fputc('\n', stream);
+    {
+        int failed = ferror(stream);
+        if (fclose(stream)) failed = 1;
+        stream = NULL;
+        if (failed || size > 4096) { result = 1; goto done; }
+    }
+    database = holy_state_lock(root, 1, &generation, &result);
+    if (database < 0) goto done;
+    dir = binding_directory(database, 1);
+    if (dir < 0) { result = 1; goto done; }
+    fd = holy_temporary_at(dir, temporary);
+    if (fd < 0) { result = 1; goto done; }
+    while (used < size) {
+        ssize_t written = write(fd, record + used, size - used);
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) { result = 1; goto done; }
+        used += (size_t)written;
+    }
+    if (fsync(fd) || renameat(dir, temporary, dir, name) || fsync(dir)) {
+        result = 1; goto done;
+    }
+    result = 0;
+    printf("apk-catalog-bound %s repo %s index %s\n", id, repo, selected.index_hash);
+done:
+    if (result) fprintf(stderr, "holypkg: APK catalog binding failed (status %d)\n", result);
+    if (stream) fclose(stream);
+    if (fd >= 0) close(fd);
+    if (dir >= 0) {
+        if (temporary[0]) unlinkat(dir, temporary, 0);
+        close(dir);
+    }
+    if (database >= 0) close(database);
+    free(base); free(trust); free(path); free(root_path); free(record);
+    free_selection(&selected);
+    return result;
+}
+
+static char *binding_field(FILE *file, const char *key)
+{
+    char *line = NULL, **v = NULL, *error = NULL, *value = NULL;
+    size_t capacity = 0, count = 0;
+    ssize_t got = getline(&line, &capacity, file);
+    if (got > 0 && got <= 4096 &&
+        holy_lex(line, (size_t)got, &v, &count, "APK binding", 0, &error) &&
+        count == 2 && !strcmp(v[0], key)) value = strdup(v[1]);
+    holy_tokens_free(v, count); free(error); free(line);
+    return value;
+}
+
+int holy_apk_catalog_path(const char *root, const char *source, const char *repo,
+                          char **catalog)
+{
+    struct apk_selection selected = {0};
+    struct stat st;
+    char id[65], name[130], *base = NULL, *trust = NULL;
+    char *saved_id = NULL, *saved_repo = NULL, *index = NULL, *hash = NULL;
+    char *path = NULL, *root_path = NULL, *joined = NULL, *key = NULL;
+    unsigned long long generation;
+    FILE *file = NULL;
+    int database = -1, dir = -1, fd = -1, result, root_relative = 0;
+    *catalog = NULL;
+    result = holy_source_apk_repo(root, source, repo, id, &base, &trust);
+    if (result) goto done;
+    if (!strcmp(trust, "require") || !binding_name(id, repo, name)) {
+        result = 6; goto done;
+    }
+    database = holy_state_lock(root, 0, &generation, &result);
+    if (database < 0) goto done;
+    dir = binding_directory(database, 0);
+    if (dir < 0) { result = 6; goto done; }
+    fd = openat(dir, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size > 4096 ||
+        (st.st_mode & 0022) || (st.st_uid != 0 && st.st_uid != geteuid())) {
+        result = 6; goto done;
+    }
+    file = fdopen(fd, "r");
+    if (!file) { result = 1; goto done; }
+    fd = -1;
+    key = binding_field(file, "format");
+    saved_id = binding_field(file, "source-id");
+    saved_repo = binding_field(file, "repo");
+    index = binding_field(file, "index-sha256");
+    hash = binding_field(file, "catalog-sha256");
+    if (!key || strcmp(key, "holy-apk-binding-1") || !saved_id || strcmp(saved_id, id) ||
+        !saved_repo || strcmp(saved_repo, repo) || !index || !hex_digest(index) ||
+        !hash || !hex_digest(hash)) { result = 6; goto done; }
+    {
+        char *line = NULL, **v = NULL, *error = NULL;
+        size_t capacity = 0, n = 0;
+        ssize_t got = getline(&line, &capacity, file);
+        if (got <= 0 || got > 4096 ||
+            !holy_lex(line, (size_t)got, &v, &n, "APK binding", 0, &error) ||
+            n != 2 || (strcmp(v[0], "path") && strcmp(v[0], "root-path")) ||
+            v[1][0] != '/' || fgetc(file) != EOF) result = 6;
+        else {
+            path = strdup(v[1]);
+            if (!path) result = 1;
+            root_relative = !strcmp(v[0], "root-path");
+            if (root_relative) root_path = realpath(root, NULL);
+        }
+        holy_tokens_free(v, n); free(error); free(line);
+        if (result) goto done;
+    }
+    if (root_relative && !root_path) { result = 6; goto done; }
+    if (root_path) {
+        size_t a = strlen(root_path), b = strlen(path);
+        if (a > (size_t)-1 - b - 1) { result = 1; goto done; }
+        joined = malloc(a + b + 1);
+        if (!joined) { result = 1; goto done; }
+        if (!strcmp(root_path, "/")) memcpy(joined, path, b + 1);
+        else { memcpy(joined, root_path, a); memcpy(joined + a, path, b + 1); }
+        free(path); path = realpath(joined, NULL);
+        if (!path || (strcmp(root_path, "/") &&
+                      (strncmp(path, root_path, a) || path[a] != '/'))) {
+            result = 6; goto done;
+        }
+    } else {
+        char *resolved = realpath(path, NULL);
+        free(path); path = resolved;
+        if (!path) { result = 6; goto done; }
+    }
+    result = select_package(path, NULL, NULL, NULL, &selected);
+    if (result || strcmp(selected.source_id, id) ||
+        strcmp(selected.repo, repo) || strcmp(selected.base, base) ||
+        strcmp(selected.index_hash, index) || strcmp(selected.catalog_hash, hash)) {
+        result = 6; goto done;
+    }
+    *catalog = path; path = NULL; result = 0;
+done:
+    if (result) fprintf(stderr, "holypkg: bound APK catalog unavailable (status %d)\n", result);
+    if (file) fclose(file);
+    if (fd >= 0) close(fd);
+    if (dir >= 0) close(dir);
+    if (database >= 0) close(database);
+    free(base); free(trust); free(saved_id); free(saved_repo);
+    free(index); free(hash); free(path); free(root_path); free(joined); free(key);
+    free_selection(&selected);
     return result;
 }
 
@@ -827,6 +1036,7 @@ int holy_apk_sync(const char *root, const char *source, const char *repo,
     if (!downloaded) { result = 1; goto done; }
     sprintf(downloaded, "%s/%s", template, digest);
     result = apk_index_bound(downloaded, source, base, output, id, repo);
+    if (!result) result = holy_apk_bind(root, source, repo, output, digest);
 done:
     if (result && result != 3)
         fprintf(stderr, "holypkg: APK source sync failed (status %d)\n", result);

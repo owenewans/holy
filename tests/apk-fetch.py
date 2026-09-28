@@ -6,6 +6,7 @@ import http.server
 import io
 import os
 import pathlib
+import shutil
 import ssl
 import subprocess
 import sys
@@ -106,8 +107,32 @@ with tempfile.TemporaryDirectory() as scratch:
         run(*sync, "--sha256", "0" * 64, status=4)
         run(*sync, "--accept-unsigned", index_hash)
         pinned_sync = list(sync)
-        pinned_sync[pinned_sync.index("--output") + 1] = tmp / "pinned-catalog"
+        pinned_sync[pinned_sync.index("--output") + 1] = root / "pinned-catalog"
         run(*pinned_sync, "--sha256", index_hash)
+        assert run("apk", "search", "fixture", "--source", "fixture", "--repo",
+                   "main", "--root", root).stdout == "fixture 1.2-r0 x86_64\n"
+        assert "checksum " in run("apk", "info", "fixture", "--source",
+                                  "fixture", "--repo", "main", "--root", root).stdout
+        run("apk", "bind", "fixture", "main", tmp / "bound-catalog", "--root",
+            root, status=3)
+        run("apk", "bind", "fixture", "main", tmp / "bound-catalog", "--root",
+            root, "--accept-unsigned", index_hash)
+        bound_auto = ("apk", "fetch", "fixture", "1.2-r0", "x86_64",
+                      "--source", "fixture", "--repo", "main", "--root", root,
+                      "--output", tmp / "bound-auto", "--ca-file", tmp / "cert.pem")
+        run(*bound_auto)
+        assert (tmp / "bound-auto/original").read_bytes() == package
+        saved_catalog = (tmp / "bound-catalog/catalog").read_bytes()
+        (tmp / "bound-catalog/catalog").write_bytes(saved_catalog + b"broken")
+        run("apk", "search", "fixture", "--source", "fixture", "--repo",
+            "main", "--root", root, status=6)
+        (tmp / "bound-catalog/catalog").write_bytes(saved_catalog)
+        run("apk", "bind", "fixture", "main", root / "pinned-catalog", "--root",
+            root, "--accept-unsigned", index_hash)
+        copied = tmp / "copied-root"
+        shutil.copytree(root, copied)
+        assert run("apk", "search", "fixture", "--source", "fixture", "--repo",
+                   "main", "--root", copied).stdout == "fixture 1.2-r0 x86_64\n"
         bound = (tmp / "bound-catalog/conversion").read_text()
         source_id = next(line.split()[1] for line in bound.splitlines()
                          if line.startswith("source-id "))
@@ -122,6 +147,8 @@ with tempfile.TemporaryDirectory() as scratch:
         assert "source-binding checked" in (tmp / "bound-package/selection").read_text()
         config.write_text(f'[source renamed]\ntype apk\nrepo main "{base}"\n')
         register()
+        assert run("apk", "search", "fixture", "--source", "renamed", "--repo",
+                   "main", "--root", root).stdout == "fixture 1.2-r0 x86_64\n"
         renamed_fetch = list(bound_fetch)
         renamed_fetch[renamed_fetch.index("--output") + 1] = tmp / "renamed-source"
         run(*renamed_fetch, "--source", "renamed")
@@ -135,6 +162,8 @@ with tempfile.TemporaryDirectory() as scratch:
         rejected_sync[rejected_sync.index("--output") + 1] = tmp / "require-rejected"
         run(*rejected_sync, "--sha256", index_hash, status=6)
         assert not (tmp / "require-rejected").exists()
+        run("apk", "search", "fixture", "--source", "renamed", "--repo",
+            "main", "--root", root, status=6)
         config.write_text('[source fixture]\ntype apk\nrepo main "https://localhost:1/"\n')
         register()
         changed_fetch = list(bound_fetch)

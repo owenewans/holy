@@ -17,5 +17,10 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
 int holy_apk_sync(const char *root, const char *source, const char *repo,
                   const char *output, const char *sha256,
                   const char *accept_unsigned, const char *ca_file);
+int holy_apk_bind(const char *root, const char *source, const char *repo,
+                  const char *catalog, const char *accepted);
+/* returns an owned verified catalog path for an active source and repo. */
+int holy_apk_catalog_path(const char *root, const char *source, const char *repo,
+                          char **catalog);
 
 #endif

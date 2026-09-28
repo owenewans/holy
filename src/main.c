@@ -711,27 +711,65 @@ int main(int argc, char **argv)
         if (argc == 10 && !strcmp(argv[2], "index") && !strcmp(argv[4], "--source") &&
             !strcmp(argv[6], "--base") && !strcmp(argv[8], "--output"))
             return holy_apk_index(argv[3], argv[5], argv[7], argv[9]);
-        if (argc == 6 && !strcmp(argv[4], "--catalog")) {
-            if (!strcmp(argv[2], "search")) return holy_apk_query(argv[5], argv[3], 0);
-            if (!strcmp(argv[2], "info")) return holy_apk_query(argv[5], argv[3], 1);
+        if ((argc == 8 || argc == 10) && !strcmp(argv[2], "bind") &&
+            !strcmp(argv[6], "--root") &&
+            (argc == 8 || !strcmp(argv[8], "--accept-unsigned")))
+            return holy_apk_bind(argv[7], argv[3], argv[4], argv[5],
+                                 argc == 10 ? argv[9] : NULL);
+        if (argc >= 6 && !(argc & 1) &&
+            (!strcmp(argv[2], "search") || !strcmp(argv[2], "info"))) {
+            const char *catalog = NULL, *source_alias = NULL, *repo = NULL, *root = NULL;
+            char *bound = NULL;
+            int i, result;
+            for (i = 4; i < argc; i += 2) {
+                if (!strcmp(argv[i], "--catalog") && !catalog) catalog = argv[i + 1];
+                else if (!strcmp(argv[i], "--source") && !source_alias) source_alias = argv[i + 1];
+                else if (!strcmp(argv[i], "--repo") && !repo) repo = argv[i + 1];
+                else if (!strcmp(argv[i], "--root") && !root) root = argv[i + 1];
+                else break;
+            }
+            if (i == argc && ((catalog && !source_alias && !repo && !root) ||
+                              (!catalog && source_alias && repo && root))) {
+                if (!catalog) {
+                    result = holy_apk_catalog_path(root, source_alias, repo, &bound);
+                    if (result) return result;
+                    catalog = bound;
+                }
+                result = holy_apk_query(catalog, argv[3], !strcmp(argv[2], "info"));
+                free(bound);
+                return result;
+            }
         }
-        if ((argc == 10 || argc == 12 || argc == 14 || argc == 16 || argc == 18) &&
-            !strcmp(argv[2], "fetch") &&
-            !strcmp(argv[6], "--catalog") && !strcmp(argv[8], "--output")) {
-            const char *sha256 = NULL, *ca_file = NULL, *root = NULL, *source_alias = NULL;
-            int i;
-            for (i = 10; i < argc; i += 2) {
-                if (!strcmp(argv[i], "--sha256") && !sha256) sha256 = argv[i + 1];
+        if (argc >= 10 && !(argc & 1) && !strcmp(argv[2], "fetch")) {
+            const char *catalog = NULL, *output = NULL, *sha256 = NULL;
+            const char *ca_file = NULL, *root = NULL, *source_alias = NULL, *repo = NULL;
+            char *bound = NULL;
+            int i, result;
+            for (i = 6; i < argc; i += 2) {
+                if (!strcmp(argv[i], "--catalog") && !catalog) catalog = argv[i + 1];
+                else if (!strcmp(argv[i], "--output") && !output) output = argv[i + 1];
+                else if (!strcmp(argv[i], "--repo") && !repo) repo = argv[i + 1];
+                else if (!strcmp(argv[i], "--sha256") && !sha256) sha256 = argv[i + 1];
                 else if (!strcmp(argv[i], "--ca-file") && !ca_file) ca_file = argv[i + 1];
                 else if (!strcmp(argv[i], "--root") && !root) root = argv[i + 1];
                 else if (!strcmp(argv[i], "--source") && !source_alias) source_alias = argv[i + 1];
                 else break;
             }
-            if (i == argc) return holy_apk_fetch(argv[7], argv[3], argv[4], argv[5],
-                                                   argv[9], sha256, ca_file, root,
-                                                   source_alias);
+            if (i == argc && output &&
+                ((catalog && !repo && (!source_alias || root)) ||
+                 (!catalog && source_alias && repo && root))) {
+                if (!catalog) {
+                    result = holy_apk_catalog_path(root, source_alias, repo, &bound);
+                    if (result) return result;
+                    catalog = bound;
+                }
+                result = holy_apk_fetch(catalog, argv[3], argv[4], argv[5], output,
+                                        sha256, ca_file, root, source_alias);
+                free(bound);
+                return result;
+            }
         }
-        fputs("usage: holypkg apk sync SOURCE REPO --root DIRECTORY --output NEW_DIRECTORY [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] | apk index FILE --source NAME --base URL --output NEW_DIRECTORY | apk search|info NAME --catalog DIRECTORY | apk fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--sha256 HASH] [--ca-file FILE] [--root DIRECTORY] [--source CURRENT_ALIAS]\n", stderr);
+        fputs("usage: holypkg apk sync SOURCE REPO --root DIRECTORY --output NEW_DIRECTORY [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] | apk bind SOURCE REPO CATALOG --root DIRECTORY [--accept-unsigned HASH] | apk index FILE --source NAME --base URL --output NEW_DIRECTORY | apk search|info NAME [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] | apk fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE]\n", stderr);
         return 2;
     }
     if (argc > 1 && !strcmp(argv[1], "search") && argc > 2)
