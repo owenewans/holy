@@ -271,12 +271,31 @@ done:
 }
 
 struct root_check {
-    int root, recovering, accepted_privileged;
+    int root, recovering, accepted_privileged, files_fd;
     struct holy_manifest_entry *directories;
     size_t count;
     struct directory_list parents;
     struct observed_groups groups;
 };
+
+static const char *repair_target(int files_fd, const char *path, int config,
+                                 char **allocated)
+{
+    size_t length;
+    int owner;
+    *allocated = NULL;
+    if (files_fd < 0 || !config) return path;
+    length = strlen(path);
+    if (length > SIZE_MAX - sizeof ".holy-new") return NULL;
+    *allocated = malloc(length + sizeof ".holy-new");
+    if (!*allocated) return NULL;
+    memcpy(*allocated, path, length);
+    memcpy(*allocated + length, ".holy-new", sizeof ".holy-new");
+    owner = holy_install_manifest_owns(files_fd, *allocated);
+    if (owner == 1) return *allocated;
+    free(*allocated); *allocated = NULL;
+    return owner == 0 ? path : NULL;
+}
 
 static int collect_directory(void *context, const struct holy_manifest_entry *entry)
 {
@@ -297,27 +316,36 @@ static int collect_directory(void *context, const struct holy_manifest_entry *en
 static int check_entry(void *context, const struct holy_manifest_entry *entry)
 {
     struct root_check *check = context;
+    struct holy_manifest_entry mapped = *entry;
+    char *allocated = NULL;
     int state;
     struct stat observed;
+    mapped.path = repair_target(check->files_fd, entry->path, entry->config, &allocated);
+    if (!mapped.path) return 0;
     if ((entry->link && (entry->mode != 0777 || entry->link[0] == '/')) ||
         ((entry->mode & 07000) &&
          (!check->accepted_privileged || entry->directory || entry->link || entry->hardlink ||
           (entry->mode & 03000))) || entry->uid != (long long)geteuid() ||
         entry->gid != (long long)getegid() ||
-        !planned_parents(check->root, entry->path, &check->parents)) return 0;
-    state = transition_matches(check->root, entry, &observed);
-    if (state == 1 && !observe_group(&check->groups, entry->group, &observed)) return 0;
+        !planned_parents(check->root, mapped.path, &check->parents)) {
+        free(allocated); return 0;
+    }
+    state = transition_matches(check->root, &mapped, &observed);
+    if (state == 1 && !observe_group(&check->groups, entry->group, &observed)) {
+        free(allocated); return 0;
+    }
+    free(allocated);
     return state == 2 || (state == 1 && (entry->directory || check->recovering));
 }
 
 static int prepare_directories(const char *snapshot, int root, int create,
-                               int recovering, int accepted_privileged)
+                               int recovering, int accepted_privileged, int files_fd)
 {
     struct root_check check = {0};
     size_t i;
     int ok = 0;
     check.root = root; check.recovering = recovering;
-    check.accepted_privileged = accepted_privileged;
+    check.accepted_privileged = accepted_privileged; check.files_fd = files_fd;
     if (!holy_verify_visit(snapshot, collect_directory, &check)) goto done;
     check.parents.items = calloc(check.count ? check.count : 1, sizeof *check.parents.items);
     if (!check.parents.items) goto done;
@@ -338,12 +366,12 @@ done:
 
 int holy_install_preflight(const char *snapshot, int root, int accepted_privileged)
 {
-    return prepare_directories(snapshot, root, 0, 0, accepted_privileged);
+    return prepare_directories(snapshot, root, 0, 0, accepted_privileged, -1);
 }
 
 int holy_install_preflight_resume(const char *snapshot, int root, int accepted_privileged)
 {
-    return prepare_directories(snapshot, root, 0, 1, accepted_privileged);
+    return prepare_directories(snapshot, root, 0, 1, accepted_privileged, -1);
 }
 
 static int link_payload(int root, const char *source, const struct holy_manifest_entry *destination,
@@ -398,22 +426,51 @@ static int install_link(void *context, const struct holy_manifest_entry *entry)
     return state == 2 || (state == 1 && link_payload(links->root, entry->path, &anchor, 0));
 }
 
+struct repair_configs { char **paths; size_t count; };
+
+static int collect_repair_config(void *context, const struct holy_manifest_entry *entry)
+{
+    struct repair_configs *configs = context;
+    char **next;
+    if (!entry->config || entry->directory || entry->link || entry->hardlink || entry->group) return 1;
+    if (configs->count == SIZE_MAX / sizeof *next) return 0;
+    next = realloc(configs->paths, (configs->count + 1) * sizeof *next);
+    if (!next) return 0;
+    configs->paths = next;
+    configs->paths[configs->count] = strdup(entry->path);
+    if (!configs->paths[configs->count]) return 0;
+    ++configs->count;
+    return 1;
+}
+
+static int repair_config_path(const struct repair_configs *configs, const char *path)
+{
+    size_t i;
+    for (i = 0; i < configs->count; ++i)
+        if (!strcmp(configs->paths[i], path)) return 1;
+    return 0;
+}
+
 static int install_payload(const char *snapshot, int root, int missing_only,
-                           int accepted_privileged)
+                           int accepted_privileged, int files_fd)
 {
     struct archive *archive = archive_read_new();
     struct archive_entry *entry;
+    struct repair_configs configs = {0};
     char buffer[65536];
     int status, ok = 0;
     struct link_install links = {root, missing_only, 1};
     if (!archive) return 0;
-    if (!prepare_directories(snapshot, root, 1, missing_only, accepted_privileged) ||
+    if ((files_fd >= 0 && !holy_verify_visit(snapshot, collect_repair_config, &configs)) ||
+        !prepare_directories(snapshot, root, 1, missing_only, accepted_privileged, files_fd) ||
         (missing_only && !holy_verify_visit(snapshot, install_link, &links))) goto done;
     if (archive_read_support_filter_lz4(archive) != ARCHIVE_OK ||
         archive_read_support_format_tar(archive) != ARCHIVE_OK ||
         archive_read_open_filename(archive, snapshot, 8192) != ARCHIVE_OK) goto done;
     while ((status = archive_read_next_header(archive, &entry)) == ARCHIVE_OK) {
         const char *path = archive_entry_pathname(entry);
+        const char *target_path;
+        char *mapped = NULL;
         char *storage = NULL;
         const char *base;
         int parent = -1, fd = -1;
@@ -424,14 +481,17 @@ static int install_payload(const char *snapshot, int root, int missing_only,
             if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
             continue;
         }
+        target_path = repair_target(files_fd, path + 5,
+            repair_config_path(&configs, path + 5), &mapped);
+        if (!target_path) goto done;
         if (archive_entry_filetype(entry) == AE_IFLNK) {
             const char *target = archive_entry_symlink(entry);
             if (!target || target[0] == '/' ||
                 !holy_safe_link(path + 5, target) ||
                 archive_entry_perm(entry) != 0777 ||
-                archive_entry_size(entry) != 0) goto done;
-            parent = parent_fd(root, path + 5, &storage, &base);
-            if (parent < 0) goto done;
+                archive_entry_size(entry) != 0) goto file_done;
+            parent = parent_fd(root, target_path, &storage, &base);
+            if (parent < 0) goto file_done;
             if (symlinkat(target, parent, base)) {
                 struct stat st;
                 size_t size = strlen(target);
@@ -451,14 +511,15 @@ static int install_payload(const char *snapshot, int root, int missing_only,
             if (fsync(parent) || archive_read_data_skip(archive) != ARCHIVE_OK) goto file_done;
             close(parent);
             free(storage);
+            free(mapped);
             continue;
         }
         if (archive_entry_filetype(entry) != AE_IFREG ||
-            archive_entry_hardlink(entry) || archive_entry_size(entry) < 0) goto done;
+            archive_entry_hardlink(entry) || archive_entry_size(entry) < 0) goto file_done;
         if ((archive_entry_perm(entry) & 07000) &&
-            (!accepted_privileged || (archive_entry_perm(entry) & 03000))) goto done;
-        parent = parent_fd(root, path + 5, &storage, &base);
-        if (parent < 0) goto done;
+            (!accepted_privileged || (archive_entry_perm(entry) & 03000))) goto file_done;
+        parent = parent_fd(root, target_path, &storage, &base);
+        if (parent < 0) goto file_done;
         if (missing_only) {
             struct stat st;
             fd = openat(parent, base, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
@@ -483,6 +544,7 @@ static int install_payload(const char *snapshot, int root, int missing_only,
                 close(fd);
                 close(parent);
                 free(storage);
+                free(mapped);
                 continue;
             }
             if (errno != ENOENT) goto file_done;
@@ -506,29 +568,38 @@ static int install_payload(const char *snapshot, int root, int missing_only,
         close(fd);
         close(parent);
         free(storage);
+        free(mapped);
         continue;
 file_done:
         if (fd >= 0) close(fd);
-        close(parent);
+        if (parent >= 0) close(parent);
         free(storage);
+        free(mapped);
         goto done;
     }
     links.restore_anchor = 0;
     ok = status == ARCHIVE_EOF && holy_verify_visit(snapshot, install_link, &links);
 done:
     archive_read_free(archive);
+    while (configs.count) free(configs.paths[--configs.count]);
+    free(configs.paths);
     if (!ok) fprintf(stderr, "holypkg: install payload incomplete; inspect transaction journal\n");
     return ok;
 }
 
 int holy_install_payload(const char *snapshot, int root, int accepted_privileged)
 {
-    return install_payload(snapshot, root, 0, accepted_privileged);
+    return install_payload(snapshot, root, 0, accepted_privileged, -1);
 }
 
 int holy_install_payload_missing(const char *snapshot, int root)
 {
-    return install_payload(snapshot, root, 1, 1);
+    return install_payload(snapshot, root, 1, 1, -1);
+}
+
+int holy_install_payload_missing_mapped(const char *snapshot, int root, int files_fd)
+{
+    return install_payload(snapshot, root, 1, 1, files_fd);
 }
 
 static int decimal(const char *text, int base, unsigned long long *value)
@@ -881,14 +952,26 @@ static int walk_manifest(int files_fd, int root, int mode,
         struct manifest_row *row = &rows[i];
         char **v = row->fields;
         int checked = row->checked;
+        int preserved = 0;
+        size_t j, path_length;
         if (filter && strcmp(filter, v[1])) continue;
         ++matches;
+        path_length = strlen(v[1]);
+        if (mode == 5 && !strcmp(v[0], "file") &&
+            (!strcmp(v[9], "config") || !strcmp(v[9], "config,mutable")) &&
+            path_length <= SIZE_MAX - sizeof ".holy-new")
+            for (j = 0; j < row_count; ++j)
+                if (strlen(rows[j].fields[1]) == path_length + sizeof ".holy-new" - 1 &&
+                    !memcmp(rows[j].fields[1], v[1], path_length) &&
+                    !strcmp(rows[j].fields[1] + path_length, ".holy-new")) {
+                    preserved = 1; break;
+                }
         if ((mode == 1 || mode == 2 || mode == 3) &&
             (!strcmp(v[9], "config") || !strcmp(v[9], "config,mutable"))) continue;
         if (mode == 4 && checked == 0 && !strcmp(v[0], "file") &&
             (!strcmp(v[9], "config") || !strcmp(v[9], "config,mutable"))) continue;
         if (checked == 2) {
-            if (mode != 2 && mode != 3 && result == 1) result = 0;
+            if (mode != 2 && mode != 3 && (mode != 5 || preserved) && result == 1) result = 0;
             if (mode != 2 && mode != 3) report_changed(v[1], "missing-file");
         } else if (!checked) {
             report_changed(v[1], !strcmp(v[9], "config") ||
@@ -992,6 +1075,11 @@ int holy_install_check_path(int files_fd, int root, const char *path)
 int holy_install_check_or_missing(int files_fd, int root)
 {
     return walk_manifest(files_fd, root, 3, NULL, NULL, NULL, NULL, NULL);
+}
+
+int holy_install_check_repair_transformed(int files_fd, int root)
+{
+    return walk_manifest(files_fd, root, 5, NULL, NULL, NULL, NULL, NULL);
 }
 
 int holy_install_remove_manifest(int files_fd, int root)

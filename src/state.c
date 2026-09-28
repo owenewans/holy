@@ -4865,7 +4865,7 @@ int holy_state_continue_set(const char *root_path)
 }
 
 static int repair_hash(int root, unsigned long long generation, const char *digest,
-                        const char *graph, char output[65])
+                        const char *graph, const char *manifest, char output[65])
 {
     struct stat st;
     char identity[128];
@@ -4875,8 +4875,8 @@ static int repair_hash(int root, unsigned long long generation, const char *dige
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
     int ok = 0;
     if (!ctx || fstat(root, &st) || EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
-        !hash_text(ctx, "holy-repair-missing-1") || !hash_text(ctx, digest) ||
-        !hash_text(ctx, graph)) goto done;
+        !hash_text(ctx, "holy-repair-missing-2") || !hash_text(ctx, digest) ||
+        !hash_text(ctx, graph) || !hash_text(ctx, manifest)) goto done;
     snprintf(identity, sizeof identity, "%ju:%ju:%llu", (uintmax_t)st.st_dev,
              (uintmax_t)st.st_ino, generation);
     if (!hash_text(ctx, identity) || EVP_DigestFinal_ex(ctx, hash, &length) != 1 || length != 32) goto done;
@@ -4890,8 +4890,8 @@ done:
 int holy_state_repair(const char *digest, const char *approved, const char *root_path)
 {
     int root = -1, dir = -1, installed = -1, item = -1, files = -1, transactions = -1;
-    int result = 1, stage = 0, journaled = 0, resume = digest == NULL;
-    char artifact[65], expected[65], actual[65], graph[65], journal[256];
+    int result = 1, stage = 0, journaled = 0, resume = digest == NULL, transformed = 0;
+    char artifact[65], expected[65], actual[65], graph[65], manifest[65], journal[256];
     char *snapshot = NULL;
     unsigned long long generation, recorded;
     struct stat root_st;
@@ -4936,18 +4936,16 @@ int holy_state_repair(const char *digest, const char *approved, const char *root
     item = installed < 0 ? -1 : child_dir(installed, digest, 0);
     if (item < 0) { result = 6; goto done; }
     {
-        struct stat transformed;
-        if (!fstatat(item, "config-state", &transformed, AT_SYMLINK_NOFOLLOW)) {
-            fputs("holypkg: transformed config repair requires source-path mapping\n", stderr);
-            result = 6; goto done;
-        }
-        if (errno != ENOENT) goto done;
+        struct stat st;
+        transformed = !fstatat(item, "config-state", &st, AT_SYMLINK_NOFOLLOW);
+        if (!transformed && errno != ENOENT) goto done;
     }
     files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
     snapshot = holy_cache_snapshot(digest, root_path);
     if (!snapshot) { result = 6; goto done; }
     if (files < 0 || !instance_matches_snapshot(item, snapshot) ||
-        !graph_digest(item, graph) || !repair_hash(root, recorded, digest, graph, actual)) goto done;
+        !graph_digest(item, graph) || !instance_record_digest(item, "files", manifest) ||
+        !repair_hash(root, recorded, digest, graph, manifest, actual)) goto done;
     {
         struct plan_hash claims = {0};
         int valid;
@@ -4960,7 +4958,10 @@ int holy_state_repair(const char *digest, const char *approved, const char *root
     }
     if (approved && strcmp(approved, actual)) { result = 3; goto done; }
     if (exclusive_claims(installed, digest, files) != 1 ||
-        holy_install_check_or_missing(files, root) != 1) { result = resume ? 5 : 4; goto done; }
+        (transformed ? holy_install_check_repair_transformed(files, root) :
+                       holy_install_check_or_missing(files, root)) != 1) {
+        result = resume ? 5 : 4; goto done;
+    }
     if (!same_root(root_path, &root_st)) { result = 4; goto done; }
     if (!approved) {
         printf("repair-plan generation %llu artifact %s sha256 %s missing-only read-only\n",
@@ -4978,7 +4979,8 @@ int holy_state_repair(const char *digest, const char *approved, const char *root
         if (length >= sizeof journal || !record_file(transactions, "journal", journal, length)) goto done;
         journaled = 1;
     }
-    if (!holy_install_payload_missing(snapshot, root) ||
+    if (!(transformed ? holy_install_payload_missing_mapped(snapshot, root, files) :
+                         holy_install_payload_missing(snapshot, root)) ||
         holy_install_check_manifest(files, root) != 1 ||
         (generation == recorded && !set_generation(dir, recorded + 1)) || fsync(dir) ||
         unlinkat(transactions, "journal", 0) || fsync(transactions)) goto done;

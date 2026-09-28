@@ -1474,9 +1474,10 @@ its hashes in config-state. The local manifest owns both the preserved public
 config and PATH.holy-new. check and owner use that manifest; a later package
 update carries it forward. Changing the preserved file after the plan was
 reviewed invalidates apply. Package removal leaves config files on disk and
-removes PATH.holy-new. Missing-file repair for a transformed instance currently
-returns 6 before creating a journal; the source-path mapping for repair remains
-to be implemented.
+removes PATH.holy-new. Missing-only repair maps archived config bytes to
+PATH.holy-new and checks the installed manifest after extraction. It cannot
+recreate a missing preserved public config from the archive and rejects that
+case before journaling. A repair plan binds the installed manifest hash.
 .PP
 Hardlink updates stage one inode per new group and link each changed member's
 temporary path to it. A group-stage record binds the reserved anchor sibling

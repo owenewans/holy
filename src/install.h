@@ -43,7 +43,11 @@ int holy_install_manifests_conflict(int left_fd, int right_fd);
 
 /* missing-only repair; caller verifies manifest, ownership and journals first. */
 int holy_install_payload_missing(const char *snapshot, int root);
+/* restore a transformed instance using its local manifest for config paths. */
+int holy_install_payload_missing_mapped(const char *snapshot, int root, int files_fd);
 int holy_install_check_or_missing(int files_fd, int root);
+/* modified public configs cannot be recreated from an archived payload. */
+int holy_install_check_repair_transformed(int files_fd, int root);
 int holy_install_check_path(int files_fd, int root, const char *path);
 /* read-only normalized entry check: 1 matches, 2 absent, 0 drift, -1 unsupported. */
 int holy_install_check_entry(int root, const struct holy_manifest_entry *entry);

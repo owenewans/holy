@@ -384,8 +384,10 @@
   hash to the reviewed plan, publish incoming bytes as an owned .holy-new,
   store the raw and local manifests separately, and carry local state through
   later updates. The fixture checks stale plans, repeat updates, ownership,
-  recovery after interruption, reverse cached update and package removal. Missing-only repair of the
-  transformed instance and explicit config replacement remain open.
+  recovery after interruption, reverse cached update and package removal.
+  Missing-only repair restores PATH.holy-new from the verified archive and
+  rejects a missing preserved public config, whose local bytes are absent from
+  the archive. Explicit config replacement remains open.
 - [x] Accept an artifact-scoped skip decision for nonempty HOLY/hooks in local
   set installation. Print hook records before the decision, bind the skip to
   plan and journal, retain hooks/transform in installed state, report
