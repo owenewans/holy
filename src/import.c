@@ -10,6 +10,7 @@
 #include "../backends/deb-version.h"
 #include "../backends/apk-version.h"
 #include "../backends/apk.h"
+#include "../backends/xbps-version.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -713,6 +714,30 @@ static int xbps_label(const char *value)
     return 1;
 }
 
+static int xbps_dependency(const char *expression, char **name,
+                           const char **relation, const char **version)
+{
+    const char *op = strpbrk(expression, "<>");
+    int order;
+    size_t length;
+    if (!op || op == expression) return 0;
+    length = (size_t)(op - expression);
+    *name = strndup(expression, length);
+    if (!*name) return 0;
+    if (!xbps_label(*name)) { free(*name); *name = NULL; return 0; }
+    if (op[1] == '=') {
+        *relation = *op == '<' ? "le" : "ge";
+        *version = op + 2;
+    } else {
+        *relation = *op == '<' ? "lt" : "gt";
+        *version = op + 1;
+    }
+    if (!holy_xbps_version_compare(*version, *version, &order)) {
+        free(*name); *name = NULL; return 0;
+    }
+    return 1;
+}
+
 static int xbps_parse(struct foreign_input *input, struct xbps_metadata *meta)
 {
     char *pkgver = NULL, *declared_version = NULL;
@@ -1297,6 +1322,16 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
                 if (k == 2) {
                     fputs("foreign-provide ", files[5]); token(files[5], value);
                     fputc('\n', files[5]);
+                } else if (k == 0) {
+                    char *dependency = NULL;
+                    const char *relation, *required_version;
+                    if (xbps_dependency(value, &dependency, &relation, &required_version))
+                        requirement(files[2], id, name, "package", dependency,
+                                    "any", "any", relation, required_version, value, keys[k]);
+                    else
+                        requirement(files[2], id, name, "foreign", value,
+                                    "any", "any", "any", "-", value, keys[k]);
+                    free(dependency);
                 } else
                     requirement(files[2], id, name, k == 1 ? "soname" : "foreign", value,
                                 k == 1 ? arch : "any", k == 1 ? libc : "any",

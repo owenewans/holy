@@ -389,13 +389,17 @@ make check-apk-version covers comparisons against Alpine apk-tools 2.14.12.
 with libplist, and checks payload file size and SHA-256 against the file list.
 It preserves the original property lists beneath HOLY/foreign/xbps and records
 unverified provenance. Package revision becomes the .holy release. Exact
-shlib-requires become arch/libc-scoped SONAME requirements. Versioned
-run_depends and other XBPS-specific relations remain attributed foreign
-requirements until their semantics are supported. Provides are preserved in
+shlib-requires become arch/libc-scoped SONAME requirements. Simple
+run_depends of the form name<version, name<=version, name>version or
+name>=version become package requirements. Holy compares their versions only
+against XBPS-family providers with Dewey component order and the _N revision.
+Complex ranges, globs, exact package strings and other XBPS-specific relations
+remain attributed foreign requirements. Provides are preserved in
 origin metadata without creating dependencies. INSTALL and REMOVE scripts
 remain review-required. Unknown file-list fields, unsupported architecture,
 and ELF/architecture contradictions stop conversion. make check-xbps-import
-covers a generated package and malformed file lists; it does not test XBPS
+covers a generated package, dependency selection and malformed file lists;
+make check-xbps-version checks component and revision ordering. These do not test XBPS
 repository sync, signature verification or the full Void package range.
 .PP
 The apk index command snapshots a local APKINDEX.tar.gz, separates its gzip

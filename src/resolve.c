@@ -11,6 +11,7 @@
 #include "../backends/deb-version.h"
 #include "version.h"
 #include "../backends/apk-version.h"
+#include "../backends/xbps-version.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -50,7 +51,8 @@ static const struct version_adapter version_adapters[] = {
     {"pacman", holy_pacman_version_compare},
     {"deb", holy_deb_version_compare},
     {"holy", holy_version_compare},
-    {"apk", holy_apk_version_compare}
+    {"apk", holy_apk_version_compare},
+    {"xbps", holy_xbps_version_compare}
 };
 
 struct local_item {
@@ -279,8 +281,19 @@ static int package_edge_matches(const struct local_item *consumer,
     if (!strcmp(edge->kind, "soname")) return has_soname(candidate, edge->name);
     base = named_capability(edge->kind, edge->name);
     if (!base) return -1;
-    if (!strcmp(base, candidate->capability))
-        matches = version_matches(candidate->identity.version, edge, adapter);
+    if (!strcmp(base, candidate->capability)) {
+        const char *candidate_version = candidate->identity.version;
+        char *with_revision = NULL;
+        if (constrained && !strcmp(family, "xbps") && candidate->identity.release) {
+            size_t length = strlen(candidate_version) + strlen(candidate->identity.release) + 2;
+            with_revision = malloc(length);
+            if (!with_revision) { free(base); return -1; }
+            snprintf(with_revision, length, "%s_%s", candidate_version, candidate->identity.release);
+            candidate_version = with_revision;
+        }
+        matches = version_matches(candidate_version, edge, adapter);
+        free(with_revision);
+    }
     for (claim = 0; !matches && claim < candidate->claim_count; ++claim)
         if (!strcmp(base, candidate->claims[claim].capability))
             matches = version_matches(candidate->claims[claim].version, edge, adapter);

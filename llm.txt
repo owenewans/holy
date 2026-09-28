@@ -1010,7 +1010,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=88ffe06539a549da7335c84e8d876c0de6ca96f754851f12d4592b9bb8f7cb42
+holypkg.8 source=holy version=development sha256=11caf388362437373537d75d0df997464c67a4b6d0ab79e7ce25533e3c557385
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1332,14 +1332,18 @@ DESCRIPTION
      the  file list.  It preserves the original property lists beneath HOLY/for-
      eign/xbps and records unverified provenance. Package revision  becomes  the
      .holy release. Exact shlib-requires become arch/libc-scoped SONAME require-
-     ments.  Versioned	run_depends and other XBPS-specific relations remain at-
-     tributed foreign requirements until their semantics are supported. Provides
-     are preserved in origin metadata without creating dependencies. INSTALL and
-     REMOVE scripts remain review-required.  Unknown  file-list	 fields,  unsup-
-     ported  architecture,  and ELF/architecture contradictions stop conversion.
-     make check-xbps-import covers a generated package and malformed file lists;
-     it does not test XBPS repository sync, signature verification or  the  full
-     Void package range.
+     ments.   Simple   run_depends  of	the  form  name<version,  name<=version,
+     name>version or name>=version become package  requirements.  Holy	compares
+     their  versions only against XBPS-family providers with Dewey component or-
+     der and the _N revision.  Complex ranges, globs, exact package strings  and
+     other  XBPS-specific relations remain attributed foreign requirements. Pro-
+     vides are preserved in origin metadata without creating  dependencies.  IN-
+     STALL  and REMOVE scripts remain review-required. Unknown file-list fields,
+     unsupported architecture, and ELF/architecture contradictions stop	 conver-
+     sion.  make check-xbps-import covers a generated package, dependency selec-
+     tion and malformed file lists; make check-xbps-version checks component and
+     revision ordering. These do not test XBPS repository sync, signature  veri-
+     fication or the full Void package range.
 
      The apk index command snapshots a local APKINDEX.tar.gz, separates its gzip
      signature	and  data members, and publishes a sorted local catalog with the
