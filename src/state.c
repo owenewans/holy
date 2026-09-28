@@ -268,6 +268,26 @@ done:
     return ok;
 }
 
+static int config_state_valid(int item, const char *artifact)
+{
+    char source[65], raw[65], installed[65], plan[65], actual[65];
+    char *record = update_record(item, "config-state");
+    int ok = 0;
+    if (!record) return 0;
+    if (sscanf(record,
+               "format holy-config-transform-1\nsource %64[0-9a-f]\nraw %64[0-9a-f]\ninstalled %64[0-9a-f]\nplan %64[0-9a-f]\n",
+               source, raw, installed, plan) != 4 ||
+        !valid_digest(source) || !valid_digest(raw) || !valid_digest(installed) ||
+        !valid_digest(plan) ||
+        strcmp(source, artifact) ||
+        !instance_record_digest(item, "package-files", actual) || strcmp(actual, raw) ||
+        !instance_record_digest(item, "files", actual) || strcmp(actual, installed)) goto done;
+    ok = 1;
+done:
+    free(record);
+    return ok;
+}
+
 static int graph_digest(int item, char output[65])
 {
     return instance_record_digest(item, "graph", output);
@@ -351,7 +371,7 @@ static int instance_state_generation(int item, const char *digest,
 
 static int installed_valid(int dir)
 {
-    static const char *const required[] = { "meta", "files", "deps", "origin", "state", "graph", "source", "provides", "hooks", "transform", "hooks-state" };
+    static const char *const required[] = { "meta", "files", "deps", "origin", "state", "graph", "source", "provides", "hooks", "transform", "hooks-state", "package-files", "config-state" };
     int installed = child_dir(dir, "installed", 0), ok = 1;
     DIR *list;
     struct dirent *entry;
@@ -373,6 +393,19 @@ static int installed_valid(int dir)
                 (st.st_uid != 0 && st.st_uid != geteuid())) { ok = 0; break; }
         }
         if (ok && !instance_state_generation(item, entry->d_name, NULL)) ok = 0;
+        if (ok) {
+            struct stat transformed, source;
+            int has_transform, has_source;
+            errno = 0;
+            has_transform = !fstatat(item, "config-state", &transformed, AT_SYMLINK_NOFOLLOW);
+            if (!has_transform && errno != ENOENT) ok = 0;
+            errno = 0;
+            has_source = !fstatat(item, "package-files", &source, AT_SYMLINK_NOFOLLOW);
+            if (!has_source && errno != ENOENT) ok = 0;
+            if (has_transform != has_source || (has_transform &&
+                (!S_ISREG(transformed.st_mode) || !S_ISREG(source.st_mode) ||
+                 !config_state_valid(item, entry->d_name)))) ok = 0;
+        }
         if (ok) {
             DIR *members = fdopendir(dup(item));
             struct dirent *member;
@@ -4638,9 +4671,10 @@ static int instance_matches_snapshot(int item, const char *snapshot)
     static const char *const names[] = {"meta", "files", "deps", "origin", "provides", "hooks", "transform"};
     struct archive *archive = archive_read_new();
     struct archive_entry *entry;
+    struct holy_package_identity identity = {0};
     unsigned seen = 0;
     char incoming[8192], installed[8192];
-    int status, ok = 0, has_claims, has_hooks, has_transform;
+    int status, ok = 0, has_claims, has_hooks, has_transform, has_config;
     struct stat claims_stat;
     size_t i;
     has_claims = !fstatat(item, "provides", &claims_stat, AT_SYMLINK_NOFOLLOW);
@@ -4649,6 +4683,10 @@ static int instance_matches_snapshot(int item, const char *snapshot)
     if (!has_hooks && errno != ENOENT) goto done;
     has_transform = !fstatat(item, "transform", &claims_stat, AT_SYMLINK_NOFOLLOW);
     if (!has_transform && errno != ENOENT) goto done;
+    has_config = !fstatat(item, "config-state", &claims_stat, AT_SYMLINK_NOFOLLOW);
+    if (!has_config && errno != ENOENT) goto done;
+    if (has_config && (!holy_package_identity(snapshot, &identity) ||
+                       !config_state_valid(item, identity.digest))) goto done;
     if (!archive || archive_read_support_filter_lz4(archive) != ARCHIVE_OK ||
         archive_read_support_format_tar(archive) != ARCHIVE_OK ||
         archive_read_open_filename(archive, snapshot, 8192) != ARCHIVE_OK) goto done;
@@ -4665,7 +4703,8 @@ static int instance_matches_snapshot(int item, const char *snapshot)
             continue;
         }
         if (seen & (1u << i)) goto done;
-        fd = openat(item, names[i], O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+        fd = openat(item, i == 1 && has_config ? "package-files" : names[i],
+                    O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
         if (fd < 0) goto done;
         if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size != archive_entry_size(entry)) {
             close(fd); goto done;
@@ -4688,6 +4727,7 @@ static int instance_matches_snapshot(int item, const char *snapshot)
          seen == ((1u << 4) - 1u) + (has_claims ? (1u << 4) : 0) +
                  (has_hooks ? (1u << 5) : 0) + (has_transform ? (1u << 6) : 0);
 done:
+    holy_package_identity_free(&identity);
     archive_read_free(archive);
     return ok;
 }
@@ -4895,6 +4935,14 @@ int holy_state_repair(const char *digest, const char *approved, const char *root
     installed = child_dir(dir, "installed", 0);
     item = installed < 0 ? -1 : child_dir(installed, digest, 0);
     if (item < 0) { result = 6; goto done; }
+    {
+        struct stat transformed;
+        if (!fstatat(item, "config-state", &transformed, AT_SYMLINK_NOFOLLOW)) {
+            fputs("holypkg: transformed config repair requires source-path mapping\n", stderr);
+            result = 6; goto done;
+        }
+        if (errno != ENOENT) goto done;
+    }
     files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
     snapshot = holy_cache_snapshot(digest, root_path);
     if (!snapshot) { result = 6; goto done; }
@@ -5193,7 +5241,7 @@ done:
 
 static int clear_update_installed(int parent, const struct holy_resolution *resolution)
 {
-    static const char *const files[] = {"meta", "files", "deps", "origin", "graph", "state", "source", "provides", "hooks", "transform", "hooks-state"};
+    static const char *const files[] = {"meta", "files", "deps", "origin", "graph", "state", "source", "provides", "hooks", "transform", "hooks-state", "package-files", "config-state"};
     int installed = child_dir(parent, "installed", 1), item = -1, ok = 0;
     DIR *list = NULL, *members = NULL;
     struct dirent *entry;
@@ -5235,11 +5283,62 @@ done:
     return ok;
 }
 
+static int update_config_manifest(int old_item, int proposed,
+                                  const struct holy_file_plan *plan,
+                                  const char *digest, const char *transaction,
+                                  int replaced)
+{
+    char *raw = NULL, *installed = NULL, *state = NULL;
+    char raw_hash[65], installed_hash[65], record[360];
+    size_t length = 0, i;
+    int transformed = 0, result = 0;
+    if (replaced) {
+        for (i = 0; i < plan->count; ++i)
+            if (plan->changes[i].keep_config) { transformed = 1; break; }
+    } else {
+        struct stat st;
+        transformed = !fstatat(old_item, "config-state", &st, AT_SYMLINK_NOFOLLOW);
+        if (!transformed && errno != ENOENT) return 0;
+    }
+    if (!transformed) return 1;
+    raw = update_record(proposed, "files");
+    if (!raw || !instance_record_digest(proposed, "files", raw_hash)) goto done;
+    if (replaced) {
+        if (!holy_file_plan_installed_manifest(plan, raw, strlen(raw),
+                                               &installed, &length)) goto done;
+    } else {
+        char previous_hash[65];
+        if (!config_state_valid(old_item, digest) ||
+            !instance_record_digest(old_item, "package-files", previous_hash) ||
+            strcmp(previous_hash, raw_hash)) goto done;
+        installed = update_record(old_item, "files");
+        state = update_record(old_item, "config-state");
+        if (!installed || !state) goto done;
+        length = strlen(installed);
+    }
+    if (renameat(proposed, "files", proposed, "package-files") || fsync(proposed) ||
+        !record_file(proposed, "files", installed, length) ||
+        !instance_record_digest(proposed, "files", installed_hash)) goto done;
+    if (replaced) {
+        int written = snprintf(record, sizeof record,
+            "format holy-config-transform-1\nsource %s\nraw %s\ninstalled %s\nplan %s\n",
+            digest, raw_hash, installed_hash, transaction);
+        if (written < 0 || (size_t)written >= sizeof record ||
+            !record_file(proposed, "config-state", record, (size_t)written)) goto done;
+    } else if (!record_file(proposed, "config-state", state, strlen(state))) goto done;
+    result = config_state_valid(proposed, digest);
+done:
+    free(raw); free(installed); free(state);
+    return result;
+}
+
 static int update_instances(int next_db, int before, char **names, char **snapshots,
                              size_t count, size_t replaced, const char *new_digest,
                              const char *new_source, unsigned long long generation,
                              const struct holy_resolution *resolution,
-                             const char *new_architecture, int new_privileged, int create)
+                             const char *new_architecture, int new_privileged,
+                             const struct holy_file_plan *file_plan,
+                             const char *transaction, int create)
 {
     int installed = -1, item = -1, proposed = -1, ok = 0;
     char *source = NULL, *graph = NULL;
@@ -5279,6 +5378,9 @@ static int update_instances(int next_db, int before, char **names, char **snapsh
                                privileged, 0)) goto done;
         }
         proposed = child_dir(installed, digest, 0);
+        if (proposed >= 0 && create &&
+            !update_config_manifest(item, proposed, file_plan, digest, transaction,
+                                    i == replaced)) goto done;
         if (proposed < 0 || !instance_state_generation(proposed, digest, &recorded) || recorded != generation + 1 ||
             !instance_reason_matches(proposed, reason) || !instance_source_matches(proposed, source) ||
             !instance_architecture_matches(proposed, architecture) ||
@@ -5376,7 +5478,7 @@ static int finish_update(int root, int db, int transactions, int work, int befor
             !update_instances(next_db, before, names, snapshots, count, replaced,
                               journal->next, source, journal->generation, resolution,
                               new_architecture,
-                              journal->privileged, 1) ||
+                              journal->privileged, files, journal->plan, 1) ||
             !update_replace(work, "progress", "stage prepared\n")) goto done;
         if (holy_file_plan_stage(files, snapshots[replaced], root, resume, &failed) ||
             holy_file_plan_apply(files, root, update_progress, &progress, &failed)) {
@@ -5402,7 +5504,7 @@ static int finish_update(int root, int db, int transactions, int work, int befor
         !update_instances(db, before, names, snapshots, count, replaced,
                           journal->next, source, journal->generation, resolution,
                           new_architecture,
-                          journal->privileged, 0) ||
+                          journal->privileged, files, journal->plan, 0) ||
         (current == journal->generation && !set_generation(db, journal->generation + 1)) || fsync(db)) goto done;
     snprintf(committed, sizeof committed, "%s\n", journal->plan);
     if (holy_file_plan_cleanup(files, root) ||
@@ -5545,7 +5647,9 @@ static int state_update(const char *old_digest, const char *new_digest,
         states[i] = strdup(state);
         if (!states[i]) goto done;
         if (exclusive_claims(installed, names[i], files) != 1 ||
-            ((!resume || i != old_index) && holy_install_check_manifest(files, root) != 1) ||
+            ((!resume || i != old_index) &&
+             (i == old_index ? holy_install_check_manifest_except_configs(files, root) :
+                               holy_install_check_manifest(files, root)) != 1) ||
             (!resume && check_graph(installed, root, names[i], NULL) != 1)) { result = 4; goto done; }
         if (i == old_index && !installed_source_id(item, source)) goto done;
         close(files); files = -1;
@@ -5606,8 +5710,11 @@ static int state_update(const char *old_digest, const char *new_digest,
     result = 6;
     if (!validation.hash || EVP_DigestInit_ex(validation.hash, EVP_sha256(), NULL) != 1 ||
         !holy_verify_visit(new_snapshot, plan_entry, &validation) ||
-        !holy_file_plan_collect(snapshots[old_index], new_snapshot, &changes) ||
-        !holy_file_plan_record(&changes, &file_record, &file_size)) goto done;
+        !holy_file_plan_collect(snapshots[old_index], new_snapshot, &changes)) goto done;
+    result = holy_file_plan_preserve_configs(&changes, root, resume ? saved : NULL);
+    if (result) goto done;
+    result = 6;
+    if (!holy_file_plan_record(&changes, &file_record, &file_size)) goto done;
     changes.before_privileged = old_privileged;
     changes.after_privileged = new_privileged;
     result = holy_file_plan_check(&changes, root, resume, &failed);
@@ -5620,6 +5727,9 @@ static int state_update(const char *old_digest, const char *new_digest,
     new_snapshot = NULL;
     for (i = 0; i < count; ++i)
         if (!holy_verify_visit(snapshots[i], set_claim, &claims)) { result = 6; goto done; }
+    for (i = 0; i < changes.count; ++i)
+        if (changes.changes[i].keep_config &&
+            !set_claim(&claims, changes.changes[i].after)) { result = 1; goto done; }
     if (!set_claims_valid(&claims)) { result = 4; goto done; }
     result = holy_resolve_collect_set((const char *const *)snapshots, count, &resolution);
     if (result) goto done;

@@ -653,6 +653,45 @@ static int same_object(const struct stat *before, const struct stat *after)
            before->st_ctim.tv_sec == after->st_ctim.tv_sec && before->st_ctim.tv_nsec == after->st_ctim.tv_nsec;
 }
 
+int holy_install_observe_regular(int root, const struct holy_manifest_entry *entry,
+                                 struct holy_manifest_entry *observed,
+                                 unsigned char digest[32])
+{
+    char *storage = NULL;
+    const char *base;
+    char buffer[65536];
+    struct stat start, end, path_state;
+    EVP_MD_CTX *hash = NULL;
+    unsigned int length;
+    ssize_t got;
+    int parent = -1, fd = -1, ok = 0;
+    if (!entry || !entry->path || !entry->config || entry->directory ||
+        entry->link || entry->hardlink || entry->group || !observed || !digest) return 0;
+    parent = parent_fd(root, entry->path, &storage, &base);
+    if (parent < 0) goto done;
+    fd = openat(parent, base, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    hash = EVP_MD_CTX_new();
+    if (fd < 0 || !hash || fstat(fd, &start) || !S_ISREG(start.st_mode) ||
+        start.st_size < 0 || start.st_uid != entry->uid || start.st_gid != entry->gid ||
+        (start.st_mode & 07000) || EVP_DigestInit_ex(hash, EVP_sha256(), NULL) != 1) goto done;
+    while ((got = read(fd, buffer, sizeof buffer)) > 0)
+        if (EVP_DigestUpdate(hash, buffer, (size_t)got) != 1) goto done;
+    if (got < 0 || EVP_DigestFinal_ex(hash, digest, &length) != 1 || length != 32 ||
+        fstat(fd, &end) || fstatat(parent, base, &path_state, AT_SYMLINK_NOFOLLOW) ||
+        !same_object(&start, &end) || !same_object(&start, &path_state)) goto done;
+    *observed = *entry;
+    observed->hash = digest;
+    observed->size = start.st_size;
+    observed->mode = (unsigned int)(start.st_mode & 07777);
+    ok = 1;
+done:
+    EVP_MD_CTX_free(hash);
+    if (fd >= 0) close(fd);
+    if (parent >= 0) close(parent);
+    free(storage);
+    return ok;
+}
+
 static int remove_file(int root, const char *path, const struct stat *observed)
 {
     char *storage = NULL;
@@ -844,6 +883,10 @@ static int walk_manifest(int files_fd, int root, int mode,
         int checked = row->checked;
         if (filter && strcmp(filter, v[1])) continue;
         ++matches;
+        if ((mode == 1 || mode == 2 || mode == 3) &&
+            (!strcmp(v[9], "config") || !strcmp(v[9], "config,mutable"))) continue;
+        if (mode == 4 && checked == 0 && !strcmp(v[0], "file") &&
+            (!strcmp(v[9], "config") || !strcmp(v[9], "config,mutable"))) continue;
         if (checked == 2) {
             if (mode != 2 && mode != 3 && result == 1) result = 0;
             if (mode != 2 && mode != 3) report_changed(v[1], "missing-file");
@@ -921,6 +964,11 @@ done:
 int holy_install_check_manifest(int files_fd, int root)
 {
     return walk_manifest(files_fd, root, 0, NULL, NULL, NULL, NULL, NULL);
+}
+
+int holy_install_check_manifest_except_configs(int files_fd, int root)
+{
+    return walk_manifest(files_fd, root, 4, NULL, NULL, NULL, NULL, NULL);
 }
 
 int holy_install_check_report(int files_fd, int root,

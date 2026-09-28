@@ -18,6 +18,9 @@ int holy_install_directory_plan(int root, const struct holy_manifest_entry *entr
 int holy_install_payload(const char *snapshot, int root, int accepted_privileged);
 /* 1 intact, 0 changed/missing, -1 invalid installed manifest. */
 int holy_install_check_manifest(int files_fd, int root);
+/* update preflight permits content drift only for config regular files;
+   the caller must then bind each observed file in its plan. */
+int holy_install_check_manifest_except_configs(int files_fd, int root);
 /* borrowed path/code/target; target is NULL for payload drift. */
 typedef int (*holy_install_finding)(void *context, const char *path,
                                     const char *code, const char *target);
@@ -44,6 +47,11 @@ int holy_install_check_or_missing(int files_fd, int root);
 int holy_install_check_path(int files_fd, int root, const char *path);
 /* read-only normalized entry check: 1 matches, 2 absent, 0 drift, -1 unsupported. */
 int holy_install_check_entry(int root, const struct holy_manifest_entry *entry);
+/* hash a stable regular file beneath root without following the final path;
+   observed borrows entry->path and hash points to the caller's 32-byte buffer. */
+int holy_install_observe_regular(int root, const struct holy_manifest_entry *entry,
+                                 struct holy_manifest_entry *observed,
+                                 unsigned char hash[32]);
 
 /* raw content/attributes for mixed update states; temporary NULL selects public path.
    returns 1 exact, 2 absent, 0 drift, -1 invalid; observed is optional. */

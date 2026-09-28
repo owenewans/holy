@@ -261,13 +261,64 @@ register
 expect 0 "$bin" db check --all --root "$root"
 package config1 settings holy.conf '' file config
 package config2 settings holy.conf '' file config
-config_old=$(hash config1) config_new=$(hash config2)
+package config3 settings holy.conf '' file config
+config_old=$(hash config1) config_new=$(hash config2) config_third=$(hash config3)
 install "$config_old"
 expect 0 "$bin" db plan-update "$config_old" "$config_new" --root "$root"
 grep -q ' config$' "$tmp/out"
 printf 'local edit\n' > "$root/usr/share/holy.conf"
 expect 4 "$bin" db check "$config_old" --root "$root" --json
 grep -q 'changed-config' "$tmp/out"
-expect 4 "$bin" db plan-update "$config_old" "$config_new" --root "$root"
+expect 0 "$bin" db plan-update "$config_old" "$config_new" --root "$root"
+grep -q 'usr/share/holy.conf.holy-new' "$tmp/out"
+config_plan=$(update_hash)
+printf 'changed after preview\n' > "$root/usr/share/holy.conf"
+expect 3 "$bin" db apply-update "$config_plan" "$config_old" "$config_new" --root "$root"
+test ! -e "$root/usr/share/holy.conf.holy-new"
+printf 'local edit\n' > "$root/usr/share/holy.conf"
+if test "$fault_client" != skip; then
+    config_fault="$tmp/config-fault"
+    mkdir "$config_fault"
+    cp -a "$root/." "$config_fault/"
+    expect 0 "$bin" db plan-update "$config_old" "$config_new" --root "$config_fault"
+    fault_plan=$(update_hash)
+    if test "$fault_client" = dynamic; then
+        if env LD_PRELOAD="$tmp/update-fault.so" HOLY_UPDATE_FAULT=database-before HOLY_UPDATE_NEW="$config_new" \
+            "$bin" db apply-update "$fault_plan" "$config_old" "$config_new" --root "$config_fault" > "$tmp/out" 2> "$tmp/err"; then exit 1; else code=$?; fi
+    else
+        if env HOLY_UPDATE_FAULT=database-before HOLY_UPDATE_NEW="$config_new" \
+            "$bin" db apply-update "$fault_plan" "$config_old" "$config_new" --root "$config_fault" > "$tmp/out" 2> "$tmp/err"; then exit 1; else code=$?; fi
+    fi
+    test "$code" -eq 137
+    expect 5 "$bin" db status --root "$config_fault"
+    expect 0 "$bin" db recover --update --root "$config_fault"
+    grep -qx 'local edit' "$config_fault/usr/share/holy.conf"
+    grep -qx config2 "$config_fault/usr/share/holy.conf.holy-new"
+    expect 0 "$bin" db check --all --root "$config_fault"
+fi
+expect 0 "$bin" db apply-update "$config_plan" "$config_old" "$config_new" --root "$root"
 grep -qx 'local edit' "$root/usr/share/holy.conf"
+grep -qx config2 "$root/usr/share/holy.conf.holy-new"
+expect 0 "$bin" db check --all --root "$root"
+expect 0 "$bin" db owner usr/share/holy.conf.holy-new --root "$root"
+grep -qx "$config_new file usr/share/holy.conf.holy-new" "$tmp/out"
+expect 0 "$bin" db plan-update "$config_new" "$config_third" --root "$root"
+config_plan=$(update_hash)
+expect 0 "$bin" db apply-update "$config_plan" "$config_new" "$config_third" --root "$root"
+grep -qx 'local edit' "$root/usr/share/holy.conf"
+grep -qx config3 "$root/usr/share/holy.conf.holy-new"
+expect 0 "$bin" db check --all --root "$root"
+expect 6 "$bin" db repair-plan "$config_third" --root "$root"
+test ! -e "$root/var/lib/holypkg/transactions/journal"
+expect 0 "$bin" db plan-update "$old" "$new" --root "$root"
+base_plan=$(update_hash)
+expect 0 "$bin" db apply-update "$base_plan" "$old" "$new" --root "$root"
+grep -qx 'local edit' "$root/usr/share/holy.conf"
+grep -qx config3 "$root/usr/share/holy.conf.holy-new"
+expect 0 "$bin" db check --all --root "$root"
+expect 0 "$bin" db rm "$config_third" --root "$root"
+grep -qx 'local edit' "$root/usr/share/holy.conf"
+test ! -e "$root/usr/share/holy.conf.holy-new"
+expect 6 "$bin" db owner usr/share/holy.conf --root "$root"
+expect 0 "$bin" db check --all --root "$root"
 printf 'update transaction fixtures passed\n'

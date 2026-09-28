@@ -116,6 +116,11 @@ hash of HOLY/hooks and reports installed-unconfigured in check. Native
 postinstall records can be reviewed and executed through db configure-plan and
 db configure-apply. A completed hooks-state retains the same hash. Foreign
 script execution, preinstall, editing and service consent remain unimplemented.
+For a reviewed update preserving a modified config, the installed instance keeps
+the exact archived HOLY/files as package-files. Its files record describes the
+preserved public file and the new PATH.holy-new. config-state binds the source
+artifact, raw manifest hash, installed manifest hash and transaction plan hash.
+The archive digest and local installed manifest digest remain distinct.
 HOLY/transform records
 changes already applied to the normalized payload; installation never executes
 that record. Archive verification does not authorize hook execution.

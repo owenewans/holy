@@ -2,6 +2,7 @@
 #include "change.h"
 #include "install.h"
 #include "package.h"
+#include "config.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -29,6 +30,7 @@ void holy_file_plan_free(struct holy_file_plan *plan)
     size_t i;
     for (i = 0; i < plan->old_count; ++i) free_entry(&plan->old_entries[i]);
     for (i = 0; i < plan->new_count; ++i) free_entry(&plan->new_entries[i]);
+    for (i = 0; i < plan->count; ++i) free(plan->changes[i].relocated_path);
     free(plan->old_entries); free(plan->new_entries); free(plan->changes);
     memset(plan, 0, sizeof *plan);
 }
@@ -126,6 +128,7 @@ int holy_file_plan_collect(const char *old_snapshot, const char *new_snapshot,
         if (order >= 0) change->after = &after.items[j++];
         change->kind = !change->before ? HOLY_ADD : !change->after ? HOLY_REMOVE :
                        same_entry(change->before, change->after) ? HOLY_RETAIN : HOLY_REPLACE;
+        change->source_path = change->after ? change->after->path : change->before->path;
         if (!change_id(plan, change->after ? change->after->path : change->before->path, change->id)) goto done;
     }
     ok = 1;
@@ -136,13 +139,69 @@ done:
     return ok;
 }
 
+int holy_file_plan_preserve_configs(struct holy_file_plan *plan, int root,
+                                    const char *saved_record)
+{
+    size_t i;
+    for (i = 0; i < plan->count; ++i) {
+        struct holy_file_change *c = &plan->changes[i];
+        struct holy_manifest_entry observed;
+        size_t length, j;
+        int prior;
+        if (!c->before || !c->after || !c->before->config || !c->after->config ||
+            c->before->directory || c->before->link || c->before->hardlink ||
+            c->before->group || c->after->directory || c->after->link ||
+            c->after->hardlink || c->after->group) continue;
+        length = strlen(c->source_path);
+        if (length > SIZE_MAX - sizeof ".holy-new") return 6;
+        c->relocated_path = malloc(length + sizeof ".holy-new");
+        if (!c->relocated_path) return 1;
+        memcpy(c->relocated_path, c->source_path, length);
+        memcpy(c->relocated_path + length, ".holy-new", sizeof ".holy-new");
+        c->relocated_before = *c->before;
+        c->relocated_before.path = c->relocated_path;
+        c->relocated_before.config = c->relocated_before.mutable = 0;
+        prior = holy_install_check_entry(root, c->before);
+        if (prior == 1) {
+            if (holy_install_check_entry(root, &c->relocated_before) != 2) return 4;
+            continue;
+        }
+        if (prior != 0 || !holy_install_observe_regular(root, c->before, &observed,
+                                                         c->preserved_hash)) return 4;
+        for (j = 0; j < plan->new_count; ++j)
+            if (!strcmp(plan->new_entries[j].path, c->relocated_path)) return 4;
+        c->preserved = observed;
+        c->preserved.hash = c->preserved_hash;
+        c->relocated_after = *c->after;
+        c->relocated_after.path = c->relocated_path;
+        c->relocated_after.config = c->relocated_after.mutable = 0;
+        prior = holy_install_check_entry(root, &c->relocated_before);
+        if (saved_record) {
+            char marker[96];
+            const char *section = strstr(saved_record, "\n[files]\n"), *position;
+            int n = snprintf(marker, sizeof marker, "\nchange %s ", c->id);
+            if (!section || n < 0 || (size_t)n >= sizeof marker ||
+                !(position = strstr(section, marker))) return 4;
+            position += strlen(marker);
+            if (!strncmp(position, "add\nbefore absent\n", sizeof "add\nbefore absent\n" - 1)) prior = 2;
+            else if (!strncmp(position, "replace\nbefore file ", sizeof "replace\nbefore file " - 1)) prior = 1;
+            else return 4;
+        } else if (prior != 1 && prior != 2) return 4;
+        c->before = prior == 1 ? &c->relocated_before : NULL;
+        c->after = &c->relocated_after;
+        c->kind = prior == 1 ? HOLY_REPLACE : HOLY_ADD;
+        c->keep_config = 1;
+    }
+    return 0;
+}
+
 static size_t find_change(const struct holy_file_plan *plan, const char *path)
 {
     size_t low = 0, high = plan->count;
     while (low < high) {
         size_t middle = low + (high - low) / 2;
         const struct holy_file_change *c = &plan->changes[middle];
-        const char *name = c->after ? c->after->path : c->before->path;
+        const char *name = c->source_path;
         int order = strcmp(name, path);
         if (!order) return middle;
         if (order < 0) low = middle + 1;
@@ -224,17 +283,28 @@ done:
     return ok;
 }
 
-static int topology(const struct holy_manifest_entry *entries, size_t count, int root)
+static int topology(const struct holy_file_plan *plan, int after, int root)
 {
+    const struct holy_manifest_entry *entries = after ? plan->new_entries : plan->old_entries;
+    size_t count = after ? plan->new_count : plan->old_count;
     struct inode_fact *facts;
     size_t i, used = 0;
     int ok = 0;
-    if (count > SIZE_MAX / sizeof *facts) return 0;
-    facts = calloc(count ? count : 1, sizeof *facts);
+    if (count > SIZE_MAX - plan->count || count + plan->count > SIZE_MAX / sizeof *facts) return 0;
+    facts = calloc(count + plan->count ? count + plan->count : 1, sizeof *facts);
     if (!facts) return 0;
     for (i = 0; i < count; ++i) {
         const struct holy_manifest_entry *e = &entries[i];
+        size_t index = find_change(plan, e->path);
+        if (index < plan->count && plan->changes[index].keep_config)
+            e = &plan->changes[index].preserved;
         if (e->directory || e->link) continue;
+        if (holy_install_entry_state(root, e, NULL, &facts[used].state) != 1) goto done;
+        facts[used].group = e->group; facts[used++].path = e->path;
+    }
+    for (i = 0; i < plan->count; ++i) if (plan->changes[i].keep_config) {
+        const struct holy_manifest_entry *e = after ? plan->changes[i].after : plan->changes[i].before;
+        if (!e) continue;
         if (holy_install_entry_state(root, e, NULL, &facts[used].state) != 1) goto done;
         facts[used].group = e->group; facts[used++].path = e->path;
     }
@@ -275,6 +345,67 @@ static void entry_record(FILE *out, const char *side, const struct holy_manifest
             e->mutable ? "mutable" : "none");
 }
 
+static int manifest_entry(FILE *out, const struct holy_manifest_entry *e,
+                          const char *owner, const char *group)
+{
+    size_t i;
+    fputs("file ", out); quote(out, e->path);
+    fprintf(out, " %o ", e->mode); quote(out, owner);
+    fputc(' ', out); quote(out, group);
+    fprintf(out, " %lld %lld %lld ", e->uid, e->gid, e->size);
+    for (i = 0; i < 32; ++i) fprintf(out, "%02x", e->hash[i]);
+    fprintf(out, " %s - -\n", e->config ? e->mutable ? "config,mutable" : "config" :
+            e->mutable ? "mutable" : "none");
+    return !ferror(out);
+}
+
+int holy_file_plan_installed_manifest(const struct holy_file_plan *plan,
+                                     const char *source, size_t length,
+                                     char **record, size_t *size)
+{
+    FILE *out;
+    size_t start = 0, line = 0, mapped = 0;
+    int ok = 0;
+    *record = NULL; *size = 0;
+    out = open_memstream(record, size);
+    if (!out) return 0;
+    while (start < length) {
+        const char *end = memchr(source + start, '\n', length - start);
+        size_t bytes = end ? (size_t)(end - source - start) : length - start;
+        char **v = NULL, *error = NULL;
+        size_t count = 0, i;
+        ++line;
+        if (!holy_lex(source + start, bytes, &v, &count, "HOLY/files", line, &error)) {
+            free(error); goto done;
+        }
+        free(error);
+        for (i = 0; count >= 2 && i < plan->count; ++i)
+            if (plan->changes[i].keep_config &&
+                !strcmp(v[1], plan->changes[i].source_path)) break;
+        if (count >= 2 && i < plan->count && plan->changes[i].keep_config) {
+            const struct holy_file_change *c = &plan->changes[i];
+            if (count != 12 || strcmp(v[0], "file") ||
+                !manifest_entry(out, &c->preserved, v[3], v[4]) ||
+                !manifest_entry(out, c->after, v[3], v[4])) {
+                holy_tokens_free(v, count); goto done;
+            }
+            ++mapped;
+        } else if (fwrite(source + start, 1, bytes + !!end, out) != bytes + !!end) {
+            holy_tokens_free(v, count); goto done;
+        }
+        holy_tokens_free(v, count);
+        start += bytes + !!end;
+    }
+    ok = mapped != 0 && !ferror(out);
+    for (start = 0; ok && start < plan->count; ++start)
+        if (plan->changes[start].keep_config) --mapped;
+    ok = ok && mapped == 0;
+done:
+    if (fclose(out)) ok = 0;
+    if (!ok) { free(*record); *record = NULL; *size = 0; }
+    return ok;
+}
+
 int holy_file_plan_record(const struct holy_file_plan *plan, char **record, size_t *size)
 {
     static const char *const names[] = {"retain", "add", "replace", "remove"};
@@ -289,6 +420,7 @@ int holy_file_plan_record(const struct holy_file_plan *plan, char **record, size
         const struct holy_file_change *change = &plan->changes[i];
         fprintf(out, "change %s %s\n", change->id, names[change->kind]);
         entry_record(out, "before", change->before); entry_record(out, "after", change->after);
+        if (change->keep_config) entry_record(out, "preserved", &change->preserved);
     }
     for (i = 0; i < plan->count; ++i) {
         const struct holy_file_change *c = &plan->changes[i];
@@ -322,6 +454,7 @@ int holy_file_plan_check(const struct holy_file_plan *plan, int root, int recove
         if (failed) *failed = i;
         if (!supported(c->before, plan->before_privileged) ||
             !supported(c->after, plan->after_privileged) ||
+            (c->keep_config && !supported(&c->preserved, plan->before_privileged)) ||
             (c->kind == HOLY_REPLACE && ((c->before && c->before->directory) ||
                                         (c->after && c->after->directory)))) return 6;
     }
@@ -331,6 +464,7 @@ int holy_file_plan_check(const struct holy_file_plan *plan, int root, int recove
         const struct holy_file_change *c = &plan->changes[i];
         int result = 0;
         if (failed) *failed = i;
+        if (c->keep_config && holy_install_check_entry(root, &c->preserved) != 1) return 4;
         if ((c->before && c->before->directory) || (c->after && c->after->directory)) {
             const struct holy_manifest_entry *e = c->before ? c->before : c->after;
             result = holy_install_check_entry(root, e);
@@ -338,7 +472,7 @@ int holy_file_plan_check(const struct holy_file_plan *plan, int root, int recove
         } else if (!holy_install_transition_check(root, c->before, c->after, recovering) ||
                    (!recovering && c->before && holy_install_check_entry(root, c->before) != 1)) return 4;
     }
-    if ((!recovering && !topology(plan->old_entries, plan->old_count, root)) ||
+    if ((!recovering && !topology(plan, 0, root)) ||
         (recovering && holy_file_plan_finished(plan, root) && !partial_groups(plan, root))) return 4;
     if (failed) *failed = plan->count;
     return 0;
@@ -524,9 +658,10 @@ int holy_file_plan_finished(const struct holy_file_plan *plan, int root)
         const struct holy_file_change *c = &plan->changes[i];
         const struct holy_manifest_entry *e = c->after ? c->after : c->before;
         int expected = c->after || e->directory ? 1 : 2;
+        if (c->keep_config && holy_install_check_entry(root, &c->preserved) != 1) return 4;
         if (holy_install_check_entry(root, e) != expected) return 4;
     }
-    return topology(plan->new_entries, plan->new_count, root) ? 0 : 4;
+    return topology(plan, 1, root) ? 0 : 4;
 }
 
 int holy_file_plan_apply(const struct holy_file_plan *plan, int root,

@@ -285,8 +285,8 @@ files beneath HOLY/foreign/deb and each control field with its source line in
 HOLY/origin. Debian maintainer scripts remain review-required and never run
 during import. Debian conffiles paths must name regular payload files. The
 importer records them with the config manifest flag and rejects missing,
-duplicate or unsafe paths. Modified installed config files report changed-config;
-automatic preservation during update remains open.
+duplicate or unsafe paths. Modified installed config files report changed-config.
+Cached updates preserve a modified config when both package versions mark it config.
 Comma-separated Depends entries become package requirements. OR alternatives
 remain one requirement with version constraints on each branch. The solver
 records the selected branch and provider in the installed graph. Constraints
@@ -1423,8 +1423,12 @@ invalidate the plan; a deactivated registered source returns unavailable (6).
 Unassociated local packages retain source-id "-".
 .PP
 This preview writes no installed state or payload and executes no package code.
-Missing or modified installed files conflict; modified-config preservation,
-directory metadata changes, hooks, new provider selection and multi-package replacement
+Missing or modified ordinary installed files conflict. A modified regular file
+marked config in both artifacts stays at its public path; the incoming payload
+is planned at PATH.holy-new. The plan binds the observed content hash and mode.
+An existing PATH.holy-new must match the old artifact exactly; the update then
+replaces it. A changed or colliding PATH.holy-new conflicts. Directory metadata
+changes, hooks, new provider selection and multi-package replacement
 are not implemented. The printed record is not accepted by db apply or
 db apply-set. JSON output is not implemented.
 .PP
@@ -1464,6 +1468,16 @@ artifact still occupies the installed slot. Missing cache objects return 6.
 This operation restores package files and dependencies. It does not reverse
 external hook effects, migrations or user data.
 .PP
+When an update preserves a modified config, the installed instance stores the
+source HOLY/files as package-files and records the local files manifest plus
+its hashes in config-state. The local manifest owns both the preserved public
+config and PATH.holy-new. check and owner use that manifest; a later package
+update carries it forward. Changing the preserved file after the plan was
+reviewed invalidates apply. Package removal leaves config files on disk and
+removes PATH.holy-new. Missing-file repair for a transformed instance currently
+returns 6 before creating a journal; the source-path mapping for repair remains
+to be implemented.
+.PP
 Hardlink updates stage one inode per new group and link each changed member's
 temporary path to it. A group-stage record binds the reserved anchor sibling
 name to the plan. Retained anchors keep their inode. Group staging links remain
@@ -1479,7 +1493,8 @@ Recovery preserves unexpected or partly written reserved staging objects
 and returns 5 for inspection; it does not delete them automatically. Missing
 cached inputs must be restored. Interruption before publishing the immutable
 journal requires manual inspection. Unchanged files must still match their
-recorded state. Recovery does not execute hooks or merge modified configs.
+recorded state. Recovery can finish a reviewed PATH.holy-new publication; it
+does not execute hooks or merge file contents.
 An interrupted setuid update can leave a reviewed executable under a reserved
 .holy-update name until recovery or manual inspection. The reserved name and
 mode are shown in the file plan; root operators must treat it as installed code.

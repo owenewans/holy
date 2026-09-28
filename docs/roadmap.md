@@ -375,12 +375,17 @@
   candidate set and protect each selected alias provider. Discover installed
   alias owners for a later script installation using root-confined lookup,
   including chains split between installed and new packages.
-- [ ] Handle hooks, service consent, modified configs, overrides, rollback and
+- [ ] Handle hooks, service consent, overrides, general rollback and
   recovery of each interrupted mutation phase.
 - [x] Carry config/mutable flags through verified manifests and installed checks;
   import Debian conffiles as config files, reject invalid declarations, and
-  report changed-config. Update preservation and .holy-new still need a
-  transaction-aware implementation.
+  report changed-config.
+- [x] Preserve edited config files during a cached update. Bind the observed
+  hash to the reviewed plan, publish incoming bytes as an owned .holy-new,
+  store the raw and local manifests separately, and carry local state through
+  later updates. The fixture checks stale plans, repeat updates, ownership,
+  recovery after interruption and package removal. Missing-only repair of the
+  transformed instance and explicit config replacement remain open.
 - [x] Accept an artifact-scoped skip decision for nonempty HOLY/hooks in local
   set installation. Print hook records before the decision, bind the skip to
   plan and journal, retain hooks/transform in installed state, report
@@ -416,7 +421,7 @@
   preserving reasons/source identity. Recover interrupted publication after
   injected SIGKILL and ENOSPC; preserve partial staging for explicit inspection.
   Test file addition/removal, regular/symlink transitions and a compatible ELF
-  provider update. Hooks and config merging remain open.
+  provider update. Hooks and content merging remain open.
 - [x] Preview and apply a reverse cached replacement from a committed update
   transaction with `holypkg rollback`. Verify the original journal, committed
   marker and plan digest; reuse the dependency solver, whole-file plan hash,

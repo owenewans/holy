@@ -9,6 +9,11 @@ enum holy_change_kind { HOLY_RETAIN, HOLY_ADD, HOLY_REPLACE, HOLY_REMOVE };
 struct holy_file_change {
     enum holy_change_kind kind;
     const struct holy_manifest_entry *before, *after;
+    const char *source_path;
+    struct holy_manifest_entry preserved, relocated_before, relocated_after;
+    unsigned char preserved_hash[32];
+    char *relocated_path;
+    int keep_config;
     char id[65];
 };
 
@@ -25,10 +30,19 @@ struct holy_file_plan {
    returns one on success; free the result after every outcome. */
 int holy_file_plan_collect(const char *old_snapshot, const char *new_snapshot,
                            struct holy_file_plan *plan);
+/* freezes modified config content and redirects the incoming version to
+   .holy-new; a colliding or altered prior .holy-new is a conflict. */
+int holy_file_plan_preserve_configs(struct holy_file_plan *plan, int root,
+                                    const char *saved_record);
 void holy_file_plan_free(struct holy_file_plan *plan);
 /* requires a successfully collected plan; caller owns the allocated record.
    binds both archive hashes and normalized entry attributes, not database state. */
 int holy_file_plan_record(const struct holy_file_plan *plan, char **record, size_t *size);
+/* rewrite only preserved config rows and add owned .holy-new rows;
+   input is the verified new package's HOLY/files text. */
+int holy_file_plan_installed_manifest(const struct holy_file_plan *plan,
+                                     const char *source, size_t length,
+                                     char **record, size_t *size);
 /* no mutation; 0 succeeds, 4 rootfs drift, 6 unsupported transition. failed is
    the change index. ownership, dependency and source checks belong to the caller. */
 int holy_file_plan_check(const struct holy_file_plan *plan, int root, int recovering,
