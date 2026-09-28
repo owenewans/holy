@@ -101,7 +101,7 @@ with tempfile.TemporaryDirectory() as scratch:
     assert '"command" "helper"' in requirements
     assert '"package" "helper" "any" "any" "ge" "2"' in requirements
     assert '"foreign" "virtual-helper"' in requirements
-    run("solve", "local:" + str(signed), status=6)
+    run("solve", "local:" + str(signed), status=4)
 
     private_key = tmp / "signing.pem"
     public_key = tmp / "fixture.rsa.pub"

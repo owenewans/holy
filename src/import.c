@@ -7,6 +7,7 @@
 #include "stage.h"
 #include "elf.h"
 #include "provides.h"
+#include "version.h"
 #include "../backends/pacman.h"
 #include "../backends/deb-version.h"
 #include "../backends/apk-version.h"
@@ -16,6 +17,16 @@
 #include <archive.h>
 #include <archive_entry.h>
 #include <openssl/evp.h>
+#ifdef HOLY_HAVE_RPM
+#include <rpm/rpmlib.h>
+#include <rpm/rpmts.h>
+#include <rpm/rpmio.h>
+#include <rpm/header.h>
+#include <rpm/rpmtag.h>
+#include <rpm/rpmtd.h>
+#include <rpm/rpmds.h>
+#include <rpm/rpmfiles.h>
+#endif
 #ifdef __TINYC__
 /* libplist's fallback pragma is an error under tcc's strict warning mode. */
 #define __llvm__ 1
@@ -62,7 +73,13 @@ struct foreign_input {
 
 enum foreign_archive_kind { FOREIGN_PACMAN, FOREIGN_DEB_CONTROL, FOREIGN_DEB_DATA,
                             FOREIGN_SLACKWARE, FOREIGN_APK_SIGNATURE,
-                            FOREIGN_APK_CONTROL, FOREIGN_APK_DATA, FOREIGN_XBPS };
+                            FOREIGN_APK_CONTROL, FOREIGN_APK_DATA, FOREIGN_XBPS, FOREIGN_RPM };
+
+struct rpm_metadata { char *name, *version, *release, *arch;
+#ifdef HOLY_HAVE_RPM
+                      Header header;
+#endif
+};
 
 struct deb_field { char *key, *value; size_t line; };
 struct deb_metadata {
@@ -147,12 +164,14 @@ static struct archive *foreign_reader(const char *snapshot, int *result, int lzm
     else if (got >= 3 && !memcmp(header, "BZh", 3)) support = archive_read_support_filter_bzip2(a);
     else if (got >= 2 && header[0] == 0x1f && header[1] == 0x8b) support = archive_read_support_filter_gzip(a);
     else if (got >= 4 && !memcmp(header, "\x04\x22\x4d\x18", 4)) support = archive_read_support_filter_lz4(a);
+    else if (got >= 4 && !memcmp(header, "\xed\xab\xee\xdb", 4)) support = archive_read_support_filter_all(a);
     else support = archive_read_support_filter_none(a);
     if (support != ARCHIVE_OK) {
         fputs("holypkg: built-in foreign archive codec unavailable\n", stderr);
         *result = 6; archive_read_free(a); return NULL;
     }
-    if (archive_read_support_format_tar(a) != ARCHIVE_OK ||
+    if ((archive_read_support_format_tar(a) != ARCHIVE_OK) ||
+        (archive_read_support_format_cpio(a) != ARCHIVE_OK) ||
         archive_read_open_filename(a, snapshot, 65536) != ARCHIVE_OK) {
         *result = 2; archive_read_free(a); return NULL;
     }
@@ -1128,6 +1147,75 @@ static void requirement(FILE *out, const char *id, const char *consumer, const c
     fputc('\n', out);
 }
 
+#ifdef HOLY_HAVE_RPM
+static int rpm_relations(FILE *deps, FILE *provides, FILE *origin, const struct rpm_metadata *rpm,
+                         const char *arch, const char *libc)
+{
+    static const rpmTagVal names[] = {RPMTAG_REQUIRENAME, RPMTAG_PROVIDENAME,
+                                      RPMTAG_CONFLICTNAME, RPMTAG_OBSOLETENAME};
+    static const rpmTagVal versions[] = {RPMTAG_REQUIREVERSION, RPMTAG_PROVIDEVERSION,
+                                         RPMTAG_CONFLICTVERSION, RPMTAG_OBSOLETEVERSION};
+    static const rpmTagVal flags[] = {RPMTAG_REQUIREFLAGS, RPMTAG_PROVIDEFLAGS,
+                                      RPMTAG_CONFLICTFLAGS, RPMTAG_OBSOLETEFLAGS};
+    size_t k;
+    for (k = 0; k < 4; ++k) {
+        rpmtd n = rpmtdNew(), v = rpmtdNew(), f = rpmtdNew();
+        rpm_count_t count, j;
+        int ok = 1;
+        if (!n || !v || !f) { ok = 0; goto next; }
+        if (!headerGet(rpm->header, names[k], n, HEADERGET_MINMEM)) goto next;
+        count = rpmtdCount(n);
+        if ((headerGet(rpm->header, versions[k], v, HEADERGET_MINMEM) && rpmtdCount(v) != count) ||
+            (headerGet(rpm->header, flags[k], f, HEADERGET_MINMEM) && rpmtdCount(f) != count)) {
+            ok = 0; goto next;
+        }
+        for (j = 0; j < count; ++j) {
+            const char *name, *version = "", *relation = "any";
+            uint32_t bits = 0;
+            char id[48], original[1024];
+            if (rpmtdSetIndex(n, j) < 0) { ok = 0; break; }
+            name = rpmtdGetString(n);
+            if (!name || !*name || strlen(name) >= sizeof original / 2) { ok = 0; break; }
+            if (rpmtdCount(v)) { if (rpmtdSetIndex(v, j) < 0) { ok = 0; break; } version = rpmtdGetString(v); }
+            if (rpmtdCount(f)) { if (rpmtdSetIndex(f, j) < 0) { ok = 0; break; } bits = (uint32_t)rpmtdGetNumber(f); }
+            if (!version) { ok = 0; break; }
+            bits &= RPMSENSE_LESS | RPMSENSE_GREATER | RPMSENSE_EQUAL;
+            if (bits == RPMSENSE_EQUAL) relation = "eq";
+            else if (bits == (RPMSENSE_GREATER | RPMSENSE_EQUAL)) relation = "ge";
+            else if (bits == (RPMSENSE_LESS | RPMSENSE_EQUAL)) relation = "le";
+            else if (bits == RPMSENSE_GREATER) relation = "gt";
+            else if (bits == RPMSENSE_LESS) relation = "lt";
+            else if (bits) relation = "foreign";
+            snprintf(id, sizeof id, "rpm-%zu-%u", k, j);
+            snprintf(original, sizeof original, "%s %s %s", name, relation, version);
+            fputs("rpm-relation ", origin);
+            token(origin, k == 0 ? "Requires" : k == 1 ? "Provides" :
+                          k == 2 ? "Conflicts" : "Obsoletes");
+            fputc(' ', origin); token(origin, original); fputc('\n', origin);
+            if (k == 1) {
+                if (!bits && !*version) {
+                    fputs("provide package ", provides); token(provides, name);
+                    fputs(" any any ", provides); token(provides, "-");
+                    fputs(" rpm\n", provides);
+                }
+            } else if (k == 0 && !strncmp(name, "rpmlib(", 7)) {
+                /* rpmlib names describe the archive format, not a runtime dependency. */
+            } else if (k == 0 && name[0] != '/' && !*version &&
+                       strcmp(relation, "foreign"))
+                requirement(deps, id, rpm->name, "package", name, "any", "any", relation,
+                            *version ? version : "-", original, "rpm:Requires");
+            else
+                requirement(deps, id, rpm->name, "foreign", original, arch, libc, "any", "-",
+                            original, k == 0 ? "rpm:Requires" : k == 2 ? "rpm:Conflicts" : "rpm:Obsoletes");
+        }
+next:
+        rpmtdFree(n); rpmtdFree(v); rpmtdFree(f);
+        if (!ok) return 0;
+    }
+    return !ferror(deps) && !ferror(provides) && !ferror(origin);
+}
+#endif
+
 static int apk_simple_name(const char *name)
 {
     const unsigned char *p = (const unsigned char *)name;
@@ -1314,6 +1402,7 @@ done:
 static int write_output(struct foreign_input *input, const struct holy_pacman_metadata *meta,
                          const struct deb_metadata *deb, const struct slack_metadata *slack,
                          const struct apk_metadata *apk, const struct xbps_metadata *xbps,
+                         const struct rpm_metadata *rpm,
                          const char *source, const char *hash, const char *output, int output_fd,
                          FILE *receipt, int group, const char *verification,
                          const char *key_hash, const char *signature_hash,
@@ -1328,14 +1417,14 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
     struct holy_stream_entry *entries = NULL;
     int ok = 0, aggregate = input->group_count == 1 || group == (int)input->group_count - 1;
     const char *arch = input->groups[group].arch, *libc = input->groups[group].libc;
-    const char *family = xbps ? "xbps" : apk ? "apk" : slack ? "slackware" : deb ? "deb" : "pacman";
-    const char *name = xbps ? xbps->name : apk ? apk->name : slack ? slack->name : deb ? deb->name : meta->name;
-    const char *version = xbps ? xbps->version : apk ? apk->version : slack ? slack->version : deb ? deb->version : meta->version;
-    const char *source_arch = xbps ? xbps->arch : apk ? apk->arch : slack ? slack->arch : deb ? deb->arch : meta->arch;
+    const char *family = rpm ? "rpm" : xbps ? "xbps" : apk ? "apk" : slack ? "slackware" : deb ? "deb" : "pacman";
+    const char *name = rpm ? rpm->name : xbps ? xbps->name : apk ? apk->name : slack ? slack->name : deb ? deb->name : meta->name;
+    const char *version = rpm ? rpm->version : xbps ? xbps->version : apk ? apk->version : slack ? slack->version : deb ? deb->version : meta->version;
+    const char *source_arch = rpm ? rpm->arch : xbps ? xbps->arch : apk ? apk->arch : slack ? slack->arch : deb ? deb->arch : meta->arch;
     for (i = 0; i < 7; ++i) if (!(files[i] = open_memstream(&text[i], &sizes[i]))) goto done;
     fputs("format holy-package-1\nname ", files[0]); token(files[0], name);
     fputs("\nversion ", files[0]); token(files[0], version);
-    fputs("\nrelease ", files[0]); token(files[0], xbps ? xbps->release : slack ? slack->build : "1");
+    fputs("\nrelease ", files[0]); token(files[0], rpm ? rpm->release : xbps ? xbps->release : slack ? slack->build : "1");
     fprintf(files[0], "\nos linux\narch %s\nlibc %s\nx-version-family %s\nx-source-arch ", arch, libc, family);
     token(files[0], source_arch); fputc('\n', files[0]);
     if (slack) {
@@ -1365,7 +1454,7 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
                         input->groups[i].libc, "any", "-", name, "import-output");
         }
     }
-    for (i = 0; !deb && !slack && !apk && !xbps && i < meta->count; ++i) {
+    for (i = 0; !deb && !slack && !apk && !xbps && !rpm && i < meta->count; ++i) {
         const struct holy_pacman_field *field = &meta->fields[i];
         char id[64];
         fputs("pkginfo ", files[5]); token(files[5], field->key); fputc(' ', files[5]);
@@ -1457,6 +1546,9 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
             }
         }
     }
+#ifdef HOLY_HAVE_RPM
+    if (rpm && aggregate && !rpm_relations(files[2], files[3], files[5], rpm, arch, libc)) goto done;
+#endif
     if (!emit_elf_provides(files[3], input, group, arch, libc)) goto done;
     if (slack) {
         fputs("package-filename ", files[5]); token(files[5], name);
@@ -1471,7 +1563,7 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
         const struct foreign_entry *e = &input->entries[i];
         if (!belongs(input, i, group)) continue;
         if (!e->metadata && !write_manifest(files[1], input, i, family)) goto done;
-        if (!apk && !deb && !slack && !xbps && aggregate && !strcmp(e->original, ".INSTALL")) {
+        if (!apk && !deb && !slack && !xbps && !rpm && aggregate && !strcmp(e->original, ".INSTALL")) {
             fputs("foreign-script pacman /bin/sh HOLY/foreign/pacman/INSTALL sha256 ", files[4]);
             hex_hash(files[4], e->hash);
             fputs(" review-required\n", files[4]);
@@ -1534,7 +1626,7 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
     entries[count++] = (struct holy_stream_entry){xbps ? "HOLY/foreign/xbps" :
                                                    apk ? "HOLY/foreign/apk" :
                                                    slack ? "HOLY/foreign/slackware" :
-                                                   deb ? "HOLY/foreign/deb" : "HOLY/foreign/pacman",
+                                                   deb ? "HOLY/foreign/deb" : rpm ? "HOLY/foreign/rpm" : "HOLY/foreign/pacman",
                                                    NULL, NULL, "root", "root", 0, 0, 0, 0, 0755, 1};
     for (i = 0; i < input->count; ++i)
         if (input->entries[i].metadata &&
@@ -1646,7 +1738,7 @@ int holy_import_pacman(const char *input_path, const char *source, const char *o
     fprintf(receipt, "format holy-import-record-1\nfamily pacman\nconverter holy-pacman-1\noriginal-sha256 %s\nsource-name ", hash);
     token(receipt, source); fputs("\nverification unverified\n", receipt);
     for (i = 0; i < input.group_count; ++i)
-        if (!write_output(&input, &metadata, NULL, NULL, NULL, NULL, source, hash, output, output_fd,
+        if (!write_output(&input, &metadata, NULL, NULL, NULL, NULL, NULL, source, hash, output, output_fd,
                           receipt, (int)i, NULL, NULL, NULL, NULL, NULL)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
@@ -1746,7 +1838,7 @@ int holy_import_deb_verified(const char *input_path, const char *source, const c
         fputc('\n', receipt);
     }
     for (i = 0; i < input.group_count; ++i)
-        if (!write_output(&input, NULL, &metadata, NULL, NULL, NULL, source, hash, output, output_fd,
+        if (!write_output(&input, NULL, &metadata, NULL, NULL, NULL, NULL, source, hash, output, output_fd,
                           receipt, (int)i, verification, key_hash, signature_hash,
                           index_hash, source_url)) goto done;
     fputs("state complete\n", receipt);
@@ -1837,7 +1929,7 @@ int holy_import_slackware(const char *input_path, const char *source, const char
     fprintf(receipt, "format holy-import-record-1\nfamily slackware\nconverter holy-slackware-1\noriginal-sha256 %s\nsource-name ", hash);
     token(receipt, source); fputs("\nverification unverified\n", receipt);
     for (i = 0; i < input.group_count; ++i)
-        if (!write_output(&input, NULL, NULL, &metadata, NULL, NULL, source, hash,
+        if (!write_output(&input, NULL, NULL, &metadata, NULL, NULL, NULL, source, hash,
                           output, output_fd, receipt, (int)i, NULL, NULL, NULL, NULL, NULL)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
@@ -1972,7 +2064,7 @@ int holy_import_apk_verified(const char *input_path, const char *source, const c
         fputc('\n', receipt);
     }
     for (i = 0; i < input.group_count; ++i)
-        if (!write_output(&input, NULL, NULL, NULL, &metadata, NULL, source, hash,
+        if (!write_output(&input, NULL, NULL, NULL, &metadata, NULL, NULL, source, hash,
                           output, output_fd, receipt, (int)i, verification,
                           key_hash[0] ? key_hash : NULL, NULL,
                           index_hash, source_url)) goto done;
@@ -2091,7 +2183,7 @@ int holy_import_xbps_verified(const char *input_path, const char *source, const 
         fputc('\n', receipt);
     }
     for (i = 0; i < input.group_count; ++i)
-        if (!write_output(&input, NULL, NULL, NULL, NULL, &metadata, source, hash,
+        if (!write_output(&input, NULL, NULL, NULL, NULL, &metadata, NULL, source, hash,
                           output, output_fd, receipt, (int)i, verification,
                           key_hash, signature_hash, index_hash, source_url)) goto done;
     fputs("state complete\n", receipt);
@@ -2115,4 +2207,174 @@ int holy_import_xbps(const char *input_path, const char *source, const char *out
 {
     return holy_import_xbps_verified(input_path, source, output, NULL,
                                      "unverified", NULL, NULL, NULL, NULL);
+}
+
+#ifdef HOLY_HAVE_RPM
+static int rpm_header(const char *snapshot, struct rpm_metadata *meta)
+{
+    static const rpmTagVal scripts[] = {RPMTAG_PREIN, RPMTAG_POSTIN, RPMTAG_PREUN,
+                                        RPMTAG_POSTUN, RPMTAG_PRETRANS, RPMTAG_POSTTRANS,
+                                        RPMTAG_VERIFYSCRIPT, RPMTAG_TRIGGERSCRIPTS,
+                                        RPMTAG_FILETRIGGERSCRIPTS, RPMTAG_TRANSFILETRIGGERSCRIPTS};
+    rpmts ts = rpmtsCreate();
+    FD_t fd = NULL;
+    Header h = NULL;
+    const char *value;
+    size_t i;
+    int result = 2;
+    if (!ts) return 1;
+    rpmtsSetVSFlags(ts, _RPMVSF_NOSIGNATURES);
+    fd = Fopen(snapshot, "r.ufdio");
+    if (!fd || rpmReadPackageFile(ts, fd, snapshot, &h) != RPMRC_OK || !h) goto done;
+    if (headerGetNumber(h, RPMTAG_RPMFORMAT) && headerGetNumber(h, RPMTAG_RPMFORMAT) != 4) {
+        fputs("holypkg: RPM payload format requires a supported reader (v4 only)\n", stderr);
+        result = 6; goto done;
+    }
+    for (i = 0; i < sizeof scripts / sizeof *scripts; ++i)
+        if (headerGetString(h, scripts[i])) {
+            fputs("holypkg: RPM scriptlets require review support\n", stderr);
+            result = 3; goto done;
+        }
+    value = headerGetString(h, RPMTAG_NAME); if (!value || !apk_simple_name(value)) goto done;
+    meta->name = strdup(value);
+    value = headerGetString(h, RPMTAG_VERSION); if (!value || !*value) goto done;
+    meta->version = strdup(value);
+    value = headerGetString(h, RPMTAG_RELEASE); if (!value || !*value) goto done;
+    meta->release = strdup(value);
+    value = headerGetString(h, RPMTAG_ARCH); if (!value || !*value) goto done;
+    meta->arch = strdup(value);
+    if (!meta->name || !meta->version || !meta->release || !meta->arch) { result = 1; goto done; }
+    {
+        int order;
+        if (!holy_version_compare(meta->version, meta->version, &order) ||
+            !holy_version_compare(meta->release, meta->release, &order) ||
+            headerGetNumber(h, RPMTAG_EPOCH)) {
+            fputs("holypkg: RPM version or epoch requires RPM comparator support\n", stderr);
+            result = 3; goto done;
+        }
+    }
+    if (strcmp(meta->arch, "noarch") && strcmp(meta->arch, "i686") &&
+        strcmp(meta->arch, "x86_64")) {
+        fputs("holypkg: RPM source arch requires mapping\n", stderr);
+        result = 3; goto done;
+    }
+    meta->header = h; h = NULL;
+    result = 0;
+done:
+    if (h) headerFree(h);
+    if (fd) Fclose(fd);
+    rpmtsFree(ts);
+    return result;
+}
+
+static int rpm_files(struct foreign_input *input, const struct rpm_metadata *meta)
+{
+    rpmfiles files = rpmfilesNew(NULL, meta->header, RPMTAG_BASENAMES, 0);
+    unsigned char *seen = calloc(input->count ? input->count : 1, 1);
+    struct foreign_entry **sorted = malloc((input->count ? input->count : 1) * sizeof *sorted);
+    rpm_count_t i;
+    int ok = 0;
+    if (!files || !seen || !sorted) goto done;
+    for (i = 0; i < input->count; ++i) sorted[i] = &input->entries[i];
+    qsort(sorted, input->count, sizeof *sorted, path_order);
+    for (i = 0; i < rpmfilesFC(files); ++i) {
+        char *name = rpmfilesFN(files, i);
+        const char *relative = name;
+        struct foreign_entry *entry;
+        size_t j;
+        rpmfileAttrs flags = rpmfilesFFlags(files, i);
+        if (!name) goto done;
+        while (*relative == '/') ++relative;
+        while (!strncmp(relative, "./", 2)) relative += 2;
+        entry = find_path(sorted, input->count, relative);
+        if (!entry) { free(name); goto done; }
+        j = (size_t)(entry - input->entries);
+        if (seen[j] || (flags & RPMFILE_GHOST) ||
+            (rpmfilesFCaps(files, i) && *rpmfilesFCaps(files, i)) ||
+            ((flags & RPMFILE_CONFIG) && entry->stream.directory)) { free(name); goto done; }
+        seen[j] = 1;
+        entry->config = !!(flags & RPMFILE_CONFIG);
+        free(name);
+    }
+    for (i = 0; i < input->count; ++i) if (!seen[i]) goto done;
+    ok = 1;
+done:
+    rpmfilesFree(files); free(seen); free(sorted);
+    return ok;
+}
+#endif
+
+int holy_import_rpm(const char *input_path, const char *source, const char *output)
+{
+#ifndef HOLY_HAVE_RPM
+    (void)input_path; (void)source; (void)output;
+    fputs("holypkg: RPM importer requires librpm at build time\n", stderr);
+    return 6;
+#else
+    struct foreign_input input = {0};
+    struct rpm_metadata metadata = {0};
+    struct stat st;
+    char *snapshot = NULL, hash[65], temporary[43] = {0};
+    FILE *receipt = NULL;
+    int input_fd = -1, output_fd = -1, result = 1, common;
+    size_t i;
+    if (!*source || !strcmp(source, "local")) return 2;
+    for (i = 0; source[i]; ++i)
+        if ((unsigned char)source[i] <= 32 || source[i] == ':' || source[i] == '/' || source[i] == '@') return 2;
+    input_fd = open(input_path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (input_fd < 0 || fstat(input_fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+        st.st_size > 1024LL * 1024 * 1024) { result = 6; goto done; }
+    snapshot = holy_stage_fd(input_fd, "holy-import");
+    if (!snapshot || !input_hash(snapshot, hash) || mkdir(output, 0700)) goto done;
+    output_fd = open(output, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (output_fd < 0 || fstat(output_fd, &st) || st.st_uid != geteuid() ||
+        (st.st_mode & 0777) != 0700 || !preserve_original(snapshot, output_fd)) goto done;
+    result = rpm_header(snapshot, &metadata);
+    if (result) goto done;
+    result = collect_archive(snapshot, &input, FOREIGN_RPM, 0);
+    if (result) goto done;
+    if (!validate_paths(&input) || !rpm_files(&input, &metadata)) { result = 2; goto done; }
+    result = 3;
+    if (input.unknown) {
+        fputs("holypkg: unknown RPM payload ABI requires classification\n", stderr);
+        goto done;
+    }
+    if (!strcmp(metadata.arch, "noarch") && input.group_count) {
+        fputs("holypkg: noarch RPM contains machine code\n", stderr);
+        goto done;
+    }
+    if (!input.group_count) common = add_group(&input, "noarch", "nolibc");
+    else if (input.group_count == 1) common = 0;
+    else common = add_group(&input, "noarch", "nolibc");
+    if (common < 0) { result = 6; goto done; }
+    for (i = 0; i < input.count; ++i) if (input.entries[i].group < 0) input.entries[i].group = common;
+    result = 1;
+    {
+        int fd = holy_temporary_at(output_fd, temporary);
+        if (fd < 0) goto done;
+        receipt = fdopen(fd, "w");
+        if (!receipt) { close(fd); goto done; }
+    }
+    fprintf(receipt, "format holy-import-record-1\nfamily rpm\nconverter holy-rpm-1\noriginal-sha256 %s\nsource-name ", hash);
+    token(receipt, source); fputs("\nverification unverified\n", receipt);
+    for (i = 0; i < input.group_count; ++i)
+        if (!write_output(&input, NULL, NULL, NULL, NULL, NULL, &metadata, source, hash,
+                          output, output_fd, receipt, (int)i, NULL, NULL, NULL, NULL, NULL)) goto done;
+    fputs("state complete\n", receipt);
+    if (fflush(receipt) || fsync(fileno(receipt))) goto done;
+    if (fclose(receipt)) { receipt = NULL; goto done; }
+    receipt = NULL;
+    if (linkat(output_fd, temporary, output_fd, "conversion", 0) || fsync(output_fd)) goto done;
+    result = 0;
+done:
+    if (result) fprintf(stderr, "holypkg: RPM import incomplete (status %d); no installed state changed\n", result);
+    if (receipt) fclose(receipt);
+    if (output_fd >= 0) { if (*temporary) unlinkat(output_fd, temporary, 0); close(output_fd); }
+    if (input_fd >= 0) close(input_fd);
+    if (snapshot) { unlink(snapshot); free(snapshot); }
+    if (metadata.header) headerFree(metadata.header);
+    free(metadata.name); free(metadata.version); free(metadata.release); free(metadata.arch);
+    free_input(&input);
+    return result;
+#endif
 }

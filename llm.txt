@@ -1116,7 +1116,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=d41cd63eb81b2a64b2962cd23ca0ec4a7f2b61ec71835b7f22247b84e5f781d1
+holypkg.8 source=holy version=development sha256=d14c8fe383398b88e6e1b4a56e09379f11b5fa37b67758a1c0ea9c0a58dd3b12
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1136,7 +1136,7 @@ SYNOPSIS
      ROR]  [--choose  SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256]
      [--accept-privileged SHA256] [--root DIRECTORY] [--yes] [--noninteractive]
      holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
-     holypkg   import	INPUT	--source   NAME	   --format    pacman|deb|slack-
+     holypkg  import  INPUT   --source	 NAME	--format   pacman|rpm|deb|slack-
      ware|apk|xbps|appimage   --output	NEW_DIRECTORY  [--public-key  FILE  (apk
      only)]
      holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base
@@ -1343,16 +1343,26 @@ SYNOPSIS
      holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 
 DESCRIPTION
-   Local pacman, Debian, Slackware, APK and XBPS binary import
-     import snapshots a local pacman tar archive, Debian .deb,	Slackware  pack-
-     age, APK v2 or XBPS package, retains its exact bytes as NEW_DIRECTORY/orig-
-     inal  and	creates	 verified  LZ4-frame .holy outputs. The output directory
-     must not exist. --format selects the adapter explicitly;  --source	 records
-     provenance	 only  and  grants  no registered source identity or trust.  The
-     command does not install files or execute package code. Without an explicit
-     APK public key, each output records  verification=unverified.  An	explicit
-     key verifies the APK signature but does not grant a registered source iden-
-     tity.
+   Local pacman, RPM, Debian, Slackware, APK and XBPS binary import
+     import snapshots a local pacman tar archive, RPM v4 package,  Debian  .deb,
+     Slackware	package,  APK  v2  or  XBPS  package, retains its exact bytes as
+     NEW_DIRECTORY/original and creates verified LZ4-frame  .holy  outputs.  The
+     output  directory	must not exist. --format selects the adapter explicitly;
+     --source records provenance only and grants no registered	source	identity
+     or	 trust.	  The  command	does  not install files or execute package code.
+     Without an explicit APK public key, each output records verification=unver-
+     ified. An explicit key verifies the APK signature but does not grant a reg-
+     istered source identity.
+
+     --format rpm uses librpm to read the v4 header and libarchive to  read  its
+     cpio  payload.  The  importer checks header and payload file lists, records
+     config flags and original provenance, and splits observed ELF  ABI	 groups.
+     RPM  scriptlets,  triggers, file capabilities, v6 payloads, epochs and ver-
+     sions outside the current Holy comparator require further	conversion  sup-
+     port.   Versioned	RPM  requirements remain attributed foreign requirements
+     because the native comparator does not implement RPM ordering. Local import
+     does not verify RPM signatures. Builds without librpm return status  6  for
+     this format.
 
      --format  deb  reads  the	Debian ar members debian-binary, control.tar and
      data.tar in order, including supported compressed variants. It retains con-

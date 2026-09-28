@@ -10,7 +10,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
-.B holypkg import INPUT --source NAME --format pacman|deb|slackware|apk|xbps|appimage --output NEW_DIRECTORY [--public-key FILE (apk only)]
+.B holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage --output NEW_DIRECTORY [--public-key FILE (apk only)]
 .br
 .B holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY
 .br
@@ -272,14 +272,23 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 .SH DESCRIPTION
-.SS Local pacman, Debian, Slackware, APK and XBPS binary import
-import snapshots a local pacman tar archive, Debian .deb, Slackware package, APK v2 or XBPS package, retains its exact bytes as
+.SS Local pacman, RPM, Debian, Slackware, APK and XBPS binary import
+import snapshots a local pacman tar archive, RPM v4 package, Debian .deb, Slackware package, APK v2 or XBPS package, retains its exact bytes as
 NEW_DIRECTORY/original and creates verified LZ4-frame .holy outputs. The output
 directory must not exist. --format selects the adapter explicitly; --source
 records provenance only and grants no registered source identity or trust.
 The command does not install files or execute package code. Without an explicit
 APK public key, each output records verification=unverified. An explicit key
 verifies the APK signature but does not grant a registered source identity.
+.PP
+--format rpm uses librpm to read the v4 header and libarchive to read its cpio
+payload. The importer checks header and payload file lists, records config
+flags and original provenance, and splits observed ELF ABI groups. RPM
+scriptlets, triggers, file capabilities, v6 payloads, epochs and versions
+outside the current Holy comparator require further conversion support.
+Versioned RPM requirements remain attributed foreign requirements because
+the native comparator does not implement RPM ordering. Local import does not
+verify RPM signatures. Builds without librpm return status 6 for this format.
 .PP
 --format deb reads the Debian ar members debian-binary, control.tar and
 data.tar in order, including supported compressed variants. It retains control
