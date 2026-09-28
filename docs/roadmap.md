@@ -19,8 +19,12 @@
 - [x] Add a direct `holypkg run SOURCE:PACKAGE -- COMMAND` launcher for an
   installed executable, with source-slot selection, manifest verification,
   argv/exit preservation, and private-bin PATH priority when such paths exist.
-  The fixture installs a static executable in a disposable root. Automatic
-  private conflict placement and mount-namespace path views remain open.
+  The fixture installs a static executable in a disposable root. An explicit
+  `--view PUBLIC=PRIVATE` now bind mounts a package-owned private regular file
+  over an existing public file inside a private user/mount namespace, then
+  enters the target root. The fixture checks absolute helper lookup, argv,
+  exit status and host path isolation. Automatic private conflict placement,
+  missing public mountpoints and privileged fallback remain open.
 - [x] Publish a native index generation with an optional Ed25519 signature
   before switching `current`; verify the exact index bytes and package
   artifacts against a supplied public key. Signed HTTPS mirrors check the

@@ -993,7 +993,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=2d0a1144d03e206656ed990b790a01834ff6678e931523b3b22828a5cc408a37
+holypkg.8 source=holy version=development sha256=a10662c33d87410cf93bdb8e2ad7b936581d14e94d5973475801f6aeb6b27054
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1043,7 +1043,7 @@ SYNOPSIS
      file FILE]
      holypkg orphan [--root DIRECTORY] [--json]
      holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH]  [--libc  LIBC]
-     -- COMMAND [ARGS...]
+     [--view PUBLIC=PRIVATE ...] -- COMMAND [ARGS...]
      holypkg docs --root DIRECTORY --output FILE
      holypkg config check FILE
      holypkg info local:FILE
@@ -2994,18 +2994,32 @@ RUN INSTALLED COMMAND
      When the installed manifest owns a matching path  under  /usr/lib/holy/pri-
      vate/ARTIFACT-SHA256/,  run  selects it before the public path and prepends
      that artifact's private bin directories to PATH. It passes	 argv  unchanged
-     and  returns  the	program's  exit	 status	 through  exec. This is a direct
-     launcher. It does not create a mount namespace, replace shell  builtins  or
-     intercept another process that directly executes the public path. A private
-     path  still  requires an installation transform that places and records the
-     file there; the current package installation flow does not	 create	 such  a
-     mapping from a conflicting public path.
+     and  returns the program's exit status through exec. Without --view this is
+     a direct launcher. It does not replace shell builtins or intercept	 another
+     process  that  directly  executes the public path. A private path still re-
+     quires an installation transform that places and records  the  file  there;
+     the current package installation flow does not create such a mapping from a
+     conflicting public path.
 
      With  --root,  run	 executes the selected file at that root's host path. It
      does not chroot or isolate the process. Dynamic  interpreter  and	absolute
      paths  use the host's namespace, so a trial root must use a compatible host
      or a static program. An unavailable package or command returns  6;	 an  al-
      tered payload returns 4. An incomplete transaction returns 5.
+
+     --view  PUBLIC=PRIVATE  maps  one selected package-owned regular file under
+     /usr/lib/holy/private/ onto an existing regular public path. PUBLIC may  be
+     under /usr/bin, /usr/sbin, /bin, /sbin or /usr/lib. run checks the selected
+     package  manifest	and current payload before creating user and mount name-
+     spaces.  It makes mount propagation private, bind mounts the selected file,
+     enters the target root and execs the command with the caller's UID/GID map-
+     ping. Descendants inherit the view; the mount ends with its  namespace.  No
+     host  mount  or  setuid  launcher	is  created. The user namespace maps the
+     caller's primary UID and GID; supplementary groups	 are  not  remapped.  If
+     namespaces,  openat2  or mounts are unavailable, run returns 6.  An unowned
+     private file, missing target or symlink target is rejected.  --view changes
+     only the listed paths. With --view and --root, the command executes  inside
+     the target root rather than at a host-prefixed path.
 
    AppImage staging
      appimage  inspect	accepts a type 2 ELF image, checks its x86 or x86_64 ma-
