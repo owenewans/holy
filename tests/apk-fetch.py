@@ -47,6 +47,7 @@ with tempfile.TemporaryDirectory() as scratch:
     rows = (f"C:{checksum}\nP:fixture\nV:1.2-r0\nA:x86_64\n"
             f"S:{len(package)}\n\n").encode()
     (tmp / "APKINDEX.tar.gz").write_bytes(member([("APKINDEX", rows)]))
+    (serve / "APKINDEX.tar.gz").write_bytes((tmp / "APKINDEX.tar.gz").read_bytes())
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                     "-days", "1", "-keyout", str(tmp / "key.pem"), "-out",
                     str(tmp / "cert.pem"), "-subj", "/CN=localhost",
@@ -82,6 +83,65 @@ with tempfile.TemporaryDirectory() as scratch:
         fetch("accepted", extra=("--sha256", hashlib.sha256(package).hexdigest()))
         assert (tmp / "accepted/original").read_bytes() == package
         assert "state complete" in (tmp / "accepted/selection").read_text()
+
+        root = tmp / "root"
+        root.mkdir()
+        run("db", "init", "--root", root)
+        config = tmp / "source.conf"
+        config.write_text(f'[source fixture]\ntype apk\nrepo main "{base}"\n')
+
+        def register():
+            plan = run("source", "plan", "--config", config, "--root", root).stdout
+            path = tmp / "source.plan"
+            path.write_text(plan)
+            run("source", "apply", path, "--sha256",
+                hashlib.sha256(plan.encode()).hexdigest(), "--root", root)
+
+        register()
+        index_hash = hashlib.sha256((serve / "APKINDEX.tar.gz").read_bytes()).hexdigest()
+        sync = ("apk", "sync", "fixture", "main", "--root", root,
+                "--output", tmp / "bound-catalog", "--ca-file", tmp / "cert.pem")
+        run(*sync, status=3)
+        assert not (tmp / "bound-catalog").exists()
+        run(*sync, "--sha256", "0" * 64, status=4)
+        run(*sync, "--accept-unsigned", index_hash)
+        pinned_sync = list(sync)
+        pinned_sync[pinned_sync.index("--output") + 1] = tmp / "pinned-catalog"
+        run(*pinned_sync, "--sha256", index_hash)
+        bound = (tmp / "bound-catalog/conversion").read_text()
+        source_id = next(line.split()[1] for line in bound.splitlines()
+                         if line.startswith("source-id "))
+        assert len(source_id) == 64 and "repo \"main\"" in bound
+        bound_fetch = ("apk", "fetch", "fixture", "1.2-r0", "x86_64",
+                       "--catalog", tmp / "bound-catalog", "--output",
+                       tmp / "bound-package", "--root", root, "--ca-file",
+                       tmp / "cert.pem")
+        run(*bound_fetch)
+        assert (tmp / "bound-package/original").read_bytes() == package
+        assert f"source-id {source_id}" in (tmp / "bound-package/selection").read_text()
+        assert "source-binding checked" in (tmp / "bound-package/selection").read_text()
+        config.write_text(f'[source renamed]\ntype apk\nrepo main "{base}"\n')
+        register()
+        renamed_fetch = list(bound_fetch)
+        renamed_fetch[renamed_fetch.index("--output") + 1] = tmp / "renamed-source"
+        run(*renamed_fetch, "--source", "renamed")
+        assert (tmp / "renamed-source/original").read_bytes() == package
+        assert "active-source-name \"renamed\"" in (
+            tmp / "renamed-source/selection").read_text()
+        config.write_text(f'[source renamed]\ntype apk\nrepo main "{base}"\ntrust require\n')
+        register()
+        rejected_sync = list(sync)
+        rejected_sync[rejected_sync.index("fixture")] = "renamed"
+        rejected_sync[rejected_sync.index("--output") + 1] = tmp / "require-rejected"
+        run(*rejected_sync, "--sha256", index_hash, status=6)
+        assert not (tmp / "require-rejected").exists()
+        config.write_text('[source fixture]\ntype apk\nrepo main "https://localhost:1/"\n')
+        register()
+        changed_fetch = list(bound_fetch)
+        changed_fetch[changed_fetch.index("--output") + 1] = tmp / "changed-source"
+        run(*changed_fetch, status=6)
+        assert not (tmp / "changed-source").exists()
+
         fetch("bad-hash", status=4, extra=("--sha256", "0" * 64))
         assert not (tmp / "bad-hash").exists()
         (serve / "fixture-1.2-r0.apk").write_bytes(package[:-1])

@@ -92,5 +92,10 @@ userinfo, queries, fragments and whitespace. Plans therefore cannot carry those
 credential forms. Two aliases with the same definition require a decision.
 Registration neither contacts a repository nor verifies its signatures. Set
 installation can bind local artifacts to registered IDs through explicit --source
-associations. Trust policy beyond signed native catalogs and parent policy
-during package selection remain unimplemented.
+associations. Parent policy during package selection remains unimplemented.
+.PP
+A registered APK source uses type apk and one or more repo NAME HTTPS_BASE/
+entries. holypkg apk sync names the repo, obtains its APKINDEX.tar.gz and writes
+a source-id-bearing catalog. APK publisher signatures are still unverified;
+trust require therefore rejects APK sync. See holypkg(8) for the digest
+confirmation and fetch sequence.

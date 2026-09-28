@@ -664,6 +664,57 @@ static char *native_endpoint(const char *definition, int *git)
     return url;
 }
 
+int holy_source_apk_repo(const char *root, const char *alias, const char *repo,
+                         char id[65], char **url, char **trust)
+{
+    struct registry registry = {0};
+    char *data = NULL, *selected = NULL;
+    const char *line;
+    unsigned long long generation;
+    size_t i;
+    int dir, result = 1, apk = 0;
+    id[0] = 0;
+    *url = NULL;
+    *trust = NULL;
+    if (!alias || !*alias || !strcmp(alias, "local") || !repo || !*repo) return 2;
+    dir = holy_state_lock(root, 0, &generation, &result);
+    if (dir < 0) return result;
+    data = load_registry(dir, &registry);
+    if (!data) goto done;
+    result = 6;
+    for (i = 0; i < registry.count; ++i)
+        if (registry.items[i].active && !strcmp(registry.items[i].alias, alias)) break;
+    if (i == registry.count) goto done;
+    line = registry.items[i].definition;
+    while (*line) {
+        const char *end = strchr(line, '\n');
+        char **v = NULL;
+        size_t n = 0;
+        if (!end || !tokens(line, (size_t)(end - line), &v, &n)) {
+            holy_tokens_free(v, n); result = 2; goto done;
+        }
+        if (n == 2 && !strcmp(v[0], "type")) apk = !strcmp(v[1], "apk");
+        if (n == 3 && !strcmp(v[0], "repo") && !strcmp(v[1], repo)) {
+            if (selected) { holy_tokens_free(v, n); result = 2; goto done; }
+            selected = strdup(v[2]);
+            if (!selected) { holy_tokens_free(v, n); result = 1; goto done; }
+        }
+        holy_tokens_free(v, n);
+        line = end + 1;
+    }
+    if (!apk || !selected || strncmp(selected, "https://", 8) ||
+        selected[strlen(selected) - 1] != '/') goto done;
+    *trust = strdup(registry.items[i].trust);
+    if (!*trust) { result = 1; goto done; }
+    *url = selected; selected = NULL;
+    memcpy(id, registry.items[i].id, 65);
+    result = 0;
+done:
+    if (result) { free(*url); free(*trust); *url = NULL; *trust = NULL; id[0] = 0; }
+    free(selected); free(data); clear_registry(&registry); close(dir);
+    return result;
+}
+
 int holy_source_catalog(const char *root, const char *alias,
                         const char *catalog, char source_id[65])
 {

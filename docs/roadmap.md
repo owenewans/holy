@@ -121,8 +121,13 @@
   manual import and lookup. `apk fetch` now retrieves a selected package over
   HTTPS, checks index size and Q1 control checksum, .PKGINFO identity and
   datahash, and retains the original with a selection receipt. Local HTTPS
-  fixtures and Alpine scdoc 1.11.3-r0 passed. Registered source sync,
-  publisher signatures and full relation semantics remain open.
+  fixtures and Alpine scdoc 1.11.3-r0 passed. Registered `type apk` sources now
+  select a named repository for HTTPS index sync. A reviewed digest or explicit
+  acceptance pins the index; fetch can recheck the active source-id and URL.
+  Alpine v3.22 main/x86_64 with 5647 entries and scdoc fetch passed the
+  registered-source path.
+  Binding this catalog to the general resolver, publisher signatures and full
+  relation semantics remain open.
 
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.
 - [x] Plan and atomically apply a source identity registry under the database

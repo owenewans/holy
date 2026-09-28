@@ -135,7 +135,7 @@ expect 0 "$bin" sync fixture --root "$tmp/source-root" --sha256 "$index" \
 cached="$tmp/source-root/var/cache/holypkg/catalogs/$source_id/$index"
 test -d "$cached"
 grep -qx "source-id $source_id" "$cached/mirror-origin"
-grep -qx "path \"$cached\"" "$tmp/source-root/var/lib/holypkg/catalogs/$source_id"
+grep -qx "root-path \"${cached#"$tmp/source-root"}\"" "$tmp/source-root/var/lib/holypkg/catalogs/$source_id"
 expect 0 "$bin" search https-second --source fixture --root "$tmp/source-root"
 grep -qx 'listed 1 packages' "$tmp/result"
 expect 0 "$bin" search /usr/share/holy/fixture.txt --file --source fixture --root "$tmp/source-root"
@@ -396,7 +396,7 @@ grep -qx 'selection current-accepted-unsigned' "$tmp/source-current/mirror-origi
 cmp "$tmp/serve/current" "$tmp/source-current/current"
 expect 0 "$bin" sync fixture --root "$tmp/source-root" \
     --accept-unsigned "$index" --ca-file "$tmp/cert.pem"
-grep -qx "path \"$cached\"" "$binding"
+grep -qx "root-path \"${cached#"$tmp/source-root"}\"" "$binding"
 expect 0 "$bin" source catalog bind fixture "$tmp/source-mirror" --root "$tmp/source-root"
 expect 0 "$bin" fetch fixture:https-fixture --catalog "$tmp/source-current" \
     --output "$tmp/fetched" --root "$tmp/source-root"
