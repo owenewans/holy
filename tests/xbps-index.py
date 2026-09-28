@@ -32,6 +32,13 @@ def tar_bytes(entries, mode="w"):
     return buffer.getvalue()
 
 
+def origin(package):
+    data = subprocess.run(["lz4", "-d", "-c", str(package)],
+                          capture_output=True, check=True).stdout
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
+        return archive.extractfile("HOLY/origin").read().decode()
+
+
 def repodata(package, *, package_hash=None, package_name="fixture", broken=False,
              public_key=None, claims=None, version="1.0_1"):
     digest = package_hash or hashlib.sha256(package).hexdigest()
@@ -125,6 +132,8 @@ def main():
                 "--output", imported, "--ca-file", root / "cert.pem", "--import")
             assert "imported yes" in (imported / "conversion").read_text()
             assert len(list((imported / "converted").glob("*.holy"))) == 1
+            assert "verification hash-pinned\n" in origin(
+                next((imported / "converted").glob("*.holy")))
             library = root / "libfixture.so.1"
             subprocess.run(["cc", "-shared", "-fPIC", "-x", "c", "-",
                             "-Wl,-soname,libfixture.so.1", "-o", str(library)],
@@ -154,6 +163,7 @@ def main():
             run("import", fetched / package_hash, "--source", "fixture", "--format", "xbps",
                 "--output", converted)
             assert len(list(converted.glob("*.holy"))) == 1
+            assert "verification unverified\n" in origin(next(converted.glob("*.holy")))
             private_key = root / "repo-private.pem"
             public_key = root / "repo-public.pem"
             subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt",
@@ -208,6 +218,14 @@ def main():
             assert (root / "bound-fetch" / package_hash).read_bytes() == package
             assert "source-id " in (root / "bound-fetch" / "conversion").read_text()
             assert "imported yes" in (root / "bound-fetch" / "conversion").read_text()
+            signed_origin = origin(next((root / "bound-fetch" / "converted").glob("*.holy")))
+            signed_receipt = (root / "bound-fetch" / "conversion").read_text()
+            assert "verification rsa-sha256\n" in signed_origin
+            assert "public-key-sha256 " in signed_origin
+            assert "signature-sha256 " in signed_origin
+            for field in ("public-key-sha256", "signature-sha256"):
+                assert next(line for line in signed_origin.splitlines()
+                            if line.startswith(field + " ")) in signed_receipt
             run("xbps", "fetch", "fixture", "1.0_1", "x86_64",
                 "--catalog", registered, "--output", root / "unbound-fetch",
                 "--ca-file", root / "cert.pem", "--public-key", public_key)

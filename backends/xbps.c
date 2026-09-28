@@ -1050,7 +1050,10 @@ int holy_xbps_fetch(const char *directory, const char *name, const char *version
         converted = malloc(strlen(output) + sizeof "/converted");
         if (!converted) { result = 1; goto done; }
         sprintf(converted, "%s/converted", output);
-        result = holy_import_xbps(download, state.source, converted);
+        result = holy_import_xbps_verified(download, state.source, converted, digest,
+                                           key ? "rsa-sha256" : "hash-pinned",
+                                           key ? key_hash : NULL,
+                                           key ? signature_digest : NULL);
         if (result) goto done;
         if (!imported_claim(converted, name, version, arch, required_soname)) {
             if (required_soname)

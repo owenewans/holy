@@ -1024,7 +1024,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=bf4b4a7d47028d07c4abd897e68a5c56bda0e4d80f0e4f61952d792906d34421
+holypkg.8 source=holy version=development sha256=638840d2061191fe86495ceb7bb4fdf7d3c3df66cf1b8e4db3d8303ce961bac0
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1366,12 +1366,12 @@ DESCRIPTION
      the  file	list.  It compares symlink targets by their resolved path inside
      the target root; a relative archive  target  and  the  equivalent	absolute
      files.plist target match.	It preserves the original property lists beneath
-     HOLY/foreign/xbps	and  records unverified provenance. Package revision be-
-     comes the .holy release. Exact shlib-requires become arch/libc-scoped  SON-
-     AME  requirements.	 Simple run_depends of the form name<version, name<=ver-
-     sion, name>version or name>=version become package requirements. Holy  com-
-     pares  their  versions only against XBPS-family providers with Dewey compo-
-     nent order and the _N  revision.	Complex	 ranges,  globs,  exact	 package
+     HOLY/foreign/xbps	and records unverified provenance for a direct local im-
+     port. Package revision becomes the shlib-requires	become	arch/libc-scoped
+     SONAME   requirements.   Simple   run_depends  of	the  form  name<version,
+     name<=version, name>version or name>=version become  package  requirements.
+     Holy  compares their versions only against XBPS-family providers with Dewey
+     component order and the _N revision.  Complex ranges, globs, exact	 package
      strings  and  other  XBPS-specific	 relations remain attributed foreign re-
      quirements. Provides are preserved in origin metadata without creating  de-
      pendencies.  INSTALL  and	REMOVE	scripts	 remain review-required. Unknown
@@ -1415,12 +1415,15 @@ DESCRIPTION
      its RSA SHA-256 signature over the archive bytes. The receipt distinguishes
      hash-pinned  from	rsa-sha256.  With  --import, fetch converts the verified
      archive into .holy outputs under NEW_DIRECTORY/converted and  checks  their
-     identity. --require-soname requires --import and checks exact SONAME claims
-     from  the	converted  ELF payload; an index hint alone does not satisfy it.
-     The complete fetch receipt records source-id for a checked source	binding,
-     whether  import  ran,  and	 any  verified SONAME. Import failure leaves the
-     archive and incomplete output without a complete fetch receipt. Fetch  does
-     not  install  or  execute	the  package.  The  current transport limits one
+     identity.	The  converter	checks	the archive hash again after staging and
+     records hash-pinned or rsa-sha256 in each output origin.  A  signed  output
+     also  records the public key and signature SHA-256; a direct import remains
+     unverified.  --require-soname requires --import  and  checks  exact  SONAME
+     claims from the converted ELF payload; an index hint alone does not satisfy
+     it.   The	complete  fetch	 receipt  records source-id for a checked source
+     binding, whether import ran, and any verified SONAME. Import failure leaves
+     the archive and incomplete output without a complete fetch	 receipt.  Fetch
+     does  not	install or execute the package. The current transport limits one
      archive to 1 GiB; larger indexed objects return status 6.	An explicit  im-
      port  of  the fetched digest-named file creates .holy outputs.  make check-
      xbps-index	 covers	 index	parsing,  HTTPS	 sync/fetch,  registered  source

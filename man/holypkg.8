@@ -408,7 +408,8 @@ with libplist, and checks payload file size and SHA-256 against the file list.
 It compares symlink targets by their resolved path inside the target root;
 a relative archive target and the equivalent absolute files.plist target match.
 It preserves the original property lists beneath HOLY/foreign/xbps and records
-unverified provenance. Package revision becomes the .holy release. Exact
+unverified provenance for a direct local import. Package revision becomes the
+.holy release. Exact
 shlib-requires become arch/libc-scoped SONAME requirements. Simple
 run_depends of the form name<version, name<=version, name>version or
 name>=version become package requirements. Holy compares their versions only
@@ -456,7 +457,10 @@ the index's key fingerprint, retrieves the .sig2 sidecar and checks its RSA
 SHA-256 signature over the archive bytes. The receipt distinguishes
 hash-pinned from rsa-sha256. With --import, fetch converts the verified
 archive into .holy outputs under NEW_DIRECTORY/converted and checks their
-identity. --require-soname requires --import and checks exact SONAME claims
+identity. The converter checks the archive hash again after staging and records
+hash-pinned or rsa-sha256 in each output origin. A signed output also records
+the public key and signature SHA-256; a direct import remains unverified.
+--require-soname requires --import and checks exact SONAME claims
 from the converted ELF payload; an index hint alone does not satisfy it.
 The complete fetch receipt records source-id for a checked source binding,
 whether import ran, and any verified SONAME. Import failure leaves the archive
