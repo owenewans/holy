@@ -206,6 +206,11 @@
   apply only after whole-file hash approval and source/DB revalidation. A fixture
   covers upgrade, explicit downgrade and stale/tampered plans. Grouped updates,
   native version ordering and trial execution remain open.
+- [x] Read the pinned catalog index for an installed source slot and stage only
+  matching name/os/arch/libc versions during update preparation. Verify those
+  archives against the index before planning; keep the full catalog validation
+  path for explicit source binding. A corrupt unrelated archive no longer blocks
+  the selected update. Add and general requirement lookup still scan full catalogs.
 - [x] Require a fresh artifact-hash approval when a cached replacement contains
   a setuid executable. The plan, journal, installed state and recovery retain
   the decision; a previous package's approval is not inherited. Fixtures

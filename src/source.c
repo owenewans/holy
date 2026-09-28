@@ -649,7 +649,8 @@ done:
     return result;
 }
 
-int holy_source_catalog_path(const char *root, const char *alias, char **path)
+static int source_catalog_path(const char *root, const char *alias,
+                               char **path, int fast)
 {
     struct registry registry = {0};
     char *data = NULL, *url = NULL, *saved = NULL;
@@ -671,7 +672,9 @@ int holy_source_catalog_path(const char *root, const char *alias, char **path)
     if (!url || !read_catalog_binding(database, registry.items[i].id,
                                       expected, &saved) ||
         !holy_repo_source_catalog(saved, registry.items[i].id, url) ||
-        !holy_repo_catalog_index(saved, actual) || strcmp(expected, actual)) goto done;
+        !(fast ? holy_repo_catalog_index_fast(saved, actual) :
+                  holy_repo_catalog_index(saved, actual)) ||
+        strcmp(expected, actual)) goto done;
     *path = saved;
     saved = NULL;
     result = 0;
@@ -682,6 +685,16 @@ done:
     clear_registry(&registry);
     if (database >= 0) close(database);
     return result;
+}
+
+int holy_source_catalog_path(const char *root, const char *alias, char **path)
+{
+    return source_catalog_path(root, alias, path, 0);
+}
+
+int holy_source_catalog_path_fast(const char *root, const char *alias, char **path)
+{
+    return source_catalog_path(root, alias, path, 1);
 }
 
 static int sync_catalog_parent(const char *root, const char *id, char **path)

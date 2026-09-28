@@ -811,7 +811,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=4df3aa271787762dfb713a34546c2267a2ee6c90b98f4afe8bbbbb57345be8af
+holypkg.8 source=holy version=development sha256=2952a59408f8aca75a53aaaa48bab7653d25657be66acf9551fbf9adf3986b9f
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1491,13 +1491,15 @@ DESCRIPTION
 
      up	 SOURCE:PACKAGE	 --prepare  finds  one	installed  slot by its immutable
      source-id, name and optional arch/libc. It checks the old artifact	 in  the
-     target cache, stages the complete bound or explicitly selected catalog, and
-     compares candidates in the same slot. Known pacman and deb comparator fami-
-     lies select the highest newer version; unknown or mixed comparator families
-     require  --choose SHA256. The chosen digest can explicitly select a rebuild
-     or older version. No newer candidate leaves the system unchanged and writes
-     no plan.  An absent old artifact, missing source slot or changed catalog is
-     reported.
+     target  cache,  verifies  the pinned catalog index, and stages only indexed
+     versions in the same name/os/arch/libc  slot.  The	 selected  archives  are
+     checked against their index records and actual payloads. Unrelated archives
+     are not opened; a broken unrelated archive does not block this slot update.
+     Known  pacman and deb comparator families select the highest newer version;
+     unknown or mixed comparator families require --choose  SHA256.  The  chosen
+     digest can explicitly select a rebuild or older version. No newer candidate
+     leaves  the  system  unchanged and writes no plan.	 An absent old artifact,
+     missing source slot or changed catalog is reported.
 
      Preparation writes a new mode-0600 plan file with	the  source-id,	 catalog
      path and index digest, old/new artifact hashes, exact version decisions and

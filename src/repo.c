@@ -33,6 +33,13 @@ static int same_identity(const struct holy_package_identity *a,
            !strcmp(a->arch, b->arch) && !strcmp(a->libc, b->libc);
 }
 
+static int same_slot(const struct holy_package_identity *a,
+                     const struct holy_package_identity *b)
+{
+    return !strcmp(a->name, b->name) && !strcmp(a->os, b->os) &&
+           !strcmp(a->arch, b->arch) && !strcmp(a->libc, b->libc);
+}
+
 struct claim {
     char *kind, *name, *arch, *libc, *version, *evidence;
 };
@@ -384,7 +391,8 @@ struct mirror {
 struct stage_request {
     const char *root;
     struct holy_repo_set *set;
-    int all;
+    const struct holy_package_identity *slot;
+    int index_only;
 };
 
 static int mirror_object(struct mirror *mirror, int dir, const struct object *object)
@@ -503,6 +511,9 @@ static int list(const char *directory, const char *query,
         struct holy_package_identity actual;
         char *snapshot;
         int input, matches;
+        if (stage && (stage->index_only ||
+            (stage->slot && !same_slot(&objects[i].identity, stage->slot))))
+            continue;
         if (indexed && provider_kind) {
             size_t k;
             objects[i].provider_match =
@@ -573,7 +584,7 @@ static int list(const char *directory, const char *query,
             root = i;
             ++roots;
         }
-        if (roots != 1 && !(stage && stage->all)) {
+        if (roots != 1 && !(stage && stage->slot)) {
             *solve_rc = roots ? 3 : 6;
             fprintf(stderr, "holypkg: repository root %s\n",
                     roots ? "requires package choice" : "not found");
@@ -583,12 +594,15 @@ static int list(const char *directory, const char *query,
         } else if (stage) {
             size_t position = 0;
             *solve_rc = 6;
-            if (count > 10000) { ok = 1; goto done; }
+            if (count > 100000) { ok = 1; goto done; }
             stage->set->digests = calloc(count ? count : 1, sizeof *stage->set->digests);
             if (!stage->set->digests) { *solve_rc = 1; ok = 1; goto done; }
             for (i = 0; i < count; ++i) {
-                size_t selected = stage->all ? i : i ? (i <= root ? i - 1 : i) : root;
+                if (stage->slot && !same_slot(&objects[i].identity, stage->slot))
+                    continue;
+                size_t selected = stage->slot ? i : i ? (i <= root ? i - 1 : i) : root;
                 char actual[65];
+                if (position >= 10000) { *solve_rc = 6; ok = 1; goto done; }
                 if (!holy_cache_stage_local_digest(candidate_snapshots[selected],
                                                    stage->root, actual)) {
                     *solve_rc = 1; ok = 1; goto done;
@@ -602,7 +616,7 @@ static int list(const char *directory, const char *query,
                 stage->set->count = position;
             }
             memcpy(stage->set->index, expected, 65);
-            *solve_rc = 0;
+            *solve_rc = position ? 0 : 6;
         } else if (output) {
             *solve_rc = (extract_name ?
                          holy_extract_local(candidate_snapshots[root], output) :
@@ -639,6 +653,7 @@ static int list(const char *directory, const char *query,
                         matches ? "requires an architecture/ABI choice" : "not found");
         }
     }
+    if (stage && stage->index_only) memcpy(stage->set->index, expected, 65);
     ok = 1;
 done:
     if (!ok) {
@@ -756,7 +771,7 @@ void holy_repo_set_free(struct holy_repo_set *set)
 int holy_repo_stage_set(const char *directory, const char *name,
                         const char *root, struct holy_repo_set *set)
 {
-    struct stage_request stage = {root, set, 0};
+    struct stage_request stage = {root, set, NULL, 0};
     int result = 6;
     memset(set, 0, sizeof *set);
     if (!name || !*name || !root || !*root) return 2;
@@ -769,15 +784,17 @@ int holy_repo_stage_set(const char *directory, const char *name,
     return result;
 }
 
-int holy_repo_stage_catalog(const char *directory, const char *root,
-                             struct holy_repo_set *set)
+int holy_repo_stage_slot(const char *directory, const char *root,
+                         const struct holy_package_identity *slot,
+                         struct holy_repo_set *set)
 {
-    struct stage_request stage = {root, set, 1};
+    struct stage_request stage = {root, set, slot, 0};
     int result = 6;
     memset(set, 0, sizeof *set);
-    if (!root || !*root) return 2;
+    if (!root || !*root || !slot || !slot->name || !slot->os ||
+        !slot->arch || !slot->libc) return 2;
     if (!list(directory, NULL, NULL, 1, 0, NULL, NULL, NULL, NULL,
-              "", NULL, 0, &result, NULL, 0, &stage)) {
+              slot->name, NULL, 0, &result, NULL, 0, &stage)) {
         holy_repo_set_free(set);
         return 6;
     }
@@ -844,6 +861,17 @@ int holy_repo_catalog_index(const char *directory, char digest[65])
              NULL, 0, NULL, NULL, 0, NULL)) ok = 1;
     if (dir >= 0) close(dir);
     if (!ok) digest[0] = 0;
+    return ok;
+}
+
+int holy_repo_catalog_index_fast(const char *directory, char digest[65])
+{
+    struct holy_repo_set index = {0};
+    struct stage_request stage = {NULL, &index, NULL, 1};
+    int ok = list(directory, NULL, NULL, 1, 0, NULL, NULL, NULL, NULL,
+                  NULL, NULL, 0, NULL, NULL, 0, &stage);
+    if (ok) memcpy(digest, index.index, 65);
+    else digest[0] = 0;
     return ok;
 }
 

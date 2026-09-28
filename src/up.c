@@ -171,7 +171,7 @@ int holy_up_command(int argc, char **argv)
         result = 6; goto done;
     }
     if (!catalog) {
-        result = holy_source_catalog_path(root, alias, &bound);
+        result = holy_source_catalog_path_fast(root, alias, &bound);
         if (result) goto done;
         catalog = bound;
     }
@@ -180,7 +180,7 @@ int holy_up_command(int argc, char **argv)
     if (dir < 0 || flock(dir, LOCK_SH)) { result = 6; goto done; }
     result = holy_source_catalog(root, alias, canonical, actual_id);
     if (result || strcmp(source_id, actual_id)) { result = 3; goto done; }
-    result = holy_repo_stage_catalog(canonical, root, &staged);
+    result = holy_repo_stage_slot(canonical, root, &old, &staged);
     if (result) goto done;
     for (i = 0; i < staged.count; ++i) {
         struct holy_package_identity candidate = {0};
@@ -379,7 +379,7 @@ int holy_apply_command(int argc, char **argv)
     if (strcmp(source, source_id)) { result = 3; goto done; }
     result = holy_source_catalog(root, alias, catalog, source_id);
     if (result) goto done;
-    if (!holy_repo_catalog_index(catalog, current) || strcmp(current, index)) {
+    if (!holy_repo_catalog_index_fast(catalog, current) || strcmp(current, index)) {
         fprintf(stderr, "holypkg: prepared catalog generation changed\n");
         result = 3; goto done;
     }

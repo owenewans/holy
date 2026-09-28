@@ -54,11 +54,28 @@ grep -q '^up-to-date ' "$tmp/out"
 test ! -e "$tmp/no-update"
 package 2
 next=$(sha256sum "$repo/update-2.holy" | cut -d ' ' -f 1)
+cp -a "$tmp/tree-2" "$tmp/unrelated-tree"
+sed -i 's/^name update-fixture$/name unrelated-fixture/' "$tmp/unrelated-tree/HOLY/meta"
+mv "$tmp/unrelated-tree/DATA/usr/share/update-fixture" \
+    "$tmp/unrelated-tree/DATA/usr/share/unrelated-fixture"
+expect 0 "$bin" manifest generate "$tmp/unrelated-tree" --output "$tmp/unrelated-files"
+mv "$tmp/unrelated-files" "$tmp/unrelated-tree/HOLY/files"
+expect 0 "$bin" pack "$tmp/unrelated-tree" --output "$repo/unrelated.holy"
+unrelated=$(sha256sum "$repo/unrelated.holy" | cut -d ' ' -f 1)
 seal
 expect 6 "$bin" up fixture:update-fixture --prepare --output "$tmp/stale-binding" --root "$root"
 test ! -e "$tmp/stale-binding"
 expect 0 "$bin" source catalog bind fixture "$repo" --root "$root"
+cp "$repo/unrelated.holy" "$tmp/unrelated.original"
+printf corrupt >> "$repo/unrelated.holy"
+expect 6 "$bin" source catalog bind fixture "$repo" --root "$root"
+cp "$repo/index.$index" "$tmp/saved-index"
+printf corrupt >> "$repo/index.$index"
+expect 6 "$bin" up fixture:update-fixture --prepare --output "$tmp/bad-index.plan" --root "$root"
+test ! -e "$tmp/bad-index.plan"
+cp "$tmp/saved-index" "$repo/index.$index"
 expect 0 "$bin" up fixture:update-fixture --prepare --output "$tmp/up.plan" --root "$root"
+test ! -e "$root/var/cache/holypkg/objects/sha256/$unrelated"
 plan=$(sha256sum "$tmp/up.plan" | cut -d ' ' -f 1)
 grep -qx "source-id $source_id" "$tmp/up.plan"
 grep -qx "index $index" "$tmp/up.plan"
@@ -98,6 +115,7 @@ downgrade=$(sha256sum "$tmp/downgrade.plan" | cut -d ' ' -f 1)
 expect 0 "$bin" apply "$tmp/downgrade.plan" --sha256 "$downgrade" --root "$root"
 grep -qx 'version 1' "$root/usr/share/update-fixture"
 expect 0 "$bin" db check --all --root "$root"
+cp "$tmp/unrelated.original" "$repo/unrelated.holy"
 package 3 unknown
 third=$(sha256sum "$repo/update-3.holy" | cut -d ' ' -f 1)
 seal

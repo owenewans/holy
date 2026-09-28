@@ -698,8 +698,10 @@ outside the supported installation subset.
 .PP
 up SOURCE:PACKAGE --prepare finds one installed slot by its immutable source-id,
 name and optional arch/libc. It checks the old artifact in the target cache,
-stages the complete bound or explicitly selected catalog, and compares
-candidates in the same slot. Known pacman and deb comparator families select
+verifies the pinned catalog index, and stages only indexed versions in the
+same name/os/arch/libc slot. The selected archives are checked against their
+index records and actual payloads. Unrelated archives are not opened; a
+broken unrelated archive does not block this slot update. Known pacman and deb comparator families select
 the highest newer version; unknown or mixed comparator families require
 --choose SHA256. The chosen digest can explicitly select a rebuild or older
 version. No newer candidate leaves the system unchanged and writes no plan.

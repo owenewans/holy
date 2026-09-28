@@ -15,6 +15,8 @@ int holy_source_bind_catalog(const char *root, const char *alias,
                              const char *catalog);
 /* returns an owned path for the bound mirror after source/index validation. */
 int holy_source_catalog_path(const char *root, const char *alias, char **path);
+/* validates the bound index without opening unrelated package payloads. */
+int holy_source_catalog_path_fast(const char *root, const char *alias, char **path);
 /* mirrors one registered holy-http source with a pinned index digest. */
 int holy_source_sync(const char *alias, const char *root, const char *digest,
                      const char *accepted_unsigned, const char *output,

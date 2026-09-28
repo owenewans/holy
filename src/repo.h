@@ -3,6 +3,8 @@
 
 #include <stddef.h>
 
+struct holy_package_identity;
+
 struct holy_repo_set {
     char **digests;
     size_t count;
@@ -38,12 +40,15 @@ int holy_repo_source_catalog(const char *directory, const char *source_id,
                              const char *url);
 /* verifies the complete sealed catalog and reads its selected index digest. */
 int holy_repo_catalog_index(const char *directory, char digest[65]);
+/* checks the pinned index and records without opening unrelated payloads. */
+int holy_repo_catalog_index_fast(const char *directory, char digest[65]);
 /* stages all verified catalog candidates, root first, into the target cache. */
 int holy_repo_stage_set(const char *directory, const char *name,
                         const char *root, struct holy_repo_set *set);
-/* stages every indexed artifact for source-aware candidate selection. */
-int holy_repo_stage_catalog(const char *directory, const char *root,
-                             struct holy_repo_set *set);
+/* stages only indexed versions in one installed source slot. */
+int holy_repo_stage_slot(const char *directory, const char *root,
+                         const struct holy_package_identity *slot,
+                         struct holy_repo_set *set);
 void holy_repo_set_free(struct holy_repo_set *set);
 
 #endif
