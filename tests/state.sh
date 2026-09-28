@@ -254,13 +254,58 @@ hooks=$(sha256sum "$tmp/hooks.holy")
 hooks=${hooks%% *}
 "$bin" cache stage "local:$tmp/hooks.holy" --root "$tmp/root" > "$tmp/out"
 "$bin" db reserve "$hooks" --root "$tmp/root" > "$tmp/out"
-if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
-if "$bin" db plan --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+if "$bin" db preflight --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+if "$bin" db plan --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 test ! -s "$tmp/out"
 test ! -s "$tmp/out"
-if "$bin" db preflight --root "$tmp/root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
-grep -Fqx '{"schema":"holy-preview-1","type":"error","code":"unsupported-input"}' "$tmp/out"
-test "$(wc -l < "$tmp/out")" -eq 1
+if "$bin" db preflight --root "$tmp/root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+grep -Fqx '{"schema":"holy-preview-1","type":"error","code":"decision-required"}' "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 2
+mkdir "$tmp/hooks-root"
+"$bin" db init --root "$tmp/hooks-root" > "$tmp/out"
+"$bin" cache stage "local:$tmp/hooks.holy" --root "$tmp/hooks-root" > "$tmp/out"
+if "$bin" db plan-set "$hooks" --root "$tmp/hooks-root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+grep -Fq 'postinstall /bin/sh script' "$tmp/err"
+"$bin" db plan-set "$hooks" --skip-hooks "$hooks" --root "$tmp/hooks-root" > "$tmp/out"
+grep -qx "hooks $hooks skipped installed-unconfigured scope artifact" "$tmp/out"
+hooks_plan=$(sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out" | head -1)
+test "${#hooks_plan}" -eq 64
+if "$bin" db apply-set "$hooks_plan" "$hooks" --root "$tmp/hooks-root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+"$bin" db apply-set "$hooks_plan" "$hooks" --skip-hooks "$hooks" --root "$tmp/hooks-root" > "$tmp/out"
+grep -qx 'hello' "$tmp/hooks-root/usr/bin/hello"
+grep -qx "skipped sha256 $(sha256sum "$tmp/payload/HOLY/hooks" | cut -d ' ' -f 1)" "$tmp/hooks-root/var/lib/holypkg/installed/$hooks/hooks-state"
+if "$bin" db check "$hooks" --root "$tmp/hooks-root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+grep -qx "skipped-hook $hooks installed-unconfigured" "$tmp/out"
+if "$bin" db check "$hooks" --root "$tmp/hooks-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+grep -Fq '"code":"skipped-hook","severity":"warning"' "$tmp/out"
+cp "$tmp/hooks-root/var/lib/holypkg/installed/$hooks/hooks-state" "$tmp/hooks-state-saved"
+printf 'skipped sha256 bad\n' > "$tmp/hooks-root/var/lib/holypkg/installed/$hooks/hooks-state"
+if "$bin" db status --root "$tmp/hooks-root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+cp "$tmp/hooks-state-saved" "$tmp/hooks-root/var/lib/holypkg/installed/$hooks/hooks-state"
+"$bin" db rm "$hooks" --root "$tmp/hooks-root" > "$tmp/out"
+test ! -e "$tmp/hooks-root/usr/bin/hello"
+mkdir "$tmp/hooks-add-root"
+"$bin" db init --root "$tmp/hooks-add-root" > "$tmp/out"
+"$bin" add "local:$tmp/hooks.holy" --skip-hooks "$hooks" --root "$tmp/hooks-add-root" --yes > "$tmp/out"
+grep -qx 'hello' "$tmp/hooks-add-root/usr/bin/hello"
+mkdir "$tmp/hooks-recover-root"
+"$bin" db init --root "$tmp/hooks-recover-root" > "$tmp/out"
+"$bin" cache stage "local:$tmp/hooks.holy" --root "$tmp/hooks-recover-root" > "$tmp/out"
+"$bin" db plan-set "$hooks" --skip-hooks "$hooks" --root "$tmp/hooks-recover-root" > "$tmp/out"
+hooks_recover_plan=$(sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out" | head -1)
+cat > "$tmp/hooks-recover-root/var/lib/holypkg/transactions/set-journal" <<EOF
+format holy-set-journal-6
+generation 0
+plan $hooks_recover_plan
+root $hooks
+choice -
+host $(uname -m)
+artifact $hooks
+skip-hooks $hooks
+EOF
+"$bin" db recover --continue-set --root "$tmp/hooks-recover-root" > "$tmp/out"
+grep -qx 'hello' "$tmp/hooks-recover-root/usr/bin/hello"
+test ! -e "$tmp/hooks-recover-root/var/lib/holypkg/transactions/set-journal"
 "$bin" db cancel --root "$tmp/root" > "$tmp/out"
 : > "$tmp/payload/HOLY/hooks"
 printf 'changed\n' > "$tmp/payload/HOLY/transform"

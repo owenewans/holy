@@ -178,9 +178,9 @@ tar -cf "$tmp/with-hook.tar" -C "$tmp/with-hook" HOLY DATA
 lz4 -q "$tmp/with-hook.tar" "$tmp/with-hook.holy"
 rc=0
 "$bin" preview "local:$tmp/with-hook.holy" --root "$tmp/preview-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
-test "$rc" -eq 6
+test "$rc" -eq 3
 test ! -s "$tmp/out"
-grep -q 'requires empty hooks' "$tmp/err"
+grep -q 'decision-required hooks' "$tmp/err"
 : > "$tmp/with-hook/HOLY/hooks"
 printf 'require unknown\n' > "$tmp/with-hook/HOLY/deps"
 tar -cf "$tmp/with-hook.tar" -C "$tmp/with-hook" HOLY DATA

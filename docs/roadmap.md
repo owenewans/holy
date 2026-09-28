@@ -377,6 +377,11 @@
   including chains split between installed and new packages.
 - [ ] Handle hooks, service consent, modified configs, overrides, rollback and
   recovery of each interrupted mutation phase.
+- [x] Accept an artifact-scoped skip decision for nonempty HOLY/hooks in local
+  set installation. Print hook records before the decision, bind the skip to
+  plan and journal, retain hooks/transform in installed state, report
+  skipped-hook as installed-unconfigured, and cover add/check/remove fixtures.
+  Executing or editing hooks and recovering interrupted external effects remain open.
 - [x] Prepare regular-file and relative-symlink replacements beside their target,
   verify bytes and metadata before publication, and retry individual add/replace/
   remove transitions after interruption. Reject drift and preserve complete old

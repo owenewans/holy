@@ -2,7 +2,7 @@
 .SH NAME
 holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
-.B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--associate SHA256=ALIAS ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
+.B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--associate SHA256=ALIAS ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
 .B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--candidate-local SOURCE=FILE.holy ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--prepare | --yes] [--noninteractive]
 .br
@@ -208,9 +208,9 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db apply --root DIRECTORY
 .br
-.B holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] --root DIRECTORY
+.B holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] --root DIRECTORY
 .br
-.B holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] --root DIRECTORY
+.B holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] --root DIRECTORY
 .br
 .B holypkg db recover --finish-set|--continue-set --root DIRECTORY
 .br
@@ -948,7 +948,7 @@ The separate fetch --extract operation still refuses absolute symlinks.
 .PP
 The db plan-set command resolves one explicit root against already cached
 candidate hashes and cached artifacts from the installed catalog. It supports exact-name package dependencies and the documented pacman version constraints between Linux
-data, native static and restricted dynamic packages, empty hooks,
+data, native static and restricted dynamic packages, and nonempty hooks only after an explicit skip decision,
 existing or declared safe directories and the same payload subset as db apply. It reports selected
 artifacts, reasons and requirement edges without changing installed state.
 Unused candidates are excluded from the operation. The plan digest binds
@@ -959,8 +959,16 @@ The db apply-set command accepts the reviewed plan digest followed by the same
 root and candidates. It holds one writer lock, checks the plan again and writes
 transactions/set-journal before the first payload. All selected packages share
 one generation increment. Installed state records the explicit root and
-dependency reasons; each instance retains the selected graph. Package hooks,
-upgrades and grouped removal are not implemented by this interface.
+dependency reasons; each instance retains the selected graph. The interface does
+not execute package hooks. A skipped hook leaves the package installed-unconfigured.
+Upgrades and grouped removal are not implemented by this interface.
+.PP
+Repeated --skip-hooks SHA256 accepts every HOLY/hooks record in the exact selected
+artifact without running its scripts. Without the flag, plan-set returns 3 and
+prints the hook records for review. The skip decision enters the plan digest and
+set journal; apply requires the same flag. Installed state retains the hooks,
+transform and a hash-bound hooks-state record. check reports skipped-hook with
+status 4. An unrelated artifact cannot consume this decision.
 .PP
 Repeated --accept-privileged SHA256 confirms installation of regular executable
 files with setuid in that exact selected artifact. Without it, plan-set returns
@@ -1677,7 +1685,8 @@ reconstruct original bytes rather than treating them as normalized text.
 .PP
 The solve command verifies and scans each explicitly supplied local archive,
 with the first archive as the requested root. Its supported subset accepts
-Linux packages with validated payload ABI facts, empty HOLY/hooks and an
+Linux packages with validated payload ABI facts, HOLY/hooks gated by an explicit
+skip decision at installation and an
 ordinary HOLY/transform record, and
 HOLY/deps package requirements with explicit arch/libc scopes or any, plus
 unversioned file requirements at literal absolute paths and unversioned
@@ -1940,8 +1949,8 @@ interpreter path from a bounded header read, or unknown for an incomplete
 header. Simple /usr/bin/env and /usr/bin/env -S forms also show a helper-command
 candidate. Quoted, escaped or option-heavy env arguments report unknown;
 no helper's existence is inferred. Any of these counts requires resolution.
-Preview refuses nonempty
-HOLY/hooks and privileged payload modes. A zero-conflict preview is not an
+Preview returns decision-required for nonempty HOLY/hooks and refuses privileged
+payload modes. A zero-conflict preview is not an
 installable plan: it has no installed database generation, dependency
 resolution, ownership decisions, transaction journal or apply command.
 Changes to the root after preview invalidate the result.
@@ -2040,8 +2049,9 @@ With --json, both preview and database preflight emit holy-preview-1 path
 events and a summary only after the full archive walk. Path events include
 state new, existing-dir or conflict and optional interpreter and helper
 fields. A completed database preflight adds a reservation event with
-generation and artifact. Invalid input, unsupported hooks and unavailable
-reservations produce one structured error event, without partial path output.
+generation and artifact. A hook decision emits a decision-required error event;
+database preflight also emits its reservation event. Invalid input and unavailable
+reservations emit a structured error event without partial path output.
 .PP
 The repository index command validates regular .holy files in DIRECTORY and
 writes an unsigned, lexicographically ordered index through an atomic rename.

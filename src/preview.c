@@ -106,7 +106,8 @@ done:
 }
 
 static int preview(const char *package, const char *root_path,
-                   int json, int resolved, int completed, int accepted_privileged)
+                   int json, int resolved, int completed, int accepted_privileged,
+                   int skipped_hooks)
 {
     struct archive *archive = NULL;
     struct archive_entry *entry;
@@ -115,7 +116,7 @@ static int preview(const char *package, const char *root_path,
     char *snapshot = holy_stage_local(package, "holy-preview");
     size_t count = 0, i, conflicts = 0, requirements = 0, elf_needed = 0;
     size_t script_interpreters = 0, helper_commands = 0;
-    int root = -1, status, rc = 2;
+    int root = -1, status, rc = 2, hook_decision = 0;
     if (!snapshot || !holy_verify_with_output(snapshot, 0) ||
         !holy_extract_preflight(snapshot) ||
         !holy_scan_local_facts(snapshot, 0, &elf_needed) ||
@@ -133,9 +134,10 @@ static int preview(const char *package, const char *root_path,
         struct action *next;
         int state;
         if (!strcmp(path, "HOLY/hooks")) {
-            if (archive_entry_size(entry) != 0) {
-                fprintf(stderr, "holypkg: preview requires empty hooks\n");
-                rc = 6;
+            if (archive_entry_size(entry) != 0 && !skipped_hooks) {
+                fprintf(stderr, "holypkg: decision-required hooks; review and skip explicitly\n");
+                rc = 3;
+                hook_decision = 1;
                 goto done;
             }
         }
@@ -256,6 +258,8 @@ static int preview(const char *package, const char *root_path,
          (!resolved && (requirements || elf_needed || script_interpreters)) ? 3 : 0;
 done:
     if (rc == 2) fprintf(stderr, "holypkg: cannot preview package\n");
+    if (json > 0 && hook_decision)
+        puts("{\"schema\":\"holy-preview-1\",\"type\":\"error\",\"code\":\"decision-required\"}");
     if (json > 0 && rc != 0 && rc != 3 && rc != 4)
         printf("{\"schema\":\"holy-preview-1\",\"type\":\"error\",\"code\":\"%s\"}\n",
                rc == 6 ? "unsupported-input" :
@@ -280,11 +284,11 @@ int holy_preview_local(const char *package, const char *root_path)
 
 int holy_preview_local_format(const char *package, const char *root_path, int json)
 {
-    return preview(package, root_path, json, 0, 0, 0);
+    return preview(package, root_path, json, 0, 0, 0, 0);
 }
 
 int holy_preview_resolved(const char *package, const char *root_path, int completed,
-                          int accepted_privileged)
+                          int accepted_privileged, int skipped_hooks)
 {
-    return preview(package, root_path, -1, 1, completed, accepted_privileged);
+    return preview(package, root_path, -1, 1, completed, accepted_privileged, skipped_hooks);
 }

@@ -202,8 +202,8 @@ test ! -s "$tmp/out"
 : > "$tmp/payload/HOLY/deps"
 printf 'postinstall /bin/sh script\n' > "$tmp/payload/HOLY/hooks"
 build root 4
-if "$bin" solve "local:$tmp/root-4.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
-test ! -s "$tmp/out"
+"$bin" solve "local:$tmp/root-4.holy" > "$tmp/out"
+grep -q '^selected ' "$tmp/out"
 : > "$tmp/payload/HOLY/hooks"
 printf 'patch binary\n' > "$tmp/payload/HOLY/transform"
 build root 5

@@ -799,7 +799,9 @@ static int supported_metadata(const char *snapshot)
         const char *name = archive_entry_pathname(entry);
         if (!strcmp(name, "HOLY/hooks")) {
             hooks = 1;
-            if (archive_entry_size(entry)) goto done;
+            if (archive_entry_filetype(entry) != AE_IFREG ||
+                archive_entry_size(entry) < 0 || archive_entry_size(entry) > 1024 * 1024)
+                goto done;
         }
         if (!strcmp(name, "HOLY/transform")) {
             transform = 1;

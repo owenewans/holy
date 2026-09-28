@@ -107,7 +107,10 @@ is provenance, not authority to assign a trusted installed source-id.
 .PP
 A requirement of kind foreign preserves an unsupported source expression. The
 current solver reports unsupported semantics instead of dropping that requirement.
-Foreign hooks still require installation support. HOLY/transform records
+Foreign hooks may be skipped by an explicit artifact-scoped --skip-hooks decision
+during set installation. The installed package then carries hooks-state with the
+hash of HOLY/hooks and reports installed-unconfigured in check. Hook execution,
+editing and service consent remain unimplemented. HOLY/transform records
 changes already applied to the normalized payload; installation never executes
 that record. Archive verification does not authorize hook execution.
 .SH INSTALLED GRAPH
