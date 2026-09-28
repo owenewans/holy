@@ -59,6 +59,24 @@ static int valid_hash(const char *text)
     return strlen(text) == 64 && strspn(text, "0123456789abcdef") == 64;
 }
 
+static int key_fingerprint(const char key[65], char output[65])
+{
+    unsigned char raw[32], digest[32];
+    unsigned size;
+    size_t i;
+    if (!key[0]) { strcpy(output, "-"); return 1; }
+    if (!valid_hash(key)) return 0;
+    for (i = 0; i < 32; ++i) {
+        unsigned hi = (unsigned)(key[2 * i] <= '9' ? key[2 * i] - '0' : key[2 * i] - 'a' + 10);
+        unsigned lo = (unsigned)(key[2 * i + 1] <= '9' ? key[2 * i + 1] - '0' : key[2 * i + 1] - 'a' + 10);
+        raw[i] = (unsigned char)(hi * 16 + lo);
+    }
+    if (EVP_Digest(raw, sizeof raw, digest, &size, EVP_sha256(), NULL) != 1 || size != 32)
+        return 0;
+    for (i = 0; i < 32; ++i) snprintf(output + 2 * i, 3, "%02x", digest[i]);
+    return 1;
+}
+
 static void quote(FILE *out, const char *text)
 {
     const unsigned char *p = (const unsigned char *)text;
@@ -670,11 +688,13 @@ int holy_source_show(const char *root, const char *alias)
     result = 6;
     for (i = 0; i < r.count; ++i) if (r.items[i].active && !strcmp(r.items[i].alias, alias)) {
         const struct source *s = &r.items[i];
+        char fingerprint[65];
+        if (!key_fingerprint(s->key, fingerprint)) { result = 1; break; }
         printf("source-id %s\nalias ", s->id); quote(stdout, s->alias);
         fputs("\ndefinition\n", stdout);
         fputs(s->definition, stdout);
         printf("trust %s\npublic-key-sha256 %s\nparent-id %s\nfamily ",
-               s->trust, s->key[0] ? s->key : "-", s->parent[0] ? s->parent : "-");
+               s->trust, fingerprint, s->parent[0] ? s->parent : "-");
         quote(stdout, s->family ? s->family : "-");
         printf("\npriority %d\nrevision %llu\n", s->priority, r.revision);
         result = ferror(stdout) ? 1 : 0;

@@ -148,7 +148,8 @@ int holy_up_command(int argc, char **argv)
     const char *accepted_arch = NULL, *accepted_privileged = NULL;
     char *alias = NULL, *bound = NULL, *canonical = NULL, *old_snapshot = NULL;
     char *inner = NULL, *plan = NULL, *temporary_dir = NULL, *temporary_plan = NULL;
-    struct holy_package_identity old = {0}, selected = {0};
+    struct holy_package_identity old = {0}, *selected = NULL;
+    struct holy_repo_slot_list candidates = {0};
     struct holy_repo_set staged = {0};
     char source_id[65], actual_id[65], old_hash[65], inner_hash[65], plan_hash[65], answer[16];
     size_t i, size = 0, compatible = 0, ambiguous = 0;
@@ -209,60 +210,49 @@ int holy_up_command(int argc, char **argv)
     if (dir < 0 || flock(dir, LOCK_SH)) { result = 6; goto done; }
     result = holy_source_catalog(root, alias, canonical, actual_id);
     if (result || strcmp(source_id, actual_id)) { result = 3; goto done; }
-    result = holy_repo_stage_slot(canonical, root, &old, &staged);
-    if (result) goto done;
-    for (i = 0; i < staged.count; ++i) {
-        struct holy_package_identity candidate = {0};
-        char *snapshot = holy_cache_snapshot(staged.digests[i], root);
+    result = holy_repo_slot_candidates(canonical, &old, &candidates);
+    if (result) {
+        if (result == 6)
+            fprintf(stderr, "holypkg: source package slot changed or disappeared\n");
+        goto done;
+    }
+    for (i = 0; i < candidates.count; ++i) {
+        struct holy_package_identity *candidate = &candidates.items[i];
         int order = 0;
-        if (!snapshot || !holy_package_identity(snapshot, &candidate)) {
-            if (snapshot) { unlink(snapshot); free(snapshot); }
-            result = 6; goto done;
-        }
-        unlink(snapshot); free(snapshot);
-        if (!same_slot(&old, &candidate)) {
-            holy_package_identity_free(&candidate);
-            continue;
-        }
+        if (!same_slot(&old, candidate)) { result = 1; goto done; }
         ++compatible;
-        if (!strcmp(candidate.digest, old_hash)) {
+        if (!strcmp(candidate->digest, old_hash)) {
             old_present = 1;
-            holy_package_identity_free(&candidate);
             continue;
         }
         printf("update-candidate %s version %s release %s comparator %s\n",
-               candidate.digest, candidate.version, candidate.release,
-               candidate.version_family ? candidate.version_family : "unknown");
+               candidate->digest, candidate->version, candidate->release,
+               candidate->version_family ? candidate->version_family : "unknown");
         if (choice) {
-            if (!strcmp(choice, candidate.digest)) {
-                holy_package_identity_free(&selected);
+            if (!strcmp(choice, candidate->digest)) {
                 selected = candidate;
-            } else holy_package_identity_free(&candidate);
+            }
             continue;
         }
-        if (!version_order(&candidate, &old, &order)) {
+        if (!version_order(candidate, &old, &order)) {
             ambiguous = 1;
-            holy_package_identity_free(&candidate);
             continue;
         }
-        if (order <= 0) { holy_package_identity_free(&candidate); continue; }
-        if (!selected.name) { selected = candidate; continue; }
-        if (!version_order(&candidate, &selected, &order) || !order) ambiguous = 1;
-        if (order > 0) {
-            holy_package_identity_free(&selected);
-            selected = candidate;
-        } else holy_package_identity_free(&candidate);
+        if (order <= 0) continue;
+        if (!selected) { selected = candidate; continue; }
+        if (!version_order(candidate, selected, &order) || !order) ambiguous = 1;
+        if (order > 0) selected = candidate;
     }
     if (!compatible) {
         fprintf(stderr, "holypkg: source package slot changed or disappeared\n");
         result = 6; goto done;
     }
-    if (choice && !selected.name) { result = 6; goto done; }
+    if (choice && !selected) { result = 6; goto done; }
     if (!choice && ambiguous) {
         fprintf(stderr, "holypkg: decision-required update candidate; use --choose SHA256\n");
         result = 3; goto done;
     }
-    if (!selected.name) {
+    if (!selected) {
         if (!old_present) {
             fprintf(stderr, "holypkg: installed artifact absent from source and no newer candidate\n");
             result = 6; goto done;
@@ -270,11 +260,16 @@ int holy_up_command(int argc, char **argv)
         printf("up-to-date %s %s\n", source_id, old_hash);
         result = 0; goto done;
     }
-    if ((accepted_arch && strcmp(accepted_arch, selected.digest)) ||
-        (accepted_privileged && strcmp(accepted_privileged, selected.digest))) {
+    if ((accepted_arch && strcmp(accepted_arch, selected->digest)) ||
+        (accepted_privileged && strcmp(accepted_privileged, selected->digest))) {
         result = 2; goto done;
     }
-    result = holy_state_update_prepare(old_hash, selected.digest,
+    result = holy_repo_stage_slot_digest(canonical, root, &old,
+                                         selected->digest, &staged);
+    if (result) goto done;
+    if (strcmp(staged.index, candidates.index) || staged.count != 1 ||
+        strcmp(staged.digests[0], selected->digest)) { result = 3; goto done; }
+    result = holy_state_update_prepare(old_hash, selected->digest,
                                        accepted_arch, accepted_privileged,
                                        root, inner_hash, &inner);
     if (result) goto done;
@@ -293,7 +288,7 @@ int holy_up_command(int argc, char **argv)
     fputs("\ncatalog ", stream);
     quoted(stream, canonical);
     fprintf(stream, "\nindex %s\nold %s\nnew %s\nstate-plan %s\naccept-arch %s\naccept-privileged %s\n",
-            staged.index, old_hash, selected.digest, inner_hash,
+            staged.index, old_hash, selected->digest, inner_hash,
             accepted_arch ? accepted_arch : "-",
             accepted_privileged ? accepted_privileged : "-");
     fputs(inner, stream);
@@ -306,7 +301,7 @@ int holy_up_command(int argc, char **argv)
         plan_written = 1;
     }
     printf("prepared %s %s old %s new %s index %s\n",
-           plan_hash, output, old_hash, selected.digest, staged.index);
+           plan_hash, output, old_hash, selected->digest, staged.index);
     if (!prepared) {
         char *apply_argv[] = {"holypkg", "apply", (char *)output, "--sha256",
                               plan_hash, "--root", (char *)root, NULL};
@@ -342,7 +337,7 @@ done:
     if (dir >= 0) close(dir);
     if (old_snapshot) { unlink(old_snapshot); free(old_snapshot); }
     holy_package_identity_free(&old);
-    holy_package_identity_free(&selected);
+    holy_repo_slot_list_free(&candidates);
     holy_repo_set_free(&staged);
     if (temporary_dir && !plan_written) rmdir(temporary_dir);
     free(alias); free(bound); free(canonical); free(inner); free(plan);

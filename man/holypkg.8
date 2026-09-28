@@ -1263,17 +1263,18 @@ changes.
 .PP
 up SOURCE:PACKAGE finds one installed slot by its immutable source-id,
 name and optional arch/libc. It checks the old artifact in the target cache,
-verifies the pinned catalog index, and stages only indexed versions in the
-same name/os/arch/libc slot. The selected archives are checked against their
-index records and actual payloads. Unrelated archives are not opened; a
-broken unrelated archive does not block this slot update. Known pacman, deb,
+verifies the pinned catalog index, and compares its records in the same
+name/os/arch/libc slot. It stages only the chosen artifact and checks it
+against its index record and actual payload. Other versions are not opened; a
+broken unselected archive does not block this slot update. Known pacman, deb,
 apk, xbps and holy comparator families select the highest newer version; unknown or
 mixed comparator families require --choose SHA256. The chosen digest can
 explicitly select a rebuild or older
 version. No newer candidate leaves the system unchanged and writes no plan.
 APK compares its full upstream pkgver, including -r revision. XBPS combines
 version and release with the source _revision convention before comparison.
-An unparsable version still needs an explicit choice.
+An unparsable version or an older index without comparator metadata still
+needs an explicit choice.
 An absent old artifact, missing source slot or changed catalog is reported.
 Without --prepare, up prints the full proposed plan, saves it, then asks for
 approval before applying the exact file and hash through the same apply command.
@@ -2130,8 +2131,10 @@ The repository index command validates regular .holy files in DIRECTORY and
 writes an unsigned, lexicographically ordered index through an atomic rename.
 It refuses symlinked packages, duplicate package identities and a nonregular
 existing index. It rejects unsupported HOLY/deps records. Records in format
-holy-index-prototype-7 contain the quoted
-name, version, release, os, arch, libc, relative filename, SHA-256 and size.
+holy-index-prototype-8 contain the quoted
+name, version, release, os, arch, libc, relative filename, SHA-256, size and
+version comparator family. The last field is - when the artifact declares no
+comparator. The reader checks this field against the chosen archive.
 Following package records include typed claim lines bound to the package
 SHA-256, copied from validated HOLY/provides. Readers compare every indexed
 claim to the artifact before returning records. A separate coverage line
@@ -2155,7 +2158,7 @@ symbols per library path, including version, type, binding, visibility and
 hidden flag. Provider search uses these facts to reject a missing export
 without opening the candidate archive. It compares indexed exports against
 the selected artifact before staging. The resolver checks selected archives
-again. Old holy-index-prototype-1 through -6 generations remain readable,
+again. Old holy-index-prototype-1 through -7 generations remain readable,
 with the coverage each generation declares;
 optional signatures are sidecars to a sealed generation. Source adapters
 must not treat it as the native repository format.

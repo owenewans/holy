@@ -11,6 +11,12 @@ struct holy_repo_set {
     char index[65];
 };
 
+struct holy_repo_slot_list {
+    struct holy_package_identity *items;
+    size_t count;
+    char index[65];
+};
+
 /* materialize a pinned HTTPS catalog in a new directory; CLI status result. */
 int holy_repo_mirror(const char *base, const char *digest, const char *output,
                      const char *ca_file);
@@ -78,6 +84,15 @@ int holy_repo_stage_provider(const char *directory, const char *kind,
 int holy_repo_stage_slot(const char *directory, const char *root,
                          const struct holy_package_identity *slot,
                          struct holy_repo_set *set);
+/* reads one installed slot from the pinned index without opening payloads. */
+int holy_repo_slot_candidates(const char *directory,
+                              const struct holy_package_identity *slot,
+                              struct holy_repo_slot_list *out);
+void holy_repo_slot_list_free(struct holy_repo_slot_list *list);
+/* stages and verifies one indexed artifact in that slot. */
+int holy_repo_stage_slot_digest(const char *directory, const char *root,
+                                const struct holy_package_identity *slot,
+                                const char *digest, struct holy_repo_set *set);
 void holy_repo_set_free(struct holy_repo_set *set);
 
 #endif

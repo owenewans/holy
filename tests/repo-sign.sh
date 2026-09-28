@@ -33,12 +33,9 @@ source_plan=$(sha256sum "$tmp/source.plan" | cut -d ' ' -f 1)
 "$bin" source list --root "$root" > "$tmp/out"
 source_id=$(sed -n 's/^source \([0-9a-f]*\) "fixture" active$/\1/p' "$tmp/out")
 test "${#source_id}" -eq 64
-key_raw=$(awk -v id="$source_id" '$1 == "source" && $2 == id {print $NF}' "$root/var/lib/holypkg/sources")
-key_hash=$(python3 - "$key_raw" <<'PY'
-import hashlib, sys
-print(hashlib.sha256(bytes.fromhex(sys.argv[1])).hexdigest())
-PY
-)
+"$bin" source show fixture --root "$root" > "$tmp/out"
+key_hash=$(sed -n 's/^public-key-sha256 //p' "$tmp/out")
+test "${#key_hash}" -eq 64
 printf 'format holy-mirror-1\nurl "https://fixture.example/holy/"\nindex-sha256 %s\nverification ed25519-pinned-key\npublic-key-sha256 %s\nsource-id %s\n' \
     "$hash" "$key_hash" "$source_id" > "$tmp/repo/mirror-origin"
 "$bin" source catalog bind fixture "$tmp/repo" --root "$root" > "$tmp/out"

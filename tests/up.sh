@@ -80,11 +80,16 @@ cp "$tmp/saved-index" "$repo/index.$index"
 expect 0 "$bin" up fixture:update-fixture --prepare --output "$tmp/up.plan" --root "$root"
 test ! -e "$root/var/cache/holypkg/objects/sha256/$unrelated"
 plan=$(sha256sum "$tmp/up.plan" | cut -d ' ' -f 1)
+grep -qx "prepared $plan $tmp/up.plan old $old new $next index $index" "$tmp/out"
+cp "$repo/update-1.holy" "$tmp/old-source-artifact"
+printf corrupt >> "$repo/update-1.holy"
+expect 0 "$bin" up fixture:update-fixture --prepare --output "$tmp/old-source-damaged.plan" --root "$root"
+cmp "$tmp/up.plan" "$tmp/old-source-damaged.plan"
+cp "$tmp/old-source-artifact" "$repo/update-1.holy"
 grep -qx "source-id $source_id" "$tmp/up.plan"
 grep -qx "index $index" "$tmp/up.plan"
 grep -qx "old $old" "$tmp/up.plan"
 grep -qx "new $next" "$tmp/up.plan"
-grep -qx "prepared $plan $tmp/up.plan old $old new $next index $index" "$tmp/out"
 grep -qx 'version 1' "$root/usr/share/update-fixture"
 package 9
 unlisted=$(sha256sum "$repo/update-9.holy" | cut -d ' ' -f 1)

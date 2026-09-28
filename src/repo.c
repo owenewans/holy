@@ -473,7 +473,9 @@ static int record(FILE *fp, const struct object *object)
     for (i = 0; i < sizeof values / sizeof *values; ++i) {
         if (fputc(' ', fp) == EOF || !quote(fp, values[i])) return 0;
     }
-    return fprintf(fp, " %s %" PRIu64 "\n", id->digest, id->size) >= 0;
+    if (fprintf(fp, " %s %" PRIu64 " ", id->digest, id->size) < 0) return 0;
+    return quote(fp, id->version_family ? id->version_family : "-") &&
+           fputc('\n', fp) != EOF;
 }
 
 static int claim_record(FILE *fp, const struct object *object,
@@ -657,7 +659,7 @@ int holy_repo_index(const char *directory)
     stream = fdopen(temp, "w");
     if (!stream) goto done;
     temp = -1;
-    if (fputs("format holy-index-prototype-7\ncoverage files complete\ncoverage dependencies complete\ncoverage elf-sonames complete\ncoverage elf-versions complete\ncoverage elf-exports complete\n", stream) == EOF) goto done;
+    if (fputs("format holy-index-prototype-8\ncoverage files complete\ncoverage dependencies complete\ncoverage elf-sonames complete\ncoverage elf-versions complete\ncoverage elf-exports complete\n", stream) == EOF) goto done;
     for (i = 0; i < count; ++i) {
         if (!record(stream, &objects[i])) goto done;
         for (j = 0; j < objects[i].claim_count; ++j)
@@ -710,7 +712,8 @@ static int parse_record(char **v, size_t n, struct object *object)
     char *end;
     size_t i;
     const char *filename;
-    if (n != 10 || strcmp(v[0], "package")) return 0;
+    if ((n != 10 && n != 11) || strcmp(v[0], "package") ||
+        (n == 11 && (!v[10][0] || strlen(v[10]) > 128))) return 0;
     filename = v[7];
     i = strlen(filename);
     if (i < 6 || strcmp(filename + i - 5, ".holy") || strchr(filename, '/') ||
@@ -728,6 +731,9 @@ static int parse_record(char **v, size_t n, struct object *object)
     object->identity.os = v[4]; v[4] = NULL;
     object->identity.arch = v[5]; v[5] = NULL;
     object->identity.libc = v[6]; v[6] = NULL;
+    if (n == 11 && strcmp(v[10], "-")) {
+        object->identity.version_family = v[10]; v[10] = NULL;
+    }
     memcpy(object->identity.digest, v[8], 65);
     object->identity.size = size;
     return 1;
@@ -1044,7 +1050,25 @@ struct stage_request {
     const char *digest;
     int index_only;
     int provider;
+    struct holy_repo_slot_list *candidates;
 };
+
+static int copy_identity(struct holy_package_identity *to,
+                         const struct holy_package_identity *from)
+{
+    memset(to, 0, sizeof *to);
+    to->name = strdup(from->name);
+    to->version = strdup(from->version);
+    to->release = strdup(from->release);
+    to->version_family = from->version_family ? strdup(from->version_family) : NULL;
+    to->os = strdup(from->os);
+    to->arch = strdup(from->arch);
+    to->libc = strdup(from->libc);
+    memcpy(to->digest, from->digest, sizeof to->digest);
+    to->size = from->size;
+    return to->name && to->version && to->release && to->os && to->arch &&
+           to->libc && (!from->version_family || to->version_family);
+}
 
 struct closure {
     unsigned char *selected;
@@ -1364,7 +1388,7 @@ static int list_probe(const char *directory, const char *query,
     ssize_t length;
     int dir = -1, fd = -1, ok = 0, indexed = 0, file_index = 0;
     int dependency_index = 0, soname_index = 0, version_index = 0;
-    int export_index = 0;
+    int export_index = 0, comparator_index = 0;
 
     dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dir < 0 || (lock && flock(dir, LOCK_SH) < 0)) goto done;
@@ -1405,24 +1429,31 @@ static int list_probe(const char *directory, const char *query,
                          !strcmp(v[1], "holy-index-prototype-4") ||
                          !strcmp(v[1], "holy-index-prototype-5") ||
                          !strcmp(v[1], "holy-index-prototype-6") ||
-                         !strcmp(v[1], "holy-index-prototype-7"));
+                         !strcmp(v[1], "holy-index-prototype-7") ||
+                         !strcmp(v[1], "holy-index-prototype-8"));
             if (valid) {
                 indexed = strcmp(v[1], "holy-index-prototype-1") != 0;
                 file_index = !strcmp(v[1], "holy-index-prototype-3") ||
                              !strcmp(v[1], "holy-index-prototype-4") ||
                              !strcmp(v[1], "holy-index-prototype-5") ||
                              !strcmp(v[1], "holy-index-prototype-6") ||
-                             !strcmp(v[1], "holy-index-prototype-7");
+                             !strcmp(v[1], "holy-index-prototype-7") ||
+                             !strcmp(v[1], "holy-index-prototype-8");
                 dependency_index = !strcmp(v[1], "holy-index-prototype-4") ||
                                    !strcmp(v[1], "holy-index-prototype-5") ||
                                    !strcmp(v[1], "holy-index-prototype-6") ||
-                                   !strcmp(v[1], "holy-index-prototype-7");
+                                   !strcmp(v[1], "holy-index-prototype-7") ||
+                                   !strcmp(v[1], "holy-index-prototype-8");
                 soname_index = !strcmp(v[1], "holy-index-prototype-5") ||
                                !strcmp(v[1], "holy-index-prototype-6") ||
-                               !strcmp(v[1], "holy-index-prototype-7");
+                                   !strcmp(v[1], "holy-index-prototype-7") ||
+                                   !strcmp(v[1], "holy-index-prototype-8");
                 version_index = !strcmp(v[1], "holy-index-prototype-6") ||
-                                !strcmp(v[1], "holy-index-prototype-7");
-                export_index = !strcmp(v[1], "holy-index-prototype-7");
+                                !strcmp(v[1], "holy-index-prototype-7") ||
+                                !strcmp(v[1], "holy-index-prototype-8");
+                export_index = !strcmp(v[1], "holy-index-prototype-7") ||
+                               !strcmp(v[1], "holy-index-prototype-8");
+                comparator_index = !strcmp(v[1], "holy-index-prototype-8");
             }
             holy_tokens_free(v, n);
             if (!valid) goto done;
@@ -1522,7 +1553,8 @@ static int list_probe(const char *directory, const char *query,
         if (!next) { holy_tokens_free(v, n); goto done; }
         objects = next;
         memset(&objects[count], 0, sizeof *objects);
-        if (!parse_record(v, n, &objects[count])) {
+        if ((comparator_index && n != 11) ||
+            !parse_record(v, n, &objects[count])) {
             holy_tokens_free(v, n);
             goto done;
         }
@@ -1592,7 +1624,8 @@ static int list_probe(const char *directory, const char *query,
         int input, matches;
         i = closure.selected ? closure.queue[cursor] : cursor;
         if (stage && (stage->index_only ||
-            (stage->slot && !same_slot(&objects[i].identity, stage->slot))))
+            (stage->slot && !same_slot(&objects[i].identity, stage->slot)) ||
+            (stage->digest && strcmp(objects[i].identity.digest, stage->digest))))
             continue;
         if (query && (emit == 1 || emit == 3) &&
             strcmp(query, objects[i].identity.name)) continue;
@@ -1647,6 +1680,10 @@ static int list_probe(const char *directory, const char *query,
                   holy_package_identity(snapshot, &actual);
         if (matches) {
             matches = same_identity(&objects[i].identity, &actual) &&
+                      (!comparator_index ||
+                       (!objects[i].identity.version_family == !actual.version_family &&
+                        (!actual.version_family ||
+                         !strcmp(objects[i].identity.version_family, actual.version_family)))) &&
                       !strcmp(objects[i].identity.digest, actual.digest) &&
                       objects[i].identity.size == actual.size;
             holy_package_identity_free(&actual);
@@ -1741,6 +1778,8 @@ static int list_probe(const char *directory, const char *query,
             for (cursor = 0; cursor < (closure.selected ? closure.count : count); ++cursor) {
                 i = closure.selected ? closure.queue[cursor] : cursor;
                 if (stage->slot && !same_slot(&objects[i].identity, stage->slot))
+                    continue;
+                if (stage->digest && strcmp(objects[i].identity.digest, stage->digest))
                     continue;
                 size_t selected = closure.selected ? i :
                                   stage->slot ? i : i ? (i <= root ? i - 1 : i) : root;
@@ -1883,6 +1922,23 @@ static int list_probe(const char *directory, const char *query,
     }
     if (stage && stage->index_only) {
         memcpy(stage->set->index, expected, 65);
+        if (stage->candidates) {
+            struct holy_repo_slot_list *list = stage->candidates;
+            size_t matches = 0;
+            for (i = 0; i < count; ++i)
+                if (same_slot(&objects[i].identity, stage->slot)) ++matches;
+            list->items = calloc(matches ? matches : 1, sizeof *list->items);
+            if (!list->items) goto done;
+            for (i = 0; i < count; ++i) if (same_slot(&objects[i].identity, stage->slot)) {
+                if (!copy_identity(&list->items[list->count], &objects[i].identity)) {
+                    ++list->count;
+                    goto done;
+                }
+                ++list->count;
+            }
+            memcpy(list->index, expected, 65);
+            *solve_rc = matches ? 0 : 6;
+        }
         if (stage->digest) {
             *solve_rc = 3;
             for (i = 0; i < count; ++i)
@@ -2118,7 +2174,7 @@ void holy_repo_set_free(struct holy_repo_set *set)
 int holy_repo_stage_set(const char *directory, const char *name,
                         const char *root, struct holy_repo_set *set)
 {
-    struct stage_request stage = {root, set, NULL, NULL, 0, 0};
+    struct stage_request stage = {root, set, NULL, NULL, 0, 0, NULL};
     int result = 6;
     memset(set, 0, sizeof *set);
     if (!name || !*name || !root || !*root) return 2;
@@ -2135,7 +2191,7 @@ int holy_repo_stage_provider(const char *directory, const char *kind,
                              const char *name, const char *root,
                              struct holy_repo_set *set)
 {
-    struct stage_request stage = {root, set, NULL, NULL, 0, 1};
+    struct stage_request stage = {root, set, NULL, NULL, 0, 1, NULL};
     int result = 6;
     memset(set, 0, sizeof *set);
     if (!kind || (strcmp(kind, "package") && strcmp(kind, "package-or") && strcmp(kind, "file") &&
@@ -2155,7 +2211,7 @@ int holy_repo_stage_slot(const char *directory, const char *root,
                          const struct holy_package_identity *slot,
                          struct holy_repo_set *set)
 {
-    struct stage_request stage = {root, set, slot, NULL, 0, 0};
+    struct stage_request stage = {root, set, slot, NULL, 0, 0, NULL};
     int result = 6;
     memset(set, 0, sizeof *set);
     if (!root || !*root || !slot || !slot->name || !slot->os ||
@@ -2165,6 +2221,47 @@ int holy_repo_stage_slot(const char *directory, const char *root,
         holy_repo_set_free(set);
         return 6;
     }
+    if (result) holy_repo_set_free(set);
+    return result;
+}
+
+void holy_repo_slot_list_free(struct holy_repo_slot_list *list)
+{
+    size_t i;
+    if (!list) return;
+    for (i = 0; i < list->count; ++i) holy_package_identity_free(&list->items[i]);
+    free(list->items);
+    memset(list, 0, sizeof *list);
+}
+
+int holy_repo_slot_candidates(const char *directory,
+                              const struct holy_package_identity *slot,
+                              struct holy_repo_slot_list *out)
+{
+    struct holy_repo_set index = {0};
+    struct stage_request stage = {NULL, &index, slot, NULL, 1, 0, out};
+    int result = 6;
+    if (!directory || !slot || !slot->name || !slot->os || !slot->arch ||
+        !slot->libc || !out) return 2;
+    memset(out, 0, sizeof *out);
+    if (!list(directory, NULL, NULL, 1, 0, NULL, NULL, NULL, NULL,
+              NULL, NULL, 0, &result, NULL, 0, &stage, NULL)) result = 6;
+    if (result) holy_repo_slot_list_free(out);
+    return result;
+}
+
+int holy_repo_stage_slot_digest(const char *directory, const char *root,
+                                const struct holy_package_identity *slot,
+                                const char *digest, struct holy_repo_set *set)
+{
+    struct stage_request stage = {root, set, slot, digest, 0, 0, NULL};
+    int result = 6;
+    if (!directory || !root || !slot || !slot->name || !slot->os ||
+        !slot->arch || !slot->libc || !digest || strlen(digest) != 64 ||
+        strspn(digest, "0123456789abcdef") != 64 || !set) return 2;
+    memset(set, 0, sizeof *set);
+    if (!list(directory, NULL, NULL, 1, 0, NULL, NULL, NULL, NULL,
+              slot->name, NULL, 0, &result, NULL, 0, &stage, NULL)) result = 6;
     if (result) holy_repo_set_free(set);
     return result;
 }
@@ -2237,7 +2334,7 @@ int holy_repo_catalog_index(const char *directory, char digest[65])
 int holy_repo_catalog_index_fast(const char *directory, char digest[65])
 {
     struct holy_repo_set index = {0};
-    struct stage_request stage = {NULL, &index, NULL, NULL, 1, 0};
+    struct stage_request stage = {NULL, &index, NULL, NULL, 1, 0, NULL};
     int ok = list(directory, NULL, NULL, 1, 0, NULL, NULL, NULL, NULL,
                   NULL, NULL, 0, NULL, NULL, 0, &stage, NULL);
     if (ok) memcpy(digest, index.index, 65);
@@ -2250,7 +2347,7 @@ int holy_repo_catalog_slot_digest(const char *directory,
                                   const char *artifact, char index_digest[65])
 {
     struct holy_repo_set index = {0};
-    struct stage_request stage = {NULL, &index, slot, artifact, 1, 0};
+    struct stage_request stage = {NULL, &index, slot, artifact, 1, 0, NULL};
     int result = 6;
     if (!slot || !artifact || strlen(artifact) != 64 ||
         strspn(artifact, "0123456789abcdef") != 64) return 2;
