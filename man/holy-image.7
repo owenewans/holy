@@ -215,8 +215,11 @@ ARCH=i686 chooses qemu-system-i386 and requires an i686 guest image.
 The builder reads the x86 kernel boot header and rejects a kernel with the
 other target architecture before it creates an image.
 REPORT_DIR chooses an existing report parent directory, defaulting to the
-system temporary directory. QEMU_TIMEOUT bounds boot in seconds (1..600,
-default 120). QEMU_ACCEL=auto selects usable KVM or TCG; kvm and tcg force
+system temporary directory. QEMU_TIMEOUT bounds each boot in seconds (1..600,
+default 120). QEMU_PROBE_TIMEOUT bounds each guest stage (1..600, defaulting
+to QEMU_TIMEOUT). The guest emits stage-start markers; a repeated marker does
+not renew its deadline. The report names the stage that timed out.
+QEMU_ACCEL=auto selects usable KVM or TCG; kvm and tcg force
 the accelerator, with unavailable KVM returning 6.
 .PP
 FIRMWARE=bios is the default. FIRMWARE=uefi requires UEFI_CODE and UEFI_VARS.
@@ -231,10 +234,13 @@ DNS server and fetches both archives by that HTTPS name. The report records
 DNS queries, the CA and artifact hashes, HTTP requests and recovery markers.
 This fixture does not test a public CA bundle or external network access.
 .PP
-ROOT_DISK explicitly supplies a regular raw disk image for the persistent
-dual-libc test. The runner copies it to a read-only base, creates a qcow2
-overlay and attaches only that overlay through virtio-blk. It verifies the
-base hash after QEMU exits and retains the overlay and its hash. ROOT_IMAGE
+ROOT_DISK supplies a self-contained regular raw or qcow2 disk image for the
+persistent dual-libc test. An external qcow2 backing chain is rejected. The
+runner copies the input to a read-only base, creates a qcow2 overlay and
+attaches only that overlay through virtio-blk. It verifies the copied base
+hash after QEMU exits and retains the overlay and its hash. Copying a live
+input is marked unverified for consistency; the caller must provide a stopped
+image or stable snapshot for a precise trial. ROOT_IMAGE
 alone remains an optional report input and does not attach a disk.
 .PP
 The guest verifies that / is ext4, completes recovery and its package probes,
@@ -267,6 +273,7 @@ Each run retains serial.log, QEMU output, a text report and report.json
 hashes, elapsed time, stage deadlines, exit reason and per-marker status.
 Persistent tests additionally record both boot results, the first-boot
 completion time, root storage type and whether the read-only base stayed intact.
+The probe list records each stage's elapsed time and pass/fail/unknown status.
 Optional KERNEL_IMAGE, INITRAMFS and ROOT_IMAGE inputs add their hashes.
 They identify caller-supplied files, not guest measurements of running code.
 .SS Retained recovery matrix
@@ -289,7 +296,7 @@ directory alongside the summary for revalidation.
 BOOT_MEDIA=disk selects standalone disk boot in the QEMU runner and requires
 ROOT_DISK. ISO must be empty; the runner attaches no CD-ROM. Each run uses
 its own qcow2 overlay and records boot_media, two boot contracts and the
-unchanged raw base. gpt-ext4 produces disk.raw, disk.plan, disk-layout.json
+unchanged copied base. gpt-ext4 produces disk.raw, disk.plan, disk-layout.json
 and limine.conf instead of an ISO. BIOS and UEFI remain separate test runs.
 .PP
 The bootstrap glibc package currently contains

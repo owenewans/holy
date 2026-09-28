@@ -83,6 +83,15 @@ def boot_frames(lines, disk):
     return frames, True
 
 
+def disk_format(qemu_img, path):
+    details = json.loads(subprocess.check_output(
+        [qemu_img, 'info', '--output=json', str(path)], text=True))
+    kind = details.get('format')
+    if kind not in ('raw', 'qcow2') or details.get('backing-filename'):
+        error('ROOT_DISK must be a self-contained raw or qcow2 image', 6)
+    return kind
+
+
 def main():
     network = os.environ.get('NETWORK_RECOVERY', 'off')
     if network == 'fixture' and os.environ.get('HOLY_QEMU_NETNS') != '1':
@@ -133,6 +142,9 @@ def main():
     limit = os.environ.get('QEMU_TIMEOUT', '120')
     if not limit.isascii() or not limit.isdecimal() or not 1 <= int(limit) <= 600:
         error('QEMU_TIMEOUT must be 1..600 seconds', 2)
+    probe_limit = os.environ.get('QEMU_PROBE_TIMEOUT', limit)
+    if not probe_limit.isascii() or not probe_limit.isdecimal() or not 1 <= int(probe_limit) <= 600:
+        error('QEMU_PROBE_TIMEOUT must be 1..600 seconds', 2)
     firmware = os.environ.get('FIRMWARE', 'bios')
     if firmware not in ('bios', 'uefi'):
         error('FIRMWARE must be bios or uefi', 2)
@@ -153,7 +165,7 @@ def main():
         error('disk boot requires ROOT_DISK', 6)
     qemu_img = shutil.which('qemu-img')
     if disk_path and (profile != 'dual-libc' or not Path(disk_path).is_file() or not qemu_img):
-        error('disk recovery requires dual-libc, a regular raw ROOT_DISK and qemu-img', 6)
+        error('disk recovery requires dual-libc, a regular ROOT_DISK and qemu-img', 6)
     firmware_files = {}
     if firmware == 'uefi':
         for field in ('UEFI_CODE', 'UEFI_VARS'):
@@ -173,11 +185,16 @@ def main():
         os.chmod(run / 'input.iso', 0o444)
         inputs['iso']['sha256'] = digest(run / 'input.iso')
     if disk_path:
-        base = run / 'root.raw'
+        format_name = disk_format(qemu_img, disk_path)
+        base = run / ('root-base.' + format_name)
         shutil.copyfile(disk_path, base)
         os.chmod(base, 0o444)
-        inputs['root_disk'] = {'source': str(Path(disk_path).resolve()), 'sha256': digest(base), 'format': 'raw'}
-        subprocess.run([qemu_img, 'create', '-q', '-f', 'qcow2', '-F', 'raw', '-b',
+        if disk_format(qemu_img, base) != format_name:
+            error('copied root disk changed format', 6)
+        inputs['root_disk'] = {'source': str(Path(disk_path).resolve()),
+                               'sha256': digest(base), 'format': format_name,
+                               'copy_consistency': 'unverified'}
+        subprocess.run([qemu_img, 'create', '-q', '-f', 'qcow2', '-F', format_name, '-b',
                         str(base), str(run / 'root.qcow2')], check=True)
     for field in ('KERNEL_IMAGE', 'INITRAMFS', 'ROOT_IMAGE'):
         if field in os.environ:
@@ -345,6 +362,10 @@ def main():
     seen = set()
     frames = []
     first_completed = None
+    serial_lines = []
+    probe_history = []
+    active_probe = None
+    probe_deadline = None
     deadline = started + int(limit)
     with tempfile.TemporaryDirectory(prefix='holy-qmp-') as control:
         qmp = Path(control) / 'control'
@@ -358,14 +379,44 @@ def main():
                         break
                     serial = run / 'serial.log'
                     if serial.exists():
-                        complete = serial.read_text(errors='replace').rsplit('\n', 1)[0]
-                        seen = set(complete.splitlines())
-                        frames, valid = boot_frames(complete.splitlines(), bool(disk_path))
+                        content = serial.read_text(errors='replace')
+                        complete = content.rsplit('\n', 1)[0] if '\n' in content else ''
+                        lines = complete.splitlines()
+                        if lines[:len(serial_lines)] != serial_lines:
+                            reason = 'serial-log-changed'
+                            break
+                        now = time.monotonic()
+                        for line in lines[len(serial_lines):]:
+                            if not line.startswith('HOLY-BOOT-1 stage '):
+                                continue
+                            name = line.removeprefix('HOLY-BOOT-1 stage ')
+                            if name not in ('identity', 'login', 'esp', 'static-core',
+                                            'installer', 'devices', 'libc-recovery',
+                                            'network-setup', 'documentation', 'packages',
+                                            'installer-transaction', 'libc-removal',
+                                            'reboot', 'result'):
+                                reason = 'invalid-probe-stage'
+                                break
+                            if active_probe:
+                                active_probe['duration_seconds'] = now - active_probe['started_at']
+                                active_probe['status'] = 'pass'
+                            active_probe = {'stage': name, 'started_at': now,
+                                            'duration_seconds': None, 'status': 'unknown'}
+                            probe_history.append(active_probe)
+                            probe_deadline = now + int(probe_limit)
+                        if reason == 'invalid-probe-stage':
+                            break
+                        serial_lines = lines
+                        seen = set(lines)
+                        frames, valid = boot_frames(lines, bool(disk_path))
                         if not valid:
                             reason = 'invalid-boot-sequence'
                             break
                     if 'HOLY-BOOT-1 result fail' in seen:
                         reason = 'guest-failure'
+                        if active_probe:
+                            active_probe['duration_seconds'] = time.monotonic() - active_probe['started_at']
+                            active_probe['status'] = 'fail'
                         break
                     if disk_path and first_completed is None and frames and expected_boots[0] <= frames[0]:
                         first_completed = time.monotonic() - started
@@ -374,6 +425,14 @@ def main():
                     if len(frames) == len(expected_boots) and all(
                             wanted <= actual for wanted, actual in zip(expected_boots, frames)):
                         reason = 'probes-complete'
+                        if active_probe:
+                            active_probe['duration_seconds'] = time.monotonic() - active_probe['started_at']
+                            active_probe['status'] = 'pass'
+                        break
+                    if probe_deadline and time.monotonic() >= probe_deadline:
+                        reason = 'probe-timeout'
+                        if active_probe:
+                            active_probe['duration_seconds'] = time.monotonic() - active_probe['started_at']
                         break
                     if process.poll() is not None:
                         reason = 'early-exit'
@@ -397,7 +456,9 @@ def main():
                 if process.poll() is None:
                     process.kill()
                     process.wait()
-    base_unchanged = not disk_path or digest(run / 'root.raw') == inputs['root_disk']['sha256']
+    if active_probe and active_probe['duration_seconds'] is None:
+        active_probe['duration_seconds'] = time.monotonic() - active_probe['started_at']
+    base_unchanged = not disk_path or digest(base) == inputs['root_disk']['sha256']
     if server:
         server.shutdown()
         server.server_close()
@@ -425,7 +486,13 @@ def main():
               'argv': args, 'pid': process.pid, 'exit': code,
               'cancel_signal': cancelled[0] if cancelled else None,
               'elapsed_seconds': time.monotonic() - started,
-              'boot_timeout_seconds': int(limit), 'shutdown_timeout_seconds': 5,
+              'boot_timeout_seconds': int(limit), 'probe_timeout_seconds': int(probe_limit),
+              'shutdown_timeout_seconds': 5,
+              'probes': [{'stage': probe['stage'],
+                          'started_seconds': probe['started_at'] - started,
+                          'duration_seconds': probe['duration_seconds'],
+                          'status': probe['status']} for probe in probe_history],
+              'timed_out_probe': active_probe['stage'] if reason == 'probe-timeout' else None,
               'root_storage': 'ext4-overlay' if disk_path else 'ram', 'boots': boots,
               'boot_media': media,
               'first_boot_completed_seconds': first_completed,
@@ -439,7 +506,8 @@ def main():
                             ['installer', 'hardware', 'public-network' if server else 'network', 'kernel-update']}
     if disk_path:
         report['overlay'] = {'path': str(run / 'root.qcow2'), 'sha256': digest(run / 'root.qcow2'),
-                             'base_unchanged': base_unchanged}
+                             'base_unchanged': base_unchanged,
+                             'backing_format': inputs['root_disk']['format']}
     (run / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     (run / 'report').write_text(
         f'format holy-qemu-report-2\narch {arch}\nboot-media {media}\niso-sha256 {inputs.get("iso", {}).get("sha256", "none")}\n'

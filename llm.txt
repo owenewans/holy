@@ -1,4 +1,4 @@
-holy-image.7 source=holy version=development sha256=b21212384027ac3162f0ed8cf6d3082c27e5564dff20ab589454fbdb3ff3b62e
+holy-image.7 source=holy version=development sha256=d489d70f684684ba670b6b4bc2111434c82b37360c17b0b0f5c2e803c32a12dd
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
 NAME
@@ -227,62 +227,69 @@ QEMU
      builder  reads  the  x86  kernel  boot header and rejects a kernel with the
      other target architecture before it creates an image.   REPORT_DIR	 chooses
      an existing report parent directory, defaulting to the system temporary di-
-     rectory.  QEMU_TIMEOUT  bounds  boot  in  seconds	(1..600,  default  120).
-     QEMU_ACCEL=auto selects usable KVM or TCG; kvm and tcg force the  accelera-
+     rectory.  QEMU_TIMEOUT  bounds  each boot in seconds (1..600, default 120).
+     QEMU_PROBE_TIMEOUT	 bounds	 each  guest  stage   (1..600,	 defaulting   to
+     QEMU_TIMEOUT).  The guest emits stage-start markers; a repeated marker does
+     not renew its  deadline.  The  report  names  the	stage  that  timed  out.
+     QEMU_ACCEL=auto  selects usable KVM or TCG; kvm and tcg force the accelera-
      tor, with unavailable KVM returning 6.
 
-     FIRMWARE=bios   is	  the  default.	 FIRMWARE=uefi	requires  UEFI_CODE  and
-     UEFI_VARS.	 The runner copies both firmware inputs and gives  the	guest  a
-     new  writable VARS file. It copies and hashes the ISO before starting QEMU.
-     Networking is disabled by default, and no host writable disks  or	directo-
+     FIRMWARE=bios  is	the  default.  FIRMWARE=uefi  requires	 UEFI_CODE   and
+     UEFI_VARS.	  The  runner  copies both firmware inputs and gives the guest a
+     new writable VARS file. It copies and hashes the ISO before starting  QEMU.
+     Networking	 is  disabled by default, and no host writable disks or directo-
      ries are attached.	 For NETWORK_RECOVERY=fixture, the runner creates a pri-
-     vate  network  namespace,	raises its loopback, serves the two frozen arti-
-     facts over HTTPS and connects QEMU user networking only to that  namespace.
+     vate network namespace, raises its loopback, serves the  two  frozen  arti-
+     facts  over HTTPS and connects QEMU user networking only to that namespace.
      Its host has no external route.  The guest uses 10.0.2.15/24, resolves fix-
-     ture.holy.test  through the fixture DNS server and fetches both archives by
-     that HTTPS name. The report  records  DNS	queries,  the  CA  and	artifact
-     hashes,  HTTP  requests and recovery markers.  This fixture does not test a
+     ture.holy.test through the fixture DNS server and fetches both archives  by
+     that  HTTPS  name.	 The  report  records  DNS  queries, the CA and artifact
+     hashes, HTTP requests and recovery markers.  This fixture does not	 test  a
      public CA bundle or external network access.
 
-     ROOT_DISK explicitly supplies a regular raw disk image for	 the  persistent
-     dual-libc	test.  The runner copies it to a read-only base, creates a qcow2
-     overlay and attaches only that overlay through virtio-blk. It verifies  the
-     base hash after QEMU exits and retains the overlay and its hash. ROOT_IMAGE
-     alone remains an optional report input and does not attach a disk.
+     ROOT_DISK supplies a self-contained regular raw or qcow2 disk image for the
+     persistent dual-libc test. An external qcow2 backing chain is rejected. The
+     runner  copies  the  input to a read-only base, creates a qcow2 overlay and
+     attaches only that overlay through virtio-blk. It verifies the copied  base
+     hash  after QEMU exits and retains the overlay and its hash. Copying a live
+     input is marked unverified for  consistency;  the	caller	must  provide  a
+     stopped  image or stable snapshot for a precise trial. ROOT_IMAGE alone re-
+     mains an optional report input and does not attach a disk.
 
-     The  guest	 verifies  that	 /  is	ext4, completes recovery and its package
-     probes, records the plan  ID  under  /var/lib/holy-boot-test/reboot,  calls
-     static  sync  and requests reboot. On the second boot it requires that wit-
+     The guest verifies that / is  ext4,  completes  recovery  and  its	 package
+     probes,  records  the  plan  ID under /var/lib/holy-boot-test/reboot, calls
+     static sync and requests reboot. On the second boot it requires  that  wit-
      ness and intact restored libc; it repeats PID 1, shell, device, dynamic/IPC
-     and package probes without another	 libc  repair.	The  runner  keeps  each
-     boot's  markers separate, rejects repeated or out-of-order boot numbers and
-     requires both complete contracts. Each boot has its own QEMU_TIMEOUT  dead-
+     and  package  probes  without  another  libc  repair. The runner keeps each
+     boot's markers separate, rejects repeated or out-of-order boot numbers  and
+     requires  both complete contracts. Each boot has its own QEMU_TIMEOUT dead-
      line. RAM tests still use one boot and QEMU's no-reboot mode.
 
      Guest markers must confirm the expected plan and architecture, dinit as PID
-     1	by /proc/1/exe, a BusyBox shell probe, mdevd/coldplug and a complete lo-
-     cal two-package dependency-set install/check/remove, including  refusal  to
-     remove  the  referenced  provider first. The guest checks the critical exe-
+     1 by /proc/1/exe, a BusyBox shell probe, mdevd/coldplug and a complete  lo-
+     cal  two-package  dependency-set install/check/remove, including refusal to
+     remove the referenced provider first. The guest checks  the  critical  exe-
      cutables' static ELF classification. For static-core it also checks absence
-     of the four expected dynamic loaders. For dual-libc  it  verifies	the  de-
-     clared  initial  presence/absence	of  the	 runtime files, diagnoses broken
-     providers, reads the local LZ4 archives and  executes  missing-only  repair
-     inside  the  guest.  It  runs allocation, thread and clock probes with each
-     libc, checks both standard loader links and exchanges data through	 a  pipe
-     in	 both  directions between the two ABIs.	 KERNEL_VERSION additionally re-
-     quires the matching release marker. A failure marker overrides  pass  mark-
-     ers.   The	 runner sends QMP quit after the probes or a boot timeout, waits
+     of	 the  four  expected  dynamic loaders. For dual-libc it verifies the de-
+     clared initial presence/absence of	 the  runtime  files,  diagnoses  broken
+     providers,	 reads	the  local LZ4 archives and executes missing-only repair
+     inside the guest. It runs allocation, thread and  clock  probes  with  each
+     libc,  checks  both standard loader links and exchanges data through a pipe
+     in both directions between the two ABIs.  KERNEL_VERSION  additionally  re-
+     quires  the  matching release marker. A failure marker overrides pass mark-
+     ers.  The runner sends QMP quit after the probes or a boot	 timeout,  waits
      up to five seconds, then kills a process which did not exit. Process launch
      or exit status alone cannot pass a boot test.
 
-     Each run retains serial.log, QEMU output, a  text	report	and  report.json
-     (holy-qemu-report-2).  Reports  include  argv, accelerator, firmware, input
-     hashes, elapsed time, stage deadlines, exit reason and  per-marker	 status.
+     Each  run	retains	 serial.log,  QEMU output, a text report and report.json
+     (holy-qemu-report-2). Reports include argv,  accelerator,	firmware,  input
+     hashes,  elapsed  time, stage deadlines, exit reason and per-marker status.
      Persistent tests additionally record both boot results, the first-boot com-
-     pletion  time,  root storage type and whether the read-only base stayed in-
-     tact.  Optional KERNEL_IMAGE, INITRAMFS and  ROOT_IMAGE  inputs  add  their
-     hashes.   They  identify  caller-supplied	files, not guest measurements of
-     running code.
+     pletion time, root storage type and whether the read-only base  stayed  in-
+     tact.   The  probe list records each stage's elapsed time and pass/fail/un-
+     known status.  Optional KERNEL_IMAGE, INITRAMFS and ROOT_IMAGE  inputs  add
+     their  hashes.  They identify caller-supplied files, not guest measurements
+     of running code.
 
    Retained recovery matrix
      make check-recovery-matrix REPORT=NEW_FILE REPORTS="REPORT_PATHS" validates
@@ -306,69 +313,69 @@ COVERAGE
      BOOT_MEDIA=disk  selects  standalone  disk	 boot in the QEMU runner and re-
      quires ROOT_DISK. ISO must be empty; the runner attaches  no  CD-ROM.  Each
      run  uses	its own qcow2 overlay and records boot_media, two boot contracts
-     and the unchanged raw base. gpt-ext4 produces  disk.raw,  disk.plan,  disk-
-     layout.json  and  limine.conf instead of an ISO. BIOS and UEFI remain sepa-
+     and the unchanged copied base. gpt-ext4 produces disk.raw, disk.plan, disk-
+     layout.json and limine.conf instead of an ISO. BIOS and UEFI  remain  sepa-
      rate test runs.
 
-     The bootstrap glibc package currently contains  libc.so.6	and  its  loader
-     with  licenses, not the complete SDK, locale archive, NSS modules or auxil-
-     iary glibc libraries. The reference image still needs the installer,  ordi-
-     nary  networking and public CA packaging. The ext4 fixture uses an ISO ker-
+     The  bootstrap  glibc  package  currently contains libc.so.6 and its loader
+     with licenses, not the complete SDK, locale archive, NSS modules or  auxil-
+     iary  glibc libraries. The reference image still needs the installer, ordi-
+     nary networking and public CA packaging. The ext4 fixture uses an ISO  ker-
      nel; gpt-ext4 loads its kernel and initramfs from the disk's ESP. Both test
-     recovery followed by reboot on a persistent root overlay. The  GPT	 builder
-     is	 not the interactive installer. Kernel updates still require integration
+     recovery  followed	 by reboot on a persistent root overlay. The GPT builder
+     is not the interactive installer. Kernel updates still require  integration
      with ESP contents and the generated initramfs.  Those gates remain separate
-     from this boot result. The glibc/musl/both damage fixtures	 retain	 package
-     records;  remove-both  exercises package removal and reinstallation after a
-     persistent reboot.	  The  repository  documentation  bundle  contains  Holy
+     from  this	 boot result. The glibc/musl/both damage fixtures retain package
+     records; remove-both exercises package removal and reinstallation	after  a
+     persistent	 reboot.   The	repository  documentation  bundle  contains Holy
      pages. The image builder uses holypkg docs after its package transaction to
-     generate  /usr/share/holy/llm.txt from the installed man sources, including
-     dinit.  This generated file is separate from  package-owned  source  pages;
+     generate /usr/share/holy/llm.txt from the installed man sources,  including
+     dinit.   This  generated  file is separate from package-owned source pages;
      its SHA-256 is recorded in the frozen image plan and /etc/holy/docs.sha256.
      The output directory retains llm.txt and docs.record with the coverage sum-
-     mary.  Packages  without man pages and unsupported page encodings appear in
+     mary. Packages without man pages and unsupported page encodings  appear  in
      that bundle.
 
-     On each boot, the guest verifies the shipped bundle's digest  and	regener-
-     ates  it  with static holypkg after any libc recovery. It compares the com-
-     plete contents, normalizing only the final	 summary's  database  generation
+     On	 each  boot, the guest verifies the shipped bundle's digest and regener-
+     ates it with static holypkg after any libc recovery. It compares  the  com-
+     plete  contents,  normalizing  only the final summary's database generation
      because package transactions between boots advance that counter. A documen-
      tation failure fails the boot contract. The bundle contains attributed roff
      sources rather than rendered upstream text. QEMU virtual devices do not es-
      tablish physical GPU support.
 
-     make   check-image-docs   IMAGE_DIRECTORY=DIRECTORY   tests  an  ext4/dual-
+     make  check-image-docs  IMAGE_DIRECTORY=DIRECTORY	 tests	 an   ext4/dual-
      libc/both build's documentation failures. It copies root.ext4 into two dis-
-     posable disks, changes the	 generated  bundle  in	one  and  the  installed
-     holypkg  man  source in the other, then boots each through the original ISO
-     under BIOS/TCG. Both guests must stop the boot contract at	 the  documenta-
-     tion  stage. The original root image's hash must remain unchanged. The fix-
+     posable  disks,  changes  the  generated  bundle  in  one and the installed
+     holypkg man source in the other, then boots each through the  original  ISO
+     under  BIOS/TCG.  Both guests must stop the boot contract at the documenta-
+     tion stage. The original root image's hash must remain unchanged. The  fix-
      ture requires debugfs and the QEMU tools; it never edits the original image
      or mounts a host disk.
 
 HARDWARE
-     make check-hardware runs outside QEMU against a physical NVIDIA  GPU  using
-     Nouveau  and Mesa NVK. It checks the kernel driver and DRM render node, se-
-     lects the NVK Vulkan device, presents 30 frames with vkcube,  and	measures
+     make  check-hardware  runs outside QEMU against a physical NVIDIA GPU using
+     Nouveau and Mesa NVK. It checks the kernel driver and DRM render node,  se-
+     lects  the	 NVK Vulkan device, presents 30 frames with vkcube, and measures
      OpenGL frames with glxgears. glxinfo must report an accelerated NVIDIA ren-
-     derer.  lspci,  vulkaninfo,  vkcube,  glxinfo, glxgears, timeout, a display
+     derer. lspci, vulkaninfo, vkcube, glxinfo,	 glxgears,  timeout,  a	 display
      session and a writable render node are required.
 
      The default HARDWARE_SCOPE=holy requires a valid installed Holy database on
-     the running system. Missing inputs return 6. REPORT defaults  to  out/hard-
+     the  running  system. Missing inputs return 6. REPORT defaults to out/hard-
      ware.json; the holy-hardware-1 JSON records probe commands, output, elapsed
-     times,  driver  selection	and  frame  counts.  A failure returns 1.  HARD-
-     WARE_SCOPE=host permits a diagnostic  probe  on  another  distribution  and
-     marks  release_gate=false.	 A host result cannot certify Holy's packages or
-     boot image. The frame probes establish presentation and an FPS  count,  not
+     times, driver selection and frame	counts.	 A  failure  returns  1.   HARD-
+     WARE_SCOPE=host  permits  a  diagnostic  probe  on another distribution and
+     marks release_gate=false. A host result cannot certify Holy's  packages  or
+     boot  image.  The frame probes establish presentation and an FPS count, not
      pixel-correct rendering or broader game compatibility.
 
 SOURCES
-     Limine   configuration   and  ISO	layout:	 https://github.com/limine-boot-
-     loader/limine/blob/v12.x/CONFIG.md	  and	 https://github.com/limine-boot-
+     Limine  configuration  and	 ISO   layout:	 https://github.com/limine-boot-
+     loader/limine/blob/v12.x/CONFIG.md	   and	 https://github.com/limine-boot-
      loader/limine/blob/v12.x/USAGE.md.	      dracut	  module      interface:
      https://github.com/dracut-ng/dracut-ng/blob/main/man/dracut.modules.7.adoc.
-     QEMU block device and backing-file options:  https://www.qemu.org/docs/mas-
+     QEMU  block device and backing-file options: https://www.qemu.org/docs/mas-
      ter/system/invocation.html.
 
 SEE ALSO

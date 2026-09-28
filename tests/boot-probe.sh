@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
 stage=identity
+echo "HOLY-BOOT-1 stage $stage"
+set_stage() { stage=$1; echo "HOLY-BOOT-1 stage $stage"; }
 trap 'echo "HOLY-BOOT-1 failed $stage"; echo "HOLY-BOOT-1 result fail"' EXIT
 bb=/usr/bin/busybox
 pkg=/usr/bin/holypkg
@@ -11,7 +13,7 @@ if test -f /etc/holy/installed-from-live; then
     $bb grep -Eq '^[^ ]+ / ext4 ' /proc/mounts
     reported_storage=ext4
     echo 'HOLY-BOOT-1 installed-disk ext4'
-    stage=login
+    set_stage login
     /usr/lib/holy/login-probe > /run/login-probe
     $bb grep -qx 'login rejected wrong password and authenticated uid=10001; doas authenticated uid=0' /run/login-probe
     echo 'HOLY-BOOT-1 user-login authenticated'
@@ -35,7 +37,7 @@ echo "HOLY-BOOT-1 root $reported_storage"
 echo "HOLY-BOOT-1 plan $plan"
 echo "HOLY-BOOT-1 profile $profile"
 if test -f /etc/holy/esp-device; then
-    stage=esp
+    set_stage esp
     esp=$($bb cat /etc/holy/esp-device)
     $bb grep -F "$esp /boot vfat rw," /proc/mounts
     test -s /boot/vmlinuz
@@ -57,7 +59,7 @@ test "$($bb uname -r)" = "$($bb cat /etc/holy/kernel-version)"
 echo "HOLY-BOOT-1 kernel $($bb uname -r)"
 test "$($bb ash -c 'printf shell-probe')" = shell-probe
 echo 'HOLY-BOOT-1 shell busybox'
-stage=static-core
+set_stage static-core
 for executable in busybox dinit dinitctl mdevd mdevd-coldplug holypkg holyinstall holy-init; do
     $pkg elf "/usr/bin/$executable" > /run/core-elf
     $bb grep -qx 'runtime nolibc' /run/core-elf
@@ -68,18 +70,18 @@ if test "$profile" = static-core; then
     done
 fi
 echo 'HOLY-BOOT-1 static-core verified'
-stage=installer
+set_stage installer
 if /usr/bin/holyinstall disk > /run/installer-usage 2>&1; then exit 1; else test "$?" -eq 2; fi
 $bb grep -q '^usage: holyinstall disk ' /run/installer-usage
 echo 'HOLY-BOOT-1 installer static-cli'
-stage=devices
+set_stage devices
 /usr/bin/dinitctl --socket-path /run/dinitctl status mdevd > /run/mdevd.status
 $bb grep -q 'State: STARTED' /run/mdevd.status
 test -c /dev/null
 $bb ls -l /dev/null | $bb grep -q '^crw-------'
 echo 'HOLY-BOOT-1 device mdevd-coldplug'
 if test "$profile" = dual-libc; then
-    stage=libc-recovery
+    set_stage libc-recovery
     case "$($bb uname -m)" in
         i686)
             glibc_loader=/usr/lib/holy/i686-linux-gnu/ld-linux.so.2
@@ -127,7 +129,7 @@ if test "$profile" = dual-libc; then
     done
     echo "HOLY-BOOT-1 libc-initial $state"
     if test "$network" = fixture && test "$state" = both; then
-        stage=network-setup
+        set_stage network-setup
         test -s /etc/holy/recovery-ca.pem
         $bb ip link set eth0 up
         $bb ip addr add 10.0.2.15/24 dev eth0
@@ -181,7 +183,7 @@ if test "$profile" = dual-libc; then
     echo 'HOLY-BOOT-1 libc-probes glibc-musl-pipe'
     if test "$state" != remove-both; then echo "HOLY-BOOT-1 libc-recovery $state"; fi
 fi
-stage=documentation
+set_stage documentation
 docs=$($bb sha256sum /usr/share/holy/llm.txt)
 test "${docs%% *}" = "$($bb cat /etc/holy/docs.sha256)"
 $pkg docs --root / --output /run/installed-man.txt
@@ -193,7 +195,7 @@ $bb grep -q '^page .*package "holypkg" ' /run/installed-man.txt
 $bb grep -q '^page .*package "holyinstall" ' /run/installed-man.txt
 $bb grep -q '^summary .*missing-man ' /run/installed-man.txt
 echo 'HOLY-BOOT-1 docs installed-man-bundle'
-stage=packages
+set_stage packages
 $pkg db check --all --root / > /run/package-check
 $pkg info local:/usr/share/holy/fixture.holy > /run/package-info
 $bb grep -q 'name boot-fixture' /run/package-info
@@ -215,7 +217,7 @@ $pkg db rm "$root_digest" --root / > /run/root-package-remove
 $pkg db rm "$digest" --root / > /run/package-remove
 test ! -e /usr/share/holy/fixture-installed
 echo 'HOLY-BOOT-1 transaction install-check-remove'
-stage=installer-transaction
+set_stage installer-transaction
 target=/run/holyinstall-root
 $bb mkdir -p "$target/usr/share"
 $pkg db init --root "$target" > /run/installer-init
@@ -234,9 +236,9 @@ test "$($bb cat "$target/usr/share/holy/fixture-installed")" = installed-in-gues
 $pkg db check --all --root "$target" > /run/installer-check
 echo 'HOLY-BOOT-1 installer root-plan-apply'
 if test "$storage" = ext4 && test "$boot" = 1; then
-    stage=reboot
+    set_stage reboot
     if test "$($bb cat /etc/holy/libc-boot-state)" = remove-both; then
-        stage=libc-removal
+        set_stage libc-removal
         for abi in glibc musl; do
             digest=$($bb cat "/etc/holy/$abi.sha256")
             probe=$($bb cat "/etc/holy/probe-$abi.sha256")
@@ -247,7 +249,7 @@ if test "$storage" = ext4 && test "$boot" = 1; then
             echo "HOLY-BOOT-1 removed-libc $abi"
         done
         if $pkg db check --all --root / > /run/libc-check 2>&1; then exit 1; else test "$?" -eq 4; fi
-        stage=reboot
+        set_stage reboot
     fi
     $bb mkdir -p /var/lib/holy-boot-test
     printf '%s\n' "$plan" > /var/lib/holy-boot-test/reboot
@@ -258,6 +260,7 @@ if test "$storage" = ext4 && test "$boot" = 1; then
     while :; do $bb sleep 3600; done
 fi
 $bb sync
+set_stage result
 echo 'HOLY-BOOT-1 result pass'
 trap - EXIT
 while :; do $bb sleep 3600; done

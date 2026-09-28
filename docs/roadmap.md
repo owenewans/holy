@@ -665,7 +665,11 @@
   an installed Holy database. The present host probe passed on Slackware;
   no Holy hardware result is claimed.
 - [ ] Extend the QEMU runner to qcow2 trial overlays and per-probe
-  timeouts/result channels. Run the physical hardware gate on Holy.
+  timeouts/result channels. The runner now accepts self-contained raw and
+  qcow2 input disks, copies either to a read-only base and boots a separate
+  qcow2 overlay. Guest stage markers get independent configurable deadlines
+  and per-stage reports. Live input copy consistency remains unverified;
+  full `holypkg test PLAN` integration and the Holy hardware gate remain open.
 - [ ] Boot both target architectures in QEMU and prove PID 1, shell, package
   install/removal and recovery after removing either or both dynamic libc runtimes.
 - [ ] Run compiler/SDK, language, GUI, graphics, gaming, workstation and foreign
