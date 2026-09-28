@@ -223,6 +223,43 @@ grep -q 'provider package:auto-child available from other' "$tmp/err"
 grep -q 'provider package:auto-child available from third' "$tmp/err"
 grep -q 'decision-required' "$tmp/err"
 test ! -e "$tmp/root/usr/share/auto-root"
+sed '/^\[source fixture\]$/a parent other' "$tmp/three-sources" > "$tmp/parent-sources"
+mkdir -p "$tmp/parent-root"
+"$bin" db init --root "$tmp/parent-root" > "$tmp/out"
+"$bin" source plan --config "$tmp/parent-sources" --root "$tmp/parent-root" > "$tmp/parent-plan"
+parent_plan=$(sha256sum "$tmp/parent-plan" | cut -d ' ' -f 1)
+"$bin" source apply "$tmp/parent-plan" --sha256 "$parent_plan" --root "$tmp/parent-root" > "$tmp/out"
+grep -q " $other_id$" "$tmp/parent-root/var/lib/holypkg/sources"
+for source in fixture other third; do
+    case "$source" in
+        fixture) parent_catalog=$tmp/repo ;;
+        other) parent_catalog=$tmp/other-repo ;;
+        third) parent_catalog=$tmp/third-repo ;;
+    esac
+    "$bin" source catalog bind "$source" "$parent_catalog" --root "$tmp/parent-root" > "$tmp/out"
+done
+mkdir -p "$tmp/renamed-parent-root"
+cp -a "$tmp/parent-root/." "$tmp/renamed-parent-root/"
+sed -e 's/^parent other$/parent preferred/' \
+    -e 's/^\[source other\]$/[source preferred]/' \
+    "$tmp/parent-sources" > "$tmp/renamed-parent-sources"
+"$bin" source plan --config "$tmp/renamed-parent-sources" \
+    --root "$tmp/renamed-parent-root" > "$tmp/renamed-parent-plan"
+renamed_parent_plan=$(sha256sum "$tmp/renamed-parent-plan" | cut -d ' ' -f 1)
+"$bin" source apply "$tmp/renamed-parent-plan" --sha256 "$renamed_parent_plan" \
+    --root "$tmp/renamed-parent-root" > "$tmp/out"
+"$bin" add fixture:auto-root --root "$tmp/renamed-parent-root" --yes --noninteractive \
+    > "$tmp/out" 2> "$tmp/err"
+grep -q 'selected preferred for package:auto-child by parent preference' "$tmp/err"
+test -f "$tmp/renamed-parent-root/usr/share/auto-child"
+"$bin" add fixture:auto-root --root "$tmp/parent-root" --yes --noninteractive \
+    > "$tmp/out" 2> "$tmp/err"
+grep -q 'selected other for package:auto-child by parent preference' "$tmp/err"
+test -f "$tmp/parent-root/usr/share/auto-root"
+test -f "$tmp/parent-root/usr/share/auto-child"
+auto_child_hash=$(sha256sum "$tmp/other-repo/auto-child.holy" | cut -d ' ' -f 1)
+grep -q "$other_id" "$tmp/parent-root/var/lib/holypkg/installed/$auto_child_hash/source"
+"$bin" db check --all --root "$tmp/parent-root" > "$tmp/out"
 for target in choice-root answers-root; do
     mkdir -p "$tmp/$target"
     "$bin" db init --root "$tmp/$target" > "$tmp/out"

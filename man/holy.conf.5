@@ -92,7 +92,10 @@ userinfo, queries, fragments and whitespace. Plans therefore cannot carry those
 credential forms. Two aliases with the same definition require a decision.
 Registration neither contacts a repository nor verifies its signatures. Set
 installation can bind local artifacts to registered IDs through explicit --source
-associations. Parent policy during package selection remains unimplemented.
+associations. The registry stores parent as a source-id, separate from the
+endpoint-derived identity. Renaming a parent alias retains the relationship.
+Parent preference applies when add discovers a missing native provider; it
+does not replace the child's URL with the parent's URL.
 .PP
 A registered APK source uses type apk and one or more repo NAME HTTPS_BASE/
 entries. holypkg apk sync names the repo, obtains its APKINDEX.tar.gz and writes

@@ -1216,11 +1216,14 @@ The manager stages the artifact by hash, binds its source-id in the plan, and
 rechecks the source and local file before apply. Dependencies and ownership
 are checked by the usual set engine. Further foreign dependencies need
 additional candidate inputs until a source adapter can discover them.
-When a set has an unsatisfied exact package, file, command or SONAME edge,
+When a set has an unsatisfied exact package, package-or, file, command or SONAME edge,
 add probes active bound native catalogs for that edge before staging foreign
 artifacts. One matching source with complete coverage supplies its providers
-and in-source closure. Multiple matching sources, or a match alongside an
-unavailable catalog, list the source aliases and ask for one alias on a TTY.
+and in-source closure. For multiple offers, add prefers the missing consumer's
+registered source-id, then its saved parent source-id. It prints each
+preference reason. An --answers entry overrides these preferences. Remaining
+ties, or a match alongside unavailable coverage without a preferred source,
+list aliases and ask for one on a TTY.
 Active foreign sources are skipped during this native-catalog probe; their
 absence of a native mirror is not counted as a failed native lookup.
 For a scanned ELF SONAME edge, the source probe checks the consumer's machine,
@@ -1239,8 +1242,8 @@ path already satisfied by an installed package. An
 unavailable catalog leaves coverage incomplete and returns 6 when no provider
 can be found. Older indexes without file or SONAME facts report unavailable
 coverage for those requirements. Selected packages retain their source IDs, and candidate
-catalogs are checked again before apply. Source preference ranking, fuzzy
-suggestions and runtime plugin discovery remain open. Executable hooks remain
+catalogs are checked again before apply. Source-family and user-priority ranking,
+fuzzy suggestions and runtime plugin discovery remain open. Executable hooks remain
 outside the supported installation subset. Recorded transforms are accepted
 after payload verification; no transformation runs during installation.
 .PP

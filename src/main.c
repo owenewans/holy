@@ -872,7 +872,9 @@ static int add_source(int argc, char **argv)
         char **aliases = NULL;
         unsigned char *offer_flags = NULL;
         size_t alias_count = 0, a, offered = 0;
-        const char *winner = NULL;
+        const char *winner = NULL, *same_source = NULL, *parent_source = NULL;
+        const char *consumer_origin = NULL;
+        char parent_id[65] = {0};
         int missing_status;
         int progressed = 0, unavailable = 0, answered = 0;
         result = holy_state_probe_source_bindings(digests, digest_count,
@@ -891,6 +893,15 @@ static int add_source(int argc, char **argv)
             holy_missing_requirement_free(&missing);
             result = missing_status; goto done;
         }
+        for (a = 0; a < staged.count; ++a)
+            if (!strcmp(staged.digests[a], missing.consumer)) consumer_origin = source_id;
+        for (a = 0; !consumer_origin && a < binding_count; ++a)
+            if (!strncmp(bindings[a], missing.consumer, 64) && bindings[a][64] == '=')
+                consumer_origin = bindings[a] + 65;
+        if (consumer_origin) {
+            result = holy_source_parent_id(root, consumer_origin, parent_id);
+            if (result) { holy_missing_requirement_free(&missing); goto done; }
+        }
         result = holy_source_active_aliases(root, &aliases, &alias_count);
         if (result) { holy_missing_requirement_free(&missing); goto done; }
         offer_flags = calloc(alias_count ? alias_count : 1, 1);
@@ -905,7 +916,6 @@ static int add_source(int argc, char **argv)
             char *family = NULL;
             char candidate_id[65];
             int probe;
-            if (!strcmp(aliases[a], alias)) continue;
             probe = holy_source_type(root, aliases[a], &family);
             if (probe) { result = probe; break; }
             if (strcmp(family, "holy-http") && strcmp(family, "holy-git")) {
@@ -913,7 +923,9 @@ static int add_source(int argc, char **argv)
                 continue;
             }
             free(family);
-            probe = holy_source_catalog_path_fast(root, aliases[a], &path);
+            probe = !strcmp(aliases[a], alias) ?
+                ((path = copy_text(catalog)) ? 0 : 1) :
+                holy_source_catalog_path_fast(root, aliases[a], &path);
             if (!probe) probe = holy_source_catalog(root, aliases[a], path, candidate_id);
             if (!probe) probe = !strcmp(missing.kind, "soname") && missing.path ?
                 holy_repo_has_compatible_soname(path, missing.name, root,
@@ -924,8 +936,14 @@ static int add_source(int argc, char **argv)
                 ++offered;
                 offer_flags[a] = 1;
                 winner = aliases[a];
-                fprintf(stderr, "holypkg: provider %s:%s available from %s\n",
-                        missing.kind, missing.name, aliases[a]);
+                if (consumer_origin && !strcmp(candidate_id, consumer_origin))
+                    same_source = aliases[a];
+                else if (parent_id[0] && !strcmp(candidate_id, parent_id))
+                    parent_source = aliases[a];
+                fprintf(stderr, "holypkg: provider %s:%s available from %s%s\n",
+                        missing.kind, missing.name, aliases[a],
+                        aliases[a] == same_source ? " rank=same-source" :
+                        aliases[a] == parent_source ? " rank=parent" : "");
             } else if (probe == 6) ++unavailable;
             else if (probe != 4) { result = probe; break; }
         }
@@ -951,7 +969,12 @@ static int add_source(int argc, char **argv)
                 }
             }
         }
-        if (!result && (offered > 1 || (offered && unavailable)) && !answered) {
+        if (!result && !answered && (same_source || parent_source)) {
+            winner = same_source ? same_source : parent_source;
+            fprintf(stderr, "holypkg: selected %s for %s:%s by %s preference\n",
+                    winner, missing.kind, missing.name,
+                    same_source ? "same-source" : "parent");
+        } else if (!result && (offered > 1 || (offered && unavailable)) && !answered) {
             winner = NULL;
             if (!noninteractive && isatty(STDIN_FILENO)) {
                 char response[4097];

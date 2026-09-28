@@ -12,6 +12,11 @@
 #include "stage.h"
 #include "verify.h"
 #include "sign.h"
+#include "version.h"
+#include "../backends/pacman.h"
+#include "../backends/deb-version.h"
+#include "../backends/apk-version.h"
+#include "../backends/xbps-version.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -867,16 +872,54 @@ static int indexed_file(const struct object *object, const char *path)
 
 struct or_match { const struct object *object; int found; };
 
+static int indexed_version_matches(const struct object *object,
+                                   const char *candidate, const char *relation,
+                                   const char *version, int identity)
+{
+    const char *family = object->identity.version_family;
+    const char *actual = candidate;
+    char *joined = NULL;
+    int order, compared;
+    if (!strcmp(relation, "any")) return 1;
+    if (!family || !candidate || !strcmp(candidate, "-")) return 0;
+    if (identity && !strcmp(family, "xbps") && object->identity.release) {
+        size_t a = strlen(candidate), b = strlen(object->identity.release);
+        if (a > SIZE_MAX - b - 2 || !(joined = malloc(a + b + 2))) return 0;
+        snprintf(joined, a + b + 2, "%s_%s", candidate, object->identity.release);
+        actual = joined;
+    }
+    compared = !strcmp(family, "pacman") ?
+        holy_pacman_version_compare(actual, version, &order) :
+        !strcmp(family, "deb") ?
+        holy_deb_version_compare(actual, version, &order) :
+        !strcmp(family, "holy") ?
+        holy_version_compare(actual, version, &order) :
+        !strcmp(family, "apk") ?
+        holy_apk_version_compare(actual, version, &order) :
+        !strcmp(family, "xbps") ?
+        holy_xbps_version_compare(actual, version, &order) : 0;
+    free(joined);
+    if (!compared) return 0;
+    return !strcmp(relation, "eq") ? order == 0 :
+           !strcmp(relation, "ge") ? order >= 0 :
+           !strcmp(relation, "gt") ? order > 0 :
+           !strcmp(relation, "le") ? order <= 0 :
+           !strcmp(relation, "lt") && order < 0;
+}
+
 static int indexed_or_branch(void *opaque, const char *name,
                              const char *relation, const char *version)
 {
     struct or_match *match = opaque;
     size_t i;
-    (void)relation; (void)version;
-    if (!strcmp(match->object->identity.name, name)) match->found = 1;
+    if (!strcmp(match->object->identity.name, name) &&
+        indexed_version_matches(match->object, match->object->identity.version,
+                                relation, version, 1)) match->found = 1;
     for (i = 0; i < match->object->claim_count; ++i)
         if (!strcmp(match->object->claims[i].kind, "package") &&
-            !strcmp(match->object->claims[i].name, name)) match->found = 1;
+            !strcmp(match->object->claims[i].name, name) &&
+            indexed_version_matches(match->object, match->object->claims[i].version,
+                                    relation, version, 0)) match->found = 1;
     return 1;
 }
 
