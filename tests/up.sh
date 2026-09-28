@@ -218,4 +218,49 @@ review=$(sha256sum "$tmp/review.plan" | cut -d ' ' -f 1)
 expect 0 "$bin" apply "$tmp/review.plan" --sha256 "$review" --root "$root"
 grep -qx 'version 7' "$root/usr/share/update-fixture"
 expect 0 "$bin" db check --all --root "$root"
+for family in apk xbps; do
+    root="$tmp/$family-root"
+    repo="$tmp/$family-repo"
+    mkdir -p "$root/usr/share" "$repo"
+    expect 0 "$bin" db init --root "$root"
+    expect 0 "$bin" source plan --config "$tmp/source.conf" --root "$root"
+    cp "$tmp/out" "$tmp/$family-source.plan"
+    source_plan=$(sha256sum "$tmp/$family-source.plan" | cut -d ' ' -f 1)
+    expect 0 "$bin" source apply "$tmp/$family-source.plan" --sha256 "$source_plan" --root "$root"
+    expect 0 "$bin" source list --root "$root"
+    source_id=$(awk '$1 == "source" && $4 == "active" {print $2}' "$tmp/out")
+    if test "$family" = apk; then
+        package 1.0-r0 apk
+    else
+        package 1.0 xbps
+    fi
+    seal
+    expect 0 "$bin" source catalog bind fixture "$repo" --root "$root"
+    expect 0 "$bin" add fixture:update-fixture --root "$root" --yes
+    if test "$family" = apk; then
+        package 1.0-r1 apk
+        revision=$(sha256sum "$repo/update-1.0-r1.holy" | cut -d ' ' -f 1)
+    else
+        cp -a "$tmp/tree-1.0" "$tmp/tree-1.0-r2"
+        sed -i 's/^release 1$/release 2/' "$tmp/tree-1.0-r2/HOLY/meta"
+        expect 0 "$bin" pack "$tmp/tree-1.0-r2" --output "$repo/update-1.0-r2.holy"
+        revision=$(sha256sum "$repo/update-1.0-r2.holy" | cut -d ' ' -f 1)
+    fi
+    seal
+    expect 0 "$bin" source catalog bind fixture "$repo" --root "$root"
+    expect 0 "$bin" up fixture:update-fixture --prepare --output "$tmp/$family-revision.plan" --root "$root"
+    grep -qx "new $revision" "$tmp/$family-revision.plan"
+    prepared=$(sha256sum "$tmp/$family-revision.plan" | cut -d ' ' -f 1)
+    expect 0 "$bin" apply "$tmp/$family-revision.plan" --sha256 "$prepared" --root "$root"
+    package 1.1 "$family"
+    newest=$(sha256sum "$repo/update-1.1.holy" | cut -d ' ' -f 1)
+    seal
+    expect 0 "$bin" source catalog bind fixture "$repo" --root "$root"
+    expect 0 "$bin" up fixture:update-fixture --prepare --output "$tmp/$family-version.plan" --root "$root"
+    grep -qx "new $newest" "$tmp/$family-version.plan"
+    prepared=$(sha256sum "$tmp/$family-version.plan" | cut -d ' ' -f 1)
+    expect 0 "$bin" apply "$tmp/$family-version.plan" --sha256 "$prepared" --root "$root"
+    grep -qx 'version 1.1' "$root/usr/share/update-fixture"
+    expect 0 "$bin" db check --all --root "$root"
+done
 printf 'source update preparation and apply fixtures passed\n'

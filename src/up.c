@@ -9,6 +9,8 @@
 #include "state.h"
 #include "../backends/pacman.h"
 #include "../backends/deb-version.h"
+#include "../backends/apk-version.h"
+#include "../backends/xbps-version.h"
 #include "version.h"
 
 #include <errno.h>
@@ -75,6 +77,24 @@ static int version_order(const struct holy_package_identity *a,
     if (!strcmp(a->version_family, "holy")) {
         if (!holy_version_compare(a->version, b->version, order)) return 0;
         return *order || holy_version_compare(a->release, b->release, order);
+    }
+    if (!strcmp(a->version_family, "apk")) {
+        if (!holy_apk_version_compare(a->version, b->version, order)) return 0;
+        return *order || holy_version_compare(a->release, b->release, order);
+    }
+    if (!strcmp(a->version_family, "xbps")) {
+        a_length = strlen(a->version) + strlen(a->release);
+        b_length = strlen(b->version) + strlen(b->release);
+        if (a_length > (size_t)-1 - 2 || b_length > (size_t)-1 - 2) return 0;
+        left = malloc(a_length + 2);
+        right = malloc(b_length + 2);
+        if (left && right) {
+            snprintf(left, a_length + 2, "%s_%s", a->version, a->release);
+            snprintf(right, b_length + 2, "%s_%s", b->version, b->release);
+            ok = holy_xbps_version_compare(left, right, order);
+        }
+        free(left); free(right);
+        return ok;
     }
     if (strcmp(a->version_family, "pacman")) return 0;
     a_length = strlen(a->version) + strlen(a->release);

@@ -1264,11 +1264,14 @@ name and optional arch/libc. It checks the old artifact in the target cache,
 verifies the pinned catalog index, and stages only indexed versions in the
 same name/os/arch/libc slot. The selected archives are checked against their
 index records and actual payloads. Unrelated archives are not opened; a
-broken unrelated archive does not block this slot update. Known pacman, deb
-and holy comparator families select the highest newer version; unknown or
+broken unrelated archive does not block this slot update. Known pacman, deb,
+apk, xbps and holy comparator families select the highest newer version; unknown or
 mixed comparator families require --choose SHA256. The chosen digest can
 explicitly select a rebuild or older
 version. No newer candidate leaves the system unchanged and writes no plan.
+APK compares its full upstream pkgver, including -r revision. XBPS combines
+version and release with the source _revision convention before comparison.
+An unparsable version still needs an explicit choice.
 An absent old artifact, missing source slot or changed catalog is reported.
 Without --prepare, up prints the full proposed plan, saves it, then asks for
 approval before applying the exact file and hash through the same apply command.

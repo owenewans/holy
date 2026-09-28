@@ -104,7 +104,8 @@
   installed consumer constraints. Run 92 upstream comparison cases and solver /
   transaction fixtures. The separate Debian comparator covers epoch, tilde and
   revision. An explicit Holy native comparator covers numeric versions and
-  prereleases; remaining foreign comparators remain open.
+  prereleases. APK and XBPS comparators now also select prepared updates in
+  their own source slots; remaining foreign comparators remain open.
 
 - [x] Resolve declared package aliases using their own versions and artifact ABI
   scopes. Preserve claims and their hash in holy-instance-4, discover installed
