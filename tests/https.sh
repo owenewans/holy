@@ -198,6 +198,47 @@ printf 'sha256 %064d\n' 0 > "$tmp/source-mirror/current"
 expect 6 "$bin" info fixture:https-second --root "$tmp/source-root"
 cp "$tmp/valid-current" "$tmp/source-mirror/current"
 expect 0 "$bin" info fixture:https-second --root "$tmp/source-root"
+mkdir "$tmp/serve/other"
+cp "$tmp/serve/native.holy" "$tmp/serve/other/"
+"$bin" repo index "$tmp/serve/other" > "$tmp/result"
+"$bin" repo seal "$tmp/serve/other" > "$tmp/result"
+other_index=$(sed -n 's/^sha256 //p' "$tmp/serve/other/current")
+printf '[source fixture]\ntype holy-http\nurl "%s"\n[source other]\ntype holy-http\nurl "%sother/"\n' \
+    "$base" "$base" > "$tmp/multi.conf"
+expect 0 "$bin" source plan --config "$tmp/multi.conf" --root "$tmp/source-root"
+cp "$tmp/result" "$tmp/multi.plan"
+multi_plan=$(sha256sum "$tmp/multi.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" source apply "$tmp/multi.plan" --sha256 "$multi_plan" --root "$tmp/source-root"
+expect 0 "$bin" source list --root "$tmp/source-root"
+other_id=$(sed -n 's/^source \([0-9a-f]*\) "other" active$/\1/p' "$tmp/result")
+test "${#other_id}" -eq 64
+expect 0 "$bin" sync other --root "$tmp/source-root" --sha256 "$other_index" \
+    --output "$tmp/other-mirror" --ca-file "$tmp/cert.pem"
+expect 0 "$bin" source catalog bind other "$tmp/other-mirror" --root "$tmp/source-root"
+expect 0 "$bin" search https-fixture --root "$tmp/source-root"
+grep -qx "source \"fixture\" id $source_id" "$tmp/result"
+grep -qx "source \"other\" id $other_id" "$tmp/result"
+test "$(sed -n 's/^source "\([^"]*\)" id .*/\1/p' "$tmp/result" | paste -sd ' ' -)" = 'fixture other'
+test "$(grep -c '^package "https-fixture" ' "$tmp/result")" -eq 2
+grep -qx 'searched 2 sources; unavailable 0' "$tmp/result"
+expect 0 "$bin" search /usr/share/holy/fixture.txt --file --root "$tmp/source-root"
+test "$(grep -c '^package "https-fixture" ' "$tmp/result")" -eq 2
+grep -qx 'searched 2 sources; unavailable 0' "$tmp/result"
+expect 0 "$bin" search https-fixturx --fuzzy --root "$tmp/source-root"
+test "$(grep -c '^suggestion score ' "$tmp/result")" -eq 2
+expect 2 "$bin" search https-fixture --catalog "$tmp/source-mirror" --root "$tmp/source-root"
+mv "$tmp/source-root/var/lib/holypkg/catalogs/$other_id" "$tmp/other-binding"
+expect 6 "$bin" search https-fixture --root "$tmp/source-root"
+grep -qx 'source "other" coverage unavailable' "$tmp/result"
+grep -qx 'searched 2 sources; unavailable 1' "$tmp/result"
+mv "$tmp/other-binding" "$tmp/source-root/var/lib/holypkg/catalogs/$other_id"
+expect 0 "$bin" source plan --config "$tmp/source.conf" --root "$tmp/source-root"
+cp "$tmp/result" "$tmp/single.plan"
+single_plan=$(sha256sum "$tmp/single.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" source apply "$tmp/single.plan" --sha256 "$single_plan" --root "$tmp/source-root"
+expect 0 "$bin" search https-fixture --root "$tmp/source-root"
+grep -qx 'searched 1 sources; unavailable 0' "$tmp/result"
+! grep -q '^source "other"' "$tmp/result"
 mkdir "$tmp/add-root"
 expect 0 "$bin" db init --root "$tmp/add-root"
 expect 0 "$bin" source plan --config "$tmp/source.conf" --root "$tmp/add-root"

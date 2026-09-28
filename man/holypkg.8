@@ -34,7 +34,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg info SOURCE:PACKAGE [--catalog MIRROR] [--root DIRECTORY]
 .br
-.B holypkg search QUERY --source SOURCE [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]
+.B holypkg search QUERY [--source SOURCE] [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]
 .br
 .B holypkg verify local:FILE
 .br
@@ -1072,7 +1072,13 @@ It requires all seven HOLY metadata members as regular files and rejects
 duplicate members.
 It does not validate the payload manifest, hashes, signatures or installability.
 .PP
-search QUERY --source SOURCE verifies the active source-id and
+search QUERY without --source visits every active source in alias order. It
+prints each source alias and immutable ID with its package or file results.
+An active source without a usable native catalog reports unavailable coverage;
+the combined search exits 6 when any source is unavailable. An empty active
+registry also exits 6. --catalog requires --source because one mirror cannot
+identify the catalogs of multiple sources. search QUERY --source SOURCE
+verifies the active source-id and
 URL against the sealed mirror record, then checks the complete indexed catalog
 and prints exact package-name matches. A missing name prints a zero-count
 summary. info SOURCE:PACKAGE performs the same checks and prints one package
@@ -1096,7 +1102,6 @@ path and package record. Up to 20 suggestions are shown, in score and index
 order. Scores prefer ASCII case-insensitive equality, prefix, substring, then one or two byte
 edits. These hints never satisfy a dependency or replace an exact SONAME.
 File hints from a legacy index report unknown coverage and exit 6.
-Multi-source results remain open.
 .PP
 The verify command checks regular DATA files against the supported HOLY/files
 records, including size, mode, numeric owner and SHA-256. It checks symlinks,

@@ -155,11 +155,35 @@ done:
     return result;
 }
 
+static void print_source_alias(const char *alias)
+{
+    const unsigned char *p = (const unsigned char *)alias;
+    fputc('"', stdout);
+    for (; *p; ++p) {
+        if (*p == '"' || *p == '\\') fprintf(stdout, "\\%c", *p);
+        else if (*p < 32 || *p >= 127) fprintf(stdout, "\\x%02x", *p);
+        else fputc(*p, stdout);
+    }
+    fputc('"', stdout);
+}
+
+static int search_catalog(const char *catalog, const char *name,
+                          int file_search, int fuzzy_search)
+{
+    if (file_search) return fuzzy_search ?
+        holy_repo_search_file_fuzzy(catalog, name) :
+        holy_repo_search_file(catalog, name);
+    return fuzzy_search ? holy_repo_search_fuzzy(catalog, name) :
+                          (holy_repo_search(catalog, name) ? 0 : 6);
+}
+
 static int query_source(int argc, char **argv, int search)
 {
     const char *root = "/", *catalog = NULL, *alias = NULL, *name = NULL;
     const char *separator = search ? NULL : strchr(argv[2], ':');
     char source_id[65], *owned_alias = NULL, *bound_catalog = NULL;
+    char **aliases = NULL;
+    size_t alias_count = 0, j, unavailable = 0;
     int i, root_seen = 0, file_search = 0, fuzzy_search = 0, result = 2;
     if (search) name = argv[2];
     else {
@@ -186,8 +210,38 @@ static int query_source(int argc, char **argv, int search)
             root = argv[++i]; root_seen = 1;
         } else goto done;
     }
-    if (!name || !*name || !alias || !*alias ||
-        !strcmp(alias, "local")) goto done;
+    if (!name || !*name || (alias && (!*alias || !strcmp(alias, "local"))) ||
+        (!alias && (!search || catalog))) goto done;
+    if (!alias) {
+        result = holy_source_active_aliases(root, &aliases, &alias_count);
+        if (result) goto done;
+        if (!alias_count) {
+            fputs("holypkg: no active sources\n", stderr);
+            result = 6; goto done;
+        }
+        for (j = 0; j < alias_count; ++j) {
+            char *path = NULL;
+            const char *current = aliases[j];
+            int rc = file_search || fuzzy_search ?
+                holy_source_catalog_path_fast(root, current, &path) :
+                holy_source_catalog_path(root, current, &path);
+            if (!rc) rc = holy_source_catalog(root, current, path, source_id);
+            printf("source "); print_source_alias(current);
+            if (rc) {
+                fputs(" coverage unavailable\n", stdout);
+                ++unavailable;
+            } else {
+                printf(" id %s\n", source_id);
+                rc = search_catalog(path, name, file_search, fuzzy_search);
+                if (rc) ++unavailable;
+            }
+            free(path);
+            if (rc == 2) { result = 2; goto done; }
+        }
+        printf("searched %zu sources; unavailable %zu\n", alias_count, unavailable);
+        result = unavailable ? 6 : ferror(stdout) ? 1 : 0;
+        goto done;
+    }
     if (!catalog) {
         result = search && (file_search || fuzzy_search) ?
                  holy_source_catalog_path_fast(root, alias, &bound_catalog) :
@@ -198,17 +252,15 @@ static int query_source(int argc, char **argv, int search)
     result = holy_source_catalog(root, alias, catalog, source_id);
     if (!result) {
         if (!search) result = holy_repo_info_name(catalog, name);
-        else if (file_search) result = fuzzy_search ?
-            holy_repo_search_file_fuzzy(catalog, name) :
-            holy_repo_search_file(catalog, name);
-        else result = fuzzy_search ? holy_repo_search_fuzzy(catalog, name) :
-                      (holy_repo_search(catalog, name) ? 0 : 6);
+        else result = search_catalog(catalog, name, file_search, fuzzy_search);
         if (!result) printf("source-id %s\n", source_id);
     }
 done:
     if (result == 2) fprintf(stderr,
-        search ? "usage: holypkg search QUERY --source SOURCE [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]\n" :
+        search ? "usage: holypkg search QUERY [--source SOURCE] [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]\n" :
                  "usage: holypkg info SOURCE:PACKAGE [--catalog MIRROR] [--root DIRECTORY]\n");
+    for (j = 0; j < alias_count; ++j) free(aliases[j]);
+    free(aliases);
     free(owned_alias); free(bound_catalog);
     return result;
 }

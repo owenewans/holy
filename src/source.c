@@ -437,6 +437,47 @@ int holy_source_list(const char *root)
     return result;
 }
 
+static int alias_order(const void *a, const void *b)
+{
+    return strcmp(*(char *const *)a, *(char *const *)b);
+}
+
+int holy_source_active_aliases(const char *root, char ***aliases, size_t *count)
+{
+    struct registry r = {0};
+    unsigned long long generation;
+    char *data = NULL;
+    char **items = NULL;
+    size_t i, used = 0;
+    int dir, result = 1;
+    if (!aliases || !count) return 2;
+    *aliases = NULL;
+    *count = 0;
+    dir = holy_state_lock(root, 0, &generation, &result);
+    if (dir < 0) return result;
+    data = load_registry(dir, &r);
+    if (!data) goto done;
+    items = calloc(r.count ? r.count : 1, sizeof *items);
+    if (!items) goto done;
+    for (i = 0; i < r.count; ++i) if (r.items[i].active) {
+        items[used] = strdup(r.items[i].alias);
+        if (!items[used]) goto done;
+        ++used;
+    }
+    qsort(items, used, sizeof *items, alias_order);
+    *aliases = items;
+    *count = used;
+    items = NULL;
+    result = 0;
+done:
+    if (items) {
+        for (i = 0; i < used; ++i) free(items[i]);
+        free(items);
+    }
+    free(data); clear_registry(&r); close(dir);
+    return result;
+}
+
 int holy_source_active_id(const char *root, const char *alias, char output[65])
 {
     struct registry registry = {0};
