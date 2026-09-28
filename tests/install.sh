@@ -150,7 +150,8 @@ import json, sys
 with open(sys.argv[1], encoding='utf-8') as stream:
     records = [json.loads(line) for line in stream]
 assert records == [{'schema': 'holy-installed-check-1', 'type': 'summary',
-                    'pass': 0, 'fail': 0, 'coverage': 'data-manifest'}]
+                    'pass': 0, 'fail': 0, 'unknown': 0,
+                    'coverage': 'data-manifest-and-direct-shebang'}]
 PY
 missing=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 if "$bin" db check "$missing" --root "$tmp/system" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
@@ -233,7 +234,8 @@ assert artifact == {'schema': 'holy-installed-check-1', 'type': 'artifact',
                     'artifact': sys.argv[2], 'state': 'pass', 'code': None,
                     'generation': 1, 'findings': []}
 assert summary == {'schema': 'holy-installed-check-1', 'type': 'summary',
-                   'pass': 1, 'fail': 0, 'coverage': 'data-manifest'}
+                   'pass': 1, 'fail': 0, 'unknown': 0,
+                   'coverage': 'data-manifest-and-direct-shebang'}
 PY
 "$bin" db owner /usr/bin/data --root "$tmp/system" > "$tmp/out"
 grep -qx "$digest file usr/bin/data" "$tmp/out"

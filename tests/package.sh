@@ -223,6 +223,12 @@ printf 'not an executable format\n' > "$tmp/script-root/bin/sh"
 chmod 755 "$tmp/script-root/bin/sh"
 if "$bin" check "local:$tmp/script.holy" --root "$tmp/script-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -q '"code":"unknown-interpreter".*"evidence":"shebang"' "$tmp/out"
+printf 'int fixture(void) { return 0; }\n' > "$tmp/interpreter.c"
+${CC:-cc} -c -o "$tmp/interpreter.o" "$tmp/interpreter.c"
+cp "$tmp/interpreter.o" "$tmp/script-root/bin/sh"
+chmod 755 "$tmp/script-root/bin/sh"
+if "$bin" check "local:$tmp/script.holy" --root "$tmp/script-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q '"code":"unknown-interpreter".*"evidence":"shebang"' "$tmp/out"
 rc=0
 "$bin" preview "local:$tmp/script.holy" --root "$tmp/decision-root" > "$tmp/out" 2> "$tmp/err" || rc=$?
 test "$rc" -eq 3

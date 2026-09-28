@@ -253,7 +253,7 @@ static int preview(const char *package, const char *root_path,
         }
     }
     rc = (conflicts && !completed) ? 4 :
-         ((!resolved && (requirements || elf_needed)) || script_interpreters) ? 3 : 0;
+         (!resolved && (requirements || elf_needed || script_interpreters)) ? 3 : 0;
 done:
     if (rc == 2) fprintf(stderr, "holypkg: cannot preview package\n");
     if (json > 0 && rc != 0 && rc != 3 && rc != 4)

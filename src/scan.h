@@ -10,9 +10,16 @@ struct holy_scanned_file {
     unsigned int mode;
     struct holy_elf_info elf;
 };
+struct holy_scanned_script {
+    char *path;
+    char *interpreter;
+    int kind;
+};
 struct holy_scan_result {
     struct holy_scanned_file *files;
     size_t count;
+    struct holy_scanned_script *scripts;
+    size_t script_count;
 };
 
 /* collects owned facts from a verified snapshot; free after any result. */

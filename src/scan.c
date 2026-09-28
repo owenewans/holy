@@ -4,6 +4,7 @@
 #include "package.h"
 #include "verify.h"
 #include "stage.h"
+#include "script.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -191,6 +192,36 @@ static int inspect_elf(int fd, const char *name, unsigned int mode,
     return 1;
 }
 
+static int inspect_script(int fd, const char *name, unsigned int mode,
+                          la_int64_t size, int emit, struct holy_scan_result *collected)
+{
+    char *interpreter = NULL;
+    int kind = holy_script_read_fd(fd, (off_t)size, (mode_t)mode, &interpreter);
+    if (kind < 0) return 0;
+    if (!kind) return 1;
+    if (emit) {
+        fputs("script ", stdout);
+        print_token(name + 5);
+        putchar(' ');
+        print_token(interpreter);
+        printf(" kind=%s\n", kind == 1 ? "direct" : kind == 2 ? "env" : "unknown");
+    }
+    if (collected) {
+        struct holy_scanned_script *next;
+        if (collected->script_count >= 65536) { free(interpreter); return 0; }
+        next = realloc(collected->scripts, (collected->script_count + 1) * sizeof *next);
+        if (!next) { free(interpreter); return 0; }
+        collected->scripts = next;
+        next = &next[collected->script_count];
+        next->path = strdup(name + 5);
+        if (!next->path) { free(interpreter); return 0; }
+        next->interpreter = interpreter;
+        next->kind = kind;
+        ++collected->script_count;
+    } else free(interpreter);
+    return 1;
+}
+
 static int scan(const char *path, int emit, size_t *needed,
                 struct holy_scan_result *collected)
 {
@@ -216,21 +247,27 @@ static int scan(const char *path, int emit, size_t *needed,
         archive_read_open_filename(a, snapshot, 8192) != ARCHIVE_OK) goto done;
     while ((status = archive_read_next_header(a, &entry)) == ARCHIVE_OK) {
         const char *name = archive_entry_pathname(entry);
-        size_t prefix = 0;
+        size_t prefix = 0, prefix_limit;
         la_ssize_t got;
         FILE *temp;
+        int elf, script;
         if (!name || strncmp(name, "DATA/", 5) || !name[5] ||
             archive_entry_filetype(entry) != AE_IFREG ||
-            archive_entry_hardlink(entry) || archive_entry_size(entry) < 4) {
+            archive_entry_hardlink(entry) || archive_entry_size(entry) < 2) {
             if (archive_read_data_skip(a) != ARCHIVE_OK) goto done;
             continue;
         }
-        while (prefix < 4) {
-            got = archive_read_data(a, buffer + prefix, 4 - prefix);
+        prefix_limit = archive_entry_size(entry) < 4 ?
+                       (size_t)archive_entry_size(entry) : 4;
+        while (prefix < prefix_limit) {
+            got = archive_read_data(a, buffer + prefix, prefix_limit - prefix);
             if (got <= 0) goto done;
             prefix += (size_t)got;
         }
-        if (memcmp(buffer, "\177ELF", 4)) {
+        elf = prefix == 4 && !memcmp(buffer, "\177ELF", 4);
+        script = (archive_entry_perm(entry) & 0111) && prefix >= 2 &&
+                 buffer[0] == '#' && buffer[1] == '!';
+        if (!elf && !script) {
             if (archive_read_data_skip(a) != ARCHIVE_OK) goto done;
             continue;
         }
@@ -240,12 +277,35 @@ static int scan(const char *path, int emit, size_t *needed,
             fclose(temp);
             goto done;
         }
-        while ((got = archive_read_data(a, buffer, sizeof buffer)) > 0)
+        while ((got = archive_read_data(a, buffer,
+                        elf ? sizeof buffer :
+                        prefix < 256 ? 256 - prefix : 0)) > 0) {
             if (fwrite(buffer, 1, (size_t)got, temp) != (size_t)got) {
                 fclose(temp);
                 goto done;
             }
+            if (!elf) {
+                prefix += (size_t)got;
+                if (prefix == 256) break;
+            }
+        }
         if (got < 0 || fflush(temp)) { fclose(temp); goto done; }
+        if (!elf) {
+            size_t low = 0, high = links.count, j;
+            if (!inspect_script(fileno(temp), name, (unsigned int)archive_entry_perm(entry),
+                                archive_entry_size(entry), emit, collected)) { fclose(temp); goto done; }
+            while (low < high) {
+                size_t middle = low + (high - low) / 2;
+                if (strcmp(links.items[middle].target, name + 5) < 0) low = middle + 1;
+                else high = middle;
+            }
+            for (j = low; j < links.count && !strcmp(links.items[j].target, name + 5); ++j)
+                if (!inspect_script(fileno(temp), links.items[j].path, links.items[j].mode,
+                                    archive_entry_size(entry), emit, collected)) { fclose(temp); goto done; }
+            if (archive_read_data_skip(a) != ARCHIVE_OK) { fclose(temp); goto done; }
+            fclose(temp);
+            continue;
+        }
         if (!inspect_elf(fileno(temp), name, (unsigned int)archive_entry_perm(entry),
                          arch, libc, emit, &edges, collected)) { fclose(temp); goto done; }
         {
@@ -303,6 +363,11 @@ void holy_scan_free(struct holy_scan_result *result)
         free(result->files[i].path);
         holy_elf_free(&result->files[i].elf);
     }
+    for (i = 0; i < result->script_count; ++i) {
+        free(result->scripts[i].path);
+        free(result->scripts[i].interpreter);
+    }
+    free(result->scripts);
     free(result->files);
     memset(result, 0, sizeof *result);
 }

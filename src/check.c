@@ -6,6 +6,7 @@
 #include "scan.h"
 #include "elf.h"
 #include "verify.h"
+#include "script.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -121,71 +122,16 @@ static int compare_file(struct archive *a, struct archive_entry *entry, int pare
                 goto done;
         }
     }
-    if (!*interpreter && (st->st_mode & 0111) && st->st_size >= 2) {
-        unsigned char header[256];
-        size_t size = st->st_size < (off_t)sizeof header ? (size_t)st->st_size : sizeof header;
-        const unsigned char *end, *start, *cursor;
-        if (pread(fd, header, size, 0) != (ssize_t)size) goto done;
-        if (header[0] == '#' && header[1] == '!') {
-            *script = 3;
-            end = memchr(header + 2, '\n', size - 2);
-            if (!end && st->st_size > (off_t)size) goto unknown_script;
-            if (!end) end = header + size;
-            if (memchr(header, 0, (size_t)(end - header)) ||
-                memchr(header, '\r', (size_t)(end - header))) goto unknown_script;
-            start = header + 2;
-            while (start < end && (*start == ' ' || *start == '\t')) ++start;
-            cursor = start;
-            while (cursor < end && *cursor != ' ' && *cursor != '\t') ++cursor;
-            if (cursor == start || *start != '/' ||
-                (cursor == end && !memchr(header + 2, '\n', size - 2) &&
-                 size == sizeof header)) goto unknown_script;
-            *interpreter = strndup((const char *)start, (size_t)(cursor - start));
-            if (!*interpreter) goto done;
-            *script = !strcmp(strrchr(*interpreter, '/') + 1, "env") ? 2 : 1;
-        }
+    if (!*interpreter) {
+        *script = holy_script_read_fd(fd, st->st_size, st->st_mode, interpreter);
+        if (*script < 0) goto done;
     }
-    goto checked_script;
-unknown_script:
-    *interpreter = strdup("<unresolved-shebang>");
-    if (!*interpreter) goto done;
-checked_script:
     ok = 1;
 done:
     if (!ok) { free(*interpreter); *interpreter = NULL; }
     if (fd >= 0) close(fd);
     EVP_MD_CTX_free(ctx);
     return ok;
-}
-
-static int shebang_status(int root, const char *interpreter)
-{
-    struct open_how how = {0};
-    struct stat st;
-    struct holy_elf_info info;
-    char *path;
-    int fd, result = -1;
-    size_t length = strlen(interpreter);
-    if (interpreter[0] != '/' || !interpreter[1] || length > (size_t)-1 - 6) return -1;
-    path = malloc(length + 6);
-    if (!path) return -1;
-    snprintf(path, length + 6, "DATA%s", interpreter);
-    if (!holy_safe_archive_path(path)) { free(path); return -1; }
-    free(path);
-    how.flags = O_RDONLY | O_CLOEXEC | O_NONBLOCK;
-    how.resolve = RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS;
-    fd = (int)syscall(SYS_openat2, root, interpreter, &how, sizeof how);
-    if (fd < 0) {
-        if (errno == ENOENT) return 0;
-        return errno == ENOSYS ? -2 : -1;
-    }
-    if (!fstat(fd, &st) && S_ISREG(st.st_mode) && (st.st_mode & 0111)) {
-        int parsed = holy_elf_read_fd(fd, &info);
-        if (!parsed) result = 1;
-        holy_elf_free(&info);
-    }
-    close(fd);
-    return result;
 }
 
 /* 1: compatible ELF, 0: missing, 2: wrong arch, -2: missing syscall, -1: unknown. */
@@ -386,7 +332,7 @@ int holy_check_local(const char *package, const char *root_path, int json)
             report_changed(path, "changed-payload", json);
             ++findings;
         } else if (interpreter) {
-            int loader = script == 3 ? -1 : script ? shebang_status(root, interpreter) :
+            int loader = script == 3 ? -1 : script ? holy_script_target_status(root, interpreter) :
                          interpreter_status(root, interpreter, elf_class, machine);
             if (script == 2 && loader == 1) loader = -1;
             if (loader != 1) {

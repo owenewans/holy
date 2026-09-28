@@ -18,8 +18,9 @@ int holy_install_directory_plan(int root, const struct holy_manifest_entry *entr
 int holy_install_payload(const char *snapshot, int root, int accepted_privileged);
 /* 1 intact, 0 changed/missing, -1 invalid installed manifest. */
 int holy_install_check_manifest(int files_fd, int root);
-/* borrowed path/code; callback returns zero on output/allocation failure. */
-typedef int (*holy_install_finding)(void *context, const char *path, const char *code);
+/* borrowed path/code/target; target is NULL for payload drift. */
+typedef int (*holy_install_finding)(void *context, const char *path,
+                                    const char *code, const char *target);
 int holy_install_check_report(int files_fd, int root,
                               holy_install_finding finding, void *context);
 /* caller must journal first; directories and unlisted paths are retained. */

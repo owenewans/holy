@@ -3,6 +3,7 @@
 #include "install.h"
 #include "verify.h"
 #include "config.h"
+#include "script.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -852,7 +853,40 @@ static int walk_manifest(int files_fd, int root, int mode,
                 !remove_file(root, v[1], &current)) result = 0;
         }
         if (finding && (checked == 0 || checked == 2) &&
-            !finding(context, v[1], checked == 2 ? "missing-file" : "changed-file")) result = -1;
+            !finding(context, v[1], checked == 2 ? "missing-file" : "changed-file", NULL)) result = -1;
+        if (finding && checked == 1 && !strcmp(v[0], "file") &&
+            (row->observed.st_mode & 0111)) {
+            char *storage = NULL, *interpreter = NULL;
+            const char *base;
+            struct stat opened;
+            int parent = parent_fd(root, v[1], &storage, &base), fd = -1;
+            int script, status;
+            if (parent < 0) { free(storage); result = -1; goto done; }
+            fd = openat(parent, base, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+            if (fd < 0 || fstat(fd, &opened) ||
+                opened.st_dev != row->observed.st_dev || opened.st_ino != row->observed.st_ino ||
+                opened.st_size != row->observed.st_size || opened.st_mode != row->observed.st_mode) {
+                if (fd >= 0) close(fd);
+                close(parent); free(storage); result = -1; goto done;
+            }
+            script = holy_script_read_fd(fd, opened.st_size, opened.st_mode, &interpreter);
+            close(fd); close(parent); free(storage);
+            if (script < 0) { result = -1; goto done; }
+            if (script) {
+                const char *code;
+                status = script == 3 ? -1 : holy_script_target_status(root, interpreter);
+                if (script == 2 && status == 1) status = -1;
+                code = status == 0 ? "missing-interpreter" :
+                       status == -2 ? "unavailable-path-resolution" : "unknown-interpreter";
+                if (status != 1) {
+                    fprintf(stderr, "holypkg: %s consumer=%s interpreter=%s\n",
+                            code, v[1], interpreter);
+                    if (!finding(context, v[1], code, interpreter)) result = -1;
+                    else if (result == 1) result = 0;
+                }
+            }
+            free(interpreter);
+        }
         if (result < 0 || (mode && result != 1)) goto done;
     }
     if (filter && matches != 1) result = -1;

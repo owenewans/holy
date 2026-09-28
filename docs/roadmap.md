@@ -160,6 +160,10 @@
   private providers, interpreter handling and explicit conflict decisions.
 - [x] Install, run, check and remove a native static syscall-only ELF fixture;
   foreign-architecture approval remains open.
+- [x] Resolve direct absolute shebangs in native package sets against exact
+  executable ELF paths. Save the selected provider edge, reject unresolved
+  env/malformed scripts, block removal of a needed interpreter, and report
+  installed interpreter drift. Symlink aliases and interpreter chains remain open.
 - [ ] Handle hooks, service consent, modified configs, overrides, rollback and
   recovery of each interrupted mutation phase.
 - [x] Prepare regular-file and relative-symlink replacements beside their target,

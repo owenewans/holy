@@ -379,9 +379,59 @@ done:
     return ok;
 }
 
+static int script_requirement(struct local_item *local, struct holy_solver_item *items,
+                              size_t count, size_t consumer_index,
+                              const struct holy_scanned_script *script)
+{
+    struct local_item *consumer = &local[consumer_index];
+    const char *parts[] = {consumer->identity.name, consumer->identity.arch,
+                          consumer->identity.libc, script->path, script->interpreter};
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    struct elf_edge *edges;
+    unsigned char hash[32];
+    unsigned int length;
+    char id[72] = "script-", capability[140];
+    size_t i, j;
+    int ok = 0;
+    if (script->kind != 1 || !literal_path(script->interpreter)) goto done;
+    if (!ctx || EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1) goto done;
+    for (i = 0; i < sizeof parts / sizeof *parts; ++i)
+        if (EVP_DigestUpdate(ctx, parts[i], strlen(parts[i]) + 1) != 1) goto done;
+    if (EVP_DigestFinal_ex(ctx, hash, &length) != 1 || length != sizeof hash) goto done;
+    for (i = 0; i < sizeof hash; ++i) snprintf(id + 7 + i * 2, 3, "%02x", hash[i]);
+    snprintf(capability, sizeof capability, "script:%s:%s", consumer->identity.digest, id);
+    edges = realloc(consumer->edges, (consumer->edge_count + 1) * sizeof *edges);
+    if (!edges) goto done;
+    consumer->edges = edges;
+    edges[consumer->edge_count].requirement = consumer->requirement_count;
+    edges[consumer->edge_count].path = script->path;
+    edges[consumer->edge_count].kind = "shebang";
+    edges[consumer->edge_count].target = script->interpreter;
+    edges[consumer->edge_count].file = NULL;
+    edges[consumer->edge_count].symbol = NULL;
+    if (!add_requirement(consumer, id, capability)) goto done;
+    ++consumer->edge_count;
+    for (i = 0; i < count; ++i) for (j = 0; j < local[i].scan.count; ++j) {
+        const struct holy_scanned_file *candidate = &local[i].scan.files[j];
+        if (!strcmp(candidate->path, script->interpreter + 1) &&
+            (candidate->mode & 0111) &&
+            (candidate->elf.type == ET_EXEC ||
+             (candidate->elf.type == ET_DYN &&
+              ((candidate->elf.flags1 & DF_1_PIE) || candidate->elf.interpreter))) &&
+            !add_provide(&items[i], capability)) goto done;
+    }
+    ok = 1;
+done:
+    EVP_MD_CTX_free(ctx);
+    return ok;
+}
+
 static int elf_requirements(struct local_item *local, struct holy_solver_item *items, size_t count)
 {
     size_t i, j, k;
+    for (i = 0; i < count; ++i)
+        for (j = 0; j < local[i].scan.script_count; ++j)
+            if (!script_requirement(local, items, count, i, &local[i].scan.scripts[j])) return 0;
     for (i = 0; i < count; ++i) for (j = 0; j < local[i].scan.count; ++j) {
         const struct holy_scanned_file *f = &local[i].scan.files[j];
         if (f->elf.interpreter && !elf_requirement(local, items, count, i, f, "interpreter", f->elf.interpreter, NULL)) return 0;
@@ -453,14 +503,17 @@ static void report_edges(const struct local_item *local, const struct holy_solve
             const char *cap = local[i].requirements[edge->requirement].first;
             int first = 1;
             if (json) {
-                printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"elf-edge\",\"id\":\"%s\",\"consumer\":\"%s\",\"path\":",
+                printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"%s\",\"id\":\"%s\",\"consumer\":\"%s\",\"path\":",
+                       !strcmp(edge->kind, "shebang") ? "script-edge" : "elf-edge",
                        id, local[i].identity.digest);
                 json_string(edge->path);
                 printf(",\"kind\":\"%s\",\"target\":", edge->kind);
                 json_string(edge->target);
                 fputs(",\"providers\":[", stdout);
             } else {
-                printf("elf-edge %s consumer=%s path=", id, local[i].identity.digest);
+                printf("%s %s consumer=%s path=",
+                       !strcmp(edge->kind, "shebang") ? "script-edge" : "elf-edge",
+                       id, local[i].identity.digest);
                 json_string(edge->path);
                 printf(" kind=%s target=", edge->kind);
                 json_string(edge->target);
@@ -672,7 +725,17 @@ static int resolve(const char *const *paths, size_t count, int json,
         for (j = 0; j < local[i].claim_count; ++j)
             if (!add_provide(&items[i], local[i].claims[j].capability)) goto done;
     }
-    if (!package_requirements(local, items, count) || !elf_requirements(local, items, count)) goto done;
+    if (!package_requirements(local, items, count)) goto done;
+    for (i = 0; i < count; ++i) for (j = 0; j < local[i].scan.script_count; ++j) {
+        const struct holy_scanned_script *script = &local[i].scan.scripts[j];
+        if (script->kind != 1 || !literal_path(script->interpreter)) {
+            fprintf(stderr, "holypkg: script-interpreter-decision consumer=%s interpreter=%s\n",
+                    script->path, script->interpreter);
+            result = 3;
+            goto done;
+        }
+    }
+    if (!elf_requirements(local, items, count)) goto done;
     for (i = 0; i < count; ++i) {
         items[i].requires = local[i].requirements;
         items[i].requires_count = local[i].requirement_count;

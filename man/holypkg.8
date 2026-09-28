@@ -823,7 +823,12 @@ does not discover update candidates or apply transactions.
 Static executable installation verifies ELF architecture and nolibc facts;
 it does not execute package programs. The caller may run an installed program
 as a separate action. Executable payloads with an unknown format are refused;
-shebang interpreters remain unresolved requirements in the current planner.
+an executable script with a direct absolute shebang creates a file-specific
+dependency edge to an executable ELF at that exact path in the selected set.
+The edge is saved in installed state and blocks provider removal unless the
+caller accepts broken dependents. The planner requires a decision for env,
+malformed shebangs and paths it cannot resolve. Symlink aliases and interpreter
+chains are not yet resolved as providers by this subset.
 Foreign architecture, including x86 on x86_64, returns requirement error 6
 until architecture override decisions are implemented. No metadata is relabeled.
 .PP
@@ -835,23 +840,28 @@ numeric owner/group and rejects
 symlinked parent paths. It returns 4 for changed or missing files, 6 when
 the instance is absent, and 5 while a file transaction is incomplete. The
 command neither downloads an archive nor repairs a file. This restricted
-check also checks recorded interpreter and needed-path providers against their
+check also checks recorded interpreter, shebang and needed-path providers against their
 installed manifests. Missing or changed provider files produce broken-provider
-findings with the absolute target path. It does not model loader search order,
-scripts or runtime behavior. --all walks
+findings with the absolute target path. For an intact executable script it
+checks the shebang interpreter within the target root. A missing interpreter
+fails; a malformed shebang, env command, invalid interpreter ELF or unresolved
+path reports unknown. This does not test interpreter libraries or runtime
+behavior. A missing openat2 syscall returns 6 and reports unknown coverage.
+It does not model loader search order. --all walks
 every supported installed manifest under the same shared lock and reports each
-artifact as intact or changed in digest order. It returns 4 if any artifact
-has changed. An empty installed set reports zero checked packages. --json
+artifact as intact, changed or unknown in digest order. It returns 4 if any
+artifact has changed or remains unknown. An empty installed set reports zero checked packages. --json
 emits one holy-installed-check-1 JSON line per artifact followed by a summary
-of passes and failures, or one error line on an invalid database, missing
+of passes, failures and unknowns, or one error line on an invalid database, missing
 instance or incomplete transaction. Each artifact includes a findings array
-with code, severity and relative path for each mismatch. missing-file identifies
+with code, severity and relative path for each mismatch. Script interpreter
+findings also include target. missing-file identifies
 an absent file, link or directory, including a path below a missing parent; changed-file covers other
 manifest mismatches, including inaccessible or symlinked parents. Paths encode
 non-ASCII bytes as \eu00HH; consumers reconstruct the original bytes. Findings
 follow manifest order; intact artifacts have an empty array. The artifact-level
-changed-file code remains the aggregate failure indicator. This reports only
-data-manifest coverage, including the selected literal-path provider files.
+code names the first finding. Coverage is data-manifest-and-direct-shebang,
+including the selected literal-path provider files.
 .PP
 Hardlink groups are checked by device and inode as well as contents and metadata.
 Independent copies with matching bytes fail the group check. Missing-only repair

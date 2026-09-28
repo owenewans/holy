@@ -1538,6 +1538,7 @@ done:
 struct check_finding {
     char *path;
     char *code;
+    char *target;
 };
 
 struct check_result {
@@ -1554,45 +1555,91 @@ static void free_check_result(struct check_result *record)
     for (i = 0; i < record->count; ++i) {
         free(record->findings[i].path);
         free(record->findings[i].code);
+        free(record->findings[i].target);
     }
     free(record->findings);
 }
 
-static int collect_finding(void *context, const char *path, const char *code)
+static int collect_finding(void *context, const char *path, const char *code,
+                           const char *target)
 {
     struct check_result *record = context;
     struct check_finding *grown;
-    char *copy, *code_copy;
+    char *copy, *code_copy, *target_copy = target ? strdup(target) : NULL;
     if (record->count >= SIZE_MAX / sizeof *grown) return 0;
+    if (target && !target_copy) return 0;
     copy = strdup(path);
-    if (!copy) return 0;
+    if (!copy) { free(target_copy); return 0; }
     code_copy = strdup(code);
-    if (!code_copy) { free(copy); return 0; }
+    if (!code_copy) { free(copy); free(target_copy); return 0; }
     grown = realloc(record->findings, (record->count + 1) * sizeof *grown);
-    if (!grown) { free(copy); free(code_copy); return 0; }
+    if (!grown) { free(copy); free(code_copy); free(target_copy); return 0; }
     record->findings = grown;
     grown[record->count].path = copy;
-    grown[record->count++].code = code_copy;
+    grown[record->count].code = code_copy;
+    grown[record->count++].target = target_copy;
     return 1;
+}
+
+static int check_status(int checked, const struct check_result *record)
+{
+    size_t i;
+    if (checked > 0) return 1;
+    if (checked < 0 || !record->count) return checked;
+    for (i = 0; i < record->count; ++i)
+        if (strcmp(record->findings[i].code, "unknown-interpreter") &&
+            strcmp(record->findings[i].code, "unavailable-path-resolution")) return 0;
+    return 2;
+}
+
+static int check_unavailable(const struct check_result *record)
+{
+    size_t i;
+    for (i = 0; i < record->count; ++i)
+        if (!strcmp(record->findings[i].code, "unavailable-path-resolution")) return 1;
+    return 0;
+}
+
+static void print_check_string(const char *value)
+{
+    const unsigned char *p = (const unsigned char *)value;
+    putchar('"');
+    for (; *p; ++p) {
+        if (*p == '"' || *p == '\\') printf("\\%c", *p);
+        else if (*p < 32 || *p >= 127) printf("\\u%04x", (unsigned)*p);
+        else putchar(*p);
+    }
+    putchar('"');
 }
 
 static int print_check_result(const struct check_result *record,
                                unsigned long long generation)
 {
-    size_t i;
-    printf("{\"schema\":\"holy-installed-check-1\",\"type\":\"artifact\",\"artifact\":\"%s\",\"state\":\"%s\",\"code\":%s,\"generation\":%llu,\"findings\":[",
-           record->digest, record->intact ? "pass" : "fail",
-           record->intact ? "null" : "\"changed-file\"", generation);
+    size_t i, primary = 0;
+    if (record->intact == 0)
+        for (i = 0; i < record->count; ++i)
+            if (strcmp(record->findings[i].code, "unknown-interpreter") &&
+                strcmp(record->findings[i].code, "unavailable-path-resolution")) {
+                primary = i;
+                break;
+            }
+    printf("{\"schema\":\"holy-installed-check-1\",\"type\":\"artifact\",\"artifact\":\"%s\",\"state\":\"%s\",\"code\":",
+           record->digest, record->intact == 1 ? "pass" : record->intact == 2 ? "unknown" : "fail");
+    if (record->intact == 1 || !record->count) fputs("null", stdout);
+    else print_check_string(record->findings[primary].code);
+    printf(",\"generation\":%llu,\"findings\":[", generation);
     for (i = 0; i < record->count; ++i) {
-        const unsigned char *p = (const unsigned char *)record->findings[i].path;
-        printf("%s{\"code\":\"%s\",\"severity\":\"error\",\"path\":\"",
-               i ? "," : "", record->findings[i].code);
-        for (; *p; ++p) {
-            if (*p == '"' || *p == '\\') printf("\\%c", *p);
-            else if (*p < 32 || *p >= 127) printf("\\u%04x", (unsigned)*p);
-            else putchar(*p);
+        const struct check_finding *finding = &record->findings[i];
+        int unknown = !strcmp(finding->code, "unknown-interpreter") ||
+                      !strcmp(finding->code, "unavailable-path-resolution");
+        printf("%s{\"code\":\"%s\",\"severity\":\"%s\",\"path\":",
+               i ? "," : "", finding->code, unknown ? "warning" : "error");
+        print_check_string(finding->path);
+        if (finding->target) {
+            fputs(",\"target\":", stdout);
+            print_check_string(finding->target);
         }
-        fputs("\"}", stdout);
+        fputs("}", stdout);
     }
     fputs("]", stdout);
     if (record->architecture[0]) {
@@ -1640,7 +1687,8 @@ static int check_graph(int installed, int root, const char *digest,
         if (strcmp(v[1], digest)) { holy_tokens_free(v, count); continue; }
         provider = child_dir(installed, v[3], 0);
         if (provider < 0) intact = errno == ENOENT ? 0 : -1;
-        else if (!strcmp(v[5], "interpreter") || !strcmp(v[5], "needed-path")) {
+        else if (!strcmp(v[5], "interpreter") || !strcmp(v[5], "needed-path") ||
+                 !strcmp(v[5], "shebang")) {
             int files = openat(provider, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
             intact = files < 0 || v[6][0] != '/' ? -1 : holy_install_check_path(files, root, v[6] + 1);
             if (files >= 0) close(files);
@@ -1651,7 +1699,7 @@ static int check_graph(int installed, int root, const char *digest,
             fprintf(stderr, "holypkg: broken-provider consumer=%s requirement=%s provider=%s target=%s\n",
                     digest, v[2], v[3], v[6]);
             if (result == 1) result = 0;
-            if (record && !collect_finding(record, v[6], "broken-provider")) result = -1;
+            if (record && !collect_finding(record, v[6], "broken-provider", NULL)) result = -1;
         }
         holy_tokens_free(v, count);
         if (result < 0) break;
@@ -1667,8 +1715,8 @@ static int check_all(int installed, int root, unsigned long long generation, int
     struct check_result *records = NULL;
     DIR *list = NULL;
     struct dirent *entry;
-    size_t count = 0, capacity = 0, i, passed = 0, failed = 0;
-    int result = 1;
+    size_t count = 0, capacity = 0, i, passed = 0, failed = 0, unknown = 0;
+    int result = 1, unavailable = 0;
     list = directory_stream(installed);
     if (!list) return 1;
     errno = 0;
@@ -1696,15 +1744,16 @@ static int check_all(int installed, int root, unsigned long long generation, int
         memcpy(records[count].digest, entry->d_name, 65);
         ++count;
         status = holy_install_check_report(files, root,
-                    json ? collect_finding : NULL, &records[count - 1]);
+                    collect_finding, &records[count - 1]);
         close(files);
         if (status < 0) goto done;
         {
-            int graph = check_graph(installed, root, entry->d_name, json ? &records[count - 1] : NULL);
+            int graph = check_graph(installed, root, entry->d_name, &records[count - 1]);
             if (graph < 0) goto done;
             if (!graph) status = 0;
         }
-        records[count - 1].intact = status;
+        records[count - 1].intact = check_status(status, &records[count - 1]);
+        if (check_unavailable(&records[count - 1])) unavailable = 1;
         errno = 0;
     }
     if (errno) goto done;
@@ -1712,13 +1761,15 @@ static int check_all(int installed, int root, unsigned long long generation, int
     result = 0;
     for (i = 0; i < count; ++i) {
         int written;
-        if (records[i].intact) ++passed;
+        if (records[i].intact == 1) ++passed;
+        else if (records[i].intact == 2) { ++unknown; result = 4; }
         else { ++failed; result = 4; }
         if (json)
             written = print_check_result(&records[i], generation) ? 0 : -1;
         else
             written = printf("%s %s generation %llu\n",
-                             records[i].intact ? "intact" : "changed",
+                             records[i].intact == 1 ? "intact" :
+                             records[i].intact == 2 ? "unknown" : "changed",
                              records[i].digest, generation);
         if (written < 0) { result = 1; break; }
         if (!json && records[i].architecture[0] &&
@@ -1727,11 +1778,12 @@ static int check_all(int installed, int root, unsigned long long generation, int
     }
     if (result != 1) {
         if (json) {
-            if (printf("{\"schema\":\"holy-installed-check-1\",\"type\":\"summary\",\"pass\":%zu,\"fail\":%zu,\"coverage\":\"data-manifest\"}\n",
-                       passed, failed) < 0) result = 1;
+            if (printf("{\"schema\":\"holy-installed-check-1\",\"type\":\"summary\",\"pass\":%zu,\"fail\":%zu,\"unknown\":%zu,\"coverage\":\"data-manifest-and-direct-shebang\"}\n",
+                       passed, failed, unknown) < 0) result = 1;
         } else if (count == 0 && puts("checked 0 installed packages") == EOF)
             result = 1;
     }
+    if (result == 4 && unavailable) result = 6;
 done:
     for (i = 0; i < count; ++i) free_check_result(&records[i]);
     free(records);
@@ -1743,7 +1795,7 @@ int holy_state_check(const char *digest, const char *root_path, int json)
 {
     struct check_result record = {0};
     unsigned long long generation;
-    int root, dir = -1, installed = -1, item = -1, files = -1, result = 1;
+    int root, dir = -1, installed = -1, item = -1, files = -1, result = 1, reported = 0;
     int checked, all = !strcmp(digest, "--all");
     if (!all && !valid_digest(digest)) {
         if (json) puts("{\"schema\":\"holy-installed-check-1\",\"type\":\"error\",\"code\":\"invalid-argument\",\"status\":2}");
@@ -1760,33 +1812,42 @@ int holy_state_check(const char *digest, const char *root_path, int json)
     if (!installed_valid(dir)) goto done;
     installed = child_dir(dir, "installed", 0);
     if (installed < 0) goto done;
-    if (all) { result = check_all(installed, root, generation, json); goto done; }
+    if (all) {
+        result = check_all(installed, root, generation, json);
+        reported = result == 0 || result == 4 || result == 6;
+        goto done;
+    }
     item = child_dir(installed, digest, 0);
     if (item < 0) { result = 6; goto done; }
     if (!instance_architecture(item, record.architecture)) goto done;
     files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (files < 0) goto done;
     checked = holy_install_check_report(files, root,
-                json ? collect_finding : NULL, &record);
+                collect_finding, &record);
     if (checked >= 0) {
-        int graph = check_graph(installed, root, digest, json ? &record : NULL);
+        int graph = check_graph(installed, root, digest, &record);
         if (graph < 0) checked = -1;
         else if (!graph) checked = 0;
     }
-    result = checked > 0 ? 0 : checked == 0 ? 4 : 1;
-    if (json && (result == 0 || result == 4)) {
+    checked = check_status(checked, &record);
+    result = checked > 0 && checked != 2 ? 0 : checked >= 0 ? 4 : 1;
+    if (result == 4 && check_unavailable(&record)) result = 6;
+    if (json && checked >= 0) {
         memcpy(record.digest, digest, 65);
-        record.intact = !result;
+        record.intact = checked;
         if (!print_check_result(&record, generation)) { result = 1; goto done; }
-        printf("{\"schema\":\"holy-installed-check-1\",\"type\":\"summary\",\"pass\":%d,\"fail\":%d,\"coverage\":\"data-manifest\"}\n",
-               result ? 0 : 1, result ? 1 : 0);
-    } else if (!result) printf("intact %s generation %llu\n", digest, generation);
+        printf("{\"schema\":\"holy-installed-check-1\",\"type\":\"summary\",\"pass\":%d,\"fail\":%d,\"unknown\":%d,\"coverage\":\"data-manifest-and-direct-shebang\"}\n",
+               checked == 1, checked == 0, checked == 2);
+        reported = 1;
+    } else if (checked >= 0 && !json)
+        printf("%s %s generation %llu\n",
+               checked == 1 ? "intact" : checked == 2 ? "unknown" : "changed", digest, generation);
     if (!json && (result == 0 || result == 4) && record.architecture[0])
         printf("accepted-arch-mismatch %s %s execution unverified scope artifact\n", digest, record.architecture);
 done:
     free_check_result(&record);
     if (result) fprintf(stderr, "holypkg: installed check failed (status %d)\n", result);
-    if (json && result != 0 && result != 4) {
+    if (json && result != 0 && !reported) {
         const char *code = result == 5 ? "incomplete-transaction" :
                            result == 6 ? "unavailable-instance" : "invalid-state";
         printf("{\"schema\":\"holy-installed-check-1\",\"type\":\"error\",\"code\":\"%s\",\"status\":%d}\n",
@@ -2345,6 +2406,12 @@ static int explicit_elf_paths(const char *snapshot)
             }
         if (result) break;
     }
+    for (i = 0; !result && i < scan.script_count; ++i)
+        if (scan.scripts[i].kind != 1) {
+            fprintf(stderr, "holypkg: script-interpreter-decision consumer=%s interpreter=%s\n",
+                    scan.scripts[i].path, scan.scripts[i].interpreter);
+            result = 3;
+        }
     holy_scan_free(&scan);
     return result;
 }
@@ -2538,6 +2605,10 @@ static int discover_installed(const char *root_path, int dir,
                 if (elf->needed[k][0] == '/')
                     ok = add_installed_candidates(&catalog, NULL, elf->needed[k] + 1);
         }
+        for (j = 0; ok && j < scan.script_count; ++j)
+            if (scan.scripts[j].kind == 1)
+                ok = add_installed_candidates(&catalog, NULL,
+                        scan.scripts[j].interpreter + 1);
         holy_scan_free(&scan);
         if (!ok) { result = 6; goto done; }
     }

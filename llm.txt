@@ -811,7 +811,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=e465020815c3027cc9e3e6c1f79fc21c0d431ba6588e70565b2614b013036fb5
+holypkg.8 source=holy version=development sha256=06b1202b24d3ab1fbe0868858cc7d71e52eab37c560ee417f42c88b0f4d90bfd
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1621,37 +1621,47 @@ DESCRIPTION
      Static executable installation verifies ELF architecture and nolibc  facts;
      it	 does not execute package programs. The caller may run an installed pro-
      gram as a separate action. Executable payloads with an unknown  format  are
-     refused; shebang interpreters remain unresolved requirements in the current
-     planner.	Foreign	 architecture, including x86 on x86_64, returns require-
-     ment error 6 until architecture  override	decisions  are	implemented.  No
-     metadata is relabeled.
+     refused;  an  executable  script  with  a direct absolute shebang creates a
+     file-specific dependency edge to an executable ELF at that	 exact	path  in
+     the selected set.	The edge is saved in installed state and blocks provider
+     removal unless the caller accepts broken dependents. The planner requires a
+     decision  for  env, malformed shebangs and paths it cannot resolve. Symlink
+     aliases and interpreter chains are not yet resolved as  providers	by  this
+     subset.  Foreign architecture, including x86 on x86_64, returns requirement
+     error  6 until architecture override decisions are implemented. No metadata
+     is relabeled.
 
-     Database  check reads one installed manifest and compares its regular files
-     against the target root by path, type, size, mode,	 numeric  ownership  and
-     SHA-256.  It compares symlink type, mode, numeric ownership and exact read-
-     link target without  following  the  link.	 It  checks  listed  directories
-     against  their  manifest mode and numeric owner/group and rejects symlinked
-     parent paths. It returns 4 for changed or missing files,  6  when	the  in-
+     Database check reads one installed manifest and compares its regular  files
+     against  the  target  root by path, type, size, mode, numeric ownership and
+     SHA-256. It compares symlink type, mode, numeric ownership and exact  read-
+     link  target  without  following  the  link.  It  checks listed directories
+     against their manifest mode and numeric owner/group and  rejects  symlinked
+     parent  paths.  It	 returns  4 for changed or missing files, 6 when the in-
      stance is absent, and 5 while a file transaction is incomplete. The command
      neither downloads an archive nor repairs a file. This restricted check also
-     checks  recorded  interpreter  and	 needed-path providers against their in-
-     stalled manifests.	 Missing  or  changed  provider	 files	produce	 broken-
-     provider  findings	 with the absolute target path. It does not model loader
-     search order, scripts or runtime behavior. --all walks every supported  in-
-     stalled  manifest	under  the same shared lock and reports each artifact as
-     intact or changed in digest  order.  It  returns  4  if  any  artifact  has
-     changed. An empty installed set reports zero checked packages. --json emits
-     one  holy-installed-check-1 JSON line per artifact followed by a summary of
-     passes and failures, or one error line on an invalid database, missing  in-
-     stance  or	 incomplete transaction. Each artifact includes a findings array
-     with code, severity and relative path for each mismatch. missing-file iden-
-     tifies an absent file, link or directory, including a path below a	 missing
-     parent; changed-file covers other manifest mismatches, including inaccessi-
-     ble or symlinked parents. Paths encode non-ASCII bytes as \u00HH; consumers
-     reconstruct  the original bytes. Findings follow manifest order; intact ar-
-     tifacts have an empty array. The artifact-level changed-file  code	 remains
-     the  aggregate failure indicator. This reports only data-manifest coverage,
-     including the selected literal-path provider files.
+     checks recorded interpreter,  shebang  and	 needed-path  providers	 against
+     their  installed  manifests. Missing or changed provider files produce bro-
+     ken-provider findings with the absolute target path.  For	an  intact  exe-
+     cutable  script it checks the shebang interpreter within the target root. A
+     missing interpreter fails; a malformed shebang, env command, invalid inter-
+     preter ELF or unresolved path reports unknown. This does  not  test  inter-
+     preter  libraries	or runtime behavior. A missing openat2 syscall returns 6
+     and reports unknown coverage.  It does not model loader search order. --all
+     walks every supported installed manifest under the same shared lock and re-
+     ports each artifact as intact, changed or unknown in digest order.	 It  re-
+     turns  4 if any artifact has changed or remains unknown. An empty installed
+     set reports zero checked packages. --json emits one  holy-installed-check-1
+     JSON  line	 per  artifact followed by a summary of passes, failures and un-
+     knowns, or one error line on an invalid database, missing instance	 or  in-
+     complete  transaction.  Each  artifact includes a findings array with code,
+     severity and relative path for each mismatch. Script  interpreter	findings
+     also include target. missing-file identifies an absent file, link or direc-
+     tory,  including  a  path below a missing parent; changed-file covers other
+     manifest mismatches, including inaccessible or symlinked parents. Paths en-
+     code non-ASCII bytes as \u00HH; consumers reconstruct the	original  bytes.
+     Findings  follow  manifest order; intact artifacts have an empty array. The
+     artifact-level code names the first finding. Coverage is data-manifest-and-
+     direct-shebang, including the selected literal-path provider files.
 
      Hardlink groups are checked by device and inode as	 well  as  contents  and
      metadata.	 Independent  copies  with  matching bytes fail the group check.
