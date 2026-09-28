@@ -16,5 +16,8 @@ int holy_fetch_https_data(const char *url, const char *expected,
 char *holy_fetch_child_url(const char *base, const char *filename);
 /* reads the exact 72-byte unsigned HTTPS current pointer; zero succeeds. */
 int holy_fetch_https_current(const char *base, const char *ca_file, char digest[65]);
+/* 64-byte Ed25519 sidecar; caller verifies it against a trusted key. */
+int holy_fetch_https_signature(const char *base, const char *digest,
+                               const char *ca_file, unsigned char signature[64]);
 
 #endif

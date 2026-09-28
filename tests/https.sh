@@ -85,6 +85,37 @@ cmp "$tmp/serve/current" "$tmp/mirror/current"
 cmp "$tmp/serve/index.$index" "$tmp/mirror/index.$index"
 cmp "$tmp/serve/space?#.holy" "$tmp/mirror/space?#.holy"
 grep -qx 'verification digest-pinned-unsigned' "$tmp/mirror/mirror-origin"
+openssl genpkey -algorithm ED25519 -out "$tmp/sign-key.pem" > "$tmp/openssl.log" 2>&1
+openssl pkey -in "$tmp/sign-key.pem" -pubout -out "$tmp/sign-pub.pem" > "$tmp/openssl.log" 2>&1
+openssl genpkey -algorithm ED25519 -out "$tmp/wrong-sign-key.pem" > "$tmp/openssl.log" 2>&1
+openssl pkey -in "$tmp/wrong-sign-key.pem" -pubout -out "$tmp/wrong-sign-pub.pem" > "$tmp/openssl.log" 2>&1
+expect 0 "$bin" repo seal "$tmp/serve" --key "$tmp/sign-key.pem"
+expect 0 "$bin" repo mirror "$base" --sha256 "$index" --output "$tmp/signed-mirror" \
+    --public-key "$tmp/sign-pub.pem" --ca-file "$tmp/cert.pem"
+expect 0 "$bin" repo verify "$tmp/signed-mirror" --key "$tmp/sign-pub.pem"
+grep -qx 'verification ed25519-pinned-key' "$tmp/signed-mirror/mirror-origin"
+grep -Eq '^public-key-sha256 [0-9a-f]{64}$' "$tmp/signed-mirror/mirror-origin"
+expect 4 "$bin" repo mirror "$base" --sha256 "$index" --output "$tmp/wrong-sign-key" \
+    --public-key "$tmp/wrong-sign-pub.pem" --ca-file "$tmp/cert.pem"
+test ! -e "$tmp/wrong-sign-key/current"
+cp "$tmp/serve/signature.$index" "$tmp/signature-original"
+printf '\001' | dd of="$tmp/serve/signature.$index" bs=1 seek=0 conv=notrunc status=none
+expect 4 "$bin" repo mirror "$base" --sha256 "$index" --output "$tmp/changed-signature" \
+    --public-key "$tmp/sign-pub.pem" --ca-file "$tmp/cert.pem"
+test ! -e "$tmp/changed-signature/current"
+cp "$tmp/signature-original" "$tmp/serve/signature.$index"
+mkdir "$tmp/signed-source-root"
+expect 0 "$bin" db init --root "$tmp/signed-source-root"
+printf '[source signed]\ntype holy-http\nurl "%s"\ntrust require\npublic-key "%s"\n' \
+    "$base" "$tmp/sign-pub.pem" > "$tmp/signed-source.conf"
+expect 0 "$bin" source plan --config "$tmp/signed-source.conf" --root "$tmp/signed-source-root"
+cp "$tmp/result" "$tmp/signed-source.plan"
+signed_plan=$(sha256sum "$tmp/signed-source.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" source apply "$tmp/signed-source.plan" --sha256 "$signed_plan" --root "$tmp/signed-source-root"
+expect 2 "$bin" sync signed --root "$tmp/signed-source-root" --accept-unsigned "$index" --ca-file "$tmp/cert.pem"
+expect 0 "$bin" sync signed --root "$tmp/signed-source-root" --ca-file "$tmp/cert.pem"
+expect 0 "$bin" search https-second --source signed --root "$tmp/signed-source-root"
+grep -qx 'listed 1 packages' "$tmp/result"
 mkdir "$tmp/source-root"
 expect 0 "$bin" db init --root "$tmp/source-root"
 printf '[source fixture]\ntype holy-http\nurl "%s"\n' "$base" > "$tmp/source.conf"

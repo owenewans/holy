@@ -20,6 +20,7 @@
 #include <archive_entry.h>
 #include <openssl/evp.h>
 #include <dirent.h>
+#include <elf.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -1070,7 +1071,7 @@ int holy_state_find_slot(const char *root_path, const char *source_id,
     struct dirent *entry;
     size_t found = 0;
     digest[0] = 0;
-    if (!valid_digest(source_id) || !name || !*name ||
+    if ((!valid_digest(source_id) && strcmp(source_id, "-")) || !name || !*name ||
         (arch && !*arch) || (libc && !*libc)) return 2;
     database = holy_state_lock(root_path, 0, &generation, &result);
     if (database < 0) return result;
@@ -2589,8 +2590,66 @@ static int installed_package_claim(struct installed_candidates *catalog, int ite
     return ok ? claim.matched : -1;
 }
 
+static int installed_command_claim(int item, const char *name)
+{
+    static const char *const dirs[] = {"usr/bin/", "bin/", "usr/sbin/", "sbin/"};
+    size_t i, length = strlen(name);
+    int files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    int result = 0;
+    if (files < 0) return -1;
+    for (i = 0; i < sizeof dirs / sizeof *dirs; ++i) {
+        size_t prefix = strlen(dirs[i]);
+        char *path;
+        if (length > SIZE_MAX - prefix - 1) { result = -1; break; }
+        path = malloc(prefix + length + 1);
+        if (!path) { result = -1; break; }
+        memcpy(path, dirs[i], prefix);
+        memcpy(path + prefix, name, length + 1);
+        result = holy_install_manifest_executable(files, path);
+        free(path);
+        if (result) break;
+    }
+    close(files);
+    return result;
+}
+
+static int installed_soname_claim(struct installed_candidates *catalog,
+                                  int item, const char *digest, const char *name,
+                                  const char *arch, const char *libc)
+{
+    struct holy_scan_result scan = {0};
+    const char *keys[] = {"arch", "libc"}, *values[] = {arch, libc};
+    char *snapshot;
+    size_t i, fields = 0;
+    int result = -1;
+    if (strcmp(arch, "any")) { keys[fields] = "arch"; values[fields++] = arch; }
+    if (strcmp(libc, "any")) { keys[fields] = "libc"; values[fields++] = libc; }
+    if (fields && (result = installed_fields(item, keys, values, fields)) <= 0) return result;
+    snapshot = holy_cache_snapshot(digest, catalog->root);
+    if (!snapshot) return -1;
+    if (!holy_scan_collect(snapshot, &scan)) goto done;
+    result = 0;
+    for (i = 0; i < scan.count; ++i) {
+        const struct holy_scanned_file *file = &scan.files[i];
+        if (file->elf.type == ET_DYN && !(file->elf.flags1 & DF_1_PIE) &&
+            file->elf.soname && !strcmp(file->elf.soname, name) &&
+            (!strcmp(arch, "any") || !strcmp(arch, holy_elf_machine(&file->elf))) &&
+            (!strcmp(libc, "any") || !strcmp(libc, file->runtime))) {
+            result = 1;
+            break;
+        }
+    }
+done:
+    holy_scan_free(&scan);
+    unlink(snapshot); free(snapshot);
+    return result;
+}
+
+enum installed_query { QUERY_PACKAGE, QUERY_PATH, QUERY_COMMAND, QUERY_SONAME };
+
 static int add_installed_candidates(struct installed_candidates *catalog,
-                                    const char *name, const char *path)
+                                    enum installed_query query, const char *needle,
+                                    const char *arch, const char *libc)
 {
     DIR *list = directory_stream(catalog->installed);
     struct dirent *entry;
@@ -2606,10 +2665,15 @@ static int add_installed_candidates(struct installed_candidates *catalog,
         if (i != catalog->count) { errno = 0; continue; }
         item = child_dir(catalog->installed, entry->d_name, 0);
         if (item < 0) goto done;
-        if (name) matches = installed_package_claim(catalog, item, entry->d_name, name);
+        if (query == QUERY_PACKAGE)
+            matches = installed_package_claim(catalog, item, entry->d_name, needle);
+        else if (query == QUERY_COMMAND)
+            matches = installed_command_claim(item, needle);
+        else if (query == QUERY_SONAME)
+            matches = installed_soname_claim(catalog, item, entry->d_name, needle, arch, libc);
         else {
             int files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
-            matches = files < 0 ? -1 : holy_install_manifest_owns(files, path);
+            matches = files < 0 ? -1 : holy_install_manifest_owns(files, needle);
             if (files >= 0) close(files);
         }
         close(item);
@@ -2632,9 +2696,17 @@ static int installed_requirement(void *context, const char *id,
     const char *arch, const char *libc, const char *relation,
     const char *version, const char *original, const char *evidence)
 {
-    (void)id; (void)consumer; (void)arch; (void)libc; (void)relation;
+    (void)id; (void)consumer; (void)relation;
     (void)version; (void)original; (void)evidence;
-    return strcmp(kind, "package") || add_installed_candidates(context, name, NULL);
+    if (!strcmp(kind, "package"))
+        return add_installed_candidates(context, QUERY_PACKAGE, name, NULL, NULL);
+    if (!strcmp(kind, "file") && name[0] == '/')
+        return add_installed_candidates(context, QUERY_PATH, name + 1, NULL, NULL);
+    if (!strcmp(kind, "command"))
+        return add_installed_candidates(context, QUERY_COMMAND, name, NULL, NULL);
+    if (!strcmp(kind, "soname") && !strcmp(relation, "any"))
+        return add_installed_candidates(context, QUERY_SONAME, name, arch, libc);
+    return 1;
 }
 
 static int installed_link_step(int root, const char *path, size_t *alias_length,
@@ -2733,7 +2805,7 @@ static int installed_script_candidates(struct installed_candidates *catalog,
             continue;
         }
         if (step == 0) {
-            result = add_installed_candidates(catalog, NULL, path) ? 0 : 1;
+            result = add_installed_candidates(catalog, QUERY_PATH, path, NULL, NULL) ? 0 : 1;
             break;
         }
         next = holy_relative_link_path(path, alias_length, target,
@@ -2741,7 +2813,7 @@ static int installed_script_candidates(struct installed_candidates *catalog,
         free(target);
         if (!next) { result = 3; goto done; }
         path[alias_length] = 0;
-        if (!add_installed_candidates(catalog, NULL, path)) {
+        if (!add_installed_candidates(catalog, QUERY_PATH, path, NULL, NULL)) {
             free(next); goto done;
         }
         free(path);
@@ -2793,10 +2865,10 @@ static int discover_installed(const char *root_path, int dir,
         for (j = 0; ok && j < scan->count; ++j) {
             const struct holy_elf_info *elf = &scan->files[j].elf;
             if (elf->interpreter && elf->interpreter[0] == '/')
-                ok = add_installed_candidates(&catalog, NULL, elf->interpreter + 1);
+                ok = add_installed_candidates(&catalog, QUERY_PATH, elf->interpreter + 1, NULL, NULL);
             for (k = 0; ok && k < elf->needed_count; ++k)
                 if (elf->needed[k][0] == '/')
-                    ok = add_installed_candidates(&catalog, NULL, elf->needed[k] + 1);
+                    ok = add_installed_candidates(&catalog, QUERY_PATH, elf->needed[k] + 1, NULL, NULL);
         }
         for (j = 0; ok && j < scan->script_count; ++j)
             if (scan->scripts[j].kind == 1) {

@@ -70,6 +70,7 @@ artifact SHA256_OF_ROOT_PACKAGE
 artifact SHA256_OF_DEPENDENCY_CANDIDATE
 accept-arch SHA256_OF_CONFIRMED_CROSS_ARCH_PACKAGE
 accept-privileged SHA256_OF_REVIEWED_SETUID_PACKAGE
+source SHA256_OF_SELECTED_PACKAGE REGISTERED_SOURCE_ID
 .fi
 .RE
 .PP
@@ -89,6 +90,13 @@ payload the caller has reviewed. Plan format 3 records its exact SHA-256 and
 apply passes the same decision to holypkg. Without the approval, planning
 returns decision-required. The package menu toggles this decision separately
 from architecture placement. A changed artifact needs a new approval and plan.
+.PP
+source associates one selected artifact with an active registered source ID.
+The target database must already contain that registration. Plan format 4
+freezes each artifact-to-source binding and passes it to holypkg during both
+planning and apply. Unknown sources, duplicate bindings and changed source
+registries fail before package mutation. The text menu can set or clear a
+source ID and keeps the binding when saving config.
 .SH DISK PREPARATION
 The disk command accepts a regular file or a block disk of at least 1 GiB. The supported
 layout is GPT with a 1 MiB BIOS boot partition, a 256 MiB FAT32 ESP and an

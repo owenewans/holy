@@ -44,3 +44,6 @@ inputs; `make check-static-core` exercises package operations inside a libc-free
 its QEMU boot probe. See [holy-image(7)](man/holy-image.7) for required inputs
 and the current coverage. `make check-qemu ARCH=x86_64 ISO=FILE BOOT_PLAN=SHA256`
 reruns a supplied image.
+`./holygetiso profiles/holygetiso.example` drives that image path from one
+local-input config once the example paths contain built artifacts. See
+[holygetiso(8)](man/holygetiso.8) for the supported profile and limits.

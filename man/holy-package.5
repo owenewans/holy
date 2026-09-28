@@ -11,6 +11,11 @@ The current resolver supports constrained package requirements for pacman,
 Debian and explicitly tagged Holy native versions. It compares versions
 within the consumer's declared family;
 unknown families remain inspectable but cannot acquire guessed version semantics.
+Unversioned file requirements match exact nondirectory paths in verified
+payload manifests. Declared file claims alone do not establish file ownership.
+Unversioned command requirements match executable payloads in the standard
+bin directories. Links must resolve to an executable in the same artifact;
+declared command claims alone do not prove one exists.
 Native packages opt in with x-version-family holy. Their version and release
 use decimal components separated by dots, with an optional lowercase
 prerelease suffix introduced by hyphen or tilde, such as 7.3-rc4. Invalid

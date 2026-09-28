@@ -11,6 +11,8 @@ int holy_source_list(const char *root);
 int holy_source_active_aliases(const char *root, char ***aliases, size_t *count);
 /* resolves one active alias under a shared database lock; shell-style status. */
 int holy_source_active_id(const char *root, const char *alias, char output[65]);
+/* resolves an alias retained in the registry, including inactive origins. */
+int holy_source_known_id(const char *root, const char *alias, char output[65]);
 /* checks one explicit sealed mirror against the active source definition. */
 int holy_source_catalog(const char *root, const char *alias,
                         const char *catalog, char source_id[65]);
@@ -21,10 +23,10 @@ int holy_source_bind_catalog(const char *root, const char *alias,
 int holy_source_catalog_path(const char *root, const char *alias, char **path);
 /* validates the bound index without opening unrelated package payloads. */
 int holy_source_catalog_path_fast(const char *root, const char *alias, char **path);
-/* mirrors one registered holy-http source with a pinned index digest. */
+/* mirrors one registered native source with a pinned index digest. */
 int holy_source_sync(const char *alias, const char *root, const char *digest,
                      const char *accepted_unsigned, const char *output,
-                     const char *ca_file);
+                     const char *ca_file, const char *commit);
 
 /* caller holds database lock; returns an owned alias record and registry hash. */
 int holy_source_record(int database, const char *id, char **record, char registry[65]);

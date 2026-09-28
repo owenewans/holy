@@ -1,6 +1,7 @@
 /holypkg
 /holy-init
 /holyinstall
+/holygetiso
 /src/*.o
 /tests/solver
 /tests/install-helper

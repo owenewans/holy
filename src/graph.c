@@ -128,7 +128,9 @@ static int collect(void *context, int root, int item, const char *digest)
                 } else if (count == 7 && !strcmp(v[0], "edge") &&
                            digest_valid(v[1]) && digest_valid(v[3]) && v[2][0] &&
                            v[4][0] && v[6][0] &&
-                           (!strcmp(v[5], "package") || !strcmp(v[5], "interpreter") ||
+                           (!strcmp(v[5], "package") || !strcmp(v[5], "file") ||
+                            !strcmp(v[5], "command") ||
+                            !strcmp(v[5], "interpreter") ||
                             !strcmp(v[5], "needed-path") || !strcmp(v[5], "soname") ||
                             !strcmp(v[5], "symbol"))) {
                     if (!strcmp(v[1], digest)) {

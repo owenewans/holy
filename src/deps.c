@@ -49,6 +49,17 @@ static int valid_requirement(char **v, size_t n)
     return 1;
 }
 
+int holy_deps_record_valid(const char *id, const char *consumer,
+    const char *kind, const char *name, const char *arch, const char *libc,
+    const char *relation, const char *version, const char *original,
+    const char *evidence)
+{
+    char *v[] = {"require", (char *)id, (char *)consumer, (char *)kind,
+                 (char *)name, (char *)arch, (char *)libc, (char *)relation,
+                 (char *)version, (char *)original, (char *)evidence};
+    return valid_requirement(v, 11);
+}
+
 static int parse(char *data, size_t length, struct requirement **items,
                  size_t *count)
 {

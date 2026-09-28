@@ -982,6 +982,67 @@ int holy_install_manifest_owns(int files_fd, const char *path)
     return manifest_claims(files_fd, path, -1);
 }
 
+static int manifest_executable_path(int files_fd, const char *path, unsigned int depth)
+{
+    struct stat st;
+    FILE *stream = NULL;
+    char *line = NULL, *link = NULL;
+    size_t capacity = 0, number = 0;
+    ssize_t length;
+    int copy, found = 0, result = 0;
+    if (depth == 16) return 0;
+    if (fstat(files_fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+        st.st_size > 16 * 1024 * 1024 || lseek(files_fd, 0, SEEK_SET)) return -1;
+    copy = dup(files_fd);
+    if (copy < 0) return -1;
+    stream = fdopen(copy, "r");
+    if (!stream) { close(copy); return -1; }
+    while ((length = getline(&line, &capacity, stream)) >= 0) {
+        char **v = NULL, *error = NULL;
+        size_t count = 0;
+        ++number;
+        if (memchr(line, '\0', (size_t)length) ||
+            !holy_lex(line, (size_t)length, &v, &count,
+                      "installed/files", number, &error)) result = -1;
+        free(error);
+        if (result >= 0 && count) {
+            int symlink = !strcmp(v[0], "symlink");
+            int hardlink = !strcmp(v[0], "hardlink");
+            if (count != (symlink || hardlink ? 13u : 12u) ||
+                (strcmp(v[0], "file") && strcmp(v[0], "dir") &&
+                 !symlink && !hardlink)) result = -1;
+            else if (!strcmp(v[1], path)) {
+                unsigned long long mode;
+                if (found++) result = -1;
+                else if (symlink) {
+                    if (!holy_safe_link(v[1], v[12]) || !(link = strdup(v[12]))) result = -1;
+                } else if (!strcmp(v[0], "file") || hardlink) {
+                    if (!decimal(v[2], 8, &mode) || mode > 07777) result = -1;
+                    else result = (mode & 0111) != 0;
+                }
+            }
+        }
+        holy_tokens_free(v, count);
+        if (result < 0) break;
+    }
+    if (ferror(stream) || st.st_size != ftello(stream)) result = -1;
+    free(line);
+    fclose(stream);
+    if (result >= 0 && link) {
+        char *next = holy_relative_link_path(path, strlen(path), link, "");
+        result = next ? manifest_executable_path(files_fd, next, depth + 1) : -1;
+        free(next);
+    }
+    free(link);
+    return result;
+}
+
+int holy_install_manifest_executable(int files_fd, const char *path)
+{
+    if (!path || !*path || *path == '/') return -1;
+    return manifest_executable_path(files_fd, path, 0);
+}
+
 int holy_install_manifests_conflict(int left_fd, int right_fd)
 {
     return manifest_claims(left_fd, NULL, right_fd);

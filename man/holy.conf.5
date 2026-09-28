@@ -4,8 +4,9 @@ holy.conf \- Holy source configuration format
 .SH STATUS
 This page describes the syntax checker and source identity registration. A
 registered holy-http source can mirror one explicitly pinned or explicitly
-accepted unsigned current index through holypkg sync. Signed source refresh,
-general multi-source resolution and
+accepted unsigned current index through holypkg sync. A registered holy-git
+source uses a pinned commit and index digest. A source with an
+Ed25519 public key verifies signed generations. General multi-source resolution and
 full disk installation are not implemented;
 the restricted local data/static-ELF transaction uses separate commands.
 .SH SYNOPSIS
@@ -36,6 +37,15 @@ Repository names within one source must be distinct. Each populated rule
 requires consumer, require and provider. Empty values are rejected. These
 checks do not prove that a repository is reachable or its packages can resolve.
 .PP
+For holy-http and holy-git, "public-key PATH" names an Ed25519 PEM public key. The path is
+relative to the file containing that entry. source plan reads it and freezes
+the raw 32-byte public key in the reviewed registry plan; source apply does
+not reopen the PEM file. "public-key-ed25519 HEX" supplies those bytes as
+64 lowercase hex digits. Only one form is allowed. trust require needs a key
+for either native source type. A configured key requires signed catalogs for sync, binding
+and later source queries even when trust is warn. Private signing keys are
+not configuration inputs.
+.PP
 [install] accepts one root directory and ordered artifact SHA-256 entries for
 holyinstall's pre-mounted-root package transaction. The first artifact is the
 explicit package. The installer checks required fields, digest syntax and
@@ -45,6 +55,10 @@ with a different target architecture. The frozen plan retains each approval.
 An accept-privileged list confirms the exact artifact hashes whose setuid
 executables have been reviewed. holyinstall records these decisions in its
 frozen plan and passes them to holypkg.
+The list key "source ARTIFACT_SHA256 SOURCE_ID" associates a selected local
+artifact with an active registered origin. The installed instance retains
+the source ID and alias snapshot; metadata inside the archive grants no source
+authority.
 .PP
 [disk] accepts one image path and layout gpt-ext4. The disk plan accepts
 regular image files, not block devices. Its fixed plan schema forbids include.
@@ -67,7 +81,7 @@ registry replacement. The source apply command consumes that frozen plan; it
 does not reread the configuration. See holypkg(8) for the command sequence.
 .PP
 The current source ID is SHA-256 of a canonical, sorted representation of type,
-url and repo records. Alias, parent and trust policy are excluded. Renaming an
+url and repo records. Alias, parent, trust policy and public key are excluded. Renaming an
 alias preserves the ID. Changing an endpoint, backend type or repository name
 creates another ID and retains the previous definition as inactive history.
 Readding the same definition reactivates its existing ID. Equivalent URL
@@ -78,5 +92,5 @@ userinfo, queries, fragments and whitespace. Plans therefore cannot carry those
 credential forms. Two aliases with the same definition require a decision.
 Registration neither contacts a repository nor verifies its signatures. Set
 installation can bind local artifacts to registered IDs through explicit --source
-associations. Source trust and parent policies during package selection remain
-unimplemented.
+associations. Trust policy beyond signed native catalogs and parent policy
+during package selection remain unimplemented.

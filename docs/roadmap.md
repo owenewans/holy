@@ -16,6 +16,19 @@
 
 ## Package manager
 
+- [x] Add a direct `holypkg run SOURCE:PACKAGE -- COMMAND` launcher for an
+  installed executable, with source-slot selection, manifest verification,
+  argv/exit preservation, and private-bin PATH priority when such paths exist.
+  The fixture installs a static executable in a disposable root. Automatic
+  private conflict placement and mount-namespace path views remain open.
+- [x] Publish a native index generation with an optional Ed25519 signature
+  before switching `current`; verify the exact index bytes and package
+  artifacts against a supplied public key. Signed HTTPS mirrors check the
+  signature before package downloads. Freeze source keys outside the source
+  ID, enforce them during sync and bound catalog reads, and carry them through
+  holygetiso's effective config. Wrong keys and changed signatures fail local
+  fixtures. The signed HTTPS fixture still needs a network-enabled run.
+
 - [x] Bind explicit non-native architecture placement decisions to individual
   selected artifact hashes, the plan and the recovery journal. Preserve host and
   target in installed state and check output, retain decisions for reused
@@ -48,8 +61,18 @@
 - [x] Resolve declared package aliases using their own versions and artifact ABI
   scopes. Preserve claims and their hash in holy-instance-4, discover installed
   aliases, and reject updates dropping required capabilities. Read legacy state
-  through verified cached artifacts when alias metadata is needed. File, command
-  and build claims still need dependency resolution support.
+  through verified cached artifacts when alias metadata is needed. Build
+  claims still need dependency resolution support.
+- [x] Resolve unversioned literal file requirements from verified nondirectory
+  payload paths, including links. Preserve the chosen owner in installed graphs;
+  reject removal that breaks a consumer. Declared file claims alone do not
+  satisfy a requirement. Versioned file requirements and cross-source lookup
+  remain open.
+- [x] Resolve unversioned bare command requirements from executable payloads
+  in standard bin directories, including links to an executable in the same
+  artifact. Reject claim-only and nonexecutable candidates; retain command
+  edges through installation and removal checks. Custom PATH, shell builtins,
+  versioned command requirements and private launcher mappings remain open.
 
 - [x] Build gzip, LZ4, Zstandard, XZ and bzip2 codecs into the static musl client.
   Verify foreign import and native install/check/remove in a chroot without
@@ -168,6 +191,14 @@
   private providers, interpreter handling and explicit conflict decisions.
 - [x] Install, run, check and remove a native static syscall-only ELF fixture;
   foreign-architecture approval remains open.
+- [x] Resolve exact unversioned HOLY/deps SONAME records from scanned ET_DYN
+  payloads, reject a forged typed claim, save the selected provider in the
+  installed graph and prevent its removal. A selected foreign dependency now
+  returns decision-required; an unused candidate can carry one without
+  blocking a separate operation. A later set can find and reuse the installed
+  SONAME provider from its cached archive, and a mismatched arch scope cannot
+  reuse it. An unrelated ABI package needs no cache object for this lookup.
+  Indexed installed SONAME lookup and loader-path checks remain open.
 - [x] Resolve direct absolute shebangs in native package sets against exact
   executable ELF paths. Save the selected provider edge, reject unresolved
   env/malformed scripts, block removal of a needed interpreter, and report
@@ -228,19 +259,30 @@
   changes, privileged ownership and general single-install resume remain open.
 - [ ] Implement native HTTPS/Git source synchronization, signed generations and
   cache retention with provenance.
+- [x] Sync a registered holy-git source at an explicit full commit and native
+  index digest. Verify all referenced artifacts and an optional registered
+  Ed25519 signature, bind the sealed clone to its source-id, and reject a
+  changed commit on later queries. A local Git fixture covers signed and unsigned
+  sync, search, fetch, wrong pins and changed checkout metadata. Remote Git transport and
+  multi-source resolution still need integration testing.
+- [x] Accept a pinned holy-git commit in holygetiso source sections. Preserve
+  the commit in the effective config and build record, pass it to source sync,
+  and verify an imported clone before source binding. A local signed Git
+  fixture covers image source staging and config validation.
 - [x] Mirror an explicitly pinned HTTPS native catalog into a new sealed local
   snapshot through the common transport. Verify all artifact hashes, identity,
   payload and claims before publishing current; retain unsigned URL/digest
   provenance. Fixture TLS covers search/solve/fetch, escaped filenames, empty,
   duplicate/truncated indexes, false claims, bad hashes, missing URLs and limits.
-  Publisher signatures remain open.
+  Signed generations use a separate Ed25519 sidecar; the signed HTTPS fixture
+  still needs a network-enabled run.
 - [x] Resolve an active registered holy-http alias to its immutable source-id
   and HTTPS URL, then mirror a pinned index into a new local catalog. An
   unsigned remote current pointer can propose a digest; a separate exact-hash
   confirmation rereads it before mirroring. Store source-id and selection in
   mirror-origin before sealing. Local TLS fixtures cover alias changes,
   unrelated backends, wrong digest, missing CA, changed/malformed pointers and
-  credential-bearing redirects. Publisher signatures and multi-source
+  credential-bearing redirects. Multi-source
   dependency resolution remain open.
 - [x] Fetch one SOURCE:PACKAGE from an explicit sealed synced mirror without
   installing it. Check active source ID and URL against mirror provenance,
@@ -251,8 +293,7 @@
   packages to the registered source-id, and bind index digest to the reviewed
   plan and recovery journal. Reject changed catalogs before apply. A faulted
   generation update recovers from the version-5 journal without network access.
-  Signed indexes, multi-source ranking and indexed on-demand candidate retrieval
-  remain open.
+  Multi-source ranking and indexed on-demand candidate retrieval remain open.
 - [x] Query an active holy-http source through an explicit synced mirror with
   `search QUERY --source ALIAS` and `info ALIAS:PACKAGE`. Verify source identity,
   pinned index and matching artifacts before returning exact names; report missing and
@@ -265,12 +306,22 @@
   order, labels each result with its source ID and reports unavailable
   catalogs as incomplete coverage. Multi-source resolver integration remains
   open.
+- [x] Add complete HOLY/deps records to native index generation 4. Verify the
+  records against each selected archive, and expose `repo requirements` for
+  a digest-pinned metadata query without opening the payload. The solver still
+  scans archives for ELF-derived requirements; indexed candidate closure remains
+  open.
+- [x] Add scanned DT_SONAME facts to index generation 5. Exact provider lookup
+  uses actual ET_DYN payload facts, then verifies selected archives; a forged
+  HOLY/provides SONAME claim cannot become a candidate. Full symbol-version
+  indexing and on-demand dependency closure remain open.
 - [x] Bind a verified synced mirror and index digest to a registered source-id
   under the target database lock. Resolve add, fetch, search and info without
   repeating --catalog; reject corrupt bindings and changed mirrors. Keep the
   binding across alias renames. Sync without --output now publishes a verified
-  generation in the target cache and binds it for source queries. Publisher
-  signatures and a rootless system-cache workflow remain open.
+  generation in the target cache and binds it for source queries. A registered
+  Ed25519 key now rejects unsigned or changed bound catalogs. A rootless
+  system-cache workflow remains open.
 - [ ] Implement remaining foreign binary adapters and file indexes with real
   fixtures: APT indexes, RPM, APK, XBPS, Slackware, eopkg, homebrew and guix.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
@@ -384,8 +435,29 @@
 - [ ] Complete C99 `holyinstall` plans for accounts, network, encryption and
   filesystem choices. The implemented blank-disk GPT/ext4/FAT path uses
   reviewed plans and `holypkg --root`; account login has a VM fixture.
+  Config and text menu now bind selected artifacts to registered source IDs
+  through frozen plan format 4 and retain that provenance at install.
 - [ ] Implement `holygetiso` with explicit inputs, installed man bundle and a
-  boot-validated ISO for each target architecture.
+  boot-validated ISO for each target architecture. The first in-tree C99
+  frontend now parses a single explicit local-input config, records its hash
+  in the boot plan and drives the existing bootstrap/QEMU path. Additional
+  relative includes now contribute to one frozen effective config; include
+  cycles and duplicate scalar values fail before the build.
+  local .holy packages join its set plan and input record.
+  Pinned holy-http sources now solve and fetch same-catalog dependency closures,
+  register their source IDs in the image root and bind each fetched artifact
+  in the set plan.
+  An explicit sealed mirror supplies the same pinned generation offline. The
+  builder includes a full verified catalog in the image root only with
+  embed-mirror yes. That binding uses a root-relative path, so moving the
+  built root preserves source lookups without forcing every ISO to carry an
+  entire repository.
+  `--export-inputs` now checks the build's input lock, then copies and verifies
+  package inputs, mirrors and plans separately. The builder records direct host
+  tool paths and hashes, but does not archive their dependency closure. Cross-source dependency
+  selection and relocatable installation remain
+  open. The explicit build-only path records untested and exits 6. No image
+  was built from this frontend without local package and kernel inputs.
 
 ## Acceptance gates
 

@@ -6,8 +6,10 @@ trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 mkdir "$tmp/empty"
 "$bin" repo index "$tmp/empty" > "$tmp/out"
 grep -qx 'indexed 0 packages' "$tmp/out"
-grep -qx 'format holy-index-prototype-3' "$tmp/empty/index"
+grep -qx 'format holy-index-prototype-5' "$tmp/empty/index"
 grep -qx 'coverage files complete' "$tmp/empty/index"
+grep -qx 'coverage dependencies complete' "$tmp/empty/index"
+grep -qx 'coverage elf-sonames complete' "$tmp/empty/index"
 if "$bin" repo list "$tmp/empty" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 "$bin" repo seal "$tmp/empty" > "$tmp/out"
@@ -33,8 +35,10 @@ grep -qx 'indexed 1 packages' "$tmp/out"
 hash=$(sha256sum "$tmp/repo/fixture.holy")
 hash=${hash%% *}
 size=$(stat -c %s "$tmp/repo/fixture.holy")
-grep -qx 'format holy-index-prototype-3' "$tmp/repo/index"
+grep -qx 'format holy-index-prototype-5' "$tmp/repo/index"
 grep -qx 'coverage files complete' "$tmp/repo/index"
+grep -qx 'coverage dependencies complete' "$tmp/repo/index"
+grep -qx 'coverage elf-sonames complete' "$tmp/repo/index"
 grep -qx "package \"fixture\" \"1.0\" \"1\" \"linux\" \"noarch\" \"nolibc\" \"fixture.holy\" $hash $size" "$tmp/repo/index"
 if "$bin" repo list "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
@@ -57,9 +61,11 @@ grep -Fqx '{"schema":"holy-repo-candidates-1","type":"summary","count":1}' "$tmp
 grep -qx 'listed 0 candidates' "$tmp/out"
 "$bin" repo providers "$tmp/repo" soname libc.so.6 --json > "$tmp/out"
 grep -Fqx '{"schema":"holy-repo-candidates-1","type":"summary","count":0}' "$tmp/out"
+"$bin" repo requirements "$tmp/repo" fixture > "$tmp/out"
+grep -qx 'requirements 0' "$tmp/out"
 mkdir "$tmp/legacy"
 cp "$tmp/repo/fixture.holy" "$tmp/legacy/fixture.holy"
-sed '/^coverage files complete$/d;s/holy-index-prototype-3/holy-index-prototype-1/' "$tmp/repo/index" > "$tmp/legacy/index"
+sed '/^coverage /d;s/holy-index-prototype-5/holy-index-prototype-1/' "$tmp/repo/index" > "$tmp/legacy/index"
 legacy_hash=$(sha256sum "$tmp/legacy/index")
 legacy_hash=${legacy_hash%% *}
 cp "$tmp/legacy/index" "$tmp/legacy/index.$legacy_hash"
@@ -68,6 +74,8 @@ printf 'sha256 %s\n' "$legacy_hash" > "$tmp/legacy/current"
 grep -qx 'listed 1 packages' "$tmp/out"
 "$bin" repo providers "$tmp/legacy" package fixture > "$tmp/out"
 grep -qx 'listed 1 candidates' "$tmp/out"
+if "$bin" repo requirements "$tmp/legacy" fixture > "$tmp/out"; then exit 1; fi
+grep -qx 'status unknown: source has no complete dependency index' "$tmp/out"
 if "$bin" repo search-file "$tmp/legacy" /usr/bin/absent > "$tmp/out"; then exit 1; fi
 grep -q '^coverage files unavailable index ' "$tmp/out"
 grep -qx 'status unknown: source has no complete file index' "$tmp/out"
@@ -140,13 +148,13 @@ sed -e 's/^name fixture$/name "fixture two"/' -e 's/^version 1.0$/version 2.0/' 
     "$tmp/payload/HOLY/meta" > "$tmp/new-meta"
 mv "$tmp/new-meta" "$tmp/payload/HOLY/meta"
 printf 'require libc-1 package soname libc.so.6 x86_64 glibc any - libc.so.6 metadata\n' > "$tmp/payload/HOLY/deps"
-printf 'provide package helper-alias noarch nolibc 2.0 metadata\nprovide command helper noarch nolibc - metadata\n' > "$tmp/payload/HOLY/provides"
+printf 'provide package helper-alias noarch nolibc 2.0 metadata\nprovide command helper noarch nolibc - metadata\nprovide soname ghost.so.1 any any - metadata\n' > "$tmp/payload/HOLY/provides"
 tar -cf "$tmp/variant.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/variant.tar" "$tmp/repo/variant.holy"
 "$bin" requirements "local:$tmp/repo/variant.holy" > "$tmp/out"
 grep -qx 'requirements 1' "$tmp/out"
 "$bin" provides "local:$tmp/repo/variant.holy" > "$tmp/out"
-grep -qx 'capabilities 2' "$tmp/out"
+grep -qx 'capabilities 3' "$tmp/out"
 "$bin" repo index "$tmp/repo" > "$tmp/out"
 grep -qx 'indexed 2 packages' "$tmp/out"
 "$bin" repo seal "$tmp/repo" > "$tmp/out"
@@ -156,7 +164,16 @@ variant_size=$(stat -c %s "$tmp/repo/variant.holy")
 grep -Fqx "package \"fixture\\x20two\" \"2.0\" \"1\" \"linux\" \"noarch\" \"nolibc\" \"variant.holy\" $variant_hash $variant_size" "$tmp/repo/index"
 grep -Fqx "claim $variant_hash \"package\" \"helper-alias\" \"noarch\" \"nolibc\" \"2.0\" \"metadata\"" "$tmp/repo/index"
 grep -Fqx "claim $variant_hash \"command\" \"helper\" \"noarch\" \"nolibc\" \"-\" \"metadata\"" "$tmp/repo/index"
+"$bin" repo providers "$tmp/repo" soname ghost.so.1 > "$tmp/out"
+grep -qx 'listed 0 candidates' "$tmp/out"
+grep -Fqx "require $variant_hash \"libc-1\" \"package\" \"soname\" \"libc.so.6\" \"x86_64\" \"glibc\" \"any\" \"-\" \"libc.so.6\" \"metadata\"" "$tmp/repo/index"
+"$bin" repo requirements "$tmp/repo" 'fixture two' > "$tmp/out"
+grep -qx 'requirements 1' "$tmp/out"
+grep -Fqx "require $variant_hash \"libc-1\" \"package\" \"soname\" \"libc.so.6\" \"x86_64\" \"glibc\" \"any\" \"-\" \"libc.so.6\" \"metadata\"" "$tmp/out"
 cp "$tmp/repo/index" "$tmp/index-before-forgery"
+sed 's/"libc.so.6" "metadata"/"libc.so.7" "metadata"/' "$tmp/index-before-forgery" > "$tmp/repo/index"
+if "$bin" repo seal "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+test ! -s "$tmp/out"
 sed 's/"helper-alias"/"forged-alias"/' "$tmp/index-before-forgery" > "$tmp/repo/index"
 if "$bin" repo seal "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"

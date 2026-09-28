@@ -200,15 +200,15 @@ static size_t receive_current(void *data, size_t size, size_t count, void *conte
     return length;
 }
 
-int holy_fetch_https_current(const char *base, const char *ca_file, char digest[65])
+static int https_small(const char *base, const char *name, const char *ca_file,
+                       unsigned char *bytes, size_t expected)
 {
     struct current_download download = {{0}, 0};
     struct timespec started, now;
     CURL *curl = NULL;
-    char *url = holy_fetch_child_url(base, "current");
+    char *url = holy_fetch_child_url(base, name);
     int initialized = 0, result = 1, redirect;
-    size_t i;
-    if (!url) return 2;
+    if (!url || expected > sizeof download.bytes) { free(url); return 2; }
     if (clock_gettime(CLOCK_MONOTONIC, &started) ||
         curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) goto done;
     initialized = 1;
@@ -249,10 +249,24 @@ int holy_fetch_https_current(const char *base, const char *ca_file, char digest[
         free(copy);
         download.used = 0;
     }
+    result = download.used == expected ? 0 : 4;
+    if (!result) memcpy(bytes, download.bytes, expected);
+done:
+    if (curl) curl_easy_cleanup(curl);
+    if (initialized) curl_global_cleanup();
+    free(url);
+    return result;
+}
+
+int holy_fetch_https_current(const char *base, const char *ca_file, char digest[65])
+{
+    unsigned char bytes[72];
+    int result = https_small(base, "current", ca_file, bytes, sizeof bytes);
+    size_t i;
+    if (result) goto done;
     result = 4;
-    if (download.used != 72 || memcmp(download.bytes, "sha256 ", 7) ||
-        download.bytes[71] != '\n') goto done;
-    memcpy(digest, download.bytes + 7, 64);
+    if (memcmp(bytes, "sha256 ", 7) || bytes[71] != '\n') goto done;
+    memcpy(digest, bytes + 7, 64);
     digest[64] = 0;
     for (i = 0; i < 64; ++i)
         if (!((digest[i] >= '0' && digest[i] <= '9') ||
@@ -260,9 +274,22 @@ int holy_fetch_https_current(const char *base, const char *ca_file, char digest[
     result = 0;
 done:
     if (result) fprintf(stderr, "holypkg: HTTPS current unavailable or invalid (status %d)\n", result);
-    if (curl) curl_easy_cleanup(curl);
-    if (initialized) curl_global_cleanup();
-    free(url);
+    return result;
+}
+
+int holy_fetch_https_signature(const char *base, const char *digest,
+                               const char *ca_file, unsigned char signature[64])
+{
+    char name[75];
+    size_t i;
+    int result;
+    if (!digest || strlen(digest) != 64) return 2;
+    for (i = 0; i < 64; ++i)
+        if (!((digest[i] >= '0' && digest[i] <= '9') ||
+              (digest[i] >= 'a' && digest[i] <= 'f'))) return 2;
+    snprintf(name, sizeof name, "signature.%s", digest);
+    result = https_small(base, name, ca_file, signature, 64);
+    if (result) fprintf(stderr, "holypkg: HTTPS signature unavailable or invalid (status %d)\n", result);
     return result;
 }
 

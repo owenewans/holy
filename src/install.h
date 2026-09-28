@@ -29,6 +29,8 @@ int holy_install_remove_manifest(int files_fd, int root);
 int holy_install_finish_remove_manifest(int files_fd, int root);
 /* 0 absent, 1 file or symlink, 2 directory, -1 malformed or I/O error. */
 int holy_install_manifest_owns(int files_fd, const char *path);
+/* 1 executable, 0 absent/nonexecutable, -1 invalid installed manifest. */
+int holy_install_manifest_executable(int files_fd, const char *path);
 /* 1 conflicting claims, 0 disjoint/shared directories, -1 invalid input. */
 int holy_install_manifests_conflict(int left_fd, int right_fd);
 

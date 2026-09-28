@@ -195,9 +195,11 @@ static int list_key(const char *section, const char *key)
 {
     return (!strncmp(section, "source ", 7) && !strcmp(key, "repo")) ||
            (!strcmp(section, "install") && (!strcmp(key, "artifact") ||
+                                            !strcmp(key, "source") ||
                                             !strcmp(key, "accept-arch") ||
                                             !strcmp(key, "accept-privileged"))) ||
            (!strcmp(section, "install-plan") && (!strcmp(key, "artifact") ||
+                                                 !strcmp(key, "source") ||
                                                  !strcmp(key, "accept-arch") ||
                                                  !strcmp(key, "accept-privileged"))) ||
            (!strcmp(section, "resolver") && !strcmp(key, "prefer"));
@@ -229,9 +231,11 @@ static int key_arity(const char *section, const char *key)
         if (!strcmp(key, "image") || !strcmp(key, "device") ||
             !strcmp(key, "layout")) return 1;
     } else if (!strcmp(section, "install")) {
+        if (!strcmp(key, "source")) return 2;
         if (!strcmp(key, "root") || !strcmp(key, "artifact") ||
             !strcmp(key, "accept-arch") || !strcmp(key, "accept-privileged")) return 1;
     } else if (!strcmp(section, "install-plan")) {
+        if (!strcmp(key, "source")) return 2;
         if (!strcmp(key, "format") || !strcmp(key, "root") ||
             !strcmp(key, "device") || !strcmp(key, "inode") ||
             !strcmp(key, "config-sha256") || !strcmp(key, "set-sha256") ||
@@ -245,7 +249,9 @@ static int key_arity(const char *section, const char *key)
     } else if (!strncmp(section, "source ", 7)) {
         if (!strcmp(key, "repo")) return 2;
         if (!strcmp(key, "type") || !strcmp(key, "url") ||
-            !strcmp(key, "parent") || !strcmp(key, "trust")) return 1;
+            !strcmp(key, "parent") || !strcmp(key, "trust") ||
+            !strcmp(key, "public-key") ||
+            !strcmp(key, "public-key-ed25519")) return 1;
     } else if (!strncmp(section, "rule ", 5)) {
         if (!strcmp(key, "consumer") || !strcmp(key, "require") ||
             !strcmp(key, "provider")) return 1;

@@ -190,10 +190,10 @@ cp "$tmp/root-2.holy" "$tmp/repo/"
 if "$bin" repo solve "$tmp/repo" root --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"decision-required"}' "$tmp/out"
 test "$(wc -l < "$tmp/out")" -eq 1
-if "$bin" solve "local:$tmp/root-2.holy" "local:$tmp/b-1.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+if "$bin" solve "local:$tmp/root-2.holy" "local:$tmp/b-1.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 test ! -s "$tmp/out"
-if "$bin" solve "local:$tmp/root-2.holy" "local:$tmp/b-1.holy" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
-grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"unsupported-input"}' "$tmp/out"
+if "$bin" solve "local:$tmp/root-2.holy" "local:$tmp/b-1.holy" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"dependency-conflict","requirement":"b-1"}' "$tmp/out"
 test "$(wc -l < "$tmp/out")" -eq 1
 printf 'require b-1 root package b any any eq 1 b metadata\n' > "$tmp/payload/HOLY/deps"
 build root 3
@@ -215,7 +215,201 @@ tar -cf "$tmp/foreign.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/foreign.tar" "$tmp/foreign.holy"
 "$bin" solve "local:$tmp/foreign.holy" > "$tmp/out"
 test "$(wc -l < "$tmp/out")" -eq 1
+mkdir -p "$tmp/payload/DATA/usr/share/holy"
+printf 'fixture\n' > "$tmp/payload/DATA/usr/share/holy/provider.txt"
+ln -s provider.txt "$tmp/payload/DATA/usr/share/holy/provider-link.txt"
+ln "$tmp/payload/DATA/usr/share/holy/provider.txt" "$tmp/payload/DATA/usr/share/holy/provider-hard.txt"
+"$bin" manifest generate "$tmp/payload" --output "$tmp/file-manifest" > "$tmp/out"
+mv "$tmp/file-manifest" "$tmp/payload/HOLY/files"
+build file-provider 1
+rm "$tmp/file-provider-1.holy"
+"$bin" pack "$tmp/payload" --output "$tmp/file-provider-1.holy" > "$tmp/out"
+rm -r "$tmp/payload/DATA/usr"
+: > "$tmp/payload/HOLY/files"
+printf 'provide file /usr/share/holy/provider.txt any any 1 metadata\n' > "$tmp/payload/HOLY/provides"
+build false-provider 1
+: > "$tmp/payload/HOLY/provides"
+printf 'require file-1 file-root file /usr/share/holy/provider.txt any any any - file metadata\n' > "$tmp/payload/HOLY/deps"
+printf 'require file-link file-root file /usr/share/holy/provider-link.txt any any any - file metadata\n' >> "$tmp/payload/HOLY/deps"
+printf 'require file-hard file-root file /usr/share/holy/provider-hard.txt any any any - file metadata\n' >> "$tmp/payload/HOLY/deps"
+build file-root 1
+: > "$tmp/payload/HOLY/deps"
+file_provider_hash=$(sha256sum "$tmp/file-provider-1.holy")
+file_provider_hash=${file_provider_hash%% *}
+file_root_hash=$(sha256sum "$tmp/file-root-1.holy")
+file_root_hash=${file_root_hash%% *}
+"$bin" solve "local:$tmp/file-root-1.holy" "local:$tmp/file-provider-1.holy" > "$tmp/out"
+grep -qx "selected $file_root_hash" "$tmp/out"
+grep -qx "selected $file_provider_hash" "$tmp/out"
+if "$bin" solve "local:$tmp/file-root-1.holy" "local:$tmp/false-provider-1.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+test ! -s "$tmp/out"
+mkdir "$tmp/file-rootfs"
+"$bin" db init --root "$tmp/file-rootfs" > "$tmp/out"
+"$bin" cache stage "local:$tmp/file-root-1.holy" --root "$tmp/file-rootfs" > "$tmp/out"
+"$bin" cache stage "local:$tmp/file-provider-1.holy" --root "$tmp/file-rootfs" > "$tmp/out"
+"$bin" db plan-set "$file_root_hash" "$file_provider_hash" --root "$tmp/file-rootfs" > "$tmp/out"
+file_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+test "${#file_plan}" -eq 64
+"$bin" db apply-set "$file_plan" "$file_root_hash" "$file_provider_hash" --root "$tmp/file-rootfs" > "$tmp/out"
+grep -Fqx "edge \"$file_root_hash\" \"file-1\" \"$file_provider_hash\" \"-\" \"file\" \"/usr/share/holy/provider.txt\"" "$tmp/file-rootfs/var/lib/holypkg/installed/$file_root_hash/graph"
+grep -Fqx "edge \"$file_root_hash\" \"file-link\" \"$file_provider_hash\" \"-\" \"file\" \"/usr/share/holy/provider-link.txt\"" "$tmp/file-rootfs/var/lib/holypkg/installed/$file_root_hash/graph"
+grep -Fqx "edge \"$file_root_hash\" \"file-hard\" \"$file_provider_hash\" \"-\" \"file\" \"/usr/share/holy/provider-hard.txt\"" "$tmp/file-rootfs/var/lib/holypkg/installed/$file_root_hash/graph"
+"$bin" db check --all --root "$tmp/file-rootfs" > "$tmp/out"
+"$bin" orphan --root "$tmp/file-rootfs" --json > "$tmp/out"
+grep -q '"installed":2,"explicit":1,"reachable":2,"orphans":0' "$tmp/out"
+if "$bin" db rm "$file_provider_hash" --root "$tmp/file-rootfs" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+test -f "$tmp/file-rootfs/usr/share/holy/provider.txt"
+cat > "$tmp/helper.s" <<'EOF'
+.global _start
+_start:
+    mov $60, %rax
+    xor %rdi, %rdi
+    syscall
+EOF
+as -o "$tmp/helper.o" "$tmp/helper.s"
+ld -static -o "$tmp/helper" "$tmp/helper.o"
+mkdir -p "$tmp/payload/DATA/usr/bin"
+cp "$tmp/helper" "$tmp/payload/DATA/usr/bin/helper"
+ln -s helper "$tmp/payload/DATA/usr/bin/helper-link"
+ln "$tmp/payload/DATA/usr/bin/helper" "$tmp/payload/DATA/usr/bin/helper-hard"
+cat > "$tmp/payload/HOLY/meta" <<'EOF'
+format holy-package-1
+name command-provider
+version 1
+release 1
+os linux
+arch x86_64
+libc nolibc
+EOF
+"$bin" manifest generate "$tmp/payload" --output "$tmp/command-manifest" > "$tmp/out"
+mv "$tmp/command-manifest" "$tmp/payload/HOLY/files"
+"$bin" pack "$tmp/payload" --output "$tmp/command-provider.holy" > "$tmp/out"
+rm -r "$tmp/payload/DATA/usr"
+: > "$tmp/payload/HOLY/files"
+printf 'provide command helper any any 1 metadata\n' > "$tmp/payload/HOLY/provides"
+build false-command 1
+: > "$tmp/payload/HOLY/provides"
+mkdir -p "$tmp/payload/DATA/usr/bin"
+printf 'not executable\n' > "$tmp/payload/DATA/usr/bin/helper"
+"$bin" manifest generate "$tmp/payload" --output "$tmp/nonexec-manifest" > "$tmp/out"
+mv "$tmp/nonexec-manifest" "$tmp/payload/HOLY/files"
+build nonexec-command 1
+rm -r "$tmp/payload/DATA/usr"
+: > "$tmp/payload/HOLY/files"
+printf 'require helper-1 command-root command helper any any any - helper metadata\n' > "$tmp/payload/HOLY/deps"
+printf 'require helper-link command-root command helper-link any any any - helper metadata\n' >> "$tmp/payload/HOLY/deps"
+printf 'require helper-hard command-root command helper-hard any any any - helper metadata\n' >> "$tmp/payload/HOLY/deps"
+build command-root 1
+: > "$tmp/payload/HOLY/deps"
+command_provider_hash=$(sha256sum "$tmp/command-provider.holy")
+command_provider_hash=${command_provider_hash%% *}
+command_root_hash=$(sha256sum "$tmp/command-root-1.holy")
+command_root_hash=${command_root_hash%% *}
+"$bin" solve "local:$tmp/command-root-1.holy" "local:$tmp/command-provider.holy" > "$tmp/out"
+grep -qx "selected $command_provider_hash" "$tmp/out"
+if "$bin" solve "local:$tmp/command-root-1.holy" "local:$tmp/false-command-1.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+if "$bin" solve "local:$tmp/command-root-1.holy" "local:$tmp/nonexec-command-1.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+mkdir "$tmp/command-rootfs"
+"$bin" db init --root "$tmp/command-rootfs" > "$tmp/out"
+"$bin" cache stage "local:$tmp/command-root-1.holy" --root "$tmp/command-rootfs" > "$tmp/out"
+"$bin" cache stage "local:$tmp/command-provider.holy" --root "$tmp/command-rootfs" > "$tmp/out"
+"$bin" db plan-set "$command_root_hash" "$command_provider_hash" --root "$tmp/command-rootfs" > "$tmp/out"
+command_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+test "${#command_plan}" -eq 64
+"$bin" db apply-set "$command_plan" "$command_root_hash" "$command_provider_hash" --root "$tmp/command-rootfs" > "$tmp/out"
+grep -Fqx "edge \"$command_root_hash\" \"helper-1\" \"$command_provider_hash\" \"-\" \"command\" \"helper\"" "$tmp/command-rootfs/var/lib/holypkg/installed/$command_root_hash/graph"
+grep -Fqx "edge \"$command_root_hash\" \"helper-link\" \"$command_provider_hash\" \"-\" \"command\" \"helper-link\"" "$tmp/command-rootfs/var/lib/holypkg/installed/$command_root_hash/graph"
+grep -Fqx "edge \"$command_root_hash\" \"helper-hard\" \"$command_provider_hash\" \"-\" \"command\" \"helper-hard\"" "$tmp/command-rootfs/var/lib/holypkg/installed/$command_root_hash/graph"
+"$bin" db check --all --root "$tmp/command-rootfs" > "$tmp/out"
+if "$bin" db rm "$command_provider_hash" --root "$tmp/command-rootfs" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 printf 'broken\n' > "$tmp/broken.holy"
 if "$bin" solve "local:$tmp/root-1.holy" "local:$tmp/b-1.holy" "local:$tmp/broken.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 test ! -s "$tmp/out"
+printf 'require foreign-1 foreign-root foreign "option A | option B" any any any - "option A | option B" upstream\n' > "$tmp/payload/HOLY/deps"
+build foreign-root 1
+: > "$tmp/payload/HOLY/deps"
+if "$bin" solve "local:$tmp/foreign-root-1.holy" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"unsupported-requirement","requirement":"foreign-1"}' "$tmp/out"
+"$bin" solve "local:$tmp/b-1.holy" "local:$tmp/foreign-root-1.holy" > "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
+printf 'require soname-1 soname-root soname libc.musl-x86_64.so.1 x86_64 musl any - libc.musl-x86_64.so.1 metadata\n' > "$tmp/payload/HOLY/deps"
+build soname-root 1
+: > "$tmp/payload/HOLY/deps"
+printf 'provide soname libc.musl-x86_64.so.1 x86_64 musl - forged\n' > "$tmp/payload/HOLY/provides"
+build false-soname 1
+: > "$tmp/payload/HOLY/provides"
+if "$bin" solve "local:$tmp/soname-root-1.holy" "local:$tmp/false-soname-1.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+mkdir -p "$tmp/payload/DATA/usr/lib"
+cat > "$tmp/soname.s" <<'EOF'
+.global holy_fixture
+holy_fixture:
+    mov $42, %eax
+    ret
+EOF
+as -o "$tmp/soname.o" "$tmp/soname.s"
+ld -shared -soname libc.musl-x86_64.so.1 -o "$tmp/payload/DATA/usr/lib/libc.musl-x86_64.so.1" "$tmp/soname.o"
+cat > "$tmp/payload/HOLY/meta" <<'EOF'
+format holy-package-1
+name soname-provider
+version 1
+release 1
+os linux
+arch x86_64
+libc musl
+EOF
+"$bin" manifest generate "$tmp/payload" --output "$tmp/soname-manifest" > "$tmp/out"
+mv "$tmp/soname-manifest" "$tmp/payload/HOLY/files"
+"$bin" pack "$tmp/payload" --output "$tmp/soname-provider.holy" > "$tmp/out"
+soname_hash=$(sha256sum "$tmp/soname-provider.holy")
+soname_hash=${soname_hash%% *}
+soname_root_hash=$(sha256sum "$tmp/soname-root-1.holy")
+soname_root_hash=${soname_root_hash%% *}
+"$bin" solve "local:$tmp/soname-root-1.holy" "local:$tmp/soname-provider.holy" > "$tmp/out"
+grep -qx "selected $soname_hash" "$tmp/out"
+mkdir "$tmp/soname-repo"
+cp "$tmp/soname-provider.holy" "$tmp/soname-repo/"
+"$bin" repo index "$tmp/soname-repo" > "$tmp/out"
+grep -Fqx "soname $soname_hash \"libc.musl-x86_64.so.1\" \"x86_64\" \"musl\" \"usr/lib/libc.musl-x86_64.so.1\"" "$tmp/soname-repo/index"
+cp "$tmp/soname-repo/index" "$tmp/soname-index"
+sed '/^soname /d' "$tmp/soname-index" > "$tmp/soname-repo/index"
+if "$bin" repo seal "$tmp/soname-repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+cp "$tmp/soname-index" "$tmp/soname-repo/index"
+"$bin" repo seal "$tmp/soname-repo" > "$tmp/out"
+"$bin" repo providers "$tmp/soname-repo" soname libc.musl-x86_64.so.1 > "$tmp/out"
+grep -qx 'listed 1 candidates' "$tmp/out"
+if test "$#" -ge 2; then
+    "$api" - "$tmp/soname-root-1.holy" "$tmp/soname-provider.holy" > "$tmp/record"
+    grep -Fqx "edge \"$soname_root_hash\" \"soname-1\" \"$soname_hash\" \"-\" \"soname\" \"libc.musl-x86_64.so.1\"" "$tmp/record"
+fi
+mkdir "$tmp/soname-rootfs"
+"$bin" db init --root "$tmp/soname-rootfs" > "$tmp/out"
+"$bin" cache stage "local:$tmp/soname-root-1.holy" --root "$tmp/soname-rootfs" > "$tmp/out"
+"$bin" cache stage "local:$tmp/soname-provider.holy" --root "$tmp/soname-rootfs" > "$tmp/out"
+"$bin" db plan-set "$soname_root_hash" "$soname_hash" --root "$tmp/soname-rootfs" > "$tmp/out"
+soname_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+test "${#soname_plan}" -eq 64
+"$bin" db apply-set "$soname_plan" "$soname_root_hash" "$soname_hash" --root "$tmp/soname-rootfs" > "$tmp/out"
+grep -Fqx "edge \"$soname_root_hash\" \"soname-1\" \"$soname_hash\" \"-\" \"soname\" \"libc.musl-x86_64.so.1\"" "$tmp/soname-rootfs/var/lib/holypkg/installed/$soname_root_hash/graph"
+"$bin" db check --all --root "$tmp/soname-rootfs" > "$tmp/out"
+rm "$tmp/soname-rootfs/var/cache/holypkg/objects/sha256/$soname_root_hash.holy"
+rm -r "$tmp/payload/DATA/usr"
+: > "$tmp/payload/HOLY/files"
+printf 'require soname-2 soname-consumer soname libc.musl-x86_64.so.1 x86_64 musl any - libc.musl-x86_64.so.1 metadata\n' > "$tmp/payload/HOLY/deps"
+build soname-consumer 1
+soname_consumer_hash=$(sha256sum "$tmp/soname-consumer-1.holy")
+soname_consumer_hash=${soname_consumer_hash%% *}
+"$bin" cache stage "local:$tmp/soname-consumer-1.holy" --root "$tmp/soname-rootfs" > "$tmp/out"
+"$bin" db plan-set "$soname_consumer_hash" --root "$tmp/soname-rootfs" > "$tmp/out"
+soname_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+test "${#soname_plan}" -eq 64
+"$bin" db apply-set "$soname_plan" "$soname_consumer_hash" --root "$tmp/soname-rootfs" > "$tmp/out"
+grep -Fqx "edge \"$soname_consumer_hash\" \"soname-2\" \"$soname_hash\" \"-\" \"soname\" \"libc.musl-x86_64.so.1\"" "$tmp/soname-rootfs/var/lib/holypkg/installed/$soname_consumer_hash/graph"
+"$bin" db check --all --root "$tmp/soname-rootfs" > "$tmp/out"
+printf 'require soname-wrong soname-wrong-root soname libc.musl-x86_64.so.1 x86 musl any - libc.musl-x86_64.so.1 metadata\n' > "$tmp/payload/HOLY/deps"
+build soname-wrong-root 1
+soname_wrong_hash=$(sha256sum "$tmp/soname-wrong-root-1.holy")
+soname_wrong_hash=${soname_wrong_hash%% *}
+"$bin" cache stage "local:$tmp/soname-wrong-root-1.holy" --root "$tmp/soname-rootfs" > "$tmp/out"
+if "$bin" db plan-set "$soname_wrong_hash" --root "$tmp/soname-rootfs" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+if "$bin" db rm "$soname_hash" --root "$tmp/soname-rootfs" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 printf 'local resolver fixtures passed\n'

@@ -12,7 +12,11 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg import INPUT --source NAME --format pacman|deb --output NEW_DIRECTORY
 .br
-.B holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--ca-file FILE]
+.B holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--public-key PUBLIC_KEY.pem] [--ca-file FILE]
+.br
+.B holypkg repo seal DIRECTORY [--key PRIVATE_KEY.pem]
+.br
+.B holypkg repo verify DIRECTORY --key PUBLIC_KEY.pem
 .br
 .B holypkg source plan --config FILE --root DIRECTORY
 .br
@@ -22,9 +26,11 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg source catalog bind ALIAS MIRROR [--root DIRECTORY]
 .br
-.B holypkg sync SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256 INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--ca-file FILE]
+.B holypkg sync SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256 INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--commit GIT_COMMIT] [--ca-file FILE]
 .br
 .B holypkg orphan [--root DIRECTORY] [--json]
+.br
+.B holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] -- COMMAND [ARGS...]
 .br
 .B holypkg docs --root DIRECTORY --output FILE
 .br
@@ -144,6 +150,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg repo list DIRECTORY
 .br
+.B holypkg repo requirements DIRECTORY NAME
+.br
 .B holypkg repo search DIRECTORY NAME
 .br
 .B holypkg repo search DIRECTORY NAME --fuzzy
@@ -181,7 +189,8 @@ Simple comma-separated Depends entries become package requirements. Their
 version constraints use Debian ordering, including epoch, tilde and revision,
 only against providers in the deb version family. Alternatives, architecture
 qualifiers, Pre-Depends and other unsupported relationships remain attributed
-foreign requirements that the current solver refuses. Simple Provides names and
+foreign requirements that require an explicit decision in the current solver.
+Simple Provides names and
 exact version claims become package capabilities; an unversioned virtual claim
 does not satisfy a versioned dependency. Unsupported or duplicate claims remain
 foreign requirements. The converter supports Architecture all, amd64 and i386;
@@ -214,7 +223,8 @@ Source packages require a recipe importer and are not treated as binary packages
 Package dependencies retain constraints and original expressions. Pacman package
 version constraints use the comparator described below. Unsupported
 SONAME relations, conflicts, replacements and unknown metadata fields become
-foreign requirements; the current solver refuses these with status 6.
+foreign requirements; the current solver reports decision-required for a
+selected output that carries them.
 Optional and build requirements remain in attributed origin records.
 An .INSTALL script remains review-required. The current installer refuses its
 nonempty hooks record. Split outputs also require scoped dependency and
@@ -284,10 +294,11 @@ without a current pointer; a new attempt uses a new output directory.
 An I/O failure during final pointer publication can require inspection of
 current, as with repo seal. Success prints only the sealed index digest.
 .PP
-The caller supplies the digest; this command does not verify publisher
-signatures, activate a configured source, assign source-id or install packages.
-Configured sync with a pinned digest is described below. Publisher trust
-decisions and signed generation discovery remain separate work.
+The caller supplies the digest. Without --public-key, this command does not
+verify a publisher signature. With --public-key, it verifies the signed index
+against that PEM key before downloading packages. It does not activate a
+configured source, assign source-id or install packages. Configured sync with
+a pinned digest is described below.
 Successful return is 0; invalid arguments return 2, conflicting
 hashes or catalog contents 4, unavailable TLS/network inputs 6, and local
 filesystem errors 1. The directory remains private to its owner until that
@@ -611,8 +622,12 @@ not yet promote dependency reasons or perform reinstalls.
 .PP
 Candidate discovery reads installed names and manifests for the package and
 literal ELF-path requirements of the supplied candidates, then follows their
-dependencies. It does not scan every installed archive. Installed candidates
-currently require their cached archives for ELF scanning.
+dependencies. For a HOLY/deps SONAME requirement it filters installed packages
+by recorded arch/libc, then scans their cached archives and compares actual
+DT_SONAME, ELF type and ABI scope;
+the name of a package or an unverified claim is insufficient. Other discovery
+uses installed names and manifests. Installed candidates currently require
+their cached archives for ELF scanning.
 A missing archive returns unavailable instead of guessing ABI facts. Reuse
 requires the version-2 or version-3 installed graph format. Multiple viable providers still
 require --choose; automatic installed/source preference ranking remains open.
@@ -697,7 +712,8 @@ providers retain their existing source. The reviewed plan binds the catalog
 index digest and selected artifact hashes. Before apply the manager rechecks
 the source and catalog; changes require a new decision. The transaction journal
 retains source bindings and index digest for recovery without network access.
-The mirror record is unsigned local provenance, not publisher authentication.
+An unsigned mirror record proves only local provenance. A source with a
+registered public key requires a signed mirror and rechecks its signature.
 The current implementation scans every object in the selected mirror and does
 not combine candidates from multiple sources. Hooks and transforms remain
 outside the supported installation subset.
@@ -1086,8 +1102,9 @@ record with its artifact hash and source-id. No match returns unavailable (6);
 multiple matches return decision-required (3) because this interface has no
 arch/libc selector yet. Both commands read the catalog without installing or
 running package code. Exact search and info leave unrelated archives unopened;
-source binding still audits the complete catalog. The mirror is unsigned local provenance, not publisher
-authentication. --catalog selects an explicit mirror; without it, the commands
+source binding still audits the complete catalog. An unsigned mirror has no
+publisher authentication; a keyed source rechecks the signature. --catalog
+selects an explicit mirror; without it, the commands
 use the mirror bound by source catalog bind. With --file, QUERY must be an
 absolute path. A native version-3 index records every verified nondirectory
 payload path and declares complete file coverage. The result prints matching
@@ -1138,7 +1155,9 @@ reconstruct original bytes rather than treating them as normalized text.
 The solve command verifies and scans each explicitly supplied local archive,
 with the first archive as the requested root. Its supported subset accepts
 Linux packages with validated payload ABI facts, empty HOLY/hooks and HOLY/transform, and
-HOLY/deps package requirements with explicit arch/libc scopes or any.
+HOLY/deps package requirements with explicit arch/libc scopes or any, plus
+unversioned file requirements at literal absolute paths and unversioned
+bare command names.
 Each consumer must equal its package name. The package's own metadata name and
 package claims in HOLY/provides supply package capabilities. An alias retains its
 declared version; an unversioned alias cannot satisfy a version constraint.
@@ -1163,7 +1182,24 @@ declare x-version-family holy; untagged native versions keep manual update
 selection.
 The adapter filters candidates before the common libsolv solver receives exact
 requirement capabilities. The mixed solver pool does not compare foreign EVRs.
-Unsupported consumer version families and metadata dependency forms return 6.
+File requirements match nondirectory paths in the verified payload manifest,
+including symlinks and hardlinks. A file claim in HOLY/provides alone cannot
+satisfy them. The chosen file owner and path enter the reviewed graph;
+removal checks installed file requirements. Versioned file requirements and
+nonliteral paths remain unsupported.
+Command requirements match executable payloads named in usr/bin, bin,
+usr/sbin or sbin. Symlink commands must resolve to an executable in the
+same artifact; direct hardlinks retain the target's executable mode. A
+command claim alone or a nonexecutable file does not satisfy the edge.
+The chosen provider enters the installed graph, and removal checks that edge.
+This test does not model a caller's custom PATH or shell builtins. Versioned
+command requirements remain unsupported.
+Exact unversioned SONAME requirements from HOLY/deps match DT_SONAME of an
+observed ET_DYN library with the requested package arch/libc scope. A typed
+SONAME claim without that ELF does not satisfy the requirement. This selects
+an artifact candidate; physical loader visibility needs a later check.
+Unsupported metadata dependency forms return decision-required when their
+consumer is selected. Unsupported consumer version families return 6.
 Providers from another or unknown family cannot satisfy a constrained edge;
 if no matching candidate remains, resolution returns dependency-conflict.
 A supplied --choose answer cannot bypass these checks. Unversioned requirements
@@ -1215,7 +1251,8 @@ interposition require later context checks; an artifact match does not prove
 that the runtime loader will select its matching file.
 For a direct root requirement, --choose pins a named requirement ID to the
 exact candidate artifact digest supplied on the command line. The candidate
-must provide the package capability or satisfy the observed ELF edge; otherwise the command returns
+must satisfy the requirement, including a package capability, verified file
+path, executable command or observed ELF edge; otherwise the command returns
 decision-required. The choice applies to this solve only and does not assign a
 source ID or rewrite ABI facts. Unsupported syntax returns 2. Transitive
 requirements and multiple choices cannot yet be pinned by this option.
@@ -1472,17 +1509,31 @@ The repository index command validates regular .holy files in DIRECTORY and
 writes an unsigned, lexicographically ordered index through an atomic rename.
 It refuses symlinked packages, duplicate package identities and a nonregular
 existing index. It rejects unsupported HOLY/deps records. Records in format
-holy-index-prototype-3 contain the quoted
+holy-index-prototype-5 contain the quoted
 name, version, release, os, arch, libc, relative filename, SHA-256 and size.
 Following package records include typed claim lines bound to the package
 SHA-256, copied from validated HOLY/provides. Readers compare every indexed
 claim to the artifact before returning records. A separate coverage line
 declares complete native payload file coverage. File records contain the
 package digest and quoted nondirectory path from the verified manifest;
-readers compare them to the artifact. Old holy-index-prototype-1 and -2
-generations remain readable without complete file coverage. This prototype omits indexed dependencies and
-signatures; source adapters
+readers compare them to the artifact. A separate coverage line declares
+complete native package dependency coverage. Requirement records contain the
+package digest and all ten validated HOLY/deps fields. Readers compare these
+records to the artifact. ELF-derived requirements still require artifact
+inspection. A separate coverage line declares complete DT_SONAME facts from
+scanned ET_DYN files, with exact name, architecture, libc class and path.
+repo providers DIRECTORY soname NAME uses these facts, ignoring unsupported
+or forged SONAME claims. Readers compare selected facts with the artifact.
+Old holy-index-prototype-1 through -4 generations remain readable,
+with the coverage each generation declares;
+optional signatures are sidecars to a sealed generation. Source adapters
 must not treat it as the native repository format.
+.B repo requirements
+reads one unambiguous package's indexed HOLY/deps records from the pinned
+catalog generation without opening its payload. It returns 6 when the index
+lacks complete dependency coverage and 3 when name alone is ambiguous.
+The digest-pinned index is metadata; package installation still verifies the
+downloaded artifact and scans its ELF files.
 .PP
 The seal command validates the entire local index, creates an index.SHA256
 generation and atomically publishes a current pointer containing its digest.
@@ -1490,8 +1541,25 @@ The list and search commands require current and check its digest before
 reading the generation. Indexing creates a draft index; publish it with seal
 after reviewing changes. Removing current makes the directory unavailable
 to list and search rather than exposing an unsealed draft.
-The pointer and artifacts remain unsigned and can be changed by someone with
-write access to the directory. Existing generation files remain in place.
+Without --key, the pointer and artifacts remain unsigned. With --key, seal
+requires an Ed25519 PEM private key, signs the exact index generation and
+publishes its 64-byte signature.SHA256 file before changing current. Existing
+signatures for the same generation must verify under the supplied key; seal
+does not replace them. Existing generation files remain in place.
+.PP
+repo verify requires an Ed25519 PEM public key. It checks the selected index
+digest, the signature over the exact index bytes and the referenced package
+artifacts. A missing or changed signature, wrong key or altered index returns
+4. The private key stays on the publishing machine. With --public-key, repo
+mirror downloads the signature over HTTPS and verifies it against the pinned
+index before downloading packages. It records ed25519-pinned-key in
+mirror-origin together with SHA-256 of the raw public key; a failed signature
+leaves the new mirror unpublished. Source sync enforces a public key frozen
+by source plan when one is registered. Verification establishes authenticity
+only relative to the supplied
+key; it does not reject an older signed generation selected by a changed
+current pointer. Publishers must distribute the public key through a trusted
+channel and retain separate generation or hash pins where freshness matters.
 .PP
 The repository list command reads that prototype index with the holy.conf
 lexer and checks each referenced regular archive's size, SHA-256, identity,
@@ -1502,7 +1570,7 @@ or activates this directory as a package source.
 The repository search command verifies the same complete local index and
 returns exact name matches. repo search-file takes an absolute path and returns
 matching package records plus coverage status, index hash and timestamp.
-With a version-3 index, it verifies only indexed candidates; a changed
+With a version-3-or-newer index, it verifies only indexed candidates; a changed
 unselected archive does not invalidate this query.
 Legacy generations return unavailable coverage and status 6. No match in a
 complete native index prints a zero-count summary. This
@@ -1512,7 +1580,8 @@ exact capability match.
 .PP
 Repository providers searches the sealed local catalog for an exact KIND and
 NAME match. It finds indexed claims from HOLY/provides and the package's own
-metadata name for KIND=package. For prototype-2, it validates the complete
+metadata name for KIND=package. With a version-5 index, KIND=soname uses
+scanned ELF facts instead of claims. For prototype-2 and later, it validates the complete
 index and verifies only candidate artifacts and their full claim sets before
 printing package records and a count. An unselected object can change without
 invalidating this query; no match describes the sealed index generation, not
@@ -1561,21 +1630,25 @@ returns decision-required (3). Malformed proposed registry data returns 2;
 I/O or existing-state corruption returns 1; an incomplete transaction returns 5.
 .PP
 The registry is /var/lib/holypkg/sources under the target root. Its
-holy-sources-1 records contain ID, alias, active/inactive state and canonical
-definition. Replacement uses a private temporary file, fsync, rename and directory
+holy-sources-1 records contain ID, alias, active/inactive state, canonical
+definition, trust policy and optional raw Ed25519 public key. Key rotation
+retains the source ID and changes the registry revision. Replacement uses a
+private temporary file, fsync, rename and directory
 fsync. Registry revisions are separate from installed database generations.
 List prints identities and status without endpoint definitions.
 .PP
 source catalog bind ALIAS MIRROR verifies the entire sealed mirror, its index,
-objects, source-id and exact registered URL. It then records the canonical host
-path and index digest in /var/lib/holypkg/catalogs/SOURCE_ID under the target
+objects, source-id and exact registered URL. A source with a registered key
+also verifies the signature against that key. It then records the catalog
+location and index digest in /var/lib/holypkg/catalogs/SOURCE_ID under the target
 root. The file is mode 0600 and replaced with fsync and rename under the
 database writer lock. The command changes neither installed packages nor the
 source registry. A renamed alias with the same source-id keeps its binding;
 an inactive or changed source cannot use it. Queries without --catalog reread
-the binding and reject a missing, changed or corrupt mirror. The stored host
-path is not portable when a target root is moved to another machine. Rebind
-the mirror after such a move. Sync with --output exports a mirror without
+the binding and reject a missing, changed or corrupt mirror. When the mirror
+resides inside the target root, the binding records its root-relative path and
+survives moving that root. An external mirror retains its host path and must
+be rebound after a move. Sync with --output exports a mirror without
 changing the binding.
 .PP
 An ID identifies a configured origin; it is not signature evidence. The current
@@ -1583,7 +1656,9 @@ registry retains inactive origins and supports explicit local-artifact associati
 in set installation and cached slot replacement. The sync command reads one
 active registered SOURCE alias under the database shared lock. For a holy-http
 source with one URL, --sha256 INDEX_SHA256 mirrors an explicitly pinned index
-and all referenced artifacts through the same validator as repo mirror. Without
+and all referenced artifacts through the same validator as repo mirror. A
+registered public key makes the signature mandatory and records its hash with
+the source ID. Without
 --output, sync publishes a verified generation under
 /var/cache/holypkg/catalogs/SOURCE_ID/INDEX_SHA256 in the target root and binds
 it to the active source. It reuses a valid cached generation and rejects a
@@ -1596,9 +1671,21 @@ chosen directory; repo search, solve and fetch can use it. Sync without
 --output writes the target cache and catalog binding, but does not install
 packages, execute scripts or migrate sources.
 .PP
+For a registered holy-git source, sync requires both --commit and --sha256.
+The commit is a full lowercase 40- or 64-digit Git object ID. Sync clones the
+configured URL, checks out that commit in detached state, validates the sealed
+native index and every referenced artifact, and records the commit with the
+source ID. A registered Ed25519 key also requires a valid index signature.
+The verified clone keeps its .git directory so later source queries can check
+that HEAD still names the pinned commit. --output exports the clone without
+binding it; without --output the normal target-root catalog cache and binding
+apply. The Git executable is a sync-time tool, not a package query dependency.
+Git transport credentials must be supplied outside the source definition;
+the source URL and provenance record do not accept embedded credentials.
+.PP
 Without --sha256, sync reads the remote current pointer over certificate-checked
 HTTPS. It accepts only one line of the form "sha256" followed by a lowercase
-64-digit digest and newline. The first call reports decision-required (3),
+64-digit digest and newline. An unsigned source reports decision-required (3),
 including that digest, without creating a catalog; --output can be omitted
 for this preview. --root defaults to /. A second call with
 --accept-unsigned INDEX_SHA256 rereads current and mirrors index.INDEX_SHA256
@@ -1611,25 +1698,33 @@ publisher signature verification. Malformed pointer data returns 4; missing
 network or CA inputs and oversized responses return 6. The current transfer
 has a 4 KiB response cap,
 the same HTTPS-only redirect policy and a five-minute deadline. --sha256 and
---accept-unsigned are mutually exclusive. There is no hidden TTY behavior.
+--accept-unsigned are mutually exclusive. A source with a registered public
+key verifies the signed index selected by current in one call;
+--accept-unsigned is invalid for it. Cached signed catalogs and bound mirrors
+are checked against the registered key before reuse. Key rotation makes an
+older binding unavailable until it is replaced with a generation signed by
+the new key. Signature verification alone does not reject replay of an older
+signed current pointer; use a generation pin where freshness matters. There
+is no hidden TTY behavior.
 .PP
-fetch SOURCE:PACKAGE reads a synced holy-http mirror selected by --catalog or
+fetch SOURCE:PACKAGE reads a synced native mirror selected by --catalog or
 the binding for its active source-id. The active source alias must match the mirror's source-id and
 exact URL; the mirror's current index and selected package object are verified before
 the named package is copied into an existing --output directory. --extract
 instead writes a new output directory. More than one package with the same name
 requires a choice (status 3); an absent package or inactive source returns 6.
-The mirror record is local provenance, not publisher signature evidence.
+The mirror record retains the digest pin or verified key hash. A bound signed
+catalog is rechecked against the registered key before source queries.
 Neither form installs files, hooks or dependencies into the target root.
 .PP
 The source registry is read before network transfer, so a later alias change
 does not change the snapshot's recorded ID. A source with another backend,
 an inactive alias or an untrusted TLS certificate is unavailable (6). The
-index digest is an explicit user pin or an accepted unsigned current value;
-the mirror remains unsigned and does not establish publisher identity. The
+index digest is an explicit user pin, an accepted unsigned current value,
+or a current value whose index was verified by the registered key. The
 recorded source-id is provenance for this
 snapshot, not an installation authority derived from package metadata.
-Publisher signatures and multi-source dependency resolution remain unimplemented.
+Multi-source dependency resolution remains unimplemented.
 Explicit cached
 replacement uses db plan-update and db apply-update. These
 commands do not yet implement JSON output. See holy.conf(5) for identity rules
@@ -1656,6 +1751,30 @@ produces a partial orphan list. Errors produce one error event with code and
 status: invalid-state (1), missing-provider (4), incomplete-transaction (5), or
 unknown-installed-graph (6). Legacy installed entries without saved graphs
 require migration before this analysis can prove reachability.
+.SH RUN INSTALLED COMMAND
+run selects one installed slot by source alias and package name. Use --arch and
+--libc when several installed slots share that name. The local alias selects a
+package installed without a registered source. A registered alias can still
+select its installed package after the source is removed from active config.
+The command after -- must be a bare name in a standard bin directory or an
+absolute path in /usr/bin, /bin, /usr/sbin or /sbin. run checks the installed
+manifest, including the executable bit and current payload, before exec.
+.PP
+When the installed manifest owns a matching path under
+/usr/lib/holy/private/ARTIFACT-SHA256/, run selects it before the public path
+and prepends that artifact's private bin directories to PATH. It passes argv
+unchanged and returns the program's exit status through exec. This is a direct
+launcher. It does not create a mount namespace, replace shell builtins or
+intercept another process that directly executes the public path. A private
+path still requires an installation transform that places and records the
+file there; the current package installation flow does not create such a
+mapping from a conflicting public path.
+.PP
+With --root, run executes the selected file at that root's host path. It does
+not chroot or isolate the process. Dynamic interpreter and absolute paths use
+the host's namespace, so a trial root must use a compatible host or a static
+program. An unavailable package or command returns 6; an altered payload
+returns 4. An incomplete transaction returns 5.
 .SH EXIT STATUS
 0 indicates success under the implemented checks; 1 indicates a failed local
 fetch, extraction or check; 2 indicates invalid arguments, configuration or

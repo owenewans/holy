@@ -24,7 +24,10 @@ SOLV_LIBS ?= $(shell pkg-config --libs libsolv 2>/dev/null) -lz
 .DEFAULT_GOAL := all
 
 .PHONY: all check check-fixtures check-root check-qemu check-qemu-gate check-hardware check-https check-solver check-install-payload check-install bootstrap-busybox check-bootstrap-busybox check-static-core man
-all: holypkg holy-init holyinstall
+all: holypkg holy-init holyinstall holygetiso
+
+holygetiso: src/getiso.o src/config.o src/sign.o
+	$(CC) $(LDFLAGS) -o $@ $^ -lcrypto
 
 holyinstall: src/installer.o src/disk.o src/config.o
 	$(CC) $(LDFLAGS) -o $@ $^ -lcrypto
@@ -53,6 +56,22 @@ check-bootstrap-glibc:
 .PHONY: bootstrap-image
 bootstrap-image: holypkg llm.txt
 	ARCH="$(or $(ARCH),x86_64)" ROOT_STORAGE="$(or $(ROOT_STORAGE),ram)" IMAGE_PROFILE="$(or $(IMAGE_PROFILE),dual-libc)" LIBC_BOOT_STATE="$(or $(LIBC_BOOT_STATE),present)" INSTALL_TEST="$(or $(INSTALL_TEST),0)" INSTALL_FIRMWARE="$(or $(INSTALL_FIRMWARE),$(if $(filter i686,$(ARCH)),bios,both))" STORAGE_TOOLS_PACKAGE="$(STORAGE_TOOLS_PACKAGE)" DOAS_PACKAGE="$(DOAS_PACKAGE)" UEFI_CODE="$(UEFI_CODE)" UEFI_VARS="$(UEFI_VARS)" NETWORK_RECOVERY="$(or $(NETWORK_RECOVERY),off)" GLIBC_PACKAGE="$(GLIBC_PACKAGE)" MUSL_PACKAGE="$(MUSL_PACKAGE)" GLIBC_CC="$(or $(GLIBC_CC),gcc)" MUSL_CC="$(MUSL_CC)" STATIC_HOLYINSTALL="$(STATIC_HOLYINSTALL)" sh tools/bootstrap-image.sh ./holypkg "$(STATIC_HOLYPKG)" "$(STATIC_CC)" "$(BUSYBOX_PACKAGE)" "$(DINIT_PACKAGE)" "$(MDEVD_PACKAGE)" "$(KERNEL_IMAGE)" "$(KERNEL_VERSION)" "$(LIMINE_DIR)" "$(OUTPUT)"
+
+.PHONY: check-image-source
+check-image-source: holypkg holyinstall holygetiso
+	sh tests/image-source.sh ./holypkg
+
+.PHONY: check-run
+check-run: holypkg
+	sh tests/run.sh ./holypkg
+
+.PHONY: check-repo-sign
+check-repo-sign: holypkg
+	sh tests/repo-sign.sh ./holypkg
+
+.PHONY: check-git-source
+check-git-source: holypkg
+	sh tests/git-source.sh ./holypkg
 
 .PHONY: bootstrap-storage
 bootstrap-storage: holypkg
@@ -121,7 +140,7 @@ static:
 	$(MAKE) clean
 	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lssl -lcrypto -llz4 -lzstd -llzma -lbz2 -lz -leu -Wl,--end-group -lpthread -ldl" all
 
-HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/script.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o src/up.o src/version.o backends/pacman.o backends/pacman-version.o backends/deb-version.o
+HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/script.o src/elf.o src/scan.o src/stage.o src/repo.o src/sign.o src/git.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o src/up.o src/version.o src/run.o backends/pacman.o backends/pacman-version.o backends/deb-version.o
 
 holypkg: $(HOLY_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(SOLV_LIBS)
@@ -139,7 +158,7 @@ src/%.o: src/%.c $(wildcard src/*.h) $(wildcard backends/*.h) .build-config
 check-init: holy-init
 	@./holy-init >/dev/null 2>&1; test $$? -eq 2
 
-check: check-pacman check-deb check-native-version holypkg tests/resolution check-init check-solver check-install-payload check-install check-https
+check: check-pacman check-deb check-native-version holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg
@@ -261,5 +280,6 @@ tests/resolution: tests/resolution.c $(filter-out src/main.o,$(HOLY_OBJECTS)) ho
 clean:
 	rm -f holy-init
 	rm -f holyinstall src/disk.o
+	rm -f holygetiso src/getiso.o
 	rm -f .build-config .build-config.tmp
 	rm -f holypkg tests/resolution tests/solver tests/install-helper tests/pacman-helper tests/deb-version-helper tests/native-version-helper $(HOLY_OBJECTS)

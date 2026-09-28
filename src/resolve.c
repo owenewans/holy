@@ -30,10 +30,15 @@ struct elf_edge {
 
 struct package_edge {
     size_t requirement;
-    char *arch, *libc, *relation, *version;
+    char *kind, *arch, *libc, *relation, *version;
 };
 
 struct package_claim { char *capability, *version; };
+
+struct payload_path {
+    char *path, *link;
+    unsigned int mode;
+};
 
 struct version_adapter {
     const char *family;
@@ -48,6 +53,7 @@ static const struct version_adapter version_adapters[] = {
 
 struct local_item {
     struct holy_package_identity identity;
+    char *unsupported_id;
     struct holy_solver_requirement *requirements;
     char **requirement_ids;
     char **original_requirements;
@@ -60,19 +66,29 @@ struct local_item {
     size_t package_edge_count;
     struct package_claim *claims;
     size_t claim_count;
+    struct payload_path *file_paths;
+    size_t file_count;
 };
+
+static int literal_path(const char *path);
+
+static char *named_capability(const char *kind, const char *name)
+{
+    size_t prefix = strlen(kind), n = strlen(name);
+    char *capability;
+    if (prefix > 65536 || n > 65536 - prefix - 2) return NULL;
+    capability = malloc(prefix + n + 2);
+    if (capability) {
+        memcpy(capability, kind, prefix);
+        capability[prefix] = ':';
+        memcpy(capability + prefix + 1, name, n + 1);
+    }
+    return capability;
+}
 
 static char *package_capability(const char *name)
 {
-    size_t n = strlen(name);
-    char *capability;
-    if (n > 65536) return NULL;
-    capability = malloc(n + 9);
-    if (capability) {
-        memcpy(capability, "package:", 8);
-        memcpy(capability + 8, name, n + 1);
-    }
-    return capability;
+    return named_capability("package", name);
 }
 
 static int add_requirement(struct local_item *item, const char *id, const char *cap)
@@ -120,12 +136,28 @@ static int exact_requirement(void *opaque, const char *id,
     char *capability;
     int ok;
     (void)original; (void)evidence;
-    if (strcmp(consumer, item->identity.name) || strcmp(kind, "package")) return 0;
-    capability = package_capability(name);
+    if (strcmp(consumer, item->identity.name)) return 0;
+    if (strcmp(kind, "package") && strcmp(kind, "file") &&
+        strcmp(kind, "command") && strcmp(kind, "soname")) {
+        if (!item->unsupported_id) item->unsupported_id = strdup(id);
+        return item->unsupported_id != NULL;
+    }
+    if (!strcmp(kind, "soname") &&
+        (!name[0] || strchr(name, '/') || strcmp(relation, "any"))) {
+        if (!item->unsupported_id) item->unsupported_id = strdup(id);
+        return item->unsupported_id != NULL;
+    }
+    if (
+        (!strcmp(kind, "file") && (!literal_path(name) || strcmp(relation, "any"))) ||
+        (!strcmp(kind, "command") && (!name[0] || strchr(name, '/') ||
+                                     !strcmp(name, ".") || !strcmp(name, "..") ||
+                                     strcmp(relation, "any")))) return 0;
+    capability = named_capability(kind, name);
     if (!capability) return 0;
     ok = add_requirement(item, id, capability);
     free(capability);
-    if (ok && (strcmp(arch, "any") || strcmp(libc, "any") || strcmp(relation, "any"))) {
+    if (ok && (strcmp(kind, "package") || strcmp(arch, "any") ||
+               strcmp(libc, "any") || strcmp(relation, "any"))) {
         struct package_edge *grown = realloc(item->package_edges,
             (item->package_edge_count + 1) * sizeof *grown), *edge;
         if (!grown) return 0;
@@ -133,9 +165,9 @@ static int exact_requirement(void *opaque, const char *id,
         edge = &grown[item->package_edge_count++];
         memset(edge, 0, sizeof *edge);
         edge->requirement = item->requirement_count - 1;
-        edge->arch = strdup(arch); edge->libc = strdup(libc);
+        edge->kind = strdup(kind); edge->arch = strdup(arch); edge->libc = strdup(libc);
         edge->relation = strdup(relation); edge->version = strdup(version);
-        ok = edge->arch && edge->libc && edge->relation && edge->version;
+        ok = edge->kind && edge->arch && edge->libc && edge->relation && edge->version;
     }
     return ok;
 }
@@ -202,6 +234,95 @@ static int add_provide(struct holy_solver_item *item, const char *capability)
     return 1;
 }
 
+static int file_path_order(const void *left, const void *right)
+{
+    const struct payload_path *a = left, *b = right;
+    return strcmp(a->path, b->path);
+}
+
+static int collect_file_path(void *opaque, const struct holy_manifest_entry *entry)
+{
+    struct local_item *item = opaque;
+    struct payload_path *paths, *path;
+    if (entry->directory) return 1;
+    if (item->file_count == SIZE_MAX / sizeof *paths) return 0;
+    paths = realloc(item->file_paths, (item->file_count + 1) * sizeof *paths);
+    if (!paths) return 0;
+    item->file_paths = paths;
+    path = &paths[item->file_count];
+    path->path = strdup(entry->path);
+    path->link = entry->link ? strdup(entry->link) : NULL;
+    path->mode = entry->mode;
+    if (!path->path || (entry->link && !path->link)) {
+        free(path->path); free(path->link);
+        return 0;
+    }
+    ++item->file_count;
+    return 1;
+}
+
+static const struct payload_path *find_path(const struct local_item *item, const char *path)
+{
+    struct payload_path key = {(char *)path, NULL, 0};
+    return item->file_count ? bsearch(&key, item->file_paths, item->file_count,
+                                      sizeof *item->file_paths, file_path_order) : NULL;
+}
+
+static int has_file(const struct local_item *item, const char *absolute)
+{
+    return find_path(item, absolute + 1) != NULL;
+}
+
+static int command_target(const struct local_item *item, const char *path)
+{
+    char *current = strdup(path);
+    size_t hop;
+    int result = 0;
+    if (!current) return 0;
+    for (hop = 0; hop < 16; ++hop) {
+        const struct payload_path *entry = find_path(item, current);
+        char *next;
+        if (!entry) break;
+        if (!entry->link) { result = (entry->mode & 0111) != 0; break; }
+        next = holy_relative_link_path(current, strlen(current), entry->link, "");
+        if (!next) break;
+        free(current);
+        current = next;
+    }
+    free(current);
+    return result;
+}
+
+static int has_command(const struct local_item *item, const char *name)
+{
+    static const char *const dirs[] = {"usr/bin/", "bin/", "usr/sbin/", "sbin/"};
+    size_t i, length = strlen(name);
+    for (i = 0; i < sizeof dirs / sizeof *dirs; ++i) {
+        size_t prefix = strlen(dirs[i]);
+        char *path = malloc(prefix + length + 1);
+        int found;
+        if (!path) return 0;
+        memcpy(path, dirs[i], prefix);
+        memcpy(path + prefix, name, length + 1);
+        found = command_target(item, path);
+        free(path);
+        if (found) return 1;
+    }
+    return 0;
+}
+
+static int has_soname(const struct local_item *item, const char *name)
+{
+    size_t i;
+    for (i = 0; i < item->scan.count; ++i) {
+        const struct holy_scanned_file *file = &item->scan.files[i];
+        if (file->elf.type == ET_DYN && !(file->elf.flags1 & DF_1_PIE) &&
+            file->elf.soname && !strcmp(file->elf.soname, name) &&
+            !strcmp(file->runtime, item->identity.libc)) return 1;
+    }
+    return 0;
+}
+
 static int package_requirements(struct local_item *local, struct holy_solver_item *items, size_t count)
 {
     size_t i, j, k;
@@ -233,10 +354,15 @@ static int package_requirements(struct local_item *local, struct holy_solver_ite
             if ((strcmp(edge->arch, "any") && strcmp(edge->arch, candidate->arch)) ||
                 (strcmp(edge->libc, "any") && strcmp(edge->libc, candidate->libc))) continue;
             if (constrained && (!candidate->version_family || strcmp(candidate->version_family, family))) continue;
-            if (!strcmp(base, local[k].capability)) matches = version_matches(candidate->version, edge, adapter);
-            for (claim = 0; !matches && claim < local[k].claim_count; ++claim)
-                if (!strcmp(base, local[k].claims[claim].capability))
-                    matches = version_matches(local[k].claims[claim].version, edge, adapter);
+            if (!strcmp(edge->kind, "file")) matches = has_file(&local[k], base + 5);
+            else if (!strcmp(edge->kind, "command")) matches = has_command(&local[k], base + 8);
+            else if (!strcmp(edge->kind, "soname")) matches = has_soname(&local[k], base + 7);
+            else {
+                if (!strcmp(base, local[k].capability)) matches = version_matches(candidate->version, edge, adapter);
+                for (claim = 0; !matches && claim < local[k].claim_count; ++claim)
+                    if (!strcmp(base, local[k].claims[claim].capability))
+                        matches = version_matches(local[k].claims[claim].version, edge, adapter);
+            }
             if (matches < 0) return 0;
             if (matches && !add_provide(&items[k], capability)) return 0;
         }
@@ -719,8 +845,18 @@ static int collect_result(const struct local_item *local, const struct holy_solv
                 if (e->requirement == j) { path = e->path; kind = e->kind; target = e->target; break; }
             }
             if (!target) {
-                if (strncmp(local[i].original_requirements[j], "package:", 8)) return 0;
-                target = local[i].original_requirements[j] + 8;
+                const char *original = local[i].original_requirements[j];
+                if (!strncmp(original, "package:", 8)) target = original + 8;
+                else if (!strncmp(original, "file:", 5)) {
+                    kind = "file";
+                    target = original + 5;
+                } else if (!strncmp(original, "command:", 8)) {
+                    kind = "command";
+                    target = original + 8;
+                } else if (!strncmp(original, "soname:", 7)) {
+                    kind = "soname";
+                    target = original + 7;
+                } else return 0;
             }
             if (out->edge_count >= 65536) return 0;
             next = realloc(out->edges, (out->edge_count + 1) * sizeof *next);
@@ -775,7 +911,7 @@ static int resolve(const char *const *paths, size_t count, int json,
         snapshot = holy_stage_local(paths[i], "holy-resolve");
         if (!snapshot) goto done;
         prepared = i + 1;
-        if (!holy_verify_with_output(snapshot, 0) ||
+        if (!holy_verify_visit(snapshot, collect_file_path, &local[i]) ||
             !holy_scan_collect(snapshot, &local[i].scan) ||
             !holy_package_identity(snapshot, &local[i].identity) ||
             strcmp(local[i].identity.os, "linux") ||
@@ -790,15 +926,23 @@ static int resolve(const char *const *paths, size_t count, int json,
             !holy_deps_visit(snapshot, exact_requirement, &local[i])) {
             unlink(snapshot); free(snapshot); goto done;
         }
+        for (j = 0; j < i; ++j)
+            if (!strcmp(local[j].identity.digest, local[i].identity.digest)) {
+                unlink(snapshot); free(snapshot); goto done;
+            }
+        items[i].id = local[i].identity.digest;
+        if (!add_provide(&items[i], local[i].capability)) {
+            unlink(snapshot); free(snapshot); goto done;
+        }
+        for (j = 0; j < local[i].claim_count; ++j)
+            if (!add_provide(&items[i], local[i].claims[j].capability)) {
+                unlink(snapshot); free(snapshot); goto done;
+            }
+        if (local[i].file_count)
+            qsort(local[i].file_paths, local[i].file_count,
+                  sizeof *local[i].file_paths, file_path_order);
         unlink(snapshot);
         free(snapshot);
-        for (j = 0; j < i; ++j)
-            if (!strcmp(local[j].identity.digest, local[i].identity.digest))
-                goto done;
-        items[i].id = local[i].identity.digest;
-        if (!add_provide(&items[i], local[i].capability)) goto done;
-        for (j = 0; j < local[i].claim_count; ++j)
-            if (!add_provide(&items[i], local[i].claims[j].capability)) goto done;
     }
     if (!package_requirements(local, items, count)) goto done;
     for (i = 0; i < count; ++i) for (j = 0; j < local[i].scan.script_count; ++j) {
@@ -848,6 +992,12 @@ static int resolve(const char *const *paths, size_t count, int json,
     solved = all ? holy_solve_exact_set(items, count, selected) :
                    holy_solve_exact_unique(items, count, items[0].id, selected);
     if (solved == 1) for (i = 0; i < count; ++i) if (selected[i]) {
+        if (local[i].unsupported_id) {
+            unresolved = local[i].unsupported_id;
+            unknown_context = "unsupported-requirement";
+            result = 3;
+            goto done;
+        }
         for (j = 0; j < local[i].requirement_count; ++j) {
             size_t k, matches = 0;
             for (k = 0; k < count; ++k)
@@ -926,10 +1076,12 @@ done:
         free(local[i].requirement_ids);
         free(local[i].original_requirements);
         free(local[i].capability);
+        free(local[i].unsupported_id);
         for (j = 0; j < local[i].edge_count; ++j)
             free(local[i].edges[j].owned_target);
         free(local[i].edges);
         for (j = 0; j < local[i].package_edge_count; ++j) {
+            free(local[i].package_edges[j].kind);
             free(local[i].package_edges[j].arch); free(local[i].package_edges[j].libc);
             free(local[i].package_edges[j].relation); free(local[i].package_edges[j].version);
         }
@@ -938,6 +1090,11 @@ done:
             free(local[i].claims[j].capability); free(local[i].claims[j].version);
         }
         free(local[i].claims);
+        for (j = 0; j < local[i].file_count; ++j) {
+            free(local[i].file_paths[j].path);
+            free(local[i].file_paths[j].link);
+        }
+        free(local[i].file_paths);
         holy_scan_free(&local[i].scan);
         holy_package_identity_free(&local[i].identity);
     }

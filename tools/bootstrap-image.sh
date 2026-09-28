@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
-test "$#" -eq 10 || {
-    echo 'usage: bootstrap-image.sh HOLYPKG STATIC_HOLYPKG STATIC_CC BUSYBOX DINIT MDEVD KERNEL KERNEL_VERSION LIMINE_DIR OUTPUT' >&2
+test "$#" -ge 10 || {
+    echo 'usage: bootstrap-image.sh HOLYPKG STATIC_HOLYPKG STATIC_CC BUSYBOX DINIT MDEVD KERNEL KERNEL_VERSION LIMINE_DIR OUTPUT [--local PACKAGE.holy | --source ALIAS PACKAGE ...]' >&2
     exit 2
 }
 if test "${HOLY_IMAGE_NAMESPACE:-}" != 1; then
@@ -24,6 +24,8 @@ kernel=$(realpath "$7")
 version=$8
 limine_dir=$(realpath "$9")
 shift 9
+image_output=$1
+shift
 case "$version" in ''|*[!a-zA-Z0-9._+-]*) exit 2 ;; esac
 test "$(uname -m)" = x86_64 || exit 6
 arch=${ARCH:-x86_64}
@@ -32,7 +34,13 @@ case "$arch" in
     i686) qemu=qemu-system-i386; package_arch=x86 ;;
     *) echo 'ARCH must be i686 or x86_64' >&2; exit 2 ;;
 esac
-for tool in dracut ldconfig limine sha256sum cpio gzip python3 "$qemu"; do
+boot_test=${IMAGE_BOOT_TEST:-required}
+case "$boot_test" in required|build-only) ;; *) echo 'IMAGE_BOOT_TEST must be required or build-only' >&2; exit 2 ;; esac
+if test "$boot_test" = required && ! command -v "$qemu" >/dev/null; then
+    boot_test=build-only
+    echo "$qemu unavailable; image will remain untested" >&2
+fi
+for tool in dracut ldconfig limine sha256sum cpio gzip python3; do
     command -v "$tool" >/dev/null || { echo "$tool required" >&2; exit 6; }
 done
 python3 - "$kernel" "$arch" <<'PY'
@@ -116,9 +124,9 @@ case "$profile:$boot_state" in
         ;;
     *) echo 'unsupported image profile or libc boot state' >&2; exit 2 ;;
 esac
-mkdir -p "$(dirname "$1")"
-mkdir -m 0700 "$1"
-out=$(realpath "$1")
+mkdir -p "$(dirname "$image_output")"
+mkdir -m 0700 "$image_output"
+out=$(realpath "$image_output")
 work="$out/work"
 root="$out/root"
 mkdir "$work" "$root" "$out/packages" "$out/inputs" "$out/reports"
@@ -126,6 +134,19 @@ started=$(date +%s)
 record="$out/build.record"
 printf 'format holy-bootstrap-image-1\narch %s\nprofile %s\nlibc-boot-state %s\nkernel-version %s\n' "$arch" "$profile" "$boot_state" "$version" > "$record"
 printf 'root-storage %s\n' "$storage" >> "$record"
+printf 'boot-test %s\n' "$boot_test" >> "$record"
+if test -n "${HOLY_IMAGE_CONFIG_SHA256:-}"; then
+    case "$HOLY_IMAGE_CONFIG_SHA256" in *[!0-9a-f]*|'') exit 2 ;; esac
+    test "${#HOLY_IMAGE_CONFIG_SHA256}" -eq 64 || exit 2
+    printf 'image-config-sha256 %s\n' "$HOLY_IMAGE_CONFIG_SHA256" >> "$record"
+    test -n "${HOLY_IMAGE_CONFIG_FILE:-}" || exit 6
+    cp "$HOLY_IMAGE_CONFIG_FILE" "$out/inputs/image.conf"
+    config_copy_hash=$(sha256sum "$out/inputs/image.conf")
+    test "${config_copy_hash%% *}" = "$HOLY_IMAGE_CONFIG_SHA256" || {
+        echo 'image config changed after validation' >&2
+        exit 3
+    }
+fi
 printf 'network-recovery %s\n' "$network_recovery" >> "$record"
 printf 'install-test %s\n' "$install_test" >> "$record"
 if test "$install_test" = 1; then printf 'install-firmware %s\n' "$install_firmware" >> "$record"; fi
@@ -133,12 +154,29 @@ finish() {
     rc=$?
     trap - EXIT
     printf 'exit %s\nelapsed-seconds %s\n' "$rc" "$(($(date +%s) - started))" >> "$record"
-    test "$rc" -eq 0 || printf 'result incomplete\n' >> "$record"
+    if test "$rc" -ne 0 && test "${image_untested:-0}" != 1; then
+        printf 'result incomplete\n' >> "$record"
+    fi
     exit "$rc"
 }
 trap finish EXIT
 trap 'exit 1' HUP INT TERM
 exec > "$out/build.log" 2>&1
+(
+    set -- "$bin" "$installer" "$cc" dracut ldconfig limine sha256sum cpio gzip python3 unshare
+    if test "$profile" = dual-libc; then set -- "$@" "$glibc_cc" "$musl_cc" patchelf; fi
+    if test "$storage" != ram; then set -- "$@" mke2fs qemu-img; fi
+    if test "$storage" = gpt-ext4; then set -- "$@" sfdisk mkfs.fat mcopy mmd; else set -- "$@" xorriso; fi
+    if test "$network_recovery" = fixture; then set -- "$@" openssl; fi
+    if test "$boot_test" = required; then set -- "$@" "$qemu"; fi
+    python3 "$project/tools/image-host-tools.py" "$out/host-tools.jsonl" "$@"
+)
+host_tools_hash=$(sha256sum "$out/host-tools.jsonl")
+printf 'host-tools-sha256 %s\n' "${host_tools_hash%% *}" >> "$record"
+"$bin" db init --root "$root"
+if test -n "${HOLY_IMAGE_SOURCE_DIR:-}"; then
+    sh "$project/tools/image-source-stage.sh" "$bin" "$root" "$out" "$HOLY_IMAGE_SOURCE_DIR"
+fi
 "$bin" elf "$static" > "$out/core.elf"
 grep -qx 'runtime nolibc' "$out/core.elf"
 grep -qx "machine $package_arch" "$out/core.elf"
@@ -167,6 +205,8 @@ pack() {
     "$bin" pack "$tree" --output "$out/packages/$1.holy"
     rm -rf "$tree"
 }
+sh "$project/tools/image-package-stage.sh" "$bin" "$out" "$arch" "$@"
+additional_packages=$(cat "$work/additional-packages")
 for name in busybox dinit mdevd $extra_packages; do
     case "$name" in
         busybox) input=$busybox ;; dinit) input=$dinit ;; mdevd) input=$mdevd ;;
@@ -354,10 +394,16 @@ sha256sum "$project/src/early-init.c" "$project/tests/boot-probe.sh" \
     "$project/profiles/dinit/"* > "$tree/HOLY/origin"
 pack holy-boot
 metadata holy-base bootstrap noarch
-for name in busybox dinit mdevd holypkg holyinstall linux limine holy-boot $extra_packages $install_doas; do
+: > "$work/package-names"
+for name in busybox dinit mdevd holypkg holyinstall linux limine holy-boot $extra_packages $install_doas $additional_packages; do
     "$bin" info "local:$out/packages/$name.holy" > "$work/package-info"
     actual_name=$(sed -n 's/^name //p' "$work/package-info")
     case "$actual_name" in ''|*[!a-zA-Z0-9._+-]*) echo 'unsupported bootstrap package name' >&2; exit 6 ;; esac
+    if grep -Fxq -e "$actual_name" "$work/package-names"; then
+        echo "duplicate image package name $actual_name" >&2
+        exit 4
+    fi
+    printf '%s\n' "$actual_name" >> "$work/package-names"
     printf 'require base-%s holy-base package %s any any any - %s metadata\n' "$name" "$actual_name" "$actual_name" >> "$tree/HOLY/deps"
 done
 pack holy-base
@@ -379,7 +425,6 @@ if test "$profile" = dual-libc; then
             "$root/usr/share/licenses/glibc" "$root/usr/share/doc/glibc" "$root/usr/share/doc/musl"
     fi
 fi
-"$bin" db init --root "$root"
 python3 - "$root" "$work/install.conf" <<'PY'
 import sys
 
@@ -392,13 +437,19 @@ with open(sys.argv[2], 'w', encoding='utf-8') as output:
     output.write('[install]\nroot ' + quoted(sys.argv[1]) + '\n')
 PY
 accepted_arch=
-for name in holy-base busybox dinit mdevd holypkg holyinstall linux limine holy-boot $extra_packages $install_doas; do
+for name in holy-base busybox dinit mdevd holypkg holyinstall linux limine holy-boot $extra_packages $install_doas $additional_packages; do
     package="$out/packages/$name.holy"
     digest=$(sha256sum "$package")
     digest=${digest%% *}
     printf 'package %s %s\n' "$name" "$digest" >> "$record"
     "$bin" cache stage "local:$package" --root "$root"
     printf 'artifact %s\n' "$digest" >> "$work/install.conf"
+    if test -f "$work/add-sources"; then
+        source_id=$(awk -v label="$name" '$1 == label {print $2}' "$work/add-sources")
+        if test -n "$source_id"; then
+            printf 'source %s %s\n' "$digest" "$source_id" >> "$work/install.conf"
+        fi
+    fi
     if test "$arch" = i686; then
         "$bin" info "local:$package" > "$work/package-info"
         if grep -qx 'arch x86' "$work/package-info"; then accepted_arch="$accepted_arch $digest"; fi
@@ -416,6 +467,8 @@ cat "$out/install.preview"
 plan=$(sed -n 's/^set-sha256 \([0-9a-f]*\)$/\1/p' "$out/install.plan")
 test "${#plan}" -eq 64
 printf 'install-plan %s\n' "$plan" >> "$record"
+install_plan_file=$(sha256sum "$out/install.plan")
+printf 'install-plan-file-sha256 %s\n' "${install_plan_file%% *}" >> "$record"
 "$installer" --apply "$out/install.plan" --holypkg "$bin" > "$out/install.apply"
 test "$(cat "$root/var/lib/holypkg/generation")" -eq 1
 "$bin" db check --all --root "$root" > "$out/root-check.record"
@@ -517,6 +570,14 @@ for abi in glibc musl; do
     esac
 done
 sha256sum "$project/tools/bootstrap-image.sh" "$project/profiles/dracut/module-setup.sh" >> "$record"
+(
+    cd "$out"
+    set -- inputs packages
+    if test -d mirrors; then set -- "$@" mirrors; fi
+    find "$@" -type f -print0 | sort -z | xargs -0 sha256sum > input-lock.sha256
+)
+input_lock=$(sha256sum "$out/input-lock.sha256")
+printf 'input-lock-sha256 %s\n' "${input_lock%% *}" >> "$record"
 if test "$storage" = gpt-ext4; then
     truncate -s 1G "$out/disk.raw"
     printf '[disk]\nimage "%s"\nlayout gpt-ext4\n' "$out/disk.raw" > "$work/disk.conf"
@@ -702,6 +763,11 @@ else
     sha256sum "$iso_image" >> "$record"
 fi
 sha256sum "$out/initramfs.img" "$root/boot/vmlinuz" >> "$record"
+if test "$boot_test" = build-only; then
+    printf 'result untested\nnot-tested qemu-boot-contract\n' >> "$record"
+    image_untested=1
+    exit 6
+fi
 if test "$install_test" = 1; then
     ARCH="$arch" ISO="$iso_image" BOOT_PLAN="$plan" REPORT_DIR="$out/reports" \
         STATIC_HOLYINSTALL="$installer" INSTALL_FIRMWARE="$install_firmware" \

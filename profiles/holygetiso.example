@@ -1,0 +1,40 @@
+[image]
+arch x86_64
+output "../out/holy-image"
+kernel-image "../out/kernel/bzImage"
+kernel-version "7.2.8-holy"
+limine-dir "../out/limine"
+static-holypkg "../out/static/holypkg"
+static-holyinstall "../out/static/holyinstall"
+static-cc "/usr/bin/musl-gcc"
+glibc-cc "/usr/bin/gcc"
+musl-cc "/usr/bin/musl-gcc"
+profile dual-libc
+root-storage ram
+boot-test required
+
+[packages]
+busybox "../out/busybox-bootstrap/busybox.holy"
+dinit "../out/dinit-bootstrap/dinit.holy"
+mdevd "../out/mdevd-bootstrap/mdevd.holy"
+glibc "../out/glibc-bootstrap/glibc.holy"
+musl "../out/musl-bootstrap/musl.holy"
+# add "../out/extra/selected-tool.holy"
+# add example:selected-tool
+
+# [source example]
+# type holy-http
+# url "https://packages.example/holy/"
+# index-sha256 "<reviewed-index-sha256>"
+# mirror "../out/exported-mirror"
+# embed-mirror yes
+
+# [source git-example]
+# type holy-git
+# url "https://git.example/holy-packages.git"
+# index-sha256 "<reviewed-index-sha256>"
+# commit "<reviewed-full-git-object-id>"
+
+[docs]
+include installed-man-pages
+output "/usr/share/holy/llm.txt"

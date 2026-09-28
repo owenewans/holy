@@ -5,6 +5,9 @@ holy-image \- image build and libc recovery boot tests
 make bootstrap-image builds a live ISO and runs its QEMU boot test. ARCH defaults
 to x86_64. ARCH=i686 supports BIOS optical ISOs with ROOT_STORAGE=ram or ext4
 and an independently bootable BIOS GPT disk with ROOT_STORAGE=gpt-ext4.
+IMAGE_BOOT_TEST=build-only produces the image without a QEMU run, records
+"result untested" and returns 6. If the selected QEMU binary is missing,
+the builder takes the same path. Neither case counts as a release boot gate.
 The i686 ISO boots through El Torito; it is not a hybrid USB image.
 The i686 profile requires an i686 kernel and matching static
 BusyBox, dinit, mdevd, holypkg and C compiler inputs. The builder checks

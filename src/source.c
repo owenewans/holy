@@ -5,6 +5,8 @@
 #include "stage.h"
 #include "repo.h"
 #include "fetch.h"
+#include "sign.h"
+#include "git.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -20,7 +22,8 @@
 
 struct source {
     char id[65];
-    char *alias, *definition;
+    char *alias, *definition, *trust;
+    char key[65];
     int active;
 };
 
@@ -29,6 +32,14 @@ struct registry {
     size_t count;
     unsigned long long revision;
 };
+
+static const char *source_public_key(const struct source *source, char spec[69])
+{
+    if (!source->key[0]) return NULL;
+    memcpy(spec, "raw:", 4);
+    memcpy(spec + 4, source->key, 65);
+    return spec;
+}
 
 static int hash(const char *data, char output[65])
 {
@@ -60,7 +71,9 @@ static void quote(FILE *out, const char *text)
 static void clear_registry(struct registry *r)
 {
     size_t i;
-    for (i = 0; i < r->count; ++i) { free(r->items[i].alias); free(r->items[i].definition); }
+    for (i = 0; i < r->count; ++i) {
+        free(r->items[i].alias); free(r->items[i].definition); free(r->items[i].trust);
+    }
     free(r->items);
     memset(r, 0, sizeof *r);
 }
@@ -167,6 +180,10 @@ static char *serialize(struct registry *r)
         struct source *s = &r->items[i];
         fprintf(out, "source %s ", s->id); quote(out, s->alias);
         fprintf(out, " %s ", s->active ? "active" : "inactive"); quote(out, s->definition);
+        if (strcmp(s->trust, "warn") || s->key[0]) {
+            fprintf(out, " %s", s->trust);
+            if (s->key[0]) fprintf(out, " %s", s->key);
+        }
         fputc('\n', out);
     }
     ok = !ferror(out);
@@ -191,13 +208,19 @@ static int parse_registry(const char *data, struct registry *r)
             errno = 0;
             if (n != 2 || strcmp(v[0], "revision") || !v[1][0] || strspn(v[1], "0123456789") != strlen(v[1])) ok = 0;
             else { r->revision = strtoull(v[1], &last, 10); ok = !errno && !*last; }
-        } else if (ok && n == 5 && !strcmp(v[0], "source") && valid_hash(v[1]) &&
+        } else if (ok && n >= 5 && n <= 7 && !strcmp(v[0], "source") && valid_hash(v[1]) &&
                    v[2][0] && strcmp(v[2], "local") &&
-                   (!strcmp(v[3], "active") || !strcmp(v[3], "inactive")) && definition_valid(v[4])) {
+                   (!strcmp(v[3], "active") || !strcmp(v[3], "inactive")) &&
+                   definition_valid(v[4]) &&
+                   (n == 5 || !strcmp(v[5], "warn") || !strcmp(v[5], "require") ||
+                    !strcmp(v[5], "ignore")) && (n < 7 || valid_hash(v[6]))) {
             struct source *grown;
             char id[65];
             int active = !strcmp(v[3], "active");
-            ok = hash(v[4], id) && !strcmp(id, v[1]) && r->count < 10000;
+            ok = hash(v[4], id) && !strcmp(id, v[1]) && r->count < 10000 &&
+                 !(n == 6 && !strcmp(v[5], "require") &&
+                   (strstr(v[4], "type \"holy-http\"\n") ||
+                    strstr(v[4], "type \"holy-git\"\n")));
             for (i = 0; ok && i < r->count; ++i)
                 if (!strcmp(r->items[i].id, id) || (active && r->items[i].active && !strcmp(r->items[i].alias, v[2]))) ok = 0;
             grown = ok ? realloc(r->items, (r->count + 1) * sizeof *grown) : NULL;
@@ -205,8 +228,11 @@ static int parse_registry(const char *data, struct registry *r)
             else {
                 struct source *s;
                 r->items = grown; s = &grown[r->count++]; memset(s, 0, sizeof *s);
-                memcpy(s->id, id, 65); s->alias = strdup(v[2]); s->definition = strdup(v[4]); s->active = active;
-                ok = s->alias && s->definition;
+                memcpy(s->id, id, 65); s->alias = strdup(v[2]);
+                s->definition = strdup(v[4]); s->trust = strdup(n >= 6 ? v[5] : "warn");
+                if (n == 7) memcpy(s->key, v[6], 65);
+                s->active = active;
+                ok = s->alias && s->definition && s->trust;
             }
         } else ok = 0;
         holy_tokens_free(v, n);
@@ -268,6 +294,35 @@ done:
     return data;
 }
 
+static const struct holy_entry *config_field(const struct holy_config *config,
+                                              const char *section, const char *key)
+{
+    size_t i;
+    for (i = 0; i < config->count; ++i)
+        if (!strcmp(config->entries[i].section, section) &&
+            !strcmp(config->entries[i].key, key)) return &config->entries[i];
+    return NULL;
+}
+
+static char *source_key_path(const struct holy_entry *entry)
+{
+    const char *name = entry->values[0], *slash;
+    char *path, *resolved;
+    size_t a, b;
+    if (name[0] == '/') return realpath(name, NULL);
+    slash = strrchr(entry->file, '/');
+    a = slash ? (size_t)(slash - entry->file + 1) : 0;
+    b = strlen(name);
+    if (a > (size_t)-1 - b - 1) return NULL;
+    path = malloc(a + b + 1);
+    if (!path) return NULL;
+    memcpy(path, entry->file, a);
+    memcpy(path + a, name, b + 1);
+    resolved = realpath(path, NULL);
+    free(path);
+    return resolved;
+}
+
 static void describe_changes(const struct registry *before, const struct registry *after)
 {
     size_t i, j, k;
@@ -316,29 +371,66 @@ int holy_source_plan(const char *path, const char *root)
     for (i = 0; i < r.count; ++i) r.items[i].active = 0;
     for (i = 0; i < config.count; ++i) {
         const struct holy_entry *e = &config.entries[i];
-        char *text, id[65], *alias;
+        const struct holy_entry *trust_entry, *key_entry, *raw_entry;
+        char *text, id[65], *alias, *trust, *key_path = NULL;
+        char key[65] = {0};
         if (strncmp(e->section, "source ", 7) || strcmp(e->key, "type")) continue;
+        trust_entry = config_field(&config, e->section, "trust");
+        if (!trust_entry) trust_entry = config_field(&config, "general", "trust");
+        key_entry = config_field(&config, e->section, "public-key");
+        raw_entry = config_field(&config, e->section, "public-key-ed25519");
+        trust = strdup(trust_entry ? trust_entry->values[0] : "warn");
+        if (!trust) goto done;
+        if (key_entry && raw_entry) {
+            fputs("holypkg: source accepts one public key form\n", stderr);
+            free(trust); result = 2; goto done;
+        }
+        if (key_entry) {
+            key_path = source_key_path(key_entry);
+            if (!key_path || !holy_public_key_hex(key_path, key)) {
+                fprintf(stderr, "holypkg: invalid Ed25519 public key at %s:%zu\n",
+                        key_entry->file, key_entry->line);
+                free(key_path); free(trust); result = 2; goto done;
+            }
+            free(key_path);
+        } else if (raw_entry) {
+            if (!valid_hash(raw_entry->values[0])) {
+                fprintf(stderr, "holypkg: invalid Ed25519 raw key at %s:%zu\n",
+                        raw_entry->file, raw_entry->line);
+                free(trust); result = 2; goto done;
+            }
+            memcpy(key, raw_entry->values[0], 65);
+        }
+        if ((!strcmp(e->values[0], "holy-http") ||
+             !strcmp(e->values[0], "holy-git")) &&
+            !strcmp(trust, "require") && !key[0]) {
+            fprintf(stderr, "holypkg: [%s] trust require needs public-key\n", e->section);
+            free(trust); result = 2; goto done;
+        }
         text = definition(&config, e->section);
         if (!text) {
             fputs("holypkg: invalid source endpoints for ", stderr); quote(stderr, e->section + 7);
             fputs("; omit credentials, query and fragment\n", stderr);
+            free(trust);
             result = 2; goto done;
         }
-        if (!hash(text, id)) { free(text); goto done; }
+        if (!hash(text, id)) { free(text); free(trust); goto done; }
         for (j = 0; j < r.count; ++j) if (!strcmp(r.items[j].id, id)) break;
         if (j < r.count && r.items[j].active) {
             fprintf(stderr, "holypkg: decision-required source-definition-%s: duplicate aliases\n", id);
-            free(text); result = 3; goto done;
+            free(text); free(trust); result = 3; goto done;
         }
         alias = strdup(e->section + 7);
-        if (!alias) { free(text); goto done; }
+        if (!alias) { free(text); free(trust); goto done; }
         if (j == r.count) {
             struct source *grown = r.count < 10000 ? realloc(r.items, (r.count + 1) * sizeof *grown) : NULL;
-            if (!grown) { free(text); free(alias); goto done; }
+            if (!grown) { free(text); free(alias); free(trust); goto done; }
             r.items = grown; memset(&grown[r.count++], 0, sizeof *grown);
             memcpy(r.items[j].id, id, 65);
             r.items[j].definition = text;
         } else free(text);
+        free(r.items[j].trust); r.items[j].trust = trust;
+        memcpy(r.items[j].key, key, 65);
         free(r.items[j].alias); r.items[j].alias = alias; r.items[j].active = 1;
     }
     next = serialize(&r);
@@ -508,11 +600,45 @@ done:
     return result;
 }
 
-static char *native_endpoint(const char *definition)
+int holy_source_known_id(const char *root, const char *alias, char output[65])
+{
+    struct registry registry = {0};
+    unsigned long long generation;
+    char *data = NULL;
+    size_t i, matches = 0;
+    int dir, result = 1, active = 0;
+    output[0] = 0;
+    if (!alias || !*alias || !strcmp(alias, "local")) return 2;
+    dir = holy_state_lock(root, 0, &generation, &result);
+    if (dir < 0) return result;
+    data = load_registry(dir, &registry);
+    if (!data) goto done;
+    result = 6;
+    for (i = 0; i < registry.count; ++i) {
+        if (strcmp(registry.items[i].alias, alias)) continue;
+        if (registry.items[i].active) {
+            memcpy(output, registry.items[i].id, 65);
+            active = 1;
+            matches = 1;
+            break;
+        }
+        if (++matches == 1) memcpy(output, registry.items[i].id, 65);
+    }
+    if (active || matches == 1) result = 0;
+    else if (matches > 1) result = 3;
+done:
+    if (result) fprintf(stderr, "holypkg: source alias %s for installed package: %s\n",
+                        result == 3 ? "ambiguous" : "unavailable", alias);
+    free(data); clear_registry(&registry); close(dir);
+    return result;
+}
+
+static char *native_endpoint(const char *definition, int *git)
 {
     const char *line = definition;
     char *url = NULL;
     int native = 0, unsupported = 0;
+    if (git) *git = 0;
     while (*line) {
         const char *end = strchr(line, '\n');
         char **v = NULL;
@@ -522,7 +648,10 @@ static char *native_endpoint(const char *definition)
             free(url);
             return NULL;
         }
-        if (n == 2 && !strcmp(v[0], "type")) native = !strcmp(v[1], "holy-http");
+        if (n == 2 && !strcmp(v[0], "type")) {
+            native = !strcmp(v[1], "holy-http") || !strcmp(v[1], "holy-git");
+            if (git) *git = !strcmp(v[1], "holy-git");
+        }
         else if (n == 2 && !strcmp(v[0], "url")) {
             free(url);
             url = strdup(v[1]);
@@ -540,9 +669,9 @@ int holy_source_catalog(const char *root, const char *alias,
 {
     struct registry registry = {0};
     unsigned long long generation;
-    char *data = NULL, *url = NULL;
+    char *data = NULL, *url = NULL, key_spec[69];
     size_t i;
-    int dir, result = 1;
+    int dir, result = 1, git = 0;
     source_id[0] = 0;
     if (!alias || !*alias || !strcmp(alias, "local") || !catalog || !*catalog) return 2;
     dir = holy_state_lock(root, 0, &generation, &result);
@@ -554,9 +683,11 @@ int holy_source_catalog(const char *root, const char *alias,
     for (i = 0; i < registry.count; ++i)
         if (registry.items[i].active && !strcmp(registry.items[i].alias, alias)) break;
     if (i == registry.count) goto done;
-    url = native_endpoint(registry.items[i].definition);
+    url = native_endpoint(registry.items[i].definition, &git);
     if (!url) goto done;
-    if (!holy_repo_source_catalog(catalog, registry.items[i].id, url)) goto done;
+    if (!holy_repo_source_catalog(catalog, registry.items[i].id, url,
+                                  source_public_key(&registry.items[i], key_spec)) ||
+        (git && !holy_git_catalog_commit(catalog, NULL))) goto done;
     memcpy(source_id, registry.items[i].id, 65);
     result = 0;
 done:
@@ -585,13 +716,14 @@ static int catalogs_dir(int database, int create)
 }
 
 static int read_catalog_binding(int database, const char *id,
-                                char index[65], char **path)
+                                char index[65], char **path, int *root_relative)
 {
     struct stat st;
     char *data = NULL, *line, **v = NULL;
     size_t n = 0;
     int catalogs = -1, fd = -1, ok = 0;
     *path = NULL;
+    *root_relative = 0;
     index[0] = 0;
     catalogs = catalogs_dir(database, 0);
     if (catalogs < 0) goto done;
@@ -613,7 +745,9 @@ static int read_catalog_binding(int database, const char *id,
     {
         char *end = strchr(line, '\n');
         if (!end || end[1] || !tokens(line, (size_t)(end - line), &v, &n) ||
-            n != 2 || strcmp(v[0], "path") || v[1][0] != '/') goto done;
+            n != 2 || (strcmp(v[0], "path") && strcmp(v[0], "root-path")) ||
+            v[1][0] != '/') goto done;
+        *root_relative = !strcmp(v[0], "root-path");
         *path = strdup(v[1]);
         ok = *path != NULL;
     }
@@ -630,12 +764,12 @@ int holy_source_bind_catalog(const char *root, const char *alias,
                              const char *catalog)
 {
     struct registry registry = {0};
-    char *data = NULL, *url = NULL, *path = NULL, *record = NULL;
-    char index[65], temp_name[43] = {0};
+    char *data = NULL, *url = NULL, *path = NULL, *root_path = NULL, *record = NULL;
+    char index[65], key_spec[69], temp_name[43] = {0};
     size_t i, size = 0, used = 0;
     unsigned long long generation;
     FILE *out = NULL;
-    int database = -1, catalogs = -1, temp = -1, result = 1;
+    int database = -1, catalogs = -1, temp = -1, result = 1, git = 0;
     if (!alias || !*alias || !strcmp(alias, "local") || !catalog || !*catalog)
         return 2;
     database = holy_state_lock(root, 1, &generation, &result);
@@ -646,15 +780,22 @@ int holy_source_bind_catalog(const char *root, const char *alias,
     for (i = 0; i < registry.count; ++i)
         if (registry.items[i].active && !strcmp(registry.items[i].alias, alias)) break;
     if (i == registry.count) goto done;
-    url = native_endpoint(registry.items[i].definition);
+    url = native_endpoint(registry.items[i].definition, &git);
     path = realpath(catalog, NULL);
-    if (!url || !path || !holy_repo_source_catalog(path, registry.items[i].id, url) ||
+    if (!url || !path || !holy_repo_source_catalog(path, registry.items[i].id, url,
+              source_public_key(&registry.items[i], key_spec)) ||
+        (git && !holy_git_catalog_commit(path, NULL)) ||
         !holy_repo_catalog_index(path, index)) goto done;
     result = 1;
     out = open_memstream(&record, &size);
     if (!out) goto done;
-    fprintf(out, "format holy-source-catalog-1\nindex %s\npath ", index);
-    quote(out, path);
+    root_path = realpath(root, NULL);
+    if (!root_path) goto done;
+    fprintf(out, "format holy-source-catalog-1\nindex %s\n%s ", index,
+            strcmp(root_path, "/") && !strncmp(path, root_path, strlen(root_path)) &&
+            path[strlen(root_path)] == '/' ? "root-path" : "path");
+    quote(out, strcmp(root_path, "/") && !strncmp(path, root_path, strlen(root_path)) &&
+          path[strlen(root_path)] == '/' ? path + strlen(root_path) : path);
     fputc('\n', out);
     {
         int failed = ferror(out);
@@ -684,7 +825,7 @@ done:
         close(catalogs);
     }
     if (database >= 0) close(database);
-    free(data); free(url); free(path); free(record);
+    free(data); free(url); free(path); free(root_path); free(record);
     clear_registry(&registry);
     if (result) fprintf(stderr, "holypkg: source catalog binding failed (status %d)\n", result);
     return result;
@@ -694,11 +835,11 @@ static int source_catalog_path(const char *root, const char *alias,
                                char **path, int fast)
 {
     struct registry registry = {0};
-    char *data = NULL, *url = NULL, *saved = NULL;
-    char expected[65], actual[65];
+    char *data = NULL, *url = NULL, *saved = NULL, *joined = NULL, *canonical = NULL;
+    char expected[65], actual[65], key_spec[69];
     size_t i;
     unsigned long long generation;
-    int database = -1, result = 1;
+    int database = -1, result = 1, root_relative = 0, git = 0;
     *path = NULL;
     if (!alias || !*alias || !strcmp(alias, "local")) return 2;
     database = holy_state_lock(root, 0, &generation, &result);
@@ -709,10 +850,31 @@ static int source_catalog_path(const char *root, const char *alias,
     for (i = 0; i < registry.count; ++i)
         if (registry.items[i].active && !strcmp(registry.items[i].alias, alias)) break;
     if (i == registry.count) goto done;
-    url = native_endpoint(registry.items[i].definition);
+    url = native_endpoint(registry.items[i].definition, &git);
     if (!url || !read_catalog_binding(database, registry.items[i].id,
-                                      expected, &saved) ||
-        !holy_repo_source_catalog(saved, registry.items[i].id, url) ||
+                                      expected, &saved, &root_relative)) goto done;
+    if (root_relative) {
+        size_t a, b;
+        canonical = realpath(root, NULL);
+        if (!canonical) goto done;
+        a = strlen(canonical); b = strlen(saved);
+        if (a > (size_t)-1 - b - 1) goto done;
+        joined = malloc(a + b + 1);
+        if (!joined) goto done;
+        if (!strcmp(canonical, "/")) memcpy(joined, saved, b + 1);
+        else {
+            memcpy(joined, canonical, a);
+            memcpy(joined + a, saved, b + 1);
+        }
+        free(saved);
+        saved = realpath(joined, NULL);
+        if (!saved || (strcmp(canonical, "/") &&
+                       (strncmp(saved, canonical, a) || saved[a] != '/'))) goto done;
+    }
+    if (
+        !holy_repo_source_catalog(saved, registry.items[i].id, url,
+                                  source_public_key(&registry.items[i], key_spec)) ||
+        (git && !holy_git_catalog_commit(saved, NULL)) ||
         !(fast ? holy_repo_catalog_index_fast(saved, actual) :
                   holy_repo_catalog_index(saved, actual)) ||
         strcmp(expected, actual)) goto done;
@@ -722,7 +884,7 @@ static int source_catalog_path(const char *root, const char *alias,
 done:
     if (result) fprintf(stderr, "holypkg: bound catalog unavailable for source ");
     if (result) { quote(stderr, alias); fputc('\n', stderr); }
-    free(saved); free(url); free(data);
+    free(saved); free(joined); free(canonical); free(url); free(data);
     clear_registry(&registry);
     if (database >= 0) close(database);
     return result;
@@ -784,7 +946,8 @@ done:
 
 static int sync_bound_catalog(const char *alias, const char *root, const char *url,
                               const char *id, const char *digest, const char *ca_file,
-                              int current_accepted)
+                              int current_accepted, const char *public_key,
+                              const char *commit)
 {
     char *parent_path = NULL, *catalog = NULL, *temporary = NULL;
     char actual[65];
@@ -801,7 +964,8 @@ static int sync_bound_catalog(const char *alias, const char *root, const char *u
     snprintf(catalog, length + 66, "%s/%s", parent_path, digest);
     if (fstatat(parent, digest, &st, AT_SYMLINK_NOFOLLOW) == 0) {
         if (!S_ISDIR(st.st_mode) ||
-            !holy_repo_source_catalog(catalog, id, url) ||
+            !holy_repo_source_catalog(catalog, id, url, public_key) ||
+            (commit && !holy_git_catalog_commit(catalog, commit)) ||
             !holy_repo_catalog_index(catalog, actual) || strcmp(actual, digest)) {
             result = 6; goto done;
         }
@@ -809,7 +973,11 @@ static int sync_bound_catalog(const char *alias, const char *root, const char *u
         if (errno != ENOENT) goto done;
         snprintf(temporary, length + 20, "%s/.sync-XXXXXX", parent_path);
         if (!mkdtemp(temporary) || rmdir(temporary)) goto done;
-        result = holy_repo_mirror_source(url, digest, temporary, ca_file, id,
+        result = commit ? holy_git_mirror_source(url, commit, digest, temporary,
+                                                 id, public_key, ca_file) :
+                 public_key ? holy_repo_mirror_source_signed(url, digest, temporary,
+                                                              ca_file, id, public_key) :
+                 holy_repo_mirror_source(url, digest, temporary, ca_file, id,
                                          current_accepted);
         if (result) {
             fprintf(stderr, "holypkg: incomplete catalog retained at %s\n", temporary);
@@ -829,19 +997,22 @@ done:
 
 int holy_source_sync(const char *alias, const char *root, const char *digest,
                      const char *accepted_unsigned, const char *output,
-                     const char *ca_file)
+                     const char *ca_file, const char *commit)
 {
     struct registry registry = {0};
     char *data = NULL, *url = NULL;
-    char source_id[65] = {0};
+    char source_id[65] = {0}, key_spec[69];
     char current[65];
+    const char *public_key = NULL;
     unsigned long long generation;
-    int dir, result = 1;
+    int dir, result = 1, git = 0;
     size_t i;
     if (!alias || !*alias || !strcmp(alias, "local") ||
         (digest && accepted_unsigned) ||
         (digest && !valid_hash(digest)) ||
         (accepted_unsigned && !valid_hash(accepted_unsigned)) ||
+        (commit && ((strlen(commit) != 40 && strlen(commit) != 64) ||
+                    strspn(commit, "0123456789abcdef") != strlen(commit))) ||
         (output && !*output)) return 2;
     dir = holy_state_lock(root, 0, &generation, &result);
     if (dir < 0) return result;
@@ -856,28 +1027,43 @@ int holy_source_sync(const char *alias, const char *root, const char *digest,
         quote(stderr, alias); fputc('\n', stderr);
         goto done;
     }
-    url = native_endpoint(registry.items[i].definition);
+    url = native_endpoint(registry.items[i].definition, &git);
     if (!url) {
         fputs("holypkg: source ", stderr);
-        quote(stderr, alias); fputs(" requires a single holy-http URL\n", stderr);
+        quote(stderr, alias); fputs(" requires a single native URL\n", stderr);
         goto done;
+    }
+    if ((git && (!commit || !digest || accepted_unsigned)) ||
+        (!git && commit)) { result = 2; goto done; }
+    public_key = source_public_key(&registry.items[i], key_spec);
+    if (public_key && accepted_unsigned) {
+        fputs("holypkg: signed source cannot accept unsigned current\n", stderr);
+        result = 2; goto done;
+    }
+    if (!public_key && !strcmp(registry.items[i].trust, "require")) {
+        fputs("holypkg: source trust require needs a registered public key\n", stderr);
+        result = 6; goto done;
     }
     memcpy(source_id, registry.items[i].id, sizeof source_id);
     close(dir); dir = -1;
     if (!digest) {
         result = holy_fetch_https_current(url, ca_file, current);
         if (result) goto done;
-        if (!accepted_unsigned || strcmp(accepted_unsigned, current)) {
+        if (!public_key && (!accepted_unsigned || strcmp(accepted_unsigned, current))) {
             fprintf(stderr, "holypkg: decision-required unsigned current source=%s index=%s; --accept-unsigned %s confirms this generation\n",
                     source_id, current, current);
             result = 3; goto done;
         }
         digest = current;
     }
-    result = output ? holy_repo_mirror_source(url, digest, output, ca_file,
-                                             source_id, accepted_unsigned != NULL) :
+    result = output ? (git ? holy_git_mirror_source(url, commit, digest, output,
+                                                  source_id, public_key, ca_file) :
+                       public_key ? holy_repo_mirror_source_signed(url, digest,
+                                             output, ca_file, source_id, public_key) :
+                      holy_repo_mirror_source(url, digest, output, ca_file,
+                                             source_id, accepted_unsigned != NULL)) :
         sync_bound_catalog(alias, root, url, source_id, digest, ca_file,
-                           accepted_unsigned != NULL);
+                           accepted_unsigned != NULL, public_key, commit);
     if (!result) printf("synced source %s index %s\n", source_id, digest);
 done:
     if (dir >= 0) close(dir);

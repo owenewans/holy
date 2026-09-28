@@ -1,0 +1,121 @@
+.TH HOLYGETISO 8 "September 2026" "Holy" "System Administration"
+.SH NAME
+holygetiso \- build and boot-test a Holy image from explicit local inputs
+.SH SYNOPSIS
+.B holygetiso
+.RB [ --check ]
+.I CONFIG
+.br
+.B holygetiso --export-inputs
+.I IMAGE_OUTPUT DIRECTORY
+.SH DESCRIPTION
+The current command drives the repository's bootstrap-image builder. Run it
+from the Holy source directory after make. It accepts local core inputs and
+pinned native source packages for additional applications. It rejects unknown sections, keys,
+duplicate scalar keys, missing input paths and malformed quoting. It uses the
+holy.conf lexer; configuration text is not executed by a shell. A top-level
+"include PATH" reads another config relative to the containing file. Include
+cycles and duplicate scalar keys across files fail.
+.PP
+The builder packages the core inputs, asks holyinstall and holypkg to install
+them into a separate root, generates the documentation bundle and initramfs,
+creates an ISO, then runs the QEMU boot contract. The output directory must
+not exist. A successful exit requires a boot-tested image; the build log,
+install preview, frozen plan, package hashes and VM report remain there.
+The command writes one expanded effective config with resolved input paths.
+Its SHA-256 is included in build.record before the boot plan is hashed. The
+builder copies those exact bytes into output/inputs/image.conf and rejects a
+change between validation and copying.
+With --check, the command validates the config and existing input paths and
+prints the effective config hash, target architecture, profile and output path without
+starting a build.
+.PP
+--export-inputs copies the inputs, normalized packages, sealed native mirrors,
+build record and frozen plans from an existing build output into a new directory.
+It checks the input lock and source/install/boot plan hashes before copying.
+SHA256SUMS records each copied file and is checked before the command succeeds.
+The bundle preserves the exact package inputs for inspection or a repeated
+experiment. host-tools.jsonl names each direct executable used by the builder,
+its canonical path and SHA-256; the build record binds that file. The bundle
+does not include the host compiler, QEMU, firmware, their dependency closure or
+the Holy source checkout. The destination must not exist.
+.SH CONFIGURATION
+Paths are resolved relative to the config file. Existing input paths must
+resolve at startup. The output path names a new directory; the ISO is written
+as holy-ARCH.iso inside it. Supported sections and keys follow.
+.TP
+.B [image]
+Required: arch (i686 or x86_64), output, kernel-image, kernel-version,
+limine-dir, static-holypkg, static-holyinstall, static-cc, profile
+(static-core or dual-libc), root-storage (ram, ext4 or gpt-ext4).
+Optional: glibc-cc, musl-cc, libc-boot-state, network-recovery,
+install-test and install-firmware. Their supported combinations are documented
+in holy-image(7). boot-test accepts required (default) or build-only. The
+dual-libc profile requires musl-cc.
+.TP
+.B [packages]
+Required: busybox, dinit and mdevd. The dual-libc profile also requires
+glibc and musl. An installer test requires doas and storage-tools. Each
+value is a path to a local .holy artifact. The builder records original and
+normalized artifact hashes separately. Repeated "add PATH" entries install
+additional local .holy packages in the same frozen set plan. Their original
+archives remain in output/inputs and the build record identifies each hash.
+An "add ALIAS:PACKAGE" entry fetches a named package from a pinned native
+source. The builder solves that package's dependency closure within its sealed
+catalog, copies each selected .holy into inputs, registers the source under
+the image root and binds each artifact's source ID in holyinstall's frozen set
+plan. A dependency requiring another source needs an explicit resolution step
+and currently stops the build. Boot core package fields still require local
+artifacts because the builder normalizes those artifacts into new unsigned
+Holy packages. Added packages must target the image architecture or noarch; x86 packages are
+also accepted in an x86_64 image. Duplicate package names fail before plan
+generation. The package manager checks payload ownership and dependencies.
+.TP
+.B [source NAME]
+Each used native source requires type holy-http or holy-git, "url" and
+"index-sha256" with the exact lowercase digest of the selected generation.
+holy-http uses an HTTPS directory URL ending in slash. holy-git also requires
+"commit" with a full lowercase Git object ID. The builder records the commit
+in build.record and checks it when fetching or importing a mirror.
+"ca-file" names an optional local CA file. "mirror PATH" selects
+an existing sealed snapshot for an offline build. Its source ID, URL and
+index must match the configured source and pin. The builder copies and
+revalidates it under output/mirrors. "embed-mirror yes" also includes the
+entire sealed catalog in the image root at
+/var/cache/holypkg/image-mirrors/NAME. The source binding uses that
+root-relative location so fetch can find it after the image boots. The
+default is no: only selected packages enter the image cache, and the user
+syncs the source after boot to obtain its current catalog.
+mirror and ca-file cannot be combined.
+"trust require" with "public-key PATH" verifies an Ed25519-signed catalog.
+holygetiso resolves the PEM path relative to its containing config file and
+freezes the raw public key in the effective config and source plan. Changing
+the key bytes changes the effective config hash. A signed offline mirror must
+carry a valid signature for that key. The key is checked again when a bound
+mirror is queried.
+The image config uses the holy.conf lexer but index-sha256 is specific to
+holygetiso. The builder registers all listed sources and keeps the
+verified mirrors in output/mirrors. Its record binds source IDs and index
+digests. An index digest is a pin, not publisher signature evidence.
+.TP
+.B [docs]
+Exactly one "include installed-man-pages" and
+"output /usr/share/holy/llm.txt" are required. holypkg docs reads the
+installed root and generates this file from its selected man pages.
+.SH STATUS
+The command returns 0 after a boot-tested build, 2 for invalid config, 6 for
+missing inputs or host requirements, and 1 for other failures. The output
+build.record says "result incomplete" when a build fails after the output
+directory is created. If QEMU is missing, or boot-test is build-only, the
+builder writes "result untested" after producing the image and returns 6.
+A successful process exit alone does not certify
+hardware, a desktop or all packages named in the Holy specification.
+.SH LIMITS
+This bootstrap command supports holy-http and holy-git sources and same-catalog dependency
+closures for additional packages,
+while boot core inputs remain local. It does not yet implement cross-source
+dependency selection, every package policy or a portable export of build
+tools. It is kept in-tree until those inputs and profiles can be
+resolved without the source checkout.
+.SH SEE ALSO
+holy-image(7), holypkg(8), holyinstall(8), holy.conf(5)

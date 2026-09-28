@@ -14,10 +14,15 @@ struct holy_repo_set {
 /* materialize a pinned HTTPS catalog in a new directory; CLI status result. */
 int holy_repo_mirror(const char *base, const char *digest, const char *output,
                      const char *ca_file);
+int holy_repo_mirror_signed(const char *base, const char *digest, const char *output,
+                            const char *ca_file, const char *public_key);
 /* identical validation, with a registered source ID in sealed provenance. */
 int holy_repo_mirror_source(const char *base, const char *digest, const char *output,
                             const char *ca_file, const char *source_id,
                             int current_accepted);
+int holy_repo_mirror_source_signed(const char *base, const char *digest,
+                                   const char *output, const char *ca_file,
+                                   const char *source_id, const char *public_key);
 
 /* writes an unsigned local prototype index after validating native objects. */
 int holy_repo_index(const char *directory);
@@ -30,7 +35,11 @@ int holy_repo_search_file(const char *directory, const char *query);
 int holy_repo_search_file_fuzzy(const char *directory, const char *query);
 /* verifies the catalog and returns one exact package record or a choice status. */
 int holy_repo_info_name(const char *directory, const char *name);
+/* reads validated dependency records from one pinned catalog generation. */
+int holy_repo_requirements(const char *directory, const char *name);
 int holy_repo_seal(const char *directory);
+int holy_repo_seal_signed(const char *directory, const char *private_key);
+int holy_repo_verify_signature(const char *directory, const char *public_key);
 int holy_repo_providers(const char *directory, const char *kind,
                         const char *name, int json);
 /* returns shell-style status; validates a sealed local catalog before solve. */
@@ -42,7 +51,7 @@ int holy_repo_fetch_name(const char *directory, const char *name,
                          const char *output, int extract);
 /* verifies the sealed mirror's recorded source and exact registered URL. */
 int holy_repo_source_catalog(const char *directory, const char *source_id,
-                             const char *url);
+                             const char *url, const char *public_key);
 /* verifies the complete sealed catalog and reads its selected index digest. */
 int holy_repo_catalog_index(const char *directory, char digest[65]);
 /* checks the pinned index and records without opening unrelated payloads. */

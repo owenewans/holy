@@ -14,5 +14,9 @@ typedef int (*holy_requirement_visit)(void *opaque, const char *id,
 /* visitor receives borrowed fields after all requirements validate. */
 int holy_deps_visit(const char *package, holy_requirement_visit visitor,
                     void *opaque);
+int holy_deps_record_valid(const char *id, const char *consumer,
+    const char *kind, const char *name, const char *arch, const char *libc,
+    const char *relation, const char *version, const char *original,
+    const char *evidence);
 
 #endif

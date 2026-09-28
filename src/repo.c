@@ -11,9 +11,11 @@
 #include "scan.h"
 #include "stage.h"
 #include "verify.h"
+#include "sign.h"
 
 #include <dirent.h>
 #include <errno.h>
+#include <elf.h>
 #include <fcntl.h>
 #include <inttypes.h>
 #include <openssl/evp.h>
@@ -44,12 +46,19 @@ struct claim {
     char *kind, *name, *arch, *libc, *version, *evidence;
 };
 
+struct indexed_requirement { char *fields[10]; };
+struct soname_fact { char *name, *arch, *libc, *path; };
+
 struct object {
     char *filename;
     struct holy_package_identity identity;
     int provider_match;
     struct claim *claims;
     size_t claim_count;
+    struct indexed_requirement *requirements;
+    size_t requirement_count;
+    struct soname_fact *sonames;
+    size_t soname_count;
     char **files;
     size_t file_count;
 };
@@ -149,6 +158,133 @@ static int compare_claim(void *opaque, const char *kind, const char *name,
            !strcmp(c->version, version) && !strcmp(c->evidence, evidence);
 }
 
+static void free_requirements(struct object *object)
+{
+    size_t i, j;
+    for (i = 0; i < object->requirement_count; ++i)
+        for (j = 0; j < 10; ++j) free(object->requirements[i].fields[j]);
+    free(object->requirements);
+}
+
+static int add_requirement(struct object *object, const char *fields[10])
+{
+    struct indexed_requirement item = {{0}}, *next;
+    size_t i;
+    if (object->requirement_count >= 1024 * 1024 / 11) return 0;
+    for (i = 0; i < 10; ++i) {
+        item.fields[i] = strdup(fields[i]);
+        if (!item.fields[i]) goto fail;
+    }
+    next = realloc(object->requirements,
+                   (object->requirement_count + 1) * sizeof *next);
+    if (!next) goto fail;
+    object->requirements = next;
+    object->requirements[object->requirement_count++] = item;
+    return 1;
+fail:
+    for (i = 0; i < 10; ++i) free(item.fields[i]);
+    return 0;
+}
+
+static int collect_requirement(void *opaque, const char *id,
+    const char *consumer, const char *kind, const char *name,
+    const char *arch, const char *libc, const char *relation,
+    const char *version, const char *original, const char *evidence)
+{
+    const char *fields[] = {id, consumer, kind, name, arch, libc,
+                            relation, version, original, evidence};
+    return add_requirement(opaque, fields);
+}
+
+struct requirement_cursor { struct object *object; size_t index; };
+
+static int compare_requirement(void *opaque, const char *id,
+    const char *consumer, const char *kind, const char *name,
+    const char *arch, const char *libc, const char *relation,
+    const char *version, const char *original, const char *evidence)
+{
+    struct requirement_cursor *cursor = opaque;
+    const char *fields[] = {id, consumer, kind, name, arch, libc,
+                            relation, version, original, evidence};
+    size_t i;
+    if (cursor->index == cursor->object->requirement_count) return 0;
+    for (i = 0; i < 10; ++i)
+        if (strcmp(cursor->object->requirements[cursor->index].fields[i], fields[i]))
+            return 0;
+    ++cursor->index;
+    return 1;
+}
+
+static void free_sonames(struct object *object)
+{
+    size_t i;
+    for (i = 0; i < object->soname_count; ++i) {
+        free(object->sonames[i].name); free(object->sonames[i].arch);
+        free(object->sonames[i].libc); free(object->sonames[i].path);
+    }
+    free(object->sonames);
+}
+
+static int add_soname(struct object *object, const char *name,
+                      const char *arch, const char *libc, const char *path)
+{
+    struct soname_fact fact = {0}, *next;
+    if (object->soname_count >= 100000) return 0;
+    fact.name = strdup(name); fact.arch = strdup(arch);
+    fact.libc = strdup(libc); fact.path = strdup(path);
+    if (!fact.name || !fact.arch || !fact.libc || !fact.path) goto fail;
+    next = realloc(object->sonames, (object->soname_count + 1) * sizeof *next);
+    if (!next) goto fail;
+    object->sonames = next;
+    object->sonames[object->soname_count++] = fact;
+    return 1;
+fail:
+    free(fact.name); free(fact.arch); free(fact.libc); free(fact.path);
+    return 0;
+}
+
+static int soname_order(const void *left, const void *right)
+{
+    const struct soname_fact *a = left, *b = right;
+    int cmp = strcmp(a->path, b->path);
+    return cmp ? cmp : strcmp(a->name, b->name);
+}
+
+static int collect_sonames(const char *snapshot, struct object *object)
+{
+    struct holy_scan_result scan = {0};
+    size_t i;
+    int ok = holy_scan_collect(snapshot, &scan);
+    for (i = 0; ok && i < scan.count; ++i) {
+        const struct holy_scanned_file *file = &scan.files[i];
+        if (file->elf.type == ET_DYN && !(file->elf.flags1 & DF_1_PIE) &&
+            file->elf.soname)
+            ok = add_soname(object, file->elf.soname,
+                            holy_elf_machine(&file->elf), file->runtime,
+                            file->path);
+    }
+    holy_scan_free(&scan);
+    if (ok && object->soname_count)
+        qsort(object->sonames, object->soname_count,
+              sizeof *object->sonames, soname_order);
+    return ok;
+}
+
+static int compare_sonames(const char *snapshot, struct object *object)
+{
+    struct object actual = {0};
+    size_t i;
+    int ok = collect_sonames(snapshot, &actual) &&
+             actual.soname_count == object->soname_count;
+    for (i = 0; ok && i < actual.soname_count; ++i) {
+        const struct soname_fact *a = &actual.sonames[i], *b = &object->sonames[i];
+        ok = !strcmp(a->name, b->name) && !strcmp(a->arch, b->arch) &&
+             !strcmp(a->libc, b->libc) && !strcmp(a->path, b->path);
+    }
+    free_sonames(&actual);
+    return ok;
+}
+
 static int compare_names(const void *left, const void *right)
 {
     const struct object *a = left, *b = right;
@@ -222,6 +358,27 @@ static int claim_record(FILE *fp, const struct object *object,
     size_t i;
     if (fprintf(fp, "claim %s", object->identity.digest) < 0) return 0;
     for (i = 0; i < sizeof values / sizeof *values; ++i)
+        if (fputc(' ', fp) == EOF || !quote(fp, values[i])) return 0;
+    return fputc('\n', fp) != EOF;
+}
+
+static int requirement_record(FILE *fp, const struct object *object,
+                              const struct indexed_requirement *requirement)
+{
+    size_t i;
+    if (fprintf(fp, "require %s", object->identity.digest) < 0) return 0;
+    for (i = 0; i < 10; ++i)
+        if (fputc(' ', fp) == EOF || !quote(fp, requirement->fields[i])) return 0;
+    return fputc('\n', fp) != EOF;
+}
+
+static int soname_record(FILE *fp, const struct object *object,
+                         const struct soname_fact *fact)
+{
+    const char *values[] = {fact->name, fact->arch, fact->libc, fact->path};
+    size_t i;
+    if (fprintf(fp, "soname %s", object->identity.digest) < 0) return 0;
+    for (i = 0; i < 4; ++i)
         if (fputc(' ', fp) == EOF || !quote(fp, values[i])) return 0;
     return fputc('\n', fp) != EOF;
 }
@@ -324,6 +481,8 @@ int holy_repo_index(const char *directory)
             !holy_provides_local(snapshot, 0) ||
             !holy_package_identity(snapshot, &objects[i].identity) ||
             !holy_provides_visit(snapshot, collect_claim, &objects[i]) ||
+            !holy_deps_visit(snapshot, collect_requirement, &objects[i]) ||
+            !collect_sonames(snapshot, &objects[i]) ||
             !holy_verify_visit(snapshot, collect_file, &objects[i])) {
             unlink(snapshot);
             free(snapshot);
@@ -353,11 +512,15 @@ int holy_repo_index(const char *directory)
     stream = fdopen(temp, "w");
     if (!stream) goto done;
     temp = -1;
-    if (fputs("format holy-index-prototype-3\ncoverage files complete\n", stream) == EOF) goto done;
+    if (fputs("format holy-index-prototype-5\ncoverage files complete\ncoverage dependencies complete\ncoverage elf-sonames complete\n", stream) == EOF) goto done;
     for (i = 0; i < count; ++i) {
         if (!record(stream, &objects[i])) goto done;
         for (j = 0; j < objects[i].claim_count; ++j)
             if (!claim_record(stream, &objects[i], &objects[i].claims[j])) goto done;
+        for (j = 0; j < objects[i].requirement_count; ++j)
+            if (!requirement_record(stream, &objects[i], &objects[i].requirements[j])) goto done;
+        for (j = 0; j < objects[i].soname_count; ++j)
+            if (!soname_record(stream, &objects[i], &objects[i].sonames[j])) goto done;
         for (j = 0; j < objects[i].file_count; ++j)
             if (!file_record(stream, &objects[i], objects[i].files[j])) goto done;
     }
@@ -379,6 +542,8 @@ done:
         free(objects[i].filename);
         holy_package_identity_free(&objects[i].identity);
         free_claims(&objects[i]);
+        free_requirements(&objects[i]);
+        free_sonames(&objects[i]);
         free_files(&objects[i]);
     }
     free(objects);
@@ -431,6 +596,20 @@ static int parse_claim(char **v, size_t n, struct object *object)
     return add_claim(object, v[2], v[3], v[4], v[5], v[6], v[7]);
 }
 
+static int parse_requirement(char **v, size_t n, struct object *object)
+{
+    size_t i;
+    const char *fields[10];
+    if (n != 12 || strcmp(v[0], "require") ||
+        strcmp(v[1], object->identity.digest) ||
+        !holy_deps_record_valid(v[2], v[3], v[4], v[5], v[6], v[7],
+                                v[8], v[9], v[10], v[11])) return 0;
+    for (i = 0; i < object->requirement_count; ++i)
+        if (!strcmp(object->requirements[i].fields[0], v[2])) return 0;
+    for (i = 0; i < 10; ++i) fields[i] = v[i + 2];
+    return add_requirement(object, fields);
+}
+
 static int safe_target_path(const char *path)
 {
     size_t length = strlen(path);
@@ -454,6 +633,22 @@ static int parse_file(char **v, size_t n, struct object *object)
         (object->file_count && strcmp(object->files[object->file_count - 1], v[2]) >= 0))
         return 0;
     return add_file(object, v[2]);
+}
+
+static int parse_soname(char **v, size_t n, struct object *object)
+{
+    struct soname_fact current;
+    if (n != 6 || strcmp(v[0], "soname") ||
+        strcmp(v[1], object->identity.digest) || !v[2][0] ||
+        (strcmp(v[3], "x86") && strcmp(v[3], "x86_64")) ||
+        (strcmp(v[4], "glibc") && strcmp(v[4], "musl")) ||
+        !safe_target_path(v[5])) return 0;
+    current.name = v[2]; current.arch = v[3];
+    current.libc = v[4]; current.path = v[5];
+    if (object->soname_count &&
+        soname_order(&object->sonames[object->soname_count - 1], &current) >= 0)
+        return 0;
+    return add_soname(object, v[2], v[3], v[4], v[5]);
 }
 
 static int indexed_file(const struct object *object, const char *path)
@@ -587,6 +782,7 @@ static int list(const char *directory, const char *query,
     size_t capacity = 0, count = 0, i, j, number = 0;
     ssize_t length;
     int dir = -1, fd = -1, ok = 0, indexed = 0, file_index = 0;
+    int dependency_index = 0, soname_index = 0;
 
     dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dir < 0 || (lock && flock(dir, LOCK_SH) < 0)) goto done;
@@ -623,10 +819,17 @@ static int list(const char *directory, const char *query,
             int valid = n == 2 && !strcmp(v[0], "format") &&
                         (!strcmp(v[1], "holy-index-prototype-1") ||
                          !strcmp(v[1], "holy-index-prototype-2") ||
-                         !strcmp(v[1], "holy-index-prototype-3"));
+                         !strcmp(v[1], "holy-index-prototype-3") ||
+                         !strcmp(v[1], "holy-index-prototype-4") ||
+                         !strcmp(v[1], "holy-index-prototype-5"));
             if (valid) {
                 indexed = strcmp(v[1], "holy-index-prototype-1") != 0;
-                file_index = !strcmp(v[1], "holy-index-prototype-3");
+                file_index = !strcmp(v[1], "holy-index-prototype-3") ||
+                             !strcmp(v[1], "holy-index-prototype-4") ||
+                             !strcmp(v[1], "holy-index-prototype-5");
+                dependency_index = !strcmp(v[1], "holy-index-prototype-4") ||
+                                   !strcmp(v[1], "holy-index-prototype-5");
+                soname_index = !strcmp(v[1], "holy-index-prototype-5");
             }
             holy_tokens_free(v, n);
             if (!valid) goto done;
@@ -639,9 +842,40 @@ static int list(const char *directory, const char *query,
             if (!valid) goto done;
             continue;
         }
+        if (dependency_index && number == 3) {
+            int valid = n == 3 && !strcmp(v[0], "coverage") &&
+                        !strcmp(v[1], "dependencies") && !strcmp(v[2], "complete");
+            holy_tokens_free(v, n);
+            if (!valid) goto done;
+            continue;
+        }
+        if (soname_index && number == 4) {
+            int valid = n == 3 && !strcmp(v[0], "coverage") &&
+                        !strcmp(v[1], "elf-sonames") && !strcmp(v[2], "complete");
+            holy_tokens_free(v, n);
+            if (!valid) goto done;
+            continue;
+        }
         if (indexed && n && !strcmp(v[0], "claim")) {
             int valid = count && !objects[count - 1].file_count &&
+                        !objects[count - 1].requirement_count &&
+                        !objects[count - 1].soname_count &&
                         parse_claim(v, n, &objects[count - 1]);
+            holy_tokens_free(v, n);
+            if (!valid) goto done;
+            continue;
+        }
+        if (dependency_index && n && !strcmp(v[0], "require")) {
+            int valid = count && !objects[count - 1].file_count &&
+                        !objects[count - 1].soname_count &&
+                        parse_requirement(v, n, &objects[count - 1]);
+            holy_tokens_free(v, n);
+            if (!valid) goto done;
+            continue;
+        }
+        if (soname_index && n && !strcmp(v[0], "soname")) {
+            int valid = count && !objects[count - 1].file_count &&
+                        parse_soname(v, n, &objects[count - 1]);
             holy_tokens_free(v, n);
             if (!valid) goto done;
             continue;
@@ -671,7 +905,9 @@ static int list(const char *directory, const char *query,
                 same_identity(&objects[i].identity, &objects[count - 1].identity))
                 goto done;
     }
-    if (ferror(index) || !number || (file_index && number < 2)) goto done;
+    if (ferror(index) || !number || (file_index && number < 2) ||
+        (dependency_index && number < 3) ||
+        (soname_index && number < 4)) goto done;
     if (mirror) {
         for (i = 0; i < count; ++i)
             if (!mirror_object(mirror, dir, &objects[i])) goto done;
@@ -706,12 +942,17 @@ static int list(const char *directory, const char *query,
             objects[i].provider_match =
                 !strcmp(provider_kind, "package") &&
                 !strcmp(provider_name, objects[i].identity.name);
-            for (k = 0; k < objects[i].claim_count; ++k)
+            if (soname_index && !strcmp(provider_kind, "soname")) {
+                for (k = 0; k < objects[i].soname_count; ++k)
+                    if (!strcmp(objects[i].sonames[k].name, provider_name))
+                        objects[i].provider_match = 1;
+            } else for (k = 0; k < objects[i].claim_count; ++k)
                 if (!strcmp(objects[i].claims[k].kind, provider_kind) &&
                     !strcmp(objects[i].claims[k].name, provider_name))
                     objects[i].provider_match = 1;
             if (!objects[i].provider_match) continue;
         }
+        if (emit == 7) continue;
         input = openat(dir, objects[i].filename,
                             O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
         if (input < 0) goto done;
@@ -742,6 +983,20 @@ static int list(const char *directory, const char *query,
                 free(snapshot);
                 goto done;
             }
+        }
+        if (dependency_index) {
+            struct requirement_cursor cursor = {&objects[i], 0};
+            if (!holy_deps_visit(snapshot, compare_requirement, &cursor) ||
+                cursor.index != objects[i].requirement_count) {
+                unlink(snapshot);
+                free(snapshot);
+                goto done;
+            }
+        }
+        if (soname_index && !compare_sonames(snapshot, &objects[i])) {
+            unlink(snapshot);
+            free(snapshot);
+            goto done;
         }
         if (file_index) {
             struct file_cursor cursor = {&objects[i], 0};
@@ -828,7 +1083,31 @@ static int list(const char *directory, const char *query,
             free(paths);
         }
     }
-    if (emit == 5 || emit == 6) {
+    if (emit == 7) {
+        size_t found = count, matches = 0;
+        if (!dependency_index) {
+            fputs("status unknown: source has no complete dependency index\n", stdout);
+            if (solve_rc) *solve_rc = 6;
+        } else {
+            for (j = 0; j < count; ++j)
+                if (!strcmp(objects[j].identity.name, query)) {
+                    found = j;
+                    ++matches;
+                }
+            if (matches == 1) {
+                if (!record(stdout, &objects[found])) goto done;
+                for (j = 0; j < objects[found].requirement_count; ++j)
+                    if (!requirement_record(stdout, &objects[found],
+                                            &objects[found].requirements[j])) goto done;
+                printf("requirements %zu\n", objects[found].requirement_count);
+                if (solve_rc) *solve_rc = 0;
+            } else {
+                fprintf(stderr, "holypkg: repository package %s\n",
+                        matches ? "requires an architecture/ABI choice" : "not found");
+                if (solve_rc) *solve_rc = matches ? 3 : 6;
+            }
+        }
+    } else if (emit == 5 || emit == 6) {
         size_t matches = 0, shown = 0;
         int rank;
         for (rank = 0; rank <= 5; ++rank) for (j = 0; j < count; ++j) {
@@ -914,6 +1193,8 @@ done:
         free(objects[i].filename);
         holy_package_identity_free(&objects[i].identity);
         free_claims(&objects[i]);
+        free_requirements(&objects[i]);
+        free_sonames(&objects[i]);
         free_files(&objects[i]);
     }
     free(objects);
@@ -971,6 +1252,15 @@ int holy_repo_info_name(const char *directory, const char *name)
     int result = 6;
     if (!name || !*name) return 2;
     if (!list(directory, name, NULL, 1, 3, NULL, NULL, NULL, NULL,
+              NULL, NULL, 0, &result, NULL, 0, NULL, NULL)) return 6;
+    return result;
+}
+
+int holy_repo_requirements(const char *directory, const char *name)
+{
+    int result = 6;
+    if (!name || !*name) return 2;
+    if (!list(directory, name, NULL, 1, 7, NULL, NULL, NULL, NULL,
               NULL, NULL, 0, &result, NULL, 0, NULL, NULL)) return 6;
     return result;
 }
@@ -1070,10 +1360,10 @@ int holy_repo_stage_slot(const char *directory, const char *root,
 }
 
 int holy_repo_source_catalog(const char *directory, const char *source_id,
-                             const char *url)
+                             const char *url, const char *public_key)
 {
     struct stat st;
-    char digest[65], *record = NULL, *expected = NULL;
+    char digest[65], key_hash[65], *record = NULL, *expected = NULL;
     size_t used = 0, expected_size = 0;
     int dir = -1, fd = -1, ok = 0;
     FILE *stream = NULL;
@@ -1081,6 +1371,7 @@ int holy_repo_source_catalog(const char *directory, const char *source_id,
         strspn(source_id, "0123456789abcdef") != 64 || !url) return 0;
     dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dir < 0 || flock(dir, LOCK_SH) || read_current(dir, digest) != 1) goto done;
+    if (public_key && !holy_verify_index_keyhash(dir, digest, public_key, key_hash)) goto done;
     fd = openat(dir, "mirror-origin", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
         (st.st_mode & 0022) || (st.st_uid != geteuid() && st.st_uid != 0) ||
@@ -1099,14 +1390,16 @@ int holy_repo_source_catalog(const char *directory, const char *source_id,
     {
         int wrote = fputs("format holy-mirror-1\nurl ", stream) != EOF &&
             quote(stream, url) &&
-            fprintf(stream, "\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n",
-                    digest, source_id) >= 0 && !ferror(stream);
+            fprintf(stream, "\nindex-sha256 %s\nverification %s\n", digest,
+                    public_key ? "ed25519-pinned-key" : "digest-pinned-unsigned") >= 0 &&
+            (!public_key || fprintf(stream, "public-key-sha256 %s\n", key_hash) >= 0) &&
+            fprintf(stream, "source-id %s\n", source_id) >= 0 && !ferror(stream);
         if (fclose(stream)) wrote = 0;
         stream = NULL;
         if (!wrote) goto done;
     }
     ok = (used == expected_size && !memcmp(record, expected, used)) ||
-         (used == expected_size + sizeof "selection current-accepted-unsigned\n" - 1 &&
+         (!public_key && used == expected_size + sizeof "selection current-accepted-unsigned\n" - 1 &&
           !memcmp(record, expected, expected_size) &&
           !memcmp(record + expected_size, "selection current-accepted-unsigned\n",
                   sizeof "selection current-accepted-unsigned\n" - 1));
@@ -1142,7 +1435,7 @@ int holy_repo_catalog_index_fast(const char *directory, char digest[65])
     return ok;
 }
 
-static int seal(const char *directory, const char *expected)
+static int seal(const char *directory, const char *expected, const char *private_key)
 {
     char temporary[43] = {0}, pointer_temp[43] = {0};
     char index_name[71], digest[65], previous[65], line[73];
@@ -1203,6 +1496,7 @@ static int seal(const char *directory, const char *expected)
             strcmp(previous, digest)) goto done;
     }
     if (fsync(dir)) goto done;
+    if (private_key && !holy_sign_index(dir, digest, private_key)) goto done;
     if (fstatat(dir, "current", &st, AT_SYMLINK_NOFOLLOW) == 0) {
         if (!S_ISREG(st.st_mode)) goto done;
     } else if (errno != ENOENT) goto done;
@@ -1239,17 +1533,39 @@ done:
 
 int holy_repo_seal(const char *directory)
 {
-    return seal(directory, NULL);
+    return seal(directory, NULL, NULL);
 }
 
-int holy_repo_mirror_source(const char *base, const char *digest, const char *output,
-                            const char *ca_file, const char *source_id,
-                            int current_accepted)
+int holy_repo_seal_signed(const char *directory, const char *private_key)
+{
+    return private_key && *private_key && seal(directory, NULL, private_key);
+}
+
+int holy_repo_verify_signature(const char *directory, const char *public_key)
+{
+    char digest[65];
+    int dir, ok;
+    if (!public_key || !*public_key) return 2;
+    dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir < 0) return 1;
+    ok = !flock(dir, LOCK_SH) && holy_repo_catalog_index(directory, digest) &&
+         holy_verify_index(dir, digest, public_key);
+    close(dir);
+    if (ok) printf("verified %s\n", digest);
+    else fputs("holypkg: repository signature invalid or unavailable\n", stderr);
+    return ok ? 0 : 4;
+}
+
+static int mirror_source(const char *base, const char *digest, const char *output,
+                         const char *ca_file, const char *source_id,
+                         int current_accepted, const char *public_key)
 {
     struct mirror mirror = { base, ca_file, NULL, 0 };
-    char index_name[71], *url = NULL, *downloads = NULL;
+    char index_name[71], signature_name[75], key_hash[65] = {0};
+    char *url = NULL, *downloads = NULL;
+    unsigned char signature[64];
     size_t i, length = strlen(output);
-    int dir = -1, provenance = -1, result = 1;
+    int dir = -1, provenance = -1, sidecar = -1, result = 1;
     FILE *record = NULL;
     if (strlen(digest) != 64) return 2;
     for (i = 0; i < 64; ++i)
@@ -1273,6 +1589,27 @@ int holy_repo_mirror_source(const char *base, const char *digest, const char *ou
     if (dir < 0 || flock(dir, LOCK_EX) || mkdirat(dir, ".downloads", 0700)) goto done;
     result = holy_fetch_https_data(url, digest, output, ca_file);
     if (result) goto done;
+    if (public_key) {
+        result = holy_fetch_https_signature(base, digest, ca_file, signature);
+        if (result) goto done;
+        result = 4;
+        if (linkat(dir, digest, dir, index_name, 0) ||
+            !holy_verify_index_bytes(dir, digest, public_key, signature, key_hash)) goto done;
+        snprintf(signature_name, sizeof signature_name, "signature.%s", digest);
+        sidecar = openat(dir, signature_name,
+                         O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);
+        if (sidecar < 0) { result = 1; goto done; }
+        for (i = 0; i < sizeof signature;) {
+            ssize_t sent = write(sidecar, signature + i, sizeof signature - i);
+            if (sent < 0 && errno == EINTR) continue;
+            if (sent <= 0) { result = 1; goto done; }
+            i += (size_t)sent;
+        }
+        if (fsync(sidecar)) { result = 1; goto done; }
+        if (close(sidecar)) { sidecar = -1; result = 1; goto done; }
+        sidecar = -1;
+        if (fsync(dir)) { result = 1; goto done; }
+    }
     if (!list(output, NULL, digest, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, &mirror, 0, NULL, NULL)) {
         result = mirror.status ? mirror.status : 4;
         goto done;
@@ -1282,7 +1619,9 @@ int holy_repo_mirror_source(const char *base, const char *digest, const char *ou
     provenance = openat(dir, "mirror-origin", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (provenance < 0 || !(record = fdopen(provenance, "w"))) goto done;
     fputs("format holy-mirror-1\nurl ", record);
-    if (!quote(record, base) || fprintf(record, "\nindex-sha256 %s\nverification digest-pinned-unsigned\n", digest) < 0 ||
+    if (!quote(record, base) || fprintf(record, "\nindex-sha256 %s\nverification %s\n", digest,
+                                      public_key ? "ed25519-pinned-key" : "digest-pinned-unsigned") < 0 ||
+        (public_key && fprintf(record, "public-key-sha256 %s\n", key_hash) < 0) ||
         (source_id && fprintf(record, "source-id %s\n", source_id) < 0) ||
         (current_accepted && fputs("selection current-accepted-unsigned\n", record) == EOF) ||
         fflush(record) || fsync(provenance)) goto done;
@@ -1291,19 +1630,43 @@ int holy_repo_mirror_source(const char *base, const char *digest, const char *ou
     if (unlinkat(dir, digest, 0) || unlinkat(dir, ".downloads", AT_REMOVEDIR) || fsync(dir)) goto done;
     /* seal takes its own exclusive lock after the private download phase. */
     close(dir); dir = -1;
-    result = seal(output, digest) ? 0 : 4;
+    result = seal(output, digest, NULL) ? 0 : 4;
 done:
     if (result) fprintf(stderr, "holypkg: HTTPS catalog mirror incomplete (status %d)\n", result);
     if (record) fclose(record);
     else if (provenance >= 0) close(provenance);
+    if (sidecar >= 0) close(sidecar);
     if (dir >= 0) close(dir);
     free(downloads);
     free(url);
     return result;
 }
 
+int holy_repo_mirror_source(const char *base, const char *digest, const char *output,
+                            const char *ca_file, const char *source_id,
+                            int current_accepted)
+{
+    return mirror_source(base, digest, output, ca_file, source_id,
+                         current_accepted, NULL);
+}
+
+int holy_repo_mirror_source_signed(const char *base, const char *digest,
+                                   const char *output, const char *ca_file,
+                                   const char *source_id, const char *public_key)
+{
+    if (!public_key || !*public_key) return 2;
+    return mirror_source(base, digest, output, ca_file, source_id, 0, public_key);
+}
+
 int holy_repo_mirror(const char *base, const char *digest, const char *output,
                      const char *ca_file)
 {
-    return holy_repo_mirror_source(base, digest, output, ca_file, NULL, 0);
+    return mirror_source(base, digest, output, ca_file, NULL, 0, NULL);
+}
+
+int holy_repo_mirror_signed(const char *base, const char *digest, const char *output,
+                            const char *ca_file, const char *public_key)
+{
+    if (!public_key || !*public_key) return 2;
+    return mirror_source(base, digest, output, ca_file, NULL, 0, public_key);
 }

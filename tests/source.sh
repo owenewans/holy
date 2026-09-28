@@ -55,11 +55,16 @@ plan
 cp "$db/sources" "$tmp/expected"
 apply
 cmp "$db/sources" "$tmp/expected"
+openssl genpkey -algorithm ED25519 -out "$tmp/private.pem" > "$tmp/out" 2> "$tmp/err"
+openssl pkey -in "$tmp/private.pem" -pubout -out "$tmp/public.pem" > "$tmp/out" 2> "$tmp/err"
 sed -e 's/source primary/source renamed/' -e 's/trust warn/trust require/' "$tmp/config" > "$tmp/renamed"
 mv "$tmp/renamed" "$tmp/config"
+expect 2 "$bin" source plan --config "$tmp/config" --root "$root"
+printf 'public-key "public.pem"\n' >> "$tmp/config"
 plan
 grep -q '^alias-change ' "$tmp/err"
 apply
+! grep -q private.pem "$db/sources"
 expect 0 "$bin" source list --root "$root"
 grep -qx "source $id \"renamed\" active" "$tmp/out"
 grep -qx 'revision 2 sources 1' "$tmp/out"
