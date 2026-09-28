@@ -71,6 +71,8 @@ grep -qx 'listed 1 candidates' "$tmp/out"
 if "$bin" repo search-file "$tmp/legacy" /usr/bin/absent > "$tmp/out"; then exit 1; fi
 grep -q '^coverage files unavailable index ' "$tmp/out"
 grep -qx 'status unknown: source has no complete file index' "$tmp/out"
+if "$bin" repo search-file "$tmp/legacy" absent --fuzzy > "$tmp/out"; then exit 1; fi
+grep -qx 'status unknown: source has no complete file index' "$tmp/out"
 if "$bin" repo providers "$tmp/repo" unknown fixture > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 if "$bin" repo providers "$tmp/repo" unknown fixture --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
@@ -169,6 +171,17 @@ grep -qx 'listed 1 packages' "$tmp/out"
 grep -qx "package \"fixture\" \"1.0\" \"1\" \"linux\" \"noarch\" \"nolibc\" \"fixture.holy\" $hash $size" "$tmp/out"
 "$bin" repo search "$tmp/repo" missing > "$tmp/out"
 grep -qx 'listed 0 packages' "$tmp/out"
+"$bin" repo search "$tmp/repo" fixtupe --fuzzy > "$tmp/out"
+grep -qx 'suggestion score 3 name "fixture"' "$tmp/out"
+grep -qx 'suggested 1 of 1 packages' "$tmp/out"
+"$bin" repo search "$tmp/repo" FiXtUrE --fuzzy > "$tmp/out"
+grep -qx 'suggestion score 0 name "fixture"' "$tmp/out"
+"$bin" repo search "$tmp/repo" FiXtUrE > "$tmp/out"
+grep -qx 'listed 0 packages' "$tmp/out"
+"$bin" repo search "$tmp/repo" fix --fuzzy > "$tmp/out"
+grep -qx 'suggested 2 of 2 packages' "$tmp/out"
+"$bin" repo search "$tmp/repo" absent --fuzzy > "$tmp/out"
+grep -qx 'suggested 0 of 0 packages' "$tmp/out"
 "$bin" repo providers "$tmp/repo" command helper > "$tmp/out"
 grep -qx 'listed 1 candidates' "$tmp/out"
 grep -Fqx "package \"fixture\x20two\" \"2.0\" \"1\" \"linux\" \"noarch\" \"nolibc\" \"variant.holy\" $variant_hash $variant_size" "$tmp/out"
@@ -186,6 +199,8 @@ grep -Fqx "package \"fixture\\x20two\" \"2.0\" \"1\" \"linux\" \"noarch\" \"noli
 grep -qx 'listed 1 packages' "$tmp/out"
 cp "$tmp/repo/variant.holy" "$tmp/variant-original"
 printf 'wrong\n' > "$tmp/repo/variant.holy"
+"$bin" repo search "$tmp/repo" fixtupe --fuzzy > "$tmp/out"
+grep -qx 'suggested 1 of 1 packages' "$tmp/out"
 if "$bin" repo list "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 if "$bin" repo search "$tmp/repo" fixture > "$tmp/out" 2> "$tmp/err"; then exit 1; fi

@@ -34,7 +34,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg info SOURCE:PACKAGE [--catalog MIRROR] [--root DIRECTORY]
 .br
-.B holypkg search QUERY --source SOURCE [--file] [--catalog MIRROR] [--root DIRECTORY]
+.B holypkg search QUERY --source SOURCE [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]
 .br
 .B holypkg verify local:FILE
 .br
@@ -146,7 +146,11 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg repo search DIRECTORY NAME
 .br
+.B holypkg repo search DIRECTORY NAME --fuzzy
+.br
 .B holypkg repo search-file DIRECTORY ABSOLUTE_PATH
+.br
+.B holypkg repo search-file DIRECTORY NAME_OR_PATH --fuzzy
 .br
 .B holypkg repo solve DIRECTORY NAME [--json]
 .br
@@ -1085,7 +1089,14 @@ complete index returns zero matches; a legacy index reports unavailable
 coverage and exits 6 because absence cannot be established. File queries
 verify the digest-pinned index and only matching archives; an unselected
 archive can change without invalidating the query. No package code runs.
-Fuzzy and multi-source results remain open.
+--fuzzy returns ranked suggestions for package names. With --file --fuzzy,
+QUERY may be a basename or absolute path; only file basenames from a complete
+index contribute suggestions. A suggestion prints its score, matched name or
+path and package record. Up to 20 suggestions are shown, in score and index
+order. Scores prefer ASCII case-insensitive equality, prefix, substring, then one or two byte
+edits. These hints never satisfy a dependency or replace an exact SONAME.
+File hints from a legacy index report unknown coverage and exit 6.
+Multi-source results remain open.
 .PP
 The verify command checks regular DATA files against the supported HOLY/files
 records, including size, mode, numeric owner and SHA-256. It checks symlinks,
@@ -1489,8 +1500,9 @@ With a version-3 index, it verifies only indexed candidates; a changed
 unselected archive does not invalidate this query.
 Legacy generations return unavailable coverage and status 6. No match in a
 complete native index prints a zero-count summary. This
-prototype does not perform fuzzy search, dependency resolution or provider
-selection.
+prototype does not perform dependency resolution or provider selection.
+--fuzzy emits ranked hints, capped at 20 displayed rows. A hint is not an
+exact capability match.
 .PP
 Repository providers searches the sealed local catalog for an exact KIND and
 NAME match. It finds indexed claims from HOLY/provides and the package's own

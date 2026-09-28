@@ -257,7 +257,9 @@
   ambiguous info queries without mutating the target. Native repositories also
   index verified nondirectory payload paths and support exact `search --file`
   with complete/unavailable coverage. File queries verify indexed candidates
-  without reopening unrelated archives. Fuzzy search remains open.
+  without reopening unrelated archives. Explicit `--fuzzy` returns ranked,
+  capped hints for package names and file basenames, without treating them as
+  exact providers. Multi-source search and resolver integration remain open.
 - [x] Bind a verified synced mirror and index digest to a registered source-id
   under the target database lock. Resolve add, fetch, search and info without
   repeating --catalog; reject corrupt bindings and changed mirrors. Keep the

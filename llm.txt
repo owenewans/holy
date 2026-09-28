@@ -817,7 +817,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=3d8a2c5cefe1cce991eeb7f8d00c44ec4813cceffa724ddf908c7a72b5e76d31
+holypkg.8 source=holy version=development sha256=41da24c514d9faf0076f33dca36545cfa40530844961fcf8d32a7ef8266e584d
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -849,8 +849,8 @@ SYNOPSIS
      holypkg config check FILE
      holypkg info local:FILE
      holypkg info SOURCE:PACKAGE [--catalog MIRROR] [--root DIRECTORY]
-     holypkg  search  QUERY  --source SOURCE [--file] [--catalog MIRROR] [--root
-     DIRECTORY]
+     holypkg  search QUERY --source SOURCE [--file] [--fuzzy] [--catalog MIRROR]
+     [--root DIRECTORY]
      holypkg verify local:FILE
      holypkg manifest local:FILE
      holypkg requirements local:FILE
@@ -915,7 +915,9 @@ SYNOPSIS
      holypkg repo index DIRECTORY
      holypkg repo list DIRECTORY
      holypkg repo search DIRECTORY NAME
+     holypkg repo search DIRECTORY NAME --fuzzy
      holypkg repo search-file DIRECTORY ABSOLUTE_PATH
+     holypkg repo search-file DIRECTORY NAME_OR_PATH --fuzzy
      holypkg repo solve DIRECTORY NAME [--json]
      holypkg repo solve DIRECTORY NAME --choose REQUIREMENT_ID=SHA256 [--json]
      holypkg repo providers DIRECTORY KIND NAME
@@ -1898,7 +1900,15 @@ DESCRIPTION
      reports unavailable coverage and exits 6 because absence cannot  be  estab-
      lished.  File  queries  verify  the  digest-pinned	 index and only matching
      archives; an unselected archive can change without invalidating the  query.
-     No package code runs.  Fuzzy and multi-source results remain open.
+     No	 package  code	runs.	--fuzzy	 returns  ranked suggestions for package
+     names. With --file --fuzzy, QUERY may be a basename or absolute path;  only
+     file  basenames  from a complete index contribute suggestions. A suggestion
+     prints its score, matched name or path and package record. Up to 20 sugges-
+     tions are shown, in score and index order. Scores prefer ASCII  case-insen-
+     sitive equality, prefix, substring, then one or two byte edits. These hints
+     never  satisfy  a dependency or replace an exact SONAME.  File hints from a
+     legacy index report unknown coverage and exit 6.  Multi-source results  re-
+     main open.
 
      The  verify  command  checks  regular  DATA  files	 against  the  supported
      HOLY/files records, including size, mode, numeric	owner  and  SHA-256.  It
@@ -2308,8 +2318,9 @@ DESCRIPTION
      stamp.   With  a  version-3  index,  it verifies only indexed candidates; a
      changed unselected archive does not invalidate this query.	 Legacy	 genera-
      tions  return unavailable coverage and status 6. No match in a complete na-
-     tive index prints a zero-count summary. This  prototype  does  not	 perform
-     fuzzy search, dependency resolution or provider selection.
+     tive index prints a zero-count summary. This prototype does not perform de-
+     pendency resolution or provider selection.	  --fuzzy  emits  ranked  hints,
+     capped at 20 displayed rows. A hint is not an exact capability match.
 
      Repository	 providers  searches  the sealed local catalog for an exact KIND
      and NAME match. It finds indexed claims from HOLY/provides	 and  the  pack-

@@ -469,6 +469,74 @@ static int indexed_file(const struct object *object, const char *path)
     return 0;
 }
 
+static unsigned char ascii_lower(unsigned char c)
+{
+    return c >= 'A' && c <= 'Z' ? (unsigned char)(c + 'a' - 'A') : c;
+}
+
+static int ascii_prefix(const char *text, const char *prefix)
+{
+    while (*prefix) {
+        if (!*text || ascii_lower((unsigned char)*text++) !=
+                      ascii_lower((unsigned char)*prefix++)) return 0;
+    }
+    return 1;
+}
+
+static int fuzzy_rank(const char *query, const char *target)
+{
+    size_t q = strlen(query), t = strlen(target), i, j;
+    unsigned int prev[129], next[129], row_min;
+    if (!q || !t || q > 256 || t > 256) return -1;
+    if (ascii_prefix(target, query)) return q == t ? 0 : 1;
+    for (i = 1; i < t; ++i)
+        if (ascii_prefix(target + i, query)) return 2;
+    if (q > 128 || t > 128 || q > t + 2 || t > q + 2) return -1;
+    for (j = 0; j <= t; ++j) prev[j] = (unsigned int)j;
+    for (i = 1; i <= q; ++i) {
+        next[0] = (unsigned int)i;
+        row_min = next[0];
+        for (j = 1; j <= t; ++j) {
+            unsigned int cost = ascii_lower((unsigned char)query[i - 1]) ==
+                                ascii_lower((unsigned char)target[j - 1]) ? 0 : 1;
+            unsigned int deletion = prev[j] + 1;
+            unsigned int insertion = next[j - 1] + 1;
+            unsigned int replacement = prev[j - 1] + cost;
+            next[j] = deletion < insertion ? deletion : insertion;
+            if (replacement < next[j]) next[j] = replacement;
+            if (next[j] < row_min) row_min = next[j];
+        }
+        if (row_min > 2) return -1;
+        memcpy(prev, next, (t + 1) * sizeof *prev);
+    }
+    return prev[t] == 1 ? 3 : prev[t] == 2 ? 4 : -1;
+}
+
+static int file_hint(const struct object *object, const char *query,
+                     const char **matched)
+{
+    const char *basename = strrchr(query, '/');
+    size_t i;
+    int best = -1;
+    basename = basename ? basename + 1 : query;
+    *matched = NULL;
+    if (!*basename) return -1;
+    for (i = 0; i < object->file_count; ++i) {
+        const char *path = object->files[i], *name = strrchr(path, '/');
+        int score = fuzzy_rank(basename, name ? name + 1 : path);
+        if (query[0] == '/' && score >= 0) {
+            if (!strcmp(query + 1, path)) score = 0;
+            else ++score;
+        }
+        if (score >= 0 && (best < 0 || score < best ||
+            (score == best && strcmp(path, *matched) < 0))) {
+            best = score;
+            *matched = path;
+        }
+    }
+    return best;
+}
+
 struct mirror {
     const char *base, *ca_file, *downloads;
     int status;
@@ -619,8 +687,14 @@ static int list(const char *directory, const char *query,
         if (stage && (stage->index_only ||
             (stage->slot && !same_slot(&objects[i].identity, stage->slot))))
             continue;
-        if (file_query && (!file_index || !indexed_file(&objects[i], file_query)))
+        if (emit == 5 && query && fuzzy_rank(query, objects[i].identity.name) < 0)
             continue;
+        if (file_query) {
+            const char *matched;
+            if (!file_index || (emit == 6 ?
+                file_hint(&objects[i], file_query, &matched) < 0 :
+                !indexed_file(&objects[i], file_query))) continue;
+        }
         if (indexed && provider_kind) {
             size_t k;
             objects[i].provider_match =
@@ -748,7 +822,33 @@ static int list(const char *directory, const char *query,
             free(paths);
         }
     }
-    {
+    if (emit == 5 || emit == 6) {
+        size_t matches = 0, shown = 0;
+        int rank;
+        for (rank = 0; rank <= 5; ++rank) for (j = 0; j < count; ++j) {
+            const char *matched = NULL;
+            int score = emit == 5 ? fuzzy_rank(query, objects[j].identity.name) :
+                        file_index ? file_hint(&objects[j], file_query, &matched) : -1;
+            if (score != rank) continue;
+            ++matches;
+            if (shown == 20) continue;
+            printf("suggestion score %d %s ", score, emit == 5 ? "name" : "path");
+            if (!quote(stdout, emit == 5 ? objects[j].identity.name : matched) ||
+                fputc('\n', stdout) == EOF || !record(stdout, &objects[j])) goto done;
+            ++shown;
+        }
+        if (emit == 6) {
+            printf("coverage files %s index %s time %lld\n",
+                   file_index ? "complete" : "unavailable", expected,
+                   (long long)st.st_mtime);
+            if (!file_index) {
+                fputs("status unknown: source has no complete file index\n", stdout);
+                if (solve_rc) *solve_rc = 6;
+            } else if (solve_rc) *solve_rc = 0;
+        }
+        printf("suggested %zu of %zu %s\n", shown, matches,
+               emit == 5 ? "packages" : "file candidates");
+    } else {
         size_t matches = 0, only = count;
         for (j = 0; j < count; ++j) {
             if (query && strcmp(objects[j].identity.name, query)) continue;
@@ -829,6 +929,13 @@ int holy_repo_search(const char *directory, const char *query)
     return list(directory, query, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, NULL);
 }
 
+int holy_repo_search_fuzzy(const char *directory, const char *query)
+{
+    if (!query || !*query) return 2;
+    return list(directory, query, NULL, 1, 5, NULL, NULL, NULL, NULL,
+                NULL, NULL, 0, NULL, NULL, 0, NULL, NULL) ? 0 : 6;
+}
+
 int holy_repo_search_file(const char *directory, const char *query)
 {
     int result = 6;
@@ -839,6 +946,17 @@ int holy_repo_search_file(const char *directory, const char *query)
     }
     if (!list(directory, NULL, NULL, 1, 4, NULL, NULL, NULL, NULL,
               NULL, NULL, 0, &result, NULL, 0, NULL, query + 1)) return 6;
+    return result;
+}
+
+int holy_repo_search_file_fuzzy(const char *directory, const char *query)
+{
+    int result = 6;
+    if (!query || !*query || query[strlen(query) - 1] == '/' ||
+        (query[0] != '/' && strchr(query, '/'))) return 2;
+    if (query[0] == '/' && !safe_target_path(query + 1)) return 2;
+    if (!list(directory, NULL, NULL, 1, 6, NULL, NULL, NULL, NULL,
+              NULL, NULL, 0, &result, NULL, 0, NULL, query)) return 6;
     return result;
 }
 
