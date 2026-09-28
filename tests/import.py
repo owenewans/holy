@@ -142,6 +142,44 @@ with tempfile.TemporaryDirectory() as scratch:
     assert "arch x86_64 libc glibc" in text and "arch x86 libc nolibc" in text and "arch noarch libc nolibc" in text
     for artifact in artifacts:
         assert "split-" in run("requirements", "local:" + str(artifact))
+    source64 = tmp / "exit64.s"
+    source64.write_text(".global _start\n_start:\n mov $60, %rax\n xor %rdi, %rdi\n syscall\n")
+    subprocess.run(["as", "--64", "-o", str(tmp / "exit64.o"), str(source64)], check=True)
+    subprocess.run(["ld", "-m", "elf_x86_64", "-o", str(tmp / "exit64"),
+                    str(tmp / "exit64.o")], check=True)
+    static_mixed = payload + [
+        ("usr/bin/", b"", "dir", None, 0o755),
+        ("usr/bin/exit64", (tmp / "exit64").read_bytes(), "file", None, 0o755),
+        ("usr/bin/exit32", (tmp / "exit32").read_bytes(), "file", None, 0o755),
+    ]
+    _, split, _ = convert(package("static-mixed", static_mixed, arch="x86_64"),
+                          "static-mixed-output")
+    assert len(split) == 3
+    split_root = tmp / "split-root"
+    split_root.mkdir()
+    run("db", "init", "--root", split_root)
+    by_arch = {}
+    for artifact in split:
+        info = run("info", "local:" + str(artifact))
+        arch = next(line.split()[1] for line in info.splitlines() if line.startswith("arch "))
+        by_arch[arch] = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        extracted = tmp / ("split-" + arch)
+        run("fetch", "local:" + str(artifact), "--extract", "--output", extracted)
+        assert (extracted / "HOLY/transform").read_text().startswith("split ")
+        run("cache", "stage", "local:" + str(artifact), "--root", split_root)
+    assert set(by_arch) == {"noarch", "x86", "x86_64"}
+    selection = [by_arch[arch] for arch in ("noarch", "x86", "x86_64")]
+    planned = run("db", "plan-set", *selection, "--accept-arch", by_arch["x86"],
+                  "--root", split_root)
+    split_plan = planned.split(" sha256 ")[1].split()[0]
+    run("db", "apply-set", split_plan, *selection, "--accept-arch", by_arch["x86"],
+        "--root", split_root)
+    run("db", "check", "--all", "--root", split_root)
+    assert (split_root / "usr/share/value").read_bytes() == b"native import\n"
+    assert (split_root / "usr/bin/exit64").is_file()
+    assert (split_root / "usr/bin/exit32").is_file()
+    subprocess.run([str(split_root / "usr/bin/exit64")], check=True)
+    subprocess.run([str(split_root / "usr/bin/exit32")], check=True)
     _, consumers, _ = convert(package("version-consumer", payload, "depend = provider>=2:1.0-2\n"), "version-consumer-output")
     _, older, _ = convert(package("version-old", payload, package_name="provider", version="2:1.0-1"), "version-old-output")
     _, newer, _ = convert(package("version-new", payload, package_name="provider", version="2:1.0-3"), "version-new-output")

@@ -23,6 +23,9 @@ package() {
         printf 'x-version-family %s\n' "$comparator" >> "$tree/HOLY/meta"
     fi
     for field in deps provides hooks origin transform; do : > "$tree/HOLY/$field"; done
+    if test "$version" = 2; then
+        printf 'record payload normalized before pack\n' > "$tree/HOLY/transform"
+    fi
     printf 'version %s\n' "$version" > "$tree/DATA/usr/share/update-fixture"
     expect 0 "$bin" manifest generate "$tree" --output "$tmp/files-$version"
     mv "$tmp/files-$version" "$tree/HOLY/files"

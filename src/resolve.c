@@ -787,7 +787,7 @@ static void report_edges(const struct local_item *local, const struct holy_solve
     }
 }
 
-static int inert_metadata(const char *snapshot)
+static int supported_metadata(const char *snapshot)
 {
     struct archive *a = archive_read_new();
     struct archive_entry *entry;
@@ -803,7 +803,7 @@ static int inert_metadata(const char *snapshot)
         }
         if (!strcmp(name, "HOLY/transform")) {
             transform = 1;
-            if (archive_entry_size(entry)) goto done;
+            if (archive_entry_filetype(entry) != AE_IFREG) goto done;
         }
         if (archive_read_data_skip(a) != ARCHIVE_OK) goto done;
     }
@@ -1047,7 +1047,7 @@ static int resolve(const char *const *paths, size_t count, int json,
             !holy_scan_collect(snapshot, &local[i].scan) ||
             !holy_package_identity(snapshot, &local[i].identity) ||
             strcmp(local[i].identity.os, "linux") ||
-            !inert_metadata(snapshot)) {
+            !supported_metadata(snapshot)) {
             unlink(snapshot); free(snapshot); goto done;
         }
         if (!holy_provides_visit(snapshot, package_claim, &local[i])) {

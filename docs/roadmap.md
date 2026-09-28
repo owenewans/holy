@@ -342,6 +342,13 @@
   broken edges; durable completed-transaction decisions remain unfinished.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions.
+- [x] Accept nonempty HOLY/transform as an immutable provenance record in local
+  solve, single-package planning, set installation and removal. The installer
+  verifies the already transformed payload and does not execute the record.
+  A pacman fixture splits one foreign archive into noarch, x86 and x86_64
+  outputs, installs all three in one set, checks them and runs both static ELF
+  programs. Cached update with a transform record also passes. Executable
+  hooks and unresolved foreign semantics remain decision gates.
 - [x] Install, run, check and remove a native static syscall-only ELF fixture;
   foreign-architecture approval remains open.
 - [x] Resolve exact unversioned HOLY/deps SONAME records from scanned ET_DYN

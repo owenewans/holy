@@ -207,8 +207,8 @@ test ! -s "$tmp/out"
 : > "$tmp/payload/HOLY/hooks"
 printf 'patch binary\n' > "$tmp/payload/HOLY/transform"
 build root 5
-if "$bin" solve "local:$tmp/root-5.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
-test ! -s "$tmp/out"
+"$bin" solve "local:$tmp/root-5.holy" > "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 1
 : > "$tmp/payload/HOLY/transform"
 sed -i 's/arch noarch/arch x86_64/' "$tmp/payload/HOLY/meta"
 tar -cf "$tmp/foreign.tar" -C "$tmp/payload" HOLY DATA

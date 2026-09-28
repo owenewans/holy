@@ -270,8 +270,8 @@ transform=$(sha256sum "$tmp/transform.holy")
 transform=${transform%% *}
 "$bin" cache stage "local:$tmp/transform.holy" --root "$tmp/root" > "$tmp/out"
 "$bin" db reserve "$transform" --root "$tmp/root" > "$tmp/out"
-if "$bin" db plan --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
-test ! -s "$tmp/out"
+"$bin" db plan --root "$tmp/root" > "$tmp/out"
+grep -q "artifact $transform paths [0-9][0-9]* sha256" "$tmp/out"
 "$bin" db cancel --root "$tmp/root" > "$tmp/out"
 : > "$tmp/payload/HOLY/transform"
 mkdir -p "$tmp/payload/DATA/var/lib/holypkg"
@@ -312,4 +312,13 @@ if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; 
 if "$bin" db cancel --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 rm "$db/transactions/pending"
 test -z "$(find "$db" -name '.holy-tmp-*' -print)"
+mkdir "$tmp/transform-root"
+"$bin" db init --root "$tmp/transform-root" > "$tmp/out"
+"$bin" cache stage "local:$tmp/transform.holy" --root "$tmp/transform-root" > "$tmp/out"
+"$bin" db plan-set "$transform" --root "$tmp/transform-root" > "$tmp/out"
+transform_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+test "${#transform_plan}" -eq 64
+"$bin" db apply-set "$transform_plan" "$transform" --root "$tmp/transform-root" > "$tmp/out"
+"$bin" db check "$transform" --root "$tmp/transform-root" > "$tmp/out"
+"$bin" db rm "$transform" --root "$tmp/transform-root" > "$tmp/out"
 printf 'database fixtures passed\n'

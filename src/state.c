@@ -975,7 +975,7 @@ static int plan_entry(void *context, const struct holy_manifest_entry *entry)
     return 1;
 }
 
-static int empty_transform(const char *snapshot)
+static int recorded_transform(const char *snapshot)
 {
     struct archive *archive = archive_read_new();
     struct archive_entry *entry;
@@ -987,7 +987,7 @@ static int empty_transform(const char *snapshot)
         goto done;
     while ((status = archive_read_next_header(archive, &entry)) == ARCHIVE_OK) {
         if (!strcmp(archive_entry_pathname(entry), "HOLY/transform")) {
-            if (found++ || archive_entry_size(entry) != 0) goto done;
+            if (found++ || archive_entry_filetype(entry) != AE_IFREG) goto done;
         }
         if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
     }
@@ -1193,7 +1193,7 @@ static int inspect_plan(const char *root_path, int root, int dir,
     result = holy_preview_local_format(snapshot, root_path, -1);
     if (result) goto done;
     result = 6;
-    if (!holy_extract_preflight(snapshot) || !empty_transform(snapshot) ||
+    if (!holy_extract_preflight(snapshot) || !recorded_transform(snapshot) ||
         !holy_package_identity(snapshot, &identity) ||
         strcmp(identity.os, "linux") ||
         strcmp(identity.libc, "nolibc") || strcmp(identity.digest, digest)) goto done;
@@ -3499,7 +3499,7 @@ static int build_set(const char *root_path, int root, int dir,
             strcmp(item->identity.os, "linux") ||
             (strcmp(item->identity.libc, "nolibc") && strcmp(item->identity.libc, "glibc") &&
              strcmp(item->identity.libc, "musl")) ||
-            !empty_transform(item->snapshot) || !instance_preflight(item->snapshot)) goto done;
+            !recorded_transform(item->snapshot) || !instance_preflight(item->snapshot)) goto done;
         strcpy(item->source_id, "-");
         result = explicit_elf_paths(item->snapshot, 1);
         if (result) goto done;
@@ -4943,7 +4943,7 @@ static int state_update(const char *old_digest, const char *new_digest,
     new_snapshot = holy_cache_snapshot(new_digest, root_path);
     if (!new_snapshot || !holy_package_identity(snapshots[old_index], &old) ||
         !holy_package_identity(new_snapshot, &next) ||
-        !empty_transform(new_snapshot) || !instance_preflight(new_snapshot)) goto done;
+        !recorded_transform(new_snapshot) || !instance_preflight(new_snapshot)) goto done;
     if (!same_slot(&old, source, &next, source)) { result = 4; goto done; }
     {
         struct privileged_scan scan = {0};

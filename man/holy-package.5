@@ -107,8 +107,9 @@ is provenance, not authority to assign a trusted installed source-id.
 .PP
 A requirement of kind foreign preserves an unsupported source expression. The
 current solver reports unsupported semantics instead of dropping that requirement.
-Foreign hooks and split transforms require their own installation support;
-archive verification does not authorize execution or claim that support exists.
+Foreign hooks still require installation support. HOLY/transform records
+changes already applied to the normalized payload; installation never executes
+that record. Archive verification does not authorize hook execution.
 .SH INSTALLED GRAPH
 New local installations use holy-instance-4 state, or holy-instance-5 when an
 explicit non-native architecture placement decision was accepted. Version 5 adds

@@ -611,7 +611,9 @@ selected output that carries them.
 Optional and build requirements remain in attributed origin records.
 An .INSTALL script remains review-required. The current installer refuses its
 nonempty hooks record. Split outputs also require scoped dependency and
-transform support before installation. Conversion success alone does not
+resolved requirements before installation. HOLY/transform records changes
+already made to the packaged payload; the installer does not execute it.
+Conversion success alone does not
 establish that an application can be installed or launched.
 .PP
 The conversion receipt binds the original SHA-256 to every output filename,
@@ -946,7 +948,7 @@ The separate fetch --extract operation still refuses absolute symlinks.
 .PP
 The db plan-set command resolves one explicit root against already cached
 candidate hashes and cached artifacts from the installed catalog. It supports exact-name package dependencies and the documented pacman version constraints between Linux
-data, native static and restricted dynamic packages, empty hooks/transforms,
+data, native static and restricted dynamic packages, empty hooks,
 existing or declared safe directories and the same payload subset as db apply. It reports selected
 artifacts, reasons and requirement edges without changing installed state.
 Unused candidates are excluded from the operation. The plan digest binds
@@ -1197,8 +1199,9 @@ unavailable catalog leaves coverage incomplete and returns 6 when no provider
 can be found. Older indexes without file or SONAME facts report unavailable
 coverage for those requirements. Selected packages retain their source IDs, and candidate
 catalogs are checked again before apply. Source preference ranking, fuzzy
-suggestions and runtime plugin discovery remain open. Hooks and
-transforms remain outside the supported installation subset.
+suggestions and runtime plugin discovery remain open. Executable hooks remain
+outside the supported installation subset. Recorded transforms are accepted
+after payload verification; no transformation runs during installation.
 .PP
 For add SOURCE:PACKAGE, --answers FILE supplies source decisions by stable
 consumer artifact hash and requirement-id. The file uses the holy.conf lexer:
@@ -1248,7 +1251,8 @@ generation. It verifies a private snapshot of the cached artifact, checks
 root-path collisions and refuses unresolved requirements, interpreters and
 ELF dependencies. The supported planning subset is linux/nolibc with
 noarch data or the native host architecture (x86_64 on x86_64, x86 on i686).
-Hooks and transform must be empty. Payloads may contain ordinary directories and regular
+Hooks must be empty. HOLY/transform may record completed payload changes.
+Payloads may contain ordinary directories and regular
 files and relative symlinks owned by the current UID/GID. Hardlinks, privileged modes
 and writes inside holypkg state or cache trees are excluded. Output includes
 target-root device/inode, generation, artifact SHA-256, path count and a
@@ -1291,7 +1295,8 @@ directory claims remain permitted. These checks read manifests directly;
 generated ownership indexes are not required for correctness.
 .PP
 Database apply installs only an approved linux/nolibc package
-with empty hooks, transform and requirements. Its payload may contain
+with empty hooks and requirements. HOLY/transform is retained as a record of
+completed changes and is never executed by apply. Its payload may contain
 ordinary regular files, including native static ELF executables, relative
 symlinks, direct hardlinks and directory entries. Existing directories must match the manifest's
 mode and numeric owner/group. Missing parents require explicit directory entries
@@ -1672,7 +1677,8 @@ reconstruct original bytes rather than treating them as normalized text.
 .PP
 The solve command verifies and scans each explicitly supplied local archive,
 with the first archive as the requested root. Its supported subset accepts
-Linux packages with validated payload ABI facts, empty HOLY/hooks and HOLY/transform, and
+Linux packages with validated payload ABI facts, empty HOLY/hooks and an
+ordinary HOLY/transform record, and
 HOLY/deps package requirements with explicit arch/libc scopes or any, plus
 unversioned file requirements at literal absolute paths and unversioned
 bare command names.
