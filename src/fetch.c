@@ -423,7 +423,7 @@ int holy_fetch_https_data(const char *url, const char *expected,
                           const char *output, const char *ca_file)
 {
     return https_object(url, expected, output, ca_file, 0, 0, NULL,
-                        16 * 1024 * 1024);
+                        128LL * 1024 * 1024);
 }
 
 int holy_fetch_https_foreign(const char *url, const char *output,

@@ -443,8 +443,11 @@
   per-library defined version names and checks strong ELF version needs before
   staging SONAME candidates. A targeted payload scan now rejects a matching
   SONAME/version candidate missing a strong imported symbol before staging.
-  Cross-source offers apply the same consumer ELF probe. The resolver rechecks
-  selected archives. Indexing individual symbol exports remains open.
+  Cross-source offers apply the same consumer ELF probe. Generation 7 indexes
+  exported dynamic symbols by library path, version and ELF attributes.
+  Provider search rejects missing exports without opening candidate archives;
+  selected artifacts are checked against the index and then by the resolver.
+  Large-catalog index scaling remains open.
 - [x] Bind a verified synced mirror and index digest to a registered source-id
   under the target database lock. Resolve add, fetch, search and info without
   repeating --catalog; reject corrupt bindings and changed mirrors. Keep the

@@ -35,7 +35,7 @@ static unsigned char *index_data(int dir, const char *digest, size_t *size)
     if (!names(digest, index, signature)) return NULL;
     fd = openat(dir, index, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
-        st.st_size < 0 || st.st_size > 16 * 1024 * 1024) goto done;
+        st.st_size < 0 || st.st_size > 128LL * 1024 * 1024) goto done;
     *size = (size_t)st.st_size;
     data = malloc(*size ? *size : 1);
     if (!data) goto done;

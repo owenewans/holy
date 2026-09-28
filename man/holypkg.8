@@ -1857,7 +1857,7 @@ The repository index command validates regular .holy files in DIRECTORY and
 writes an unsigned, lexicographically ordered index through an atomic rename.
 It refuses symlinked packages, duplicate package identities and a nonregular
 existing index. It rejects unsupported HOLY/deps records. Records in format
-holy-index-prototype-6 contain the quoted
+holy-index-prototype-7 contain the quoted
 name, version, release, os, arch, libc, relative filename, SHA-256 and size.
 Following package records include typed claim lines bound to the package
 SHA-256, copied from validated HOLY/provides. Readers compare every indexed
@@ -1874,13 +1874,15 @@ repo providers DIRECTORY soname NAME uses these facts, ignoring unsupported
 or forged SONAME claims. A further coverage line and elf-version records bind
 defined version names to each library path. When an ELF consumer has strong
 version needs for a DT_NEEDED name, indexed closure staging selects only
-same-ABI SONAME candidates carrying every required version. Selected archives
-with strong symbol imports also trigger a targeted scan of each matching
-candidate before staging; a library with the right version name but without
-the requested export is excluded. The resolver checks selected archives again
-against actual symbol exports. Readers
-compare selected index facts with the artifact. Old holy-index-prototype-1
-through -5 generations remain readable,
+same-ABI SONAME candidates carrying every required version. For older indexes,
+strong symbol imports trigger a targeted scan of each matching candidate;
+a library with the right version name but without the requested export is
+excluded. Generation 7 indexes exported dynamic
+symbols per library path, including version, type, binding, visibility and
+hidden flag. Provider search uses these facts to reject a missing export
+without opening the candidate archive. It compares indexed exports against
+the selected artifact before staging. The resolver checks selected archives
+again. Old holy-index-prototype-1 through -6 generations remain readable,
 with the coverage each generation declares;
 optional signatures are sidecars to a sealed generation. Source adapters
 must not treat it as the native repository format.

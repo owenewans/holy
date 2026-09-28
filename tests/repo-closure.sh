@@ -128,6 +128,14 @@ if test -n "$arch"; then
     mv "$tmp/repo/helper.holy" "$tmp/other-repo/helper.holy"
 fi
 "$bin" repo index "$tmp/repo" > "$tmp/out"
+if test -n "$arch"; then
+    good_export=$(sha256sum "$tmp/repo/good.holy" | cut -d ' ' -f 1)
+    grep -F "elf-export $good_export " "$tmp/repo/index" | grep -q '"foo" "GOOD_1"'
+    cp "$tmp/repo/index" "$tmp/original-index"
+    sed 's/"foo" "GOOD_1"/"forged" "GOOD_1"/' "$tmp/original-index" > "$tmp/repo/index"
+    if "$bin" repo seal "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+    cp "$tmp/original-index" "$tmp/repo/index"
+fi
 "$bin" repo seal "$tmp/repo" > "$tmp/out"
 "$bin" repo index "$tmp/other-repo" > "$tmp/out"
 "$bin" repo seal "$tmp/other-repo" > "$tmp/out"
