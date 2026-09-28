@@ -3,6 +3,7 @@
 #include "pack.h"
 #include "package.h"
 #include "verify.h"
+#include "deps.h"
 #include "stage.h"
 #include "elf.h"
 #include "../backends/pacman.h"
@@ -875,6 +876,56 @@ static int apk_depends(FILE *out, const char *consumer, const struct apk_field *
     return index != 0 && !ferror(out);
 }
 
+static int deb_term(char *term, char **name, const char **relation, char **version)
+{
+    char *end, *name_end, *p;
+    size_t i;
+    int order;
+    while (*term == ' ' || *term == '\t' || *term == '\n') ++term;
+    end = term + strlen(term);
+    while (end > term && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n')) *--end = 0;
+    if (end == term) return 0;
+    name_end = term;
+    while (*name_end && *name_end != ' ' && *name_end != '\t' &&
+           *name_end != '\n' && *name_end != '(') ++name_end;
+    if (name_end == term) return 0;
+    for (i = 0; term + i < name_end; ++i)
+        if (!((term[i] >= 'a' && term[i] <= 'z') ||
+              (term[i] >= '0' && term[i] <= '9') ||
+              (i && (term[i] == '+' || term[i] == '-' || term[i] == '.')))) return 0;
+    *name = term;
+    *relation = "any";
+    *version = NULL;
+    if (!*name_end) return 1;
+    p = name_end;
+    if (*p == '(') *p++ = 0;
+    else {
+        *p++ = 0;
+        while (*p == ' ' || *p == '\t' || *p == '\n') ++p;
+        if (*p++ != '(') return 0;
+    }
+    while (*p == ' ' || *p == '\t') ++p;
+    if (p[0] == '<' && p[1] == '<') *relation = "lt";
+    else if (p[0] == '<' && p[1] == '=') *relation = "le";
+    else if (p[0] == '=') *relation = "eq";
+    else if (p[0] == '>' && p[1] == '=') *relation = "ge";
+    else if (p[0] == '>' && p[1] == '>') *relation = "gt";
+    else return 0;
+    p += !strcmp(*relation, "eq") ? 1 : 2;
+    while (*p == ' ' || *p == '\t') ++p;
+    *version = p;
+    while (*p && *p != ' ' && *p != '\t' && *p != ')') ++p;
+    if (p == *version) return 0;
+    if (*p == ')') { *p++ = 0; if (*p) return 0; }
+    else {
+        if (!*p) return 0;
+        *p++ = 0;
+        while (*p == ' ' || *p == '\t') ++p;
+        if (*p++ != ')' || *p) return 0;
+    }
+    return holy_deb_version_compare(*version, *version, &order);
+}
+
 static int deb_relations(FILE *out, const char *consumer, const struct deb_field *field,
                          int claims)
 {
@@ -886,68 +937,63 @@ static int deb_relations(FILE *out, const char *consumer, const struct deb_field
     if (!copy || !(temporary = open_memstream(&buffer, &size))) goto done;
     cursor = copy;
     while (*cursor) {
-        char *segment = cursor, *comma = strchr(cursor, ','), *end, *name_end, *version = NULL;
-        const char *relation = "any";
+        struct { char *name, *version; const char *relation; } terms[64];
+        char *segment = cursor, *comma = strchr(cursor, ','), *end, *part;
         char id[64];
-        size_t i;
+        size_t count = 0, i;
         if (comma) { *comma = 0; cursor = comma + 1; if (!*cursor) goto done; }
         else cursor += strlen(cursor);
         while (*segment == ' ' || *segment == '\t' || *segment == '\n') ++segment;
         end = segment + strlen(segment);
         while (end > segment && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\n')) *--end = 0;
-        if (end == segment || ++index > 4096) goto done;
-        if ((size_t)(end - segment) > 65536 || !(original = strdup(segment))) goto done;
-        name_end = segment;
-        while (*name_end && *name_end != ' ' && *name_end != '\t' &&
-               *name_end != '\n' && *name_end != '(') ++name_end;
-        for (i = 0; segment + i < name_end; ++i)
-            if (!((segment[i] >= 'a' && segment[i] <= 'z') ||
-                  (segment[i] >= '0' && segment[i] <= '9') ||
-                  (i && (segment[i] == '+' || segment[i] == '-' || segment[i] == '.')))) goto done;
-        if (name_end == segment) goto done;
-        if (*name_end) {
-            char *p = name_end;
-            if (*p == '(') *p++ = 0;
-            else {
-                *p++ = 0;
-                while (*p == ' ' || *p == '\t' || *p == '\n') ++p;
-                if (*p++ != '(') goto done;
-            }
-            while (*p == ' ' || *p == '\t') ++p;
-            if (p[0] == '<' && p[1] == '<') relation = "lt";
-            else if (p[0] == '<' && p[1] == '=') relation = "le";
-            else if (p[0] == '=') relation = "eq";
-            else if (p[0] == '>' && p[1] == '=') relation = "ge";
-            else if (p[0] == '>' && p[1] == '>') relation = "gt";
-            else goto done;
-            p += !strcmp(relation, "eq") ? 1 : 2;
-            while (*p == ' ' || *p == '\t') ++p;
-            version = p;
-            while (*p && *p != ' ' && *p != '\t' && *p != ')') ++p;
-            if (p == version) goto done;
-            if (*p == ')') { *p++ = 0; if (*p) goto done; }
-            else {
-                if (!*p) goto done;
-                *p++ = 0;
-                while (*p == ' ' || *p == '\t') ++p;
-                if (*p++ != ')' || *p) goto done;
-            }
-            {
-                int order;
-                if (!holy_deb_version_compare(version, version, &order)) goto done;
-            }
-        } else *name_end = 0;
+        if (end == segment || ++index > 4096 ||
+            (size_t)(end - segment) > 65536 || !(original = strdup(segment))) goto done;
+        part = segment;
+        while (part) {
+            char *bar = strchr(part, '|');
+            if (bar) *bar = 0;
+            if (count == 64 || !deb_term(part, &terms[count].name,
+                                         &terms[count].relation,
+                                         &terms[count].version)) goto done;
+            ++count;
+            part = bar ? bar + 1 : NULL;
+        }
         if (claims) {
-            if (strcmp(relation, "any") && strcmp(relation, "eq")) goto done;
-            for (i = 0; i < seen_count; ++i) if (!strcmp(seen[i], segment)) goto done;
-            seen[seen_count++] = segment;
-            fputs("provide package ", temporary); token(temporary, segment);
-            fputs(" any any ", temporary); token(temporary, version ? version : "-");
+            if (count != 1 || (strcmp(terms[0].relation, "any") &&
+                               strcmp(terms[0].relation, "eq"))) goto done;
+            for (i = 0; i < seen_count; ++i)
+                if (!strcmp(seen[i], terms[0].name)) goto done;
+            seen[seen_count++] = terms[0].name;
+            fputs("provide package ", temporary); token(temporary, terms[0].name);
+            fputs(" any any ", temporary); token(temporary, terms[0].version ? terms[0].version : "-");
             fputs(" deb:Provides\n", temporary);
         } else {
             snprintf(id, sizeof id, "deb-%zu-%zu", field->line, index);
-            requirement(temporary, id, consumer, "package", segment, "any", "any", relation,
-                        version ? version : "-", original, "deb:Depends");
+            if (count == 1)
+                requirement(temporary, id, consumer, "package", terms[0].name,
+                            "any", "any", terms[0].relation,
+                            terms[0].version ? terms[0].version : "-", original,
+                            "deb:Depends");
+            else {
+                char *expression = NULL;
+                size_t expression_size = 0;
+                FILE *encoded = open_memstream(&expression, &expression_size);
+                if (!encoded) goto done;
+                for (i = 0; i < count; ++i)
+                    fprintf(encoded, "%s%s@%s@%s", i ? "|" : "", terms[i].name,
+                            terms[i].relation, terms[i].version ? terms[i].version : "-");
+                {
+                    int failed = ferror(encoded);
+                    if (fclose(encoded)) failed = 1;
+                    if (failed) { free(expression); goto done; }
+                }
+                if (!holy_package_or_each(expression, NULL, NULL)) {
+                    free(expression); goto done;
+                }
+                requirement(temporary, id, consumer, "package-or", expression,
+                            "any", "any", "any", "-", original, "deb:Depends");
+                free(expression);
+            }
         }
         if (ferror(temporary)) goto done;
         free(original); original = NULL;

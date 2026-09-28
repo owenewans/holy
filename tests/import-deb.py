@@ -161,8 +161,35 @@ with tempfile.TemporaryDirectory() as scratch:
 
     convert(foreign("depends", control=b"Package: debfixture\nVersion: 1\nArchitecture: all\nDepends: other (>= 2) | else\n"), "depends-output")
     dependency = next((tmp / "depends-output").glob("*.holy"))
-    assert "foreign" in run("requirements", "local:" + str(dependency))
-    run("solve", "local:" + str(dependency), status=3)
+    assert '"package-or" "other@ge@2|else@any@-"' in run(
+        "requirements", "local:" + str(dependency))
+    run("solve", "local:" + str(dependency), status=4)
+    old_other = convert(foreign("old-other", control=b"Package: other\nVersion: 1\nArchitecture: all\n",
+        data=[("usr/share/old-other", b"old\n", "file")]), "old-other-output")[0]
+    new_other = convert(foreign("new-other", control=b"Package: other\nVersion: 2\nArchitecture: all\n",
+        data=[("usr/share/new-other", b"new\n", "file")]), "new-other-output")[0]
+    alternative = convert(foreign("else", control=b"Package: else\nVersion: 1\nArchitecture: all\n",
+        data=[("usr/share/else", b"else\n", "file")]), "else-output")[0]
+    run("solve", "local:" + str(dependency), "local:" + str(old_other), status=4)
+    assert hashlib.sha256(new_other.read_bytes()).hexdigest() in run(
+        "solve", "local:" + str(dependency), "local:" + str(old_other),
+        "local:" + str(new_other))
+    assert hashlib.sha256(alternative.read_bytes()).hexdigest() in run(
+        "solve", "local:" + str(dependency), "local:" + str(old_other),
+        "local:" + str(alternative))
+    run("solve", "local:" + str(dependency), "local:" + str(new_other),
+        "local:" + str(alternative), status=3)
+    alternative_hash = hashlib.sha256(alternative.read_bytes()).hexdigest()
+    dependency_hash = hashlib.sha256(dependency.read_bytes()).hexdigest()
+    for package, digest in ((alternative, alternative_hash), (dependency, dependency_hash)):
+        run("cache", "stage", "local:" + str(package), "--root", root)
+        selected_plan = run("db", "plan-set", digest, "--root", root).split(" sha256 ")[1].split()[0]
+        run("db", "apply-set", selected_plan, digest, "--root", root)
+    graph = (root / "var/lib/holypkg/installed" / dependency_hash / "graph").read_text()
+    assert alternative_hash in graph and '"else"' in graph
+    run("db", "rm", alternative_hash, "--root", root, status=3)
+    run("db", "rm", dependency_hash, "--root", root)
+    run("db", "rm", alternative_hash, "--root", root)
     old_library = convert(foreign("old-library", control=b"Package: library\nVersion: 1.0~rc1-1\nArchitecture: all\n"),
                           "old-library-output")[0]
     new_library = convert(foreign("new-library", control=b"Package: library\nVersion: 1.0-1\nArchitecture: all\n"),

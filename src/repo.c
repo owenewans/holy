@@ -997,6 +997,13 @@ static int closure_soname(const struct object *objects, struct closure *closure,
     return 1;
 }
 
+static int closure_or_provider(void *opaque, const char *name,
+                               const char *relation, const char *version)
+{
+    (void)relation; (void)version;
+    return closure_provider(opaque, "package", name);
+}
+
 static int closure_expand(const struct object *objects,
                           struct closure *closure, size_t index,
                           const char *snapshot, int version_index)
@@ -1008,7 +1015,9 @@ static int closure_expand(const struct object *objects,
     for (i = 0; i < o->requirement_count && ok; ++i) {
         const char *kind = o->requirements[i].fields[2];
         const char *name = o->requirements[i].fields[3];
-        ok = closure_provider(closure, kind, name);
+        ok = !strcmp(kind, "package-or") ?
+             holy_package_or_each(name, closure_or_provider, closure) :
+             closure_provider(closure, kind, name);
     }
     if (ok) ok = holy_scan_collect(snapshot, &scan);
     for (i = 0; i < scan.count && ok; ++i) {

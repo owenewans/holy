@@ -242,11 +242,16 @@ data.tar in order, including supported compressed variants. It retains control
 files beneath HOLY/foreign/deb and each control field with its source line in
 HOLY/origin. Debian maintainer scripts remain review-required and never run
 during import. Conffiles require config-manifest support and return status 3.
-Simple comma-separated Depends entries become package requirements. Their
-version constraints use Debian ordering, including epoch, tilde and revision,
-only against providers in the deb version family. Alternatives, architecture
-qualifiers, Pre-Depends and other unsupported relationships remain attributed
-foreign requirements that require an explicit decision in the current solver.
+Comma-separated Depends entries become package requirements. OR alternatives
+remain one requirement with version constraints on each branch. The solver
+records the selected branch and provider in the installed graph. Constraints
+use Debian ordering, including epoch, tilde and revision, only against
+providers in the deb version family. Architecture qualifiers, Pre-Depends and
+other unsupported relationships remain attributed foreign requirements that
+require an explicit decision in the current solver.
+The automatic cross-source provider search currently probes the first branch
+of a missing OR group. Supply an artifact or candidate for another branch
+explicitly when it is absent from the active local set.
 Simple Provides names and
 exact version claims become package capabilities; an unversioned virtual claim
 does not satisfy a versioned dependency. Unsupported or duplicate claims remain
@@ -1460,7 +1465,10 @@ eleven tokens:
 .nf
 require ID CONSUMER KIND NAME ARCH LIBC RELATION VERSION ORIGINAL EVIDENCE
 .fi
-KIND is package, file, command, soname, symbol-version or build. ARCH is any,
+KIND is package, package-or, file, command, soname, symbol-version or build.
+For package-or, NAME contains Debian branches as NAME@RELATION@VERSION joined
+by |; the outer ARCH, LIBC and RELATION fields are any and VERSION is -.
+ARCH is any,
 x86, x86_64 or noarch; LIBC is any, glibc, musl or nolibc. RELATION is any,
 eq, ge, le, gt or lt. VERSION is - only for any. ORIGINAL and EVIDENCE retain
 the source expression and basis as text. Requirement IDs must be unique. The

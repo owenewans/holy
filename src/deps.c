@@ -24,10 +24,57 @@ static int one_of(const char *value, const char *const *values, size_t count)
     return 0;
 }
 
+int holy_package_or_each(const char *expression, holy_package_or_visit visit,
+                         void *opaque)
+{
+    char *copy = NULL, *cursor, *part;
+    size_t count = 0;
+    int ok = 0;
+    if (!expression || !*expression || strlen(expression) > 65536 ||
+        !(copy = strdup(expression))) return 0;
+    cursor = copy;
+    while (cursor) {
+        char *next = strchr(cursor, '|');
+        char *name, *relation, *version;
+        size_t i;
+        part = cursor;
+        if (next) { *next = 0; cursor = next + 1; }
+        else cursor = NULL;
+        name = part;
+        relation = strchr(part, '@');
+        if (++count > 64 || !relation) goto done;
+        *relation++ = 0;
+        version = strchr(relation, '@');
+        if (!version) goto done;
+        *version++ = 0;
+        if (!*name || !*version || strchr(version, '@') ||
+            (!strcmp(relation, "any") ? strcmp(version, "-") :
+             strcmp(relation, "eq") && strcmp(relation, "ge") &&
+             strcmp(relation, "gt") && strcmp(relation, "le") &&
+             strcmp(relation, "lt"))) goto done;
+        for (i = 0; name[i]; ++i)
+            if (!((name[i] >= 'a' && name[i] <= 'z') ||
+                  (name[i] >= '0' && name[i] <= '9') ||
+                  (i && (name[i] == '+' || name[i] == '-' || name[i] == '.')))) goto done;
+        if (strcmp(relation, "any")) {
+            if (!strcmp(version, "-")) goto done;
+            for (i = 0; version[i]; ++i)
+                if ((unsigned char)version[i] <= 32 ||
+                    (unsigned char)version[i] >= 127 ||
+                    version[i] == '|' || version[i] == '@') goto done;
+        }
+        if (visit && !visit(opaque, name, relation, version)) goto done;
+    }
+    ok = count >= 2;
+done:
+    free(copy);
+    return ok;
+}
+
 static int valid_requirement(char **v, size_t n)
 {
     static const char *const kinds[] = {
-        "package", "file", "command", "soname", "symbol-version", "build", "foreign"
+        "package", "package-or", "file", "command", "soname", "symbol-version", "build", "foreign"
     };
     static const char *const arches[] = {"any", "x86", "x86_64", "noarch"};
     static const char *const libcs[] = {"any", "glibc", "musl", "nolibc"};
@@ -40,7 +87,10 @@ static int valid_requirement(char **v, size_t n)
         !one_of(v[6], libcs, sizeof libcs / sizeof *libcs) ||
         !one_of(v[7], relations, sizeof relations / sizeof *relations) ||
         (!strcmp(v[7], "any") ? strcmp(v[8], "-") :
-         !v[8][0] || !strcmp(v[8], "-"))) return 0;
+         !v[8][0] || !strcmp(v[8], "-")) ||
+        (!strcmp(v[3], "package-or") &&
+         (strcmp(v[5], "any") || strcmp(v[6], "any") ||
+          strcmp(v[7], "any") || !holy_package_or_each(v[4], NULL, NULL)))) return 0;
     for (i = 0; v[1][i]; ++i)
         if (!((v[1][i] >= 'a' && v[1][i] <= 'z') ||
               (v[1][i] >= 'A' && v[1][i] <= 'Z') ||

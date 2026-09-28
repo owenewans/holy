@@ -3162,6 +3162,13 @@ done:
     return ok;
 }
 
+static int installed_or_provider(void *context, const char *name,
+                                 const char *relation, const char *version)
+{
+    (void)relation; (void)version;
+    return add_installed_candidates(context, QUERY_PACKAGE, name, NULL, NULL);
+}
+
 static int installed_requirement(void *context, const char *id,
     const char *consumer, const char *kind, const char *name,
     const char *arch, const char *libc, const char *relation,
@@ -3171,6 +3178,8 @@ static int installed_requirement(void *context, const char *id,
     (void)version; (void)original; (void)evidence;
     if (!strcmp(kind, "package"))
         return add_installed_candidates(context, QUERY_PACKAGE, name, NULL, NULL);
+    if (!strcmp(kind, "package-or"))
+        return holy_package_or_each(name, installed_or_provider, context);
     if (!strcmp(kind, "file") && name[0] == '/')
         return add_installed_candidates(context, QUERY_PATH, name + 1, NULL, NULL);
     if (!strcmp(kind, "command"))

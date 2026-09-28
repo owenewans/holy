@@ -31,7 +31,7 @@ struct elf_edge {
 
 struct package_edge {
     size_t requirement;
-    char *kind, *arch, *libc, *relation, *version;
+    char *kind, *name, *arch, *libc, *relation, *version;
 };
 
 struct package_claim { char *capability, *version; };
@@ -129,6 +129,37 @@ static int add_requirement(struct local_item *item, const char *id, const char *
     return 1;
 }
 
+static int add_package_edge(struct local_item *item, size_t requirement,
+                            const char *kind, const char *name,
+                            const char *arch, const char *libc,
+                            const char *relation, const char *version)
+{
+    struct package_edge *grown, *edge;
+    if (item->package_edge_count >= 65536) return 0;
+    grown = realloc(item->package_edges,
+                    (item->package_edge_count + 1) * sizeof *grown);
+    if (!grown) return 0;
+    item->package_edges = grown;
+    edge = &grown[item->package_edge_count++];
+    memset(edge, 0, sizeof *edge);
+    edge->requirement = requirement;
+    edge->kind = strdup(kind); edge->name = strdup(name);
+    edge->arch = strdup(arch); edge->libc = strdup(libc);
+    edge->relation = strdup(relation); edge->version = strdup(version);
+    return edge->kind && edge->name && edge->arch && edge->libc &&
+           edge->relation && edge->version;
+}
+
+struct or_context { struct local_item *item; size_t requirement; };
+
+static int add_or_branch(void *opaque, const char *name,
+                         const char *relation, const char *version)
+{
+    struct or_context *context = opaque;
+    return add_package_edge(context->item, context->requirement,
+                            "package", name, "any", "any", relation, version);
+}
+
 static int exact_requirement(void *opaque, const char *id,
     const char *consumer, const char *kind, const char *name,
     const char *arch, const char *libc, const char *relation,
@@ -139,6 +170,21 @@ static int exact_requirement(void *opaque, const char *id,
     int ok;
     (void)original; (void)evidence;
     if (strcmp(consumer, item->identity.name)) return 0;
+    if (!strcmp(kind, "package-or")) {
+        struct or_context context;
+        if (!item->identity.version_family ||
+            strcmp(item->identity.version_family, "deb") ||
+            strcmp(relation, "any") || strcmp(arch, "any") ||
+            strcmp(libc, "any")) return 0;
+        capability = named_capability(kind, name);
+        if (!capability) return 0;
+        ok = add_requirement(item, id, capability);
+        free(capability);
+        if (!ok) return 0;
+        context.item = item;
+        context.requirement = item->requirement_count - 1;
+        return holy_package_or_each(name, add_or_branch, &context);
+    }
     if (strcmp(kind, "package") && strcmp(kind, "file") &&
         strcmp(kind, "command") && strcmp(kind, "soname")) {
         if (!item->unsupported_id) item->unsupported_id = strdup(id);
@@ -160,16 +206,8 @@ static int exact_requirement(void *opaque, const char *id,
     free(capability);
     if (ok && (strcmp(kind, "package") || strcmp(arch, "any") ||
                strcmp(libc, "any") || strcmp(relation, "any"))) {
-        struct package_edge *grown = realloc(item->package_edges,
-            (item->package_edge_count + 1) * sizeof *grown), *edge;
-        if (!grown) return 0;
-        item->package_edges = grown;
-        edge = &grown[item->package_edge_count++];
-        memset(edge, 0, sizeof *edge);
-        edge->requirement = item->requirement_count - 1;
-        edge->kind = strdup(kind); edge->arch = strdup(arch); edge->libc = strdup(libc);
-        edge->relation = strdup(relation); edge->version = strdup(version);
-        ok = edge->kind && edge->arch && edge->libc && edge->relation && edge->version;
+        ok = add_package_edge(item, item->requirement_count - 1,
+                              kind, name, arch, libc, relation, version);
     }
     return ok;
 }
@@ -217,6 +255,37 @@ static int version_matches(const char *candidate, const struct package_edge *edg
            !strcmp(edge->relation, "ge") ? order >= 0 :
            !strcmp(edge->relation, "gt") ? order > 0 :
            !strcmp(edge->relation, "le") ? order <= 0 : order < 0;
+}
+
+static int has_file(const struct local_item *item, const char *absolute);
+static int has_command(const struct local_item *item, const char *name);
+static int has_soname(const struct local_item *item, const char *name);
+
+static int package_edge_matches(const struct local_item *consumer,
+                                const struct package_edge *edge,
+                                const struct local_item *candidate)
+{
+    const char *family = consumer->identity.version_family;
+    const struct version_adapter *adapter = version_adapter(family);
+    char *base;
+    int matches = 0, constrained = strcmp(edge->relation, "any") != 0;
+    size_t claim;
+    if ((strcmp(edge->arch, "any") && strcmp(edge->arch, candidate->identity.arch)) ||
+        (strcmp(edge->libc, "any") && strcmp(edge->libc, candidate->identity.libc)) ||
+        (constrained && (!candidate->identity.version_family ||
+                         strcmp(candidate->identity.version_family, family)))) return 0;
+    if (!strcmp(edge->kind, "file")) return has_file(candidate, edge->name);
+    if (!strcmp(edge->kind, "command")) return has_command(candidate, edge->name);
+    if (!strcmp(edge->kind, "soname")) return has_soname(candidate, edge->name);
+    base = named_capability(edge->kind, edge->name);
+    if (!base) return -1;
+    if (!strcmp(base, candidate->capability))
+        matches = version_matches(candidate->identity.version, edge, adapter);
+    for (claim = 0; !matches && claim < candidate->claim_count; ++claim)
+        if (!strcmp(base, candidate->claims[claim].capability))
+            matches = version_matches(candidate->claims[claim].version, edge, adapter);
+    free(base);
+    return matches;
 }
 
 static int add_provide(struct holy_solver_item *item, const char *capability)
@@ -331,7 +400,6 @@ static int package_requirements(struct local_item *local, struct holy_solver_ite
     for (i = 0; i < count; ++i) for (j = 0; j < local[i].package_edge_count; ++j) {
         const struct package_edge *edge = &local[i].package_edges[j];
         size_t index = edge->requirement;
-        const char *base = local[i].original_requirements[index];
         const char *family = local[i].identity.version_family;
         const char *relation = edge->relation;
         const struct version_adapter *adapter = version_adapter(family);
@@ -347,26 +415,17 @@ static int package_requirements(struct local_item *local, struct holy_solver_ite
         if (!capability) return 0;
         snprintf(capability, length, "package-edge:%s:%s", local[i].identity.digest,
                  local[i].requirement_ids[index]);
-        free((char *)local[i].requirements[index].first);
-        local[i].requirements[index].first = capability;
+        if (j && local[i].package_edges[j - 1].requirement == index) free(capability);
+        else {
+            free((char *)local[i].requirements[index].first);
+            local[i].requirements[index].first = capability;
+        }
+        capability = (char *)local[i].requirements[index].first;
         for (k = 0; k < count; ++k) {
-            const struct holy_package_identity *candidate = &local[k].identity;
-            int matches = 0;
-            size_t claim;
-            if ((strcmp(edge->arch, "any") && strcmp(edge->arch, candidate->arch)) ||
-                (strcmp(edge->libc, "any") && strcmp(edge->libc, candidate->libc))) continue;
-            if (constrained && (!candidate->version_family || strcmp(candidate->version_family, family))) continue;
-            if (!strcmp(edge->kind, "file")) matches = has_file(&local[k], base + 5);
-            else if (!strcmp(edge->kind, "command")) matches = has_command(&local[k], base + 8);
-            else if (!strcmp(edge->kind, "soname")) matches = has_soname(&local[k], base + 7);
-            else {
-                if (!strcmp(base, local[k].capability)) matches = version_matches(candidate->version, edge, adapter);
-                for (claim = 0; !matches && claim < local[k].claim_count; ++claim)
-                    if (!strcmp(base, local[k].claims[claim].capability))
-                        matches = version_matches(local[k].claims[claim].version, edge, adapter);
+            int matches = package_edge_matches(&local[i], edge, &local[k]);
+            if (matches < 0 || (matches && !add_provide(&items[k], capability))) {
+                return 0;
             }
-            if (matches < 0) return 0;
-            if (matches && !add_provide(&items[k], capability)) return 0;
         }
     }
     return 1;
@@ -821,6 +880,14 @@ static int capture_missing(const struct local_item *consumer, size_t requirement
         break;
     }
     if (!name) {
+        for (k = 0; k < consumer->package_edge_count; ++k)
+            if (consumer->package_edges[k].requirement == requirement) {
+                kind = consumer->package_edges[k].kind;
+                name = consumer->package_edges[k].name;
+                break;
+            }
+    }
+    if (!name) {
         original = consumer->original_requirements[requirement];
         if (!strncmp(original, "package:", 8)) { kind = "package"; name = original + 8; }
         else if (!strncmp(original, "file:", 5)) { kind = "file"; name = original + 5; }
@@ -885,13 +952,30 @@ static int collect_result(const struct local_item *local, const struct holy_solv
         for (j = 0; j < local[i].requirement_count; ++j) {
             struct holy_resolved_edge *next, *edge;
             const char *path = "-", *kind = "package", *target = NULL;
+            size_t provider = count;
+            for (k = 0; k < count; ++k)
+                if (selected[k] && provides(&items[k], local[i].requirements[j].first)) {
+                    provider = k;
+                    break;
+                }
+            if (provider == count) return 0;
             for (k = 0; k < local[i].edge_count; ++k) {
                 const struct elf_edge *e = &local[i].edges[k];
                 if (e->requirement == j) { path = e->path; kind = e->kind; target = e->target; break; }
             }
             if (!target) {
                 const char *original = local[i].original_requirements[j];
-                if (!strncmp(original, "package:", 8)) target = original + 8;
+                if (!strncmp(original, "package-or:", 11)) {
+                    for (k = 0; k < local[i].package_edge_count; ++k)
+                        if (local[i].package_edges[k].requirement == j &&
+                            package_edge_matches(&local[i], &local[i].package_edges[k],
+                                                 &local[provider]) == 1) {
+                            target = local[i].package_edges[k].name;
+                            break;
+                        }
+                    if (!target) return 0;
+                }
+                else if (!strncmp(original, "package:", 8)) target = original + 8;
                 else if (!strncmp(original, "file:", 5)) {
                     kind = "file";
                     target = original + 5;
@@ -914,11 +998,7 @@ static int collect_result(const struct local_item *local, const struct holy_solv
             edge->path = strdup(path);
             edge->kind = strdup(kind);
             edge->target = strdup(target);
-            for (k = 0; k < count; ++k)
-                if (selected[k] && provides(&items[k], local[i].requirements[j].first)) {
-                    edge->provider = strdup(local[k].identity.digest);
-                    break;
-                }
+            edge->provider = strdup(local[provider].identity.digest);
             if (!edge->consumer || !edge->id || !edge->path || !edge->kind ||
                 !edge->target || !edge->provider) return 0;
         }
@@ -1134,6 +1214,7 @@ done:
         free(local[i].edges);
         for (j = 0; j < local[i].package_edge_count; ++j) {
             free(local[i].package_edges[j].kind);
+            free(local[i].package_edges[j].name);
             free(local[i].package_edges[j].arch); free(local[i].package_edges[j].libc);
             free(local[i].package_edges[j].relation); free(local[i].package_edges[j].version);
         }

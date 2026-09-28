@@ -93,9 +93,11 @@
   ar bytes, control fields and scripts retained. Check ar order, 2.x version
   headers, optional post-data members, codec suffixes, payload paths,
   architecture claims and install/check/remove for a data package.
-  Resolve simple Depends entries and exact/unversioned Provides claims with
-  Debian version ordering within the deb family. Alternatives, Pre-Depends and
-  other unsupported relationships stay foreign requirements; conffiles require
+  Resolve Depends entries including OR alternatives and exact/unversioned
+  Provides claims with Debian version ordering within the deb family.
+  Automatic cross-source discovery still probes only the first missing OR
+  branch; candidates for another branch must be supplied explicitly.
+  Pre-Depends and other unsupported relationships stay foreign requirements; conffiles require
   a decision. Verify listed `control/md5sums` files against the payload before
   conversion; the original MD5 list is not source authentication. A pinned
   local or HTTPS APT Packages index with an explicit pin now supports name search, exact package metadata,
