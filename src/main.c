@@ -168,8 +168,13 @@ static int fetch_source(int argc, char **argv)
 {
     const char *separator = strchr(argv[2], ':');
     const char *root = "/", *catalog = NULL, *output = NULL;
-    char source_id[65], *alias = NULL, *bound_catalog = NULL;
-    int i, extract = 0, root_seen = 0, result = 2;
+    const char *repo = NULL, *version = NULL, *arch = NULL, *sha256 = NULL;
+    const char *ca_file = NULL, *public_key = NULL;
+    const char *required_soname = NULL, *required_file = NULL;
+    char source_id[65], *alias = NULL, *bound_catalog = NULL, *family = NULL;
+    char **repos = NULL;
+    size_t repo_count = 0, j;
+    int i, extract = 0, import = 0, root_seen = 0, result = 2;
     if (!separator || separator == argv[2] || !separator[1] ||
         strchr(separator + 1, ':')) goto done;
     alias = malloc((size_t)(separator - argv[2]) + 1);
@@ -178,6 +183,12 @@ static int fetch_source(int argc, char **argv)
     alias[separator - argv[2]] = 0;
     if (!strcmp(alias, "local")) goto done;
     for (i = 3; i < argc; ++i) {
+        if ((!strcmp(argv[i], "--repo") || !strcmp(argv[i], "--version") ||
+             !strcmp(argv[i], "--arch") || !strcmp(argv[i], "--sha256") ||
+             !strcmp(argv[i], "--ca-file") || !strcmp(argv[i], "--public-key") ||
+             !strcmp(argv[i], "--require-soname") || !strcmp(argv[i], "--require-file")) &&
+            (i + 1 >= argc || !argv[i + 1][0] || !strncmp(argv[i + 1], "--", 2)))
+            goto done;
         if (!strcmp(argv[i], "--catalog") && !catalog && i + 1 < argc &&
             argv[i + 1][0] && strncmp(argv[i + 1], "--", 2))
             catalog = argv[++i];
@@ -188,9 +199,54 @@ static int fetch_source(int argc, char **argv)
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) {
             root = argv[++i]; root_seen = 1;
         } else if (!strcmp(argv[i], "--extract") && !extract) extract = 1;
+        else if (!strcmp(argv[i], "--import") && !import) import = 1;
+        else if (!strcmp(argv[i], "--repo") && !repo && i + 1 < argc) repo = argv[++i];
+        else if (!strcmp(argv[i], "--version") && !version && i + 1 < argc) version = argv[++i];
+        else if (!strcmp(argv[i], "--arch") && !arch && i + 1 < argc) arch = argv[++i];
+        else if (!strcmp(argv[i], "--sha256") && !sha256 && i + 1 < argc) sha256 = argv[++i];
+        else if (!strcmp(argv[i], "--ca-file") && !ca_file && i + 1 < argc) ca_file = argv[++i];
+        else if (!strcmp(argv[i], "--public-key") && !public_key && i + 1 < argc) public_key = argv[++i];
+        else if (!strcmp(argv[i], "--require-soname") && !required_soname && i + 1 < argc)
+            required_soname = argv[++i];
+        else if (!strcmp(argv[i], "--require-file") && !required_file && i + 1 < argc)
+            required_file = argv[++i];
         else goto done;
     }
     if (!output || !*output || !*root) goto done;
+    result = holy_source_type(root, alias, &family);
+    if (result) goto done;
+    if (!strcmp(family, "apk")) {
+        if (extract) { result = 2; goto done; }
+        if (!version || !arch) {
+            fprintf(stderr, "holypkg: APK fetch needs --version and --arch for %s:%s\n",
+                    alias, separator + 1);
+            result = 3; goto done;
+        }
+        if (!repo) {
+            result = holy_source_apk_repos(root, alias, &repos, &repo_count);
+            if (result) goto done;
+            if (repo_count != 1) {
+                fprintf(stderr, "holypkg: APK source %s has %zu repositories; select --repo\n",
+                        alias, repo_count);
+                result = 3; goto done;
+            }
+            repo = repos[0];
+        }
+        if (!catalog) {
+            result = holy_apk_catalog_path(root, alias, repo, &bound_catalog);
+            if (result) goto done;
+            catalog = bound_catalog;
+        }
+        result = holy_apk_fetch(catalog, separator + 1, version, arch, output,
+                                sha256, ca_file, root, alias, public_key,
+                                import, required_soname, required_file);
+        goto done;
+    }
+    if (repo || version || arch || sha256 || ca_file || public_key || import ||
+        required_soname || required_file ||
+        (strcmp(family, "holy-http") && strcmp(family, "holy-git"))) {
+        result = 2; goto done;
+    }
     if (!catalog) {
         result = holy_source_catalog_path_fast(root, alias, &bound_catalog);
         if (result) goto done;
@@ -200,8 +256,10 @@ static int fetch_source(int argc, char **argv)
     if (!result) result = holy_repo_fetch_name(catalog, separator + 1, output, extract);
 done:
     if (result == 2)
-        fputs("usage: holypkg fetch SOURCE:PACKAGE [--catalog MIRROR] --output DIRECTORY [--extract] [--root DIRECTORY]\n", stderr);
-    free(alias); free(bound_catalog);
+        fputs("usage: holypkg fetch SOURCE:PACKAGE [--catalog MIRROR] --output DIRECTORY [--extract] [--root DIRECTORY] | holypkg fetch APK_SOURCE:PACKAGE --version VERSION --arch ARCH [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--sha256 HASH] [--import] [--require-soname SONAME] [--require-file /PATH]\n", stderr);
+    for (j = 0; j < repo_count; ++j) free(repos[j]);
+    free(repos);
+    free(alias); free(bound_catalog); free(family);
     return result;
 }
 

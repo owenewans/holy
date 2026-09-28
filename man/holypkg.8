@@ -128,6 +128,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg fetch SOURCE:PACKAGE [--catalog MIRROR] --output DIRECTORY [--extract] [--root DIRECTORY]
 .br
+.B holypkg fetch APK_SOURCE:PACKAGE --version VERSION --arch ARCH [--repo REPO] --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--sha256 HASH] [--import] [--require-soname SONAME] [--require-file /PATH]
+.br
 .B holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE]
 .br
 .B holypkg pack DIRECTORY --output FILE.holy
@@ -2204,6 +2206,16 @@ instead writes a new output directory. More than one package with the same name
 requires a choice (status 3); an absent package or inactive source returns 6.
 The mirror record retains the digest pin or verified key hash. A bound signed
 catalog is rechecked against the registered key before source queries.
+.PP
+For an active type apk source, fetch SOURCE:PACKAGE uses a bound APK catalog.
+Specify --version and --arch to select one indexed artifact. A source with one
+repository selects it; otherwise specify --repo. Missing selection returns
+decision-required (3). The command verifies the catalog binding, download and
+package signature according to the source key, then writes the original APK and
+selection receipt in a new --output directory. --import also writes converted
+.holy outputs. --require-soname and --require-file check exact claims in the
+converted output. --extract applies only to native .holy packages. --catalog
+can name a bound APK catalog; an arbitrary replacement fails source binding.
 Neither form installs files, hooks or dependencies into the target root.
 .PP
 The source registry is read before network transfer, so a later alias change

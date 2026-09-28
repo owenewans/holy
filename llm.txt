@@ -1024,7 +1024,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=696db5acb380a83b4b3b0e674ca9dd85d81f3ba2cb9444b1df403608b519e701
+holypkg.8 source=holy version=development sha256=6ee967d7ee08a6ef6de244a945efea7c772d892ba36ea168a27b748679382aa5
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1149,6 +1149,10 @@ SYNOPSIS
      holypkg fetch local:FILE --extract --output DIRECTORY
      holypkg  fetch  SOURCE:PACKAGE [--catalog MIRROR] --output DIRECTORY [--ex-
      tract] [--root DIRECTORY]
+     holypkg fetch APK_SOURCE:PACKAGE  --version  VERSION  --arch  ARCH	 [--repo
+     REPO]  --output  NEW_DIRECTORY  [--catalog	 DIRECTORY]  [--root  DIRECTORY]
+     [--ca-file FILE] [--public-key FILE] [--sha256 HASH] [--import] [--require-
+     soname SONAME] [--require-file /PATH]
      holypkg fetch https://URL --sha256	 SHA256	 --output  DIRECTORY  [--ca-file
      FILE]
      holypkg pack DIRECTORY --output FILE.holy
@@ -3219,121 +3223,131 @@ SOURCE REGISTRATION
      rectory. More than one package with the same name requires a choice (status
      3);  an absent package or inactive source returns 6.  The mirror record re-
      tains the digest pin or verified  key  hash.  A  bound  signed  catalog  is
-     rechecked	against	 the registered key before source queries.  Neither form
-     installs files, hooks or dependencies into the target root.
+     rechecked against the registered key before source queries.
 
-     The source registry is read before	 network  transfer,  so	 a  later  alias
-     change  does  not	change the snapshot's recorded ID. A source with another
-     backend, an inactive alias or an untrusted TLS certificate	 is  unavailable
+     For  an active type apk source, fetch SOURCE:PACKAGE uses a bound APK cata-
+     log.  Specify --version and --arch to select one indexed artifact. A source
+     with one repository selects it; otherwise specify --repo. Missing selection
+     returns decision-required (3). The command verifies  the  catalog	binding,
+     download and package signature according to the source key, then writes the
+     original  APK  and	 selection receipt in a new --output directory. --import
+     also writes converted converted output. --extract applies	only  to  native
+     .holy  packages.  --catalog  can name a bound APK catalog; an arbitrary re-
+     placement fails source binding.  Neither form installs files, hooks or  de-
+     pendencies into the target root.
+
+     The  source  registry  is	read  before  network transfer, so a later alias
+     change does not change the snapshot's recorded ID. A  source  with	 another
+     backend,  an  inactive alias or an untrusted TLS certificate is unavailable
      (6). The index digest is an explicit user pin, an accepted unsigned current
-     value,  or	 a current value whose index was verified by the registered key.
+     value, or a current value whose index was verified by the	registered  key.
      The recorded source-id is provenance for this snapshot, not an installation
-     authority derived from package metadata.  Multi-source  dependency	 resolu-
-     tion  remains  unimplemented.  Explicit cached replacement uses db plan-up-
-     date and db apply-update. These commands do not yet implement JSON	 output.
+     authority	derived	 from package metadata.	 Multi-source dependency resolu-
+     tion remains unimplemented.  Explicit cached replacement uses  db	plan-up-
+     date  and db apply-update. These commands do not yet implement JSON output.
      See holy.conf(5) for identity rules and endpoint restrictions.
 
 ORPHAN PACKAGES
-     orphan  reads  a  consistent  installed-state snapshot under the database's
-     shared lock. The default root is /. It follows  saved  consumer-to-provider
-     edges  from every instance marked explicit and reports dependency instances
-     outside that reachable graph. A dependency cycle with no explicit	consumer
+     orphan reads a consistent installed-state	snapshot  under	 the  database's
+     shared  lock.  The default root is /. It follows saved consumer-to-provider
+     edges from every instance marked explicit and reports dependency  instances
+     outside  that reachable graph. A dependency cycle with no explicit consumer
      is also orphaned.	Only each current instance's own edges participate; ref-
-     erences  copied  from  an	older  transaction's other consumers do not keep
+     erences copied from an older transaction's	 other	consumers  do  not  keep
      packages alive.
 
-     The command does not remove files, run package  code,  fetch  artifacts  or
-     need  the package cache. Each candidate includes its artifact hash, package
+     The  command  does	 not  remove files, run package code, fetch artifacts or
+     need the package cache. Each candidate includes its artifact hash,	 package
      name and the reason unreachable-from-explicit. Names in text output use the
-     metadata lexer's byte escapes. JSON names preserve	 valid	UTF-8.	This  is
+     metadata  lexer's	byte  escapes.	JSON names preserve valid UTF-8. This is
      graph analysis, not a payload or application-health check; use db check for
      file integrity.
 
-     With  --json, holy-orphan-1 candidate events contain artifact, name, reason
-     and generation. A final summary contains generation,  installed,  explicit,
+     With --json, holy-orphan-1 candidate events contain artifact, name,  reason
+     and  generation.  A final summary contains generation, installed, explicit,
      reachable and orphans counts. Candidates are ordered by artifact hash. Out-
-     put  is  delayed  until  the  complete graph has been read and linked, so a
-     missing provider never produces a partial orphan list. Errors  produce  one
-     error  event with code and status: invalid-state (1), missing-provider (4),
-     incomplete-transaction (5),  or  unknown-installed-graph  (6).  Legacy  in-
+     put is delayed until the complete graph has been  read  and  linked,  so  a
+     missing  provider	never produces a partial orphan list. Errors produce one
+     error event with code and status: invalid-state (1), missing-provider  (4),
+     incomplete-transaction  (5),  or  unknown-installed-graph	(6).  Legacy in-
      stalled entries without saved graphs require migration before this analysis
      can prove reachability.
 
 RUN INSTALLED COMMAND
      run selects one installed slot by source alias and package name. Use --arch
-     and  --libc  when	several installed slots share that name. The local alias
+     and --libc when several installed slots share that name.  The  local  alias
      selects a package installed without a registered source. A registered alias
      can still select its installed package after the source is removed from ac-
-     tive config.  The command after -- must be a bare name in	a  standard  bin
-     directory	or  an	absolute path in /usr/bin, /bin, /usr/sbin or /sbin. run
-     checks the installed manifest, including the  executable  bit  and	 current
+     tive  config.   The  command after -- must be a bare name in a standard bin
+     directory or an absolute path in /usr/bin, /bin, /usr/sbin	 or  /sbin.  run
+     checks  the  installed  manifest,	including the executable bit and current
      payload, before exec.
 
-     When  the	installed manifest owns a matching path under /usr/lib/holy/pri-
+     When the installed manifest owns a matching path  under  /usr/lib/holy/pri-
      vate/ARTIFACT-ID/, run selects it before the public path.	run prepends the
      selected package's manifest-owned private bin directories to PATH even when
-     the main executable uses a public path. It passes argv  unchanged	and  re-
-     turns  the program's exit status through exec. Without --view this is a di-
-     rect launcher. It does not replace	 shell	builtins  or  intercept	 another
-     process  that  directly  executes the public path. A private path still re-
-     quires an installation transform that places and records  the  file  there;
+     the  main	executable  uses a public path. It passes argv unchanged and re-
+     turns the program's exit status through exec. Without --view this is a  di-
+     rect  launcher.  It  does	not  replace shell builtins or intercept another
+     process that directly executes the public path. A private	path  still  re-
+     quires  an	 installation  transform that places and records the file there;
      the current package installation flow does not create such a mapping from a
      conflicting public path.
 
-     With  --root,  run	 executes the selected file at that root's host path. It
-     does not chroot or isolate the process. Dynamic  interpreter  and	absolute
-     paths  use the host's namespace, so a trial root must use a compatible host
-     or a static program. An unavailable package or command returns  6;	 an  al-
+     With --root, run executes the selected file at that root's	 host  path.  It
+     does  not	chroot	or isolate the process. Dynamic interpreter and absolute
+     paths use the host's namespace, so a trial root must use a compatible  host
+     or	 a  static  program. An unavailable package or command returns 6; an al-
      tered payload returns 4. An incomplete transaction returns 5.
 
-     --view  PUBLIC=PRIVATE  maps one selected package-owned regular file or di-
-     rectory under /usr/lib/holy/private/ onto an existing public  path	 of  the
-     same  type.   PUBLIC  may	be  under  /usr/bin,  /usr/sbin,  /bin, /sbin or
+     --view PUBLIC=PRIVATE maps one selected package-owned regular file	 or  di-
+     rectory  under  /usr/lib/holy/private/  onto an existing public path of the
+     same type.	 PUBLIC	 may  be  under	 /usr/bin,  /usr/sbin,	/bin,  /sbin  or
      /usr/lib, or name an existing /app directory. run checks the selected pack-
      age manifest and current payload before creating user and mount namespaces.
-     It makes mount propagation private, bind mounts the selected  file,  enters
-     the  target  root	and execs the command with the caller's UID/GID mapping.
-     Descendants inherit the view; the mount ends with its  namespace.	No  host
-     mount  or	setuid launcher is created. The user namespace maps the caller's
-     primary UID and GID; supplementary groups are not remapped. If  namespaces,
+     It	 makes	mount propagation private, bind mounts the selected file, enters
+     the target root and execs the command with the  caller's  UID/GID	mapping.
+     Descendants  inherit  the	view; the mount ends with its namespace. No host
+     mount or setuid launcher is created. The user namespace maps  the	caller's
+     primary  UID and GID; supplementary groups are not remapped. If namespaces,
      openat2 or mounts are unavailable, run returns 6.	An unowned private path,
      missing target, symlink target or file/directory type mismatch is rejected.
-     Directory	views require an existing target mountpoint; run does not create
-     one in the target root.  --view changes only the listed paths. With  --view
-     and  --root,  the	command executes inside the target root rather than at a
+     Directory views require an existing target mountpoint; run does not  create
+     one  in the target root.  --view changes only the listed paths. With --view
+     and --root, the command executes inside the target root rather  than  at  a
      host-prefixed path.
 
    AppImage staging
-     appimage inspect accepts a type 2 ELF image, checks its x86 or  x86_64  ma-
+     appimage  inspect	accepts a type 2 ELF image, checks its x86 or x86_64 ma-
      chine type, locates one plausible SquashFS superblock and prints its offset
-     and  SHA-256.   The  command reads the image without executing its runtime.
-     appimage extract copies the exact image to a new private  output  directory
-     and  invokes  unsquashfs  with the recorded offset. It requires an unprivi-
-     leged user and an available unsquashfs command. The output contains  origi-
-     nal,  AppDir,  a  classification report and a conversion receipt with state
-     extracted-unclassified.  The report lists ELF  arch/libc/ISA,  interpreter,
-     DT_NEEDED,	 loader	 search	 paths, strong symbol versions, shebang scripts,
-     links that need a path view and unknown executables without following  sym-
-     links.  It reports the AppRun entrypoint and runtime probes that static in-
-     spection cannot close. No .holy is produced and no	 package  is  installed.
+     and SHA-256.  The command reads the image without	executing  its	runtime.
+     appimage  extract	copies the exact image to a new private output directory
+     and invokes unsquashfs with the recorded offset. It  requires  an	unprivi-
+     leged  user and an available unsquashfs command. The output contains origi-
+     nal, AppDir, a classification report and a conversion  receipt  with  state
+     extracted-unclassified.   The  report lists ELF arch/libc/ISA, interpreter,
+     DT_NEEDED, loader search paths, strong symbol  versions,  shebang	scripts,
+     links  that need a path view and unknown executables without following sym-
+     links. It reports the AppRun entrypoint and runtime probes that static  in-
+     spection  cannot  close.  No .holy is produced and no package is installed.
      The extracted AppDir still needs ELF, dependency, path and launcher classi-
-     fication  before  native import. This operation does not claim that the ex-
+     fication before native import. This operation does not claim that	the  ex-
      tracted program can run.
 
-     import INPUT --source NAME --format appimage  --output  NEW_DIRECTORY  uses
-     the  same	extraction and records NAME as unverified provenance. It returns
+     import  INPUT  --source  NAME --format appimage --output NEW_DIRECTORY uses
+     the same extraction and records NAME as unverified provenance.  It	 returns
      status 3 after writing the reviewable output because no native .holy can be
-     issued until dependency and path decisions	 are  complete.	 NAME  does  not
+     issued  until  dependency	and  path  decisions are complete. NAME does not
      grant a registered source identity.
 
 EXIT STATUS
-     0	indicates success under the implemented checks; 1 indicates a failed lo-
-     cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
-     tion  or package inspection. Diagnostics go to standard error except --json
+     0 indicates success under the implemented checks; 1 indicates a failed  lo-
+     cal  fetch,  extraction or check; 2 indicates invalid arguments, configura-
+     tion or package inspection. Diagnostics go to standard error except  --json
      check events, which go to standard output.
 
-     Preview returns 3 when valid requirements need provider  decisions,  4  for
-     path  conflicts  and  6 when hooks or privileged modes need unsupported re-
+     Preview  returns  3  when valid requirements need provider decisions, 4 for
+     path conflicts and 6 when hooks or privileged modes  need	unsupported  re-
      view. It returns 1 on target-root I/O failure.
 
 SEE ALSO

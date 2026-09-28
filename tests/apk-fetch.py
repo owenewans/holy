@@ -288,6 +288,22 @@ with tempfile.TemporaryDirectory() as scratch:
             "--public-key", signing_pub)
         run("apk", "bind", "signed", "extra", tmp / "signed-catalog-extra",
             "--root", signed_root, "--public-key", signing_pub)
+        run("fetch", "signed:fixture", "--root", signed_root,
+            "--output", tmp / "generic-missing-version", status=3)
+        run("fetch", "signed:fixture", "--version", "--arch", "x86_64",
+            "--root", signed_root, "--output", tmp / "generic-bad-option", status=2)
+        run("fetch", "signed:fixture", "--version", "1.2-r0", "--arch", "x86_64",
+            "--root", signed_root, "--output", tmp / "generic-missing-repo", status=3)
+        run("fetch", "signed:fixture", "--version", "1.2-r0", "--arch", "x86_64",
+            "--repo", "main", "--root", signed_root,
+            "--output", tmp / "generic-signed", "--ca-file", tmp / "cert.pem",
+            "--public-key", signing_pub, "--import")
+        assert (tmp / "generic-signed/original").read_bytes() == signed_package
+        assert "imported yes\n" in (tmp / "generic-signed/selection").read_text()
+        assert list((tmp / "generic-signed/converted").glob("*.holy"))
+        run("fetch", "signed:fixture", "--version", "1.2-r0", "--arch", "x86_64",
+            "--repo", "main", "--root", signed_root,
+            "--output", tmp / "generic-invalid-extract", "--extract", status=2)
         assert run("apk", "search", "fixture", "--source", "signed", "--repo",
                    "main", "--root", signed_root).stdout == "fixture 1.2-r0 x86_64\n"
         generic_search = run("search", "fixture", "--source", "signed",

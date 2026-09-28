@@ -178,6 +178,8 @@
   instead of counting their absent native mirror as unavailable.
   The common search/info CLI reads bound APK repositories by source alias and
   optional repo name; APK file coverage still reports unavailable.
+  The common fetch CLI now selects a bound APK artifact by source, version,
+  architecture and repository, with package verification and optional import.
   Feeding foreign candidates into the general resolver and full relation
   semantics remain open.
 
