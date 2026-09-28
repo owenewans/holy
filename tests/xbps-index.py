@@ -32,14 +32,19 @@ def tar_bytes(entries, mode="w"):
     return buffer.getvalue()
 
 
-def repodata(package, *, package_hash=None, package_name="fixture", broken=False):
+def repodata(package, *, package_hash=None, package_name="fixture", broken=False,
+             public_key=None):
     digest = package_hash or hashlib.sha256(package).hexdigest()
     row = {"architecture": "x86_64", "pkgver": "fixture-1.0_1",
            "filename-sha256": digest, "filename-size": len(package),
            "run_depends": [], "shlib-requires": []}
     index = b"<broken" if broken else plistlib.dumps({package_name: row})
+    meta = {"signature-type": "rsa"}
+    if public_key:
+        meta["public-key"] = public_key
+        meta["public-key-size"] = 2048
     data = tar_bytes((("index.plist", index),
-                      ("index-meta.plist", plistlib.dumps({"signature-type": "rsa"})),
+                      ("index-meta.plist", plistlib.dumps(meta)),
                       ("stage.plist", b"")))
     return subprocess.run(["zstd", "-q", "-c"], input=data,
                           capture_output=True, check=True).stdout
@@ -105,6 +110,53 @@ def main():
             run("import", fetched / package_hash, "--source", "fixture", "--format", "xbps",
                 "--output", converted)
             assert len(list(converted.glob("*.holy"))) == 1
+            private_key = root / "repo-private.pem"
+            public_key = root / "repo-public.pem"
+            subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt",
+                            "rsa_keygen_bits:2048", "-out", str(private_key)],
+                           capture_output=True, check=True)
+            subprocess.run(["openssl", "pkey", "-in", str(private_key), "-pubout",
+                            "-out", str(public_key)], capture_output=True, check=True)
+            signature = serve / "fixture-1.0_1.x86_64.xbps.sig2"
+            subprocess.run(["openssl", "dgst", "-sha256", "-sign", str(private_key),
+                            "-out", str(signature),
+                            str(serve / "fixture-1.0_1.x86_64.xbps")],
+                           capture_output=True, check=True)
+            signed_index = root / "signed-repodata"
+            signed_index.write_bytes(repodata(package, public_key=public_key.read_bytes()))
+            signed_hash = hashlib.sha256(signed_index.read_bytes()).hexdigest()
+            signed_catalog = root / "signed-catalog"
+            run("xbps", "index", signed_index, "--sha256", signed_hash,
+                "--source", "fixture", "--base", base, "--output", signed_catalog,
+                "--public-key", public_key)
+            (serve / "x86_64-repodata").write_bytes(signed_index.read_bytes())
+            signed_sync = root / "signed-sync"
+            run("xbps", "sync", base, "x86_64", "--sha256", signed_hash,
+                "--source", "fixture", "--output", signed_sync,
+                "--ca-file", root / "cert.pem", "--public-key", public_key)
+            assert "verification key-matched" in (signed_sync / "conversion").read_text()
+            signed_fetch = root / "signed-fetch"
+            run("xbps", "fetch", "fixture", "1.0_1", "x86_64", "--catalog", signed_catalog,
+                "--output", signed_fetch, "--ca-file", root / "cert.pem",
+                "--public-key", public_key)
+            assert "verification rsa-sha256" in (signed_fetch / "conversion").read_text()
+            wrong_key = root / "wrong-public.pem"
+            wrong_private = root / "wrong-private.pem"
+            subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt",
+                            "rsa_keygen_bits:2048", "-out", str(wrong_private)],
+                           capture_output=True, check=True)
+            subprocess.run(["openssl", "pkey", "-in", str(wrong_private), "-pubout",
+                            "-out", str(wrong_key)], capture_output=True, check=True)
+            run("xbps", "index", signed_index, "--sha256", signed_hash,
+                "--source", "fixture", "--base", base, "--output", root / "wrong-key-index",
+                "--public-key", wrong_key, status=4)
+            run("xbps", "fetch", "fixture", "1.0_1", "x86_64", "--catalog", signed_catalog,
+                "--output", root / "wrong-key-fetch", "--ca-file", root / "cert.pem",
+                "--public-key", wrong_key, status=4)
+            signature.write_bytes(b"invalid signature")
+            run("xbps", "fetch", "fixture", "1.0_1", "x86_64", "--catalog", signed_catalog,
+                "--output", root / "bad-signature-fetch", "--ca-file", root / "cert.pem",
+                "--public-key", public_key, status=4)
             (catalog / "catalog").write_bytes(b"tampered")
             run("xbps", "info", "fixture", "--catalog", catalog, status=6)
             malformed = root / "malformed-repodata"

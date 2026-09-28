@@ -461,8 +461,9 @@
   XBPS local binary import parses plist metadata, checks payload hashes and
   resolves simple versioned dependencies with a bounded Dewey comparator.
   A pinned repodata catalog supports HTTPS sync, search, info and archive fetch.
-  Complex patterns remain review-required. Publisher signature verification,
-  source-id binding and a file index remain open.
+  An explicit RSA public key can match index metadata and verify package .sig2.
+  Complex patterns remain review-required. Source-id binding, key enrollment
+  and a file index remain open.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
   Gentoo and Pacstall recipe conversion with helper environments and split outputs.
 - [ ] Implement Nix closure, Flatpak, Snap, AppImage, Scoop and WinGet imports

@@ -52,13 +52,13 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apk fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE] [--public-key FILE]
 .br
-.B holypkg xbps index REPODATA --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY
+.B holypkg xbps index REPODATA --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--public-key FILE]
 .br
-.B holypkg xbps sync HTTPS_BASE/ ARCH --sha256 HASH --source NAME --output NEW_DIRECTORY [--ca-file FILE]
+.B holypkg xbps sync HTTPS_BASE/ ARCH --sha256 HASH --source NAME --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE]
 .br
 .B holypkg xbps search|info QUERY --catalog DIRECTORY
 .br
-.B holypkg xbps fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE]
+.B holypkg xbps fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE]
 .br
 .B holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--public-key PUBLIC_KEY.pem] [--ca-file FILE]
 .br
@@ -416,17 +416,24 @@ with the same required hash. The catalog stores package name, version,
 architecture, archive SHA-256 and size. Search and info read the catalog after
 checking its digest and the retained repodata. File-index coverage is marked
 unavailable. A source name records provenance; this workflow does not register
-a trusted source-id or verify the XBPS repository signature.
+a trusted source-id. With --public-key FILE, the index command requires that
+the supplied RSA public key match index-meta.plist and records its SHA-256
+fingerprint. The caller must establish the key's authenticity independently.
+The repodata still requires an explicit SHA-256 pin; index-meta.plist alone is
+not trusted authority for a new key.
 .PP
 xbps fetch selects an exact name/version/arch from that catalog, downloads
 the archive over HTTPS, checks size and SHA-256, and compares props.plist
-identity with the selected record. It writes a complete receipt only after
+identity with the selected record. With --public-key FILE, fetch also requires
+the index's key fingerprint, retrieves the .sig2 sidecar and checks its RSA
+SHA-256 signature over the archive bytes. The receipt distinguishes
+hash-pinned from rsa-sha256. It writes a complete receipt only after
 these checks. It does not install, convert or execute the package. The current
 transport limits one archive to 1 GiB; larger indexed objects return status 6.
 An explicit import of the fetched digest-named file creates .holy outputs.
-make check-xbps-index covers index parsing, HTTPS sync/fetch, conversion and
-failure cases on a local fixture server. Publisher signature verification and
-source binding remain open.
+make check-xbps-index covers index parsing, HTTPS sync/fetch, RSA signature
+verification, conversion and failure cases on a local fixture server. Automatic
+source binding and key enrollment remain open.
 .PP
 The apk index command snapshots a local APKINDEX.tar.gz, separates its gzip
 signature and data members, and publishes a sorted local catalog with the
