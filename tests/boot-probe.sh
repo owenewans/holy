@@ -80,6 +80,17 @@ $bb grep -q 'State: STARTED' /run/mdevd.status
 test -c /dev/null
 $bb ls -l /dev/null | $bb grep -q '^crw-------'
 echo 'HOLY-BOOT-1 device mdevd-coldplug'
+if test -f /etc/holy/dummy-module.sha256; then
+    set_stage kernel-module
+    module=/usr/lib/modules/$($bb cat /etc/holy/kernel-version)/kernel/drivers/net/dummy.ko
+    module_hash=$($bb sha256sum "$module")
+    test "${module_hash%% *}" = "$($bb cat /etc/holy/dummy-module.sha256)"
+    $pkg elf /usr/bin/holy-module-probe > /run/module-probe.elf
+    $bb grep -qx 'runtime nolibc' /run/module-probe.elf
+    /usr/bin/holy-module-probe "$module" dummy
+    $bb grep -q '^dummy ' /proc/modules
+    echo 'HOLY-BOOT-1 kernel-module dummy-loaded'
+fi
 if test "$profile" = dual-libc; then
     set_stage libc-recovery
     case "$($bb uname -m)" in

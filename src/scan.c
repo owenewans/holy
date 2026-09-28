@@ -79,6 +79,21 @@ static int link_order(const void *left, const void *right)
     return result ? result : strcmp(a->path, b->path);
 }
 
+static const char *module_release(const char *name, size_t *length)
+{
+    const char *prefix = "DATA/usr/lib/modules/";
+    const char *release, *end;
+    size_t size = strlen(name);
+    if (strncmp(name, prefix, strlen(prefix)) || size < 3 ||
+        strcmp(name + size - 3, ".ko")) return NULL;
+    release = name + strlen(prefix);
+    end = strchr(release, '/');
+    if (!end || end == release || strncmp(end, "/kernel/", 8) || !end[8])
+        return NULL;
+    *length = (size_t)(end - release);
+    return release;
+}
+
 static int inspect_elf(int fd, const char *name, unsigned int mode,
                         const char *arch, const char *libc, int emit, size_t *edges,
                         struct holy_scan_result *collected)
@@ -91,6 +106,26 @@ static int inspect_elf(int fd, const char *name, unsigned int mode,
         holy_elf_free(&info);
         fprintf(stderr, "holypkg: malformed ELF in payload: %s\n", name);
         return 0;
+    }
+    if (info.type == ET_REL) {
+        size_t release_length = 0;
+        const char *release = module_release(name, &release_length);
+        if (!release || strcmp(libc, "nolibc") ||
+            strcmp(arch, holy_elf_machine(&info)) ||
+            !holy_elf_kernel_module_fd(fd, &info, release, release_length)) {
+            fprintf(stderr, "holypkg: invalid kernel module or unsupported ELF object: %s\n", name);
+            holy_elf_free(&info);
+            return 0;
+        }
+        if (emit) {
+            fputs("kernel-module ", stdout);
+            print_token(name + 5);
+            printf(" machine=%s release=", holy_elf_machine(&info));
+            fwrite(release, 1, release_length, stdout);
+            putchar('\n');
+        }
+        holy_elf_free(&info);
+        return 1;
     }
     {
         size_t i;

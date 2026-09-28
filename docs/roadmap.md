@@ -652,8 +652,15 @@
   original .holy with its source ID, and use its boot/vmlinuz for the ISO. An
   x86_64 ext4 image with five core packages from one source and linux from a
   second source passed the two-boot libc-removal/recovery QEMU contract.
-  The fixture kernel package contains the image, not a separate module set;
-  module-rich kernel packages still need a dedicated build test.
+  That first fixture kernel package contained the image without a module set.
+- [x] Package a matching 7.2.7 x86_64 dummy.ko and modules.dep with a pinned
+  native linux artifact. The ELF scanner accepts its ET_REL payload only at a
+  kernel module path with matching .modinfo vermagic; a mismatched release
+  fails the fixture. A full x86_64 ext4 image passed two QEMU/TCG boots. On
+  each boot, the guest checked the module hash, loaded it with finit_module
+  and found dummy in /proc/modules; the second boot followed removal and
+  recovery of both dynamic libc packages. General module dependency handling,
+  i686 kernel modules and hardware drivers remain open.
 - [x] Extend that RAM profile with both dynamic libc packages and separate
   C probes. Boot present, glibc-missing, musl-missing and both-missing images
   under BIOS/TCG and UEFI/TCG. Restore absent payloads and loader links from

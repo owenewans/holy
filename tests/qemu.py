@@ -154,6 +154,9 @@ def main():
         error('unsupported image profile or libc boot state', 2)
     if profile == 'static-core' and state != 'present':
         error('libc boot state requires dual-libc profile', 2)
+    module_probe = os.environ.get('KERNEL_MODULE_PROBE', 'off')
+    if module_probe not in ('on', 'off'):
+        error('KERNEL_MODULE_PROBE must be on or off', 2)
     if network not in ('off', 'fixture'):
         error('NETWORK_RECOVERY must be off or fixture', 2)
     if network == 'fixture' and (profile != 'dual-libc' or state != 'both' or media != 'iso'):
@@ -327,6 +330,8 @@ def main():
         expected.add('HOLY-BOOT-1 network fixture-dns')
     if 'KERNEL_VERSION' in os.environ:
         expected.add('HOLY-BOOT-1 kernel ' + os.environ['KERNEL_VERSION'])
+    if module_probe == 'on':
+        expected.add('HOLY-BOOT-1 kernel-module dummy-loaded')
     if media == 'disk':
         expected.add('HOLY-BOOT-1 esp mounted-writable')
     expected_boots = [expected]
@@ -404,7 +409,7 @@ def main():
                                 continue
                             name = line.removeprefix('HOLY-BOOT-1 stage ')
                             if name not in ('identity', 'login', 'esp', 'static-core',
-                                            'installer', 'devices', 'libc-recovery',
+                                            'installer', 'devices', 'kernel-module', 'libc-recovery',
                                             'network-setup', 'documentation', 'packages',
                                             'installer-transaction', 'libc-removal',
                                             'reboot', 'result'):
@@ -496,6 +501,7 @@ def main():
                       'checks': {marker: 'pass' if marker in actual else 'unknown' for marker in sorted(wanted)}})
     report = {'schema': 'holy-qemu-report-2', 'arch': arch, 'accelerator': accel,
               'firmware': firmware, 'profile': profile, 'libc_boot_state': state,
+              'kernel_module_probe': module_probe,
               'network': 'private-loopback-fixture-https' if server else 'disabled', 'plan': plan,
               'inputs': inputs, 'network_inputs': network_inputs, 'network_requests': requests,
               'dns_queries': dns_queries,
@@ -521,6 +527,7 @@ def main():
               'not_tested': (['libc-recovery'] if profile != 'dual-libc' or state == 'present' else []) +
                             ([] if disk_path else ['libc-recovery-reboot']) +
                             (['i686-libc'] if arch != 'i686' or profile != 'dual-libc' else []) +
+                            (['kernel-module-load'] if module_probe == 'off' else []) +
                             ['installer', 'hardware', 'public-network' if server else 'network', 'kernel-update']}
     if disk_path:
         report['overlay'] = {'path': str(run / 'root.qcow2'), 'sha256': digest(run / 'root.qcow2'),

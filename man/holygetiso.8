@@ -53,6 +53,10 @@ active pinned source. The source package must be named linux, match
 kernel-version and target architecture, use libc nolibc, and contain
 boot/vmlinuz. The builder preserves that .holy and source ID in the install
 plan, and checks the extracted x86 kernel header before building the image.
+If the package contains usr/lib/modules/KERNEL_VERSION/kernel/drivers/net/dummy.ko
+and its modules.dep entry, the builder packages a static module probe. QEMU
+requires the guest to load dummy and find it in /proc/modules on each boot.
+Without that module the report marks kernel-module-load untested.
 Optional: glibc-cc, musl-cc, libc-boot-state, network-recovery,
 install-test and install-firmware. Their supported combinations are documented
 in holy-image(7). boot-test accepts required (default) or build-only. The

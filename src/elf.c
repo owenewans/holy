@@ -639,6 +639,56 @@ int holy_elf_read(const char *path, struct holy_elf_info *info)
     return result;
 }
 
+int holy_elf_kernel_module_fd(int fd, const struct holy_elf_info *info,
+                              const char *release, size_t release_length)
+{
+    Elf *elf;
+    Elf_Scn *section = NULL;
+    size_t strings;
+    int found = 0;
+    if (info->type != ET_REL || info->has_dynamic || info->interpreter ||
+        info->needed_count || info->soname || !release_length ||
+        elf_version(EV_CURRENT) == EV_NONE) return 0;
+    elf = elf_begin(fd, ELF_C_READ, NULL);
+    if (!elf) return 0;
+    if (elf_getshdrstrndx(elf, &strings)) goto done;
+    while ((section = elf_nextscn(elf, section))) {
+        GElf_Shdr header;
+        const char *name;
+        Elf_Data *data = NULL;
+        if (!gelf_getshdr(section, &header)) { found = 0; goto done; }
+        name = elf_strptr(elf, strings, header.sh_name);
+        if (!name) { found = 0; goto done; }
+        if (strcmp(name, ".modinfo")) continue;
+        if (header.sh_type != SHT_PROGBITS || header.sh_size > 1024 * 1024) {
+            found = 0;
+            goto done;
+        }
+        while ((data = elf_getdata(section, data))) {
+            const char *p = data->d_buf;
+            size_t left = data->d_size;
+            if (!p && left) { found = 0; goto done; }
+            while (left) {
+                const char *end = memchr(p, '\0', left);
+                size_t length;
+                if (!end) { found = 0; goto done; }
+                length = (size_t)(end - p);
+                if (length >= 9 + release_length &&
+                    !memcmp(p, "vermagic=", 9) &&
+                    !memcmp(p + 9, release, release_length) &&
+                    (length == 9 + release_length ||
+                     p[9 + release_length] == ' ')) found = 1;
+                left -= length + 1;
+                p = end + 1;
+            }
+        }
+        break;
+    }
+done:
+    elf_end(elf);
+    return found;
+}
+
 void holy_elf_free(struct holy_elf_info *info)
 {
     free(info->interpreter);

@@ -58,5 +58,7 @@ const char *holy_elf_runtime(const struct holy_elf_info *info);
 const char *holy_elf_isa(const struct holy_elf_info *info);
 int holy_elf_exports_symbol(const struct holy_elf_info *provider,
                             const struct holy_elf_symbol *wanted);
+int holy_elf_kernel_module_fd(int fd, const struct holy_elf_info *info,
+                              const char *release, size_t release_length);
 
 #endif

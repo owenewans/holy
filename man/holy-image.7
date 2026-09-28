@@ -79,7 +79,10 @@ requirements against the selected libc payloads before installation.
 KERNEL_IMAGE, KERNEL_VERSION
 Local Linux kernel image and its expected uname release. The selected kernel
 must include initramfs/gzip, devtmpfs, proc, sysfs, tmpfs, devpts and serial
-console support. No kernel modules are included by this profile.
+console support. The local kernel-image profile includes no kernel modules.
+The initramfs excludes kernel modules. A source kernel package may install
+modules in the rootfs; the dummy.ko fixture is loaded during the QEMU boot
+probe when present with its matching modules.dep entry.
 .TP
 LIMINE_DIR
 Directory containing limine-bios.sys, limine-bios-cd.bin and

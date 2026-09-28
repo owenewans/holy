@@ -227,6 +227,7 @@ pack() {
     rm -rf "$tree"
 }
 sh "$project/tools/image-package-stage.sh" "$bin" "$out" "$arch" "$@"
+module_probe=off
 if test -f "$work/core-kernel.holy"; then
     cp "$work/core-kernel.holy" "$out/inputs/kernel.holy"
     "$bin" info "local:$out/inputs/kernel.holy" > "$work/kernel-info"
@@ -241,6 +242,21 @@ if test -f "$work/core-kernel.holy"; then
         --output "$work/kernel-package" > "$work/kernel-extract.record"
     kernel=$(realpath "$work/kernel-package/DATA/boot/vmlinuz")
     case "$kernel" in "$work/kernel-package/DATA/"*) ;; *) exit 4 ;; esac
+    module="$work/kernel-package/DATA/usr/lib/modules/$version/kernel/drivers/net/dummy.ko"
+    if test -f "$module"; then
+        test ! -L "$module" &&
+            grep -qx 'kernel/drivers/net/dummy.ko:' \
+                "$work/kernel-package/DATA/usr/lib/modules/$version/modules.dep" || exit 4
+        module_probe=on
+        module_digest=$(sha256sum "$module")
+        module_digest=${module_digest%% *}
+        "$cc" -std=c99 -Wall -Wextra -Werror -pedantic -Os -static -fno-pie -no-pie \
+            "$project/tests/module-probe.c" -o "$work/holy-module-probe"
+        "$bin" elf "$work/holy-module-probe" > "$work/module-probe.elf"
+        grep -qx 'runtime nolibc' "$work/module-probe.elf"
+        grep -qx "machine $package_arch" "$work/module-probe.elf"
+        printf 'kernel-module dummy %s\n' "$module_digest" >> "$record"
+    fi
 fi
 test -f "$kernel" || exit 6
 validate_kernel
@@ -386,6 +402,12 @@ metadata holy-boot bootstrap "$package_arch"
 mkdir -p "$tree/DATA/usr/bin" "$tree/DATA/usr/lib/holy" "$tree/DATA/etc/dinit.d" \
     "$tree/DATA/etc/holy" "$tree/DATA/usr/share/holy"
 cp "$work/holy-init" "$tree/DATA/usr/bin/holy-init"
+if test "$module_probe" = on; then
+    cp "$work/holy-module-probe" "$tree/DATA/usr/bin/holy-module-probe"
+    printf '%s\n' "$module_digest" > "$tree/DATA/etc/holy/dummy-module.sha256"
+    sha256sum "$project/tests/module-probe.c" "$work/holy-module-probe" \
+        >> "$tree/HOLY/origin"
+fi
 cp "$project/profiles/dinit/"* "$tree/DATA/etc/dinit.d/"
 cp "$project/tests/boot-probe.sh" "$tree/DATA/usr/lib/holy/boot-probe.sh"
 cp "$project/tests/install-probe.sh" "$tree/DATA/usr/lib/holy/install-probe.sh"
@@ -696,7 +718,7 @@ HOLY_ROOT="$root" DRACUT_LDCONFIG='ldconfig -X' DRACUT_NO_MKNOD=1 DRACUT_TESTBIN
 mkdir "$work/audit"
 gzip -dc "$out/initramfs.img" > "$work/initramfs.cpio"
 (cd "$work/audit" && cpio -id --no-absolute-filenames < "$work/initramfs.cpio")
-python3 - "$root" "$work/audit" "$bin" "$profile" "$arch" > "$out/initramfs.audit" <<'PY'
+python3 - "$root" "$work/audit" "$bin" "$profile" "$arch" "$version" > "$out/initramfs.audit" <<'PY'
 import hashlib, os, pathlib, stat, subprocess, sys
 root, unpacked = map(pathlib.Path, sys.argv[1:3])
 dynamic = set()
@@ -744,7 +766,16 @@ for parent, dirs, files in os.walk(unpacked):
                 elf = f.read(4) == b'\x7fELF'
             if elf:
                 facts = subprocess.check_output([sys.argv[3], 'elf', str(path)], text=True)
-                if relative.as_posix() in dynamic:
+                module = (len(relative.parts) >= 5 and
+                          relative.parts[:3] == ('usr', 'lib', 'modules') and
+                          relative.parts[3] == sys.argv[6] and relative.suffix == '.ko')
+                if module:
+                    machine = 'x86' if sys.argv[5] == 'i686' else 'x86_64'
+                    if 'e_type 1' not in facts.splitlines() or \
+                            'machine ' + machine not in facts.splitlines():
+                        raise SystemExit('invalid kernel module: ' + str(relative))
+                    print('kernel-module-elf', relative)
+                elif relative.as_posix() in dynamic:
                     print('dynamic-fixture-elf', relative)
                 elif 'runtime nolibc' not in facts.splitlines():
                     raise SystemExit('non-static ELF: ' + str(relative))
@@ -854,6 +885,7 @@ else
         NETWORK_RECOVERY="$network_recovery" NETWORK_DIR="$out/network" \
         ROOT_DISK="$root_disk" \
         KERNEL_IMAGE="$root/boot/vmlinuz" KERNEL_VERSION="$version" INITRAMFS="$out/initramfs.img" \
+        KERNEL_MODULE_PROBE="$module_probe" \
         sh "$project/tests/qemu.sh"
 fi
 printf 'result boot-tested-%s\n' "$profile" >> "$record"
@@ -865,3 +897,4 @@ elif test "$network_recovery" = fixture; then
 else
     printf 'not-tested installer-full-flow network graphics\n' >> "$record"
 fi
+if test "$module_probe" = off; then printf 'not-tested kernel-module-load\n' >> "$record"; fi

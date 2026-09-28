@@ -46,6 +46,12 @@ ET_DYN payload file and records that file as evidence. It rejects ELF files
 whose runtime remains unknown. A plugin without such evidence needs
 classification and review before a package can pass scan.
 .PP
+The scanner accepts an ET_REL kernel module only under
+usr/lib/modules/RELEASE/kernel/ with a .ko suffix, matching package
+architecture, libc=nolibc and a .modinfo vermagic release matching its path.
+It does not treat module symbols as userspace providers. Other ET_REL objects
+remain unknown for ABI classification.
+.PP
 The archive contains one regular file at each of HOLY/meta, HOLY/files,
 HOLY/deps, HOLY/provides, HOLY/hooks, HOLY/origin and HOLY/transform. The
 inspector checks their presence and type. Empty metadata placeholders can pass
