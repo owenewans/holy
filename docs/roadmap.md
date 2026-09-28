@@ -18,8 +18,11 @@
   in a separate root bound to all pinned mirrors. The image builder copies its
   selected artifacts with their source IDs, including a unique exact provider
   from another source. A two-source fixture installs the result with
-  `holyinstall`; no package is installed in the resolver root. Image-level
-  ambiguity and full QEMU boot remain to be tested for this path.
+  `holyinstall`; no package is installed in the resolver root. A real x86_64
+  ext4 ISO with only `add fixture:cross-root` selected `other:helper`, passed
+  two QEMU/TCG boots with both libc runtimes removed and restored, and its
+  exported inputs passed SHA-256 verification. Image-level ambiguity remains
+  to be tested for this path.
 - [x] Fetch pinned bootstrap inputs over HTTPS into an explicit directory,
   verify SHA-256 before publication, and reject altered cached files. On
   x86_64, local builds produced musl 1.2.5, static BusyBox 1.37.0,

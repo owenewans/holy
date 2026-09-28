@@ -735,7 +735,7 @@ SOURCE IDENTITIES
      ture.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holygetiso.8 source=holy version=development sha256=db33fe15890228cce986295c783026517c453c986c42fb6d8d7875a342d365ca
+holygetiso.8 source=holy version=development sha256=ed8e100c675d8c69d4cc92244b29eda664dd7c43a435dd263a5837b7e28fdc29
 HOLYGETISO(8)		      System Administration		   HOLYGETISO(8)
 
 NAME
@@ -802,20 +802,17 @@ CONFIGURATION
 	    same  frozen  set plan. Their original archives remain in output/in-
 	    puts and the build record identifies each hash.  An "add ALIAS:PACK-
 	    AGE" entry fetches a named package from a pinned native source.  The
-	    builder  solves  that package's dependency closure within its sealed
-	    catalog, copies each  selected  .holy  into	 inputs,  registers  the
-	    source  under  the image root and binds each artifact's source ID in
-	    holyinstall's frozen set plan. When that catalog  lacks  a	require-
-	    ment,  the builder may stage one exact PACKAGE candidate and let the
-	    final set plan check it alongside other explicit "add ALIAS:PACKAGE"
-	    entries. The config must name the provider in its own source; an ab-
-	    sent or ambiguous exact package  fails.  The  builder  records  this
-	    fallback in build.record. Boot core package fields still require lo-
-	    cal	 artifacts  because  the builder normalizes those artifacts into
-	    new unsigned Holy packages. Added packages must target the image ar-
-	    chitecture or noarch; x86 packages are also accepted  in  an  x86_64
-	    image.  Duplicate  package	names  fail  before plan generation. The
-	    package manager checks payload ownership and dependencies.
+	    builder resolves requirements against all configured sealed catalogs
+	    in	a  temporary root, then copies selected .holy artifacts into in-
+	    puts and binds each source ID in holyinstall's frozen  set	plan.  A
+	    unique  exact  provider can come from another source. Other explicit
+	    "add ALIAS:PACKAGE" entries become candidates for the current  pack-
+	    age;  unresolved ambiguity stops the build. Boot core package fields
+	    still require local artifacts because the builder  normalizes  those
+	    artifacts  into new unsigned Holy packages. Added packages must tar-
+	    get the image architecture or noarch; x86 packages are also accepted
+	    in an x86_64 image. Duplicate package names fail before plan genera-
+	    tion. The package manager checks payload ownership and dependencies.
 
      [source NAME]
 	    Each used native source requires type holy-http or	holy-git,  "url"

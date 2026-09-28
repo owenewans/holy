@@ -61,14 +61,12 @@ normalized artifact hashes separately. Repeated "add PATH" entries install
 additional local .holy packages in the same frozen set plan. Their original
 archives remain in output/inputs and the build record identifies each hash.
 An "add ALIAS:PACKAGE" entry fetches a named package from a pinned native
-source. The builder solves that package's dependency closure within its sealed
-catalog, copies each selected .holy into inputs, registers the source under
-the image root and binds each artifact's source ID in holyinstall's frozen set
-plan. When that catalog lacks a requirement, the builder may stage one exact
-PACKAGE candidate and let the final set plan check it alongside other explicit
-"add ALIAS:PACKAGE" entries. The config must name the provider in its own
-source; an absent or ambiguous exact package fails. The builder records this
-fallback in build.record. Boot core package fields still require local
+source. The builder resolves requirements against all configured sealed
+catalogs in a temporary root, then copies selected .holy artifacts into inputs
+and binds each source ID in holyinstall's frozen set plan. A unique exact
+provider can come from another source. Other explicit "add ALIAS:PACKAGE"
+entries become candidates for the current package; unresolved ambiguity stops
+the build. Boot core package fields still require local
 artifacts because the builder normalizes those artifacts into new unsigned
 Holy packages. Added packages must target the image architecture or noarch; x86 packages are
 also accepted in an x86_64 image. Duplicate package names fail before plan
