@@ -12,6 +12,10 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg import INPUT --source NAME --format pacman|deb|slackware|apk --output NEW_DIRECTORY [--public-key FILE (apk only)]
 .br
+.B holypkg appimage inspect INPUT
+.br
+.B holypkg appimage extract INPUT --output NEW_DIRECTORY
+.br
 .B holypkg apk index APKINDEX.tar.gz --source NAME --base URL/ --output NEW_DIRECTORY
 .br
 .B holypkg apk verify-index FILE --public-key FILE
@@ -2011,6 +2015,17 @@ not chroot or isolate the process. Dynamic interpreter and absolute paths use
 the host's namespace, so a trial root must use a compatible host or a static
 program. An unavailable package or command returns 6; an altered payload
 returns 4. An incomplete transaction returns 5.
+.SS AppImage staging
+appimage inspect accepts a type 2 ELF image, checks its x86 or x86_64 machine type,
+locates one plausible SquashFS superblock and prints its offset and SHA-256.
+The command reads the image without executing its runtime.
+appimage extract copies the exact image to a new private output directory and
+invokes unsquashfs with the recorded offset. It requires an unprivileged user and
+an available unsquashfs command. The output contains original, AppDir and a
+conversion receipt with state extracted-unclassified. No .holy is produced and
+no package is installed. The extracted AppDir still needs ELF, dependency,
+path and launcher classification before native import. This operation does not
+claim that the extracted program can run.
 .SH EXIT STATUS
 0 indicates success under the implemented checks; 1 indicates a failed local
 fetch, extraction or check; 2 indicates invalid arguments, configuration or

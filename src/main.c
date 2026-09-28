@@ -19,6 +19,7 @@
 #include "source.h"
 #include "stage.h"
 #include "import.h"
+#include "appimage.h"
 #include "up.h"
 #include "run.h"
 #include "../backends/apk.h"
@@ -983,6 +984,14 @@ int main(int argc, char **argv)
             !strcmp(argv[9], "--public-key"))
             return holy_import_apk(argv[2], argv[4], argv[8], argv[10]);
         fputs("usage: holypkg import INPUT --source NAME --format pacman|deb|slackware|apk --output DIRECTORY [--public-key FILE (apk only)]\n", stderr);
+        return 2;
+    }
+
+    if (argc > 1 && !strcmp(argv[1], "appimage")) {
+        if (argc == 4 && !strcmp(argv[2], "inspect")) return holy_appimage_inspect(argv[3]);
+        if (argc == 6 && !strcmp(argv[2], "extract") && !strcmp(argv[4], "--output"))
+            return holy_appimage_extract(argv[3], argv[5]);
+        fputs("usage: holypkg appimage inspect INPUT | appimage extract INPUT --output NEW_DIRECTORY\n", stderr);
         return 2;
     }
 

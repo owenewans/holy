@@ -433,6 +433,10 @@
   Gentoo and Pacstall recipe conversion with helper environments and split outputs.
 - [ ] Implement Nix closure, Flatpak, Snap, AppImage, Scoop and WinGet imports
   without silently discarding runtime requirements.
+  AppImage type 2 inspect/extract now snapshots the original, checks ELF and
+  SquashFS structure, extracts with unsquashfs without running the image, and
+  records an unclassified AppDir. ABI/dependency classification, a launcher and
+  .holy emission remain open.
 - [ ] Implement `holypkg run`, context-specific provider paths, grouped `up --prepare`,
   isolated root/VM trials and full `check` reports.
 

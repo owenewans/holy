@@ -993,7 +993,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=4ff40d6f24eecb33226d4e6ac482932b179a8686f1d23ba9a5924bf24c95c852
+holypkg.8 source=holy version=development sha256=c47a24a390018e9705a1a3c29fd56559bee6904385bf2a741f9d626b1d237437
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1013,6 +1013,8 @@ SYNOPSIS
      holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
      holypkg import INPUT --source NAME --format pacman|deb|slackware|apk --out-
      put NEW_DIRECTORY [--public-key FILE (apk only)]
+     holypkg appimage inspect INPUT
+     holypkg appimage extract INPUT --output NEW_DIRECTORY
      holypkg apk  index	 APKINDEX.tar.gz  --source  NAME  --base  URL/	--output
      NEW_DIRECTORY
      holypkg apk verify-index FILE --public-key FILE
@@ -3004,6 +3006,18 @@ RUN INSTALLED COMMAND
      paths  use the host's namespace, so a trial root must use a compatible host
      or a static program. An unavailable package or command returns  6;	 an  al-
      tered payload returns 4. An incomplete transaction returns 5.
+
+   AppImage staging
+     appimage  inspect	accepts a type 2 ELF image, checks its x86 or x86_64 ma-
+     chine type, locates one plausible SquashFS superblock and prints its offset
+     and SHA-256.  The command reads the image without	executing  its	runtime.
+     appimage  extract	copies the exact image to a new private output directory
+     and invokes unsquashfs with the recorded offset. It  requires  an	unprivi-
+     leged  user and an available unsquashfs command. The output contains origi-
+     nal, AppDir and a conversion receipt with state extracted-unclassified.  No
+     .holy  is	produced and no package is installed. The extracted AppDir still
+     needs ELF, dependency, path and launcher classification before  native  im-
+     port. This operation does not claim that the extracted program can run.
 
 EXIT STATUS
      0	indicates success under the implemented checks; 1 indicates a failed lo-
