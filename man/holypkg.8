@@ -2,7 +2,7 @@
 .SH NAME
 holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
-.B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--root DIRECTORY] [--yes] [--noninteractive]
+.B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
 .B holypkg import INPUT --source NAME --format pacman|deb --output NEW_DIRECTORY
 .br
@@ -639,6 +639,13 @@ providers and plan hash. --candidate adds local archives to the resolver pool;
 only selected packages are installed. --choose binds one stable requirement ID
 to an exact provider artifact hash. The default root is /. Local archive
 metadata cannot assign a trusted source-id.
+.B --associate-source ALIAS
+is an explicit confirmation that the root local artifact belongs to an active
+registered source. The manager resolves the alias to its immutable source-id
+under the database lock and binds that ID into the reviewed plan. This flag
+does not infer provenance from archive metadata, verify a publisher signature
+or associate the candidate dependency archives. The association requires a
+registered active source and is checked again before apply.
 .PP
 With a terminal, add asks for y before applying the displayed plan. An n answer
 leaves installed state unchanged. Without a terminal, add returns 3 after

@@ -811,7 +811,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=67cd9395d64394a0077405b3eb533b1df14c719de3503aecbd8df0f64aa14eef
+holypkg.8 source=holy version=development sha256=4dbfdfa3a219a4826c1e8bad830ac1c9bb48cab7572ae5846fcf1f93a201b9c3
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -819,7 +819,7 @@ NAME
 
 SYNOPSIS
      holypkg  add  local:FILE  [--candidate local:FILE ...] [--choose ID=SHA256]
-     [--root DIRECTORY] [--yes] [--noninteractive]
+     [--associate-source ALIAS] [--root DIRECTORY] [--yes] [--noninteractive]
      holypkg import INPUT --source NAME --format pacman|deb --output  NEW_DIREC-
      TORY
      holypkg  repo  mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIREC-
@@ -1433,7 +1433,14 @@ DESCRIPTION
      packages, providers and plan hash. --candidate adds local archives	 to  the
      resolver  pool;  only  selected  packages are installed. --choose binds one
      stable requirement ID to an exact provider artifact hash. The default  root
-     is /. Local archive metadata cannot assign a trusted source-id.
+     is	 /.  Local  archive metadata cannot assign a trusted source-id.	 --asso-
+     ciate-source ALIAS is an explicit confirmation that the root local artifact
+     belongs to an active registered source. The manager resolves the  alias  to
+     its  immutable source-id under the database lock and binds that ID into the
+     reviewed plan. This flag does not infer provenance from  archive  metadata,
+     verify   a	 publisher  signature  or  associate  the  candidate  dependency
+     archives. The association	requires  a  registered	 active	 source	 and  is
+     checked again before apply.
 
      With  a  terminal,	 add asks for y before applying the displayed plan. An n
      answer leaves installed state unchanged. Without a terminal, add returns  3

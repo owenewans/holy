@@ -29,8 +29,9 @@ static int add_local(int argc, char **argv)
 {
     const char **inputs = NULL, **digests = NULL;
     char (*hashes)[65] = NULL;
-    const char *root = "/", *choice = NULL;
-    char plan[65], answer[16];
+    const char *root = "/", *choice = NULL, *association = NULL;
+    const char *bindings[1];
+    char plan[65], answer[16], source_id[65], binding[130];
     size_t count = 0, i, j;
     int yes = 0, noninteractive = 0, root_seen = 0, result = 2;
     if (argc < 3 || strncmp(argv[2], "local:", 6) || !argv[2][6]) goto done;
@@ -49,6 +50,10 @@ static int add_local(int argc, char **argv)
         } else if (!strcmp(argv[i], "--choose") && !choice && i + 1 < (size_t)argc &&
                    argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) {
             choice = argv[++i];
+        } else if (!strcmp(argv[i], "--associate-source") && !association &&
+                   i + 1 < (size_t)argc && argv[i + 1][0] &&
+                   strncmp(argv[i + 1], "--", 2)) {
+            association = argv[++i];
         } else if (!strcmp(argv[i], "--yes") && !yes) yes = 1;
         else if (!strcmp(argv[i], "--noninteractive") && !noninteractive) noninteractive = 1;
         else goto done;
@@ -61,8 +66,15 @@ static int add_local(int argc, char **argv)
         for (j = 0; j < i; ++j) if (!strcmp(hashes[j], hashes[i])) goto done;
         digests[i] = hashes[i];
     }
+    if (association) {
+        result = holy_source_active_id(root, association, source_id);
+        if (result) goto done;
+        snprintf(binding, sizeof binding, "%s=%s", hashes[0], source_id);
+        bindings[0] = binding;
+    }
     result = holy_state_set(digests, count, choice, NULL, root,
-                            NULL, 0, NULL, 0, NULL, 0, plan);
+                            association ? bindings : NULL, association ? 1 : 0,
+                            NULL, 0, NULL, 0, plan);
     if (result) goto done;
     if (!yes) {
         if (noninteractive || !isatty(STDIN_FILENO)) {
@@ -78,10 +90,11 @@ static int add_local(int argc, char **argv)
         }
     }
     result = holy_state_set(digests, count, choice, plan, root,
-                            NULL, 0, NULL, 0, NULL, 0, NULL);
+                            association ? bindings : NULL, association ? 1 : 0,
+                            NULL, 0, NULL, 0, NULL);
 done:
     if (result == 2)
-        fputs("usage: holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
+        fputs("usage: holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
     free(hashes); free(digests); free(inputs);
     return result;
 }

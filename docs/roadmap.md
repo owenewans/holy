@@ -138,8 +138,9 @@
   The bootstrap image installs its base through this set engine.
 - [x] Expose local .holy installation as holypkg add with explicit candidate
   archives, a displayed set plan, terminal approval or scoped --yes, and
-  decision-required behavior without a terminal. Source lookup and hooks
-  remain outside this local entry point.
+  decision-required behavior without a terminal. Explicit root-artifact
+  association resolves an active source alias to its immutable ID. Remote source
+  lookup and hooks remain outside this local entry point.
 - [x] Install glibc/musl dynamic sets with explicit interpreter and DT_NEEDED
   payload paths; execute real fixtures in a disposable x86_64 root. Report broken
   selected provider files through installed check. Ordinary SONAME search and

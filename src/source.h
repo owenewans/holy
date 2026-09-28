@@ -5,6 +5,8 @@
 int holy_source_plan(const char *config, const char *root);
 int holy_source_apply(const char *plan, const char *digest, const char *root);
 int holy_source_list(const char *root);
+/* resolves one active alias under a shared database lock; shell-style status. */
+int holy_source_active_id(const char *root, const char *alias, char output[65]);
 /* mirrors one registered holy-http source with a pinned index digest. */
 int holy_source_sync(const char *alias, const char *root, const char *digest,
                      const char *accepted_unsigned, const char *output,

@@ -78,4 +78,34 @@ assert not os.path.exists(sys.argv[3] + '/usr/share/lib')
 assert answer(b'y') == 0
 assert open(sys.argv[3] + '/usr/share/lib', encoding='utf-8').read() == 'lib\n'
 PY
+
+associated="$tmp/associated"
+mkdir -p "$associated/usr/share"
+"$bin" db init --root "$associated" > "$tmp/out"
+printf '[source fixture]\ntype holy-http\nurl "https://example.invalid/"\n' > "$tmp/source.conf"
+"$bin" source plan --config "$tmp/source.conf" --root "$associated" > "$tmp/source.plan"
+source_plan=$(sha256sum "$tmp/source.plan" | cut -d ' ' -f 1)
+"$bin" source apply "$tmp/source.plan" --sha256 "$source_plan" --root "$associated" > "$tmp/out"
+"$bin" source list --root "$associated" > "$tmp/out"
+source_id=$(awk '$1 == "source" && $4 == "active" {print $2}' "$tmp/out")
+test "${#source_id}" -eq 64
+if "$bin" add "local:$tmp/lib.holy" --associate-source absent --root "$associated" --yes \
+    > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+test ! -e "$associated/usr/share/lib"
+"$bin" add "local:$tmp/lib.holy" --associate-source fixture --root "$associated" \
+    --yes > "$tmp/out"
+grep -q "binding $lib source $source_id" "$tmp/out"
+grep -qx "source-id $source_id" "$associated/var/lib/holypkg/installed/$lib/state"
+"$bin" db check "$lib" --root "$associated" > "$tmp/out"
+printf '[source renamed]\ntype holy-http\nurl "https://example.invalid/"\n' > "$tmp/source.conf"
+"$bin" source plan --config "$tmp/source.conf" --root "$associated" > "$tmp/source.plan"
+source_plan=$(sha256sum "$tmp/source.plan" | cut -d ' ' -f 1)
+"$bin" source apply "$tmp/source.plan" --sha256 "$source_plan" --root "$associated" > "$tmp/out"
+if "$bin" add "local:$tmp/app.holy" --associate-source fixture --root "$associated" \
+    --yes > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+test ! -e "$associated/usr/share/app"
+"$bin" add "local:$tmp/app.holy" --associate-source renamed --root "$associated" \
+    --yes > "$tmp/out"
+grep -qx "source-id $source_id" "$associated/var/lib/holypkg/installed/$app/state"
+"$bin" db check --all --root "$associated" > "$tmp/out"
 printf 'local add fixtures passed\n'

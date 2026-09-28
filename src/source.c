@@ -436,6 +436,36 @@ int holy_source_list(const char *root)
     return result;
 }
 
+int holy_source_active_id(const char *root, const char *alias, char output[65])
+{
+    struct registry registry = {0};
+    unsigned long long generation;
+    char *data = NULL;
+    size_t i;
+    int dir, result = 1;
+    output[0] = 0;
+    if (!alias || !*alias || !strcmp(alias, "local")) return 2;
+    dir = holy_state_lock(root, 0, &generation, &result);
+    if (dir < 0) return result;
+    result = 1;
+    data = load_registry(dir, &registry);
+    if (!data) goto done;
+    result = 6;
+    for (i = 0; i < registry.count; ++i)
+        if (registry.items[i].active && !strcmp(registry.items[i].alias, alias)) {
+            memcpy(output, registry.items[i].id, 65);
+            result = 0;
+            break;
+        }
+done:
+    if (result) {
+        fputs("holypkg: active source unavailable: ", stderr);
+        quote(stderr, alias); fputc('\n', stderr);
+    }
+    free(data); clear_registry(&registry); close(dir);
+    return result;
+}
+
 static char *native_endpoint(const char *definition)
 {
     const char *line = definition;
