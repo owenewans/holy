@@ -858,6 +858,9 @@ chroot, holypkg verifies and caches the supplied BusyBox package, installs,
 checks and removes it twice using the cached artifact. The original package
 is removed after caching. A BusyBox shell probe runs after each install.
 doas creates the chroot and drops to the caller's numeric UID/GID.
+For an ELF32 i686 client, the fixture uses setarch i686 so the process sees
+the i686 host personality while the x86_64 kernel executes it. This does not
+test booting an i686 kernel.
 Both artifact hashes are printed on success. This verifies the local static
 package path; removal and restoration of real dynamic libc packages, network
 recovery and dinit boot still require their own tests.

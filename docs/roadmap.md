@@ -16,6 +16,12 @@
   A persistent ext4 variant passed two QEMU boots, including removal of both
   libc packages and recovery across reboot. These local artifacts remain
   under out/; i686 boot and a published image remain separate gates.
+- [x] Build i686 musl, glibc, BusyBox, dinit, mdevd and the musl-static Holy
+  binaries. The i686 static client passed the pentium2 QEMU user-mode target
+  test and the libc-free static-core chroot fixture. BusyBox, dinit and mdevd
+  passed their package fixtures. A single x86_64 root ran glibc32, musl32,
+  glibc64 and musl64 probes with threads, pipes and local recovery. i686
+  kernel boot is still untested in this local build.
 - [x] Boot the x86_64 live ISO, prepare a blank GPT guest disk in holyinstall,
   install the target root, then boot the installed disk through BIOS and UEFI
   under QEMU/TCG. The installed guest checks dinit, holypkg, package repair

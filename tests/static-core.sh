@@ -2,6 +2,12 @@
 set -eu
 bin=$(realpath "$1")
 package=$(realpath "$2")
+target32=0
+if LC_ALL=C readelf -h "$bin" | grep -q 'Class:.*ELF32'; then
+    LC_ALL=C readelf -h "$bin" | grep -q 'Machine:.*Intel 80386' || exit 6
+    command -v setarch >/dev/null || exit 6
+    target32=1
+fi
 command -v doas >/dev/null && doas -n true || {
     printf 'static core fixture requires noninteractive doas\n' >&2
     exit 6
@@ -17,7 +23,18 @@ cp "$package" "$root/input/busybox.holy"
 uid=$(id -u)
 gid=$(id -g)
 guest() {
-    doas -n chroot --userspec="$uid:$gid" "$root" /usr/bin/holypkg "$@"
+    if test "$target32" = 1; then
+        setarch i686 doas -n chroot --userspec="$uid:$gid" "$root" /usr/bin/holypkg "$@"
+    else
+        doas -n chroot --userspec="$uid:$gid" "$root" /usr/bin/holypkg "$@"
+    fi
+}
+guest_shell() {
+    if test "$target32" = 1; then
+        setarch i686 doas -n chroot --userspec="$uid:$gid" "$root" /usr/bin/busybox ash -c "$1"
+    else
+        doas -n chroot --userspec="$uid:$gid" "$root" /usr/bin/busybox ash -c "$1"
+    fi
 }
 test ! -e "$root/lib"
 test ! -e "$root/lib64"
@@ -41,7 +58,7 @@ for iteration in 1 2; do
     guest db approve "$plan" --root / > "$tmp/out"
     guest db apply --root / > "$tmp/out"
     guest db check "$digest" --root / > "$tmp/out"
-    doas -n chroot --userspec="$uid:$gid" "$root" /usr/bin/busybox ash -c '
+    guest_shell '
         test ! -e /lib && test ! -e /lib64 && test ! -e /usr/lib || exit 1
         /usr/bin/busybox test -s /usr/share/licenses/musl/COPYRIGHT || exit 1
         /usr/bin/busybox printf "static-core-pass\n"
