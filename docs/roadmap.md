@@ -416,7 +416,12 @@
   preserving reasons/source identity. Recover interrupted publication after
   injected SIGKILL and ENOSPC; preserve partial staging for explicit inspection.
   Test file addition/removal, regular/symlink transitions and a compatible ELF
-  provider update. Hooks, config merging and general rollback remain open.
+  provider update. Hooks and config merging remain open.
+- [x] Preview and apply a reverse cached replacement from a committed update
+  transaction with `holypkg rollback`. Verify the original journal, committed
+  marker and plan digest; reuse the dependency solver, whole-file plan hash,
+  writer lock and update recovery. External hook effects and arbitrary
+  transaction types remain outside this command.
 - [x] Prepare one source-aware slot update from a bound native catalog. Select
   the highest newer pacman/deb version or require an exact choice when version
   ordering is unknown, save the catalog digest and complete update plan, then

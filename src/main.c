@@ -1784,6 +1784,27 @@ sync_usage:
         return 2;
     }
 
+    if (argc > 1 && !strcmp(argv[1], "rollback")) {
+        const char *root = "/", *approved = NULL, *arch = NULL, *privileged = NULL;
+        int i, root_seen = 0;
+        if (argc < 3) goto rollback_usage;
+        for (i = 3; i < argc; ++i) {
+            if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < argc) {
+                root = argv[++i]; root_seen = 1;
+            } else if (!strcmp(argv[i], "--apply") && !approved && i + 1 < argc)
+                approved = argv[++i];
+            else if (!strcmp(argv[i], "--accept-arch") && !arch && i + 1 < argc)
+                arch = argv[++i];
+            else if (!strcmp(argv[i], "--accept-privileged") && !privileged && i + 1 < argc)
+                privileged = argv[++i];
+            else goto rollback_usage;
+        }
+        return holy_state_rollback(argv[2], approved, arch, privileged, root);
+rollback_usage:
+        fputs("usage: holypkg rollback TRANSACTION [--root DIRECTORY] [--apply PLAN_SHA256] [--accept-arch ARTIFACT_SHA256] [--accept-privileged ARTIFACT_SHA256]\n", stderr);
+        return 2;
+    }
+
     if (argc == 3 && !strcmp(argv[1], "elf")) {
         struct holy_elf_info info;
         int rc = holy_elf_read(argv[2], &info);

@@ -92,6 +92,10 @@ int holy_state_apply_update(const char *plan, const char *old_digest,
                             const char *accepted_privileged,
                             const char *root_path);
 int holy_state_recover_update(const char *root_path);
+/* review or apply a cached reverse update from a committed transaction. */
+int holy_state_rollback(const char *transaction, const char *approved,
+                        const char *accepted_arch, const char *accepted_privileged,
+                        const char *root_path);
 /* finds one installed slot by immutable source ID and package identity. */
 int holy_state_find_slot(const char *root_path, const char *source_id,
                          const char *name, const char *arch, const char *libc,

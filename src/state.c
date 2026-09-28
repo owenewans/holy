@@ -5764,3 +5764,78 @@ int holy_state_recover_update(const char *root_path)
 {
     return state_update(NULL, NULL, NULL, NULL, NULL, root_path, 1, NULL, NULL);
 }
+
+int holy_state_rollback(const char *transaction, const char *approved,
+                        const char *accepted_arch, const char *accepted_privileged,
+                        const char *root_path)
+{
+    struct update_journal journal = {0};
+    unsigned long long generation;
+    unsigned char digest[32];
+    unsigned digest_size;
+    char computed[65], hash[65], lineage[160], generation_line[64];
+    char *committed = NULL, *source_plan = NULL, *installed_section;
+    char *record = NULL, *marker = NULL;
+    int root = -1, db = -1, transactions = -1, work = -1, result = 1;
+    size_t i;
+    if (!valid_digest(transaction) || (approved && !valid_digest(approved)) ||
+        (accepted_arch && !valid_digest(accepted_arch)) ||
+        (accepted_privileged && !valid_digest(accepted_privileged))) return 2;
+    root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0 || (db = state_dir_at(root, 0)) < 0 || flock(db, LOCK_SH) ||
+        !state_layout(db, 0) || (transactions = child_dir(db, "transactions", 0)) < 0 ||
+        (work = child_dir(transactions, transaction, 0)) < 0) goto done;
+    committed = update_record(work, "committed");
+    source_plan = update_record(work, "plan");
+    marker = update_record(work, "journal");
+    if (!committed || strlen(committed) != 65 ||
+        memcmp(committed, transaction, 64) || committed[64] != '\n' ||
+        !source_plan || !marker ||
+        sscanf(marker, "format holy-update-journal-%*d\ngeneration %llu\n", &generation) != 1 ||
+        generation == ULLONG_MAX ||
+        !read_update_journal(work, generation + 1, &journal) ||
+        strcmp(journal.plan, transaction) ||
+        EVP_Digest(source_plan, strlen(source_plan), digest, &digest_size,
+                   EVP_sha256(), NULL) != 1 || digest_size != 32) {
+        result = 2; goto done;
+    }
+    for (i = 0; i < 32; ++i) snprintf(computed + i * 2, 3, "%02x", digest[i]);
+    if (strcmp(computed, transaction) ||
+        strncmp(source_plan, "[update]\nformat holy-update-plan-1\n",
+                sizeof "[update]\nformat holy-update-plan-1\n" - 1)) {
+        result = 2; goto done;
+    }
+    snprintf(lineage, sizeof lineage, "\nold %s\nnew %s\n", journal.old, journal.next);
+    snprintf(generation_line, sizeof generation_line, "\ngeneration %llu\n",
+             journal.generation);
+    installed_section = strstr(source_plan, "\n[installed]\n");
+    if (!installed_section || !strstr(source_plan, lineage) ||
+        strstr(source_plan, lineage) >= installed_section ||
+        !strstr(source_plan, generation_line) ||
+        strstr(source_plan, generation_line) >= installed_section) {
+        result = 2; goto done;
+    }
+    result = 0;
+done:
+    free(committed); free(source_plan); free(marker);
+    if (work >= 0) close(work);
+    if (transactions >= 0) close(transactions);
+    if (db >= 0) close(db);
+    if (root >= 0) close(root);
+    if (result) return result;
+    if (approved) {
+        result = holy_state_apply_update(approved, journal.next, journal.old,
+                                         accepted_arch, accepted_privileged, root_path);
+        if (!result) printf("rollback %s restored %s\n", transaction, journal.old);
+        return result;
+    }
+    result = holy_state_update_prepare(journal.next, journal.old,
+                                       accepted_arch, accepted_privileged,
+                                       root_path, hash, &record);
+    if (result) return result;
+    if (printf("rollback-plan transaction %s current %s target %s sha256 %s read-only\n",
+               transaction, journal.next, journal.old, hash) < 0 ||
+        fputs(record, stdout) == EOF) result = 1;
+    free(record);
+    return result;
+}

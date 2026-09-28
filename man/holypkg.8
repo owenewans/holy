@@ -226,6 +226,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY
 .br
+.B holypkg rollback TRANSACTION [--root DIRECTORY] [--apply PLAN_SHA256] [--accept-arch ARTIFACT_SHA256] [--accept-privileged ARTIFACT_SHA256]
+.br
 .B holypkg db recover --update --root DIRECTORY
 .br
 .B holypkg db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY
@@ -1447,7 +1449,20 @@ does not atomically switch the whole rootfs. Database publication requires
 renameat2(RENAME_EXCHANGE), tested on that filesystem before payload mutation.
 After validating the new payload, database and generation, apply retains the
 old database and journal under transactions/PLAN_SHA256. It retains cached
-old archives. These records are not a general rollback command.
+old archives. These records can supply a reviewed reverse update through
+holypkg rollback.
+.PP
+holypkg rollback accepts the hash of a committed update transaction. It checks
+the committed marker, journal and exact plan hash, then previews a reverse
+replacement using the cached old artifact and the current dependency graph.
+The rollback-plan line gives the SHA-256 of the following update plan.
+--apply requires that exact hash; a stale plan or changed root fails before
+mutation. The reverse replacement gets its own update journal and recovery path.
+--accept-arch and --accept-privileged are artifact-scoped decisions for the
+restored artifact. Rollback is limited to one committed update whose new
+artifact still occupies the installed slot. Missing cache objects return 6.
+This operation restores package files and dependencies. It does not reverse
+external hook effects, migrations or user data.
 .PP
 Hardlink updates stage one inode per new group and link each changed member's
 temporary path to it. A group-stage record binds the reserved anchor sibling
