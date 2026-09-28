@@ -308,6 +308,16 @@ expect 0 "$bin" db apply-update "$config_plan" "$config_new" "$config_third" --r
 grep -qx 'local edit' "$root/usr/share/holy.conf"
 grep -qx config3 "$root/usr/share/holy.conf.holy-new"
 expect 0 "$bin" db check --all --root "$root"
+config_rollback="$tmp/config-rollback"
+mkdir "$config_rollback"
+cp -a "$root/." "$config_rollback/"
+expect 0 "$bin" rollback "$config_plan" --root "$config_rollback"
+rollback_plan=$(sed -n 's/^rollback-plan .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+test "${#rollback_plan}" -eq 64
+expect 0 "$bin" rollback "$config_plan" --root "$config_rollback" --apply "$rollback_plan"
+grep -qx 'local edit' "$config_rollback/usr/share/holy.conf"
+grep -qx config2 "$config_rollback/usr/share/holy.conf.holy-new"
+expect 0 "$bin" db check --all --root "$config_rollback"
 expect 6 "$bin" db repair-plan "$config_third" --root "$root"
 test ! -e "$root/var/lib/holypkg/transactions/journal"
 expect 0 "$bin" db plan-update "$old" "$new" --root "$root"
