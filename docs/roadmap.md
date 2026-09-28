@@ -263,8 +263,10 @@
   the highest newer pacman/deb version or require an exact choice when version
   ordering is unknown, save the catalog digest and complete update plan, then
   apply only after whole-file hash approval and source/DB revalidation. A fixture
-  covers upgrade, explicit downgrade and stale/tampered plans. Grouped updates
-  and trial execution remain open.
+  covers upgrade, explicit downgrade and stale/tampered plans. Apply now checks
+  the selected digest against the pinned index and installed slot before changing
+  rootfs; a forged but internally consistent plan for an unlisted cached artifact
+  fails. Grouped updates and trial execution remain open.
 - [x] Read the pinned catalog index for an installed source slot and stage only
   matching name/os/arch/libc versions during update preparation. Verify those
   archives against the index before planning; keep the full catalog validation

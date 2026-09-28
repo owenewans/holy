@@ -858,6 +858,7 @@ struct stage_request {
     const char *root;
     struct holy_repo_set *set;
     const struct holy_package_identity *slot;
+    const char *digest;
     int index_only;
     int provider;
 };
@@ -1547,7 +1548,18 @@ static int list(const char *directory, const char *query,
             } else if (solve_rc) *solve_rc = 0;
         }
     }
-    if (stage && stage->index_only) memcpy(stage->set->index, expected, 65);
+    if (stage && stage->index_only) {
+        memcpy(stage->set->index, expected, 65);
+        if (stage->digest) {
+            *solve_rc = 3;
+            for (i = 0; i < count; ++i)
+                if (!strcmp(objects[i].identity.digest, stage->digest) &&
+                    same_slot(&objects[i].identity, stage->slot)) {
+                    *solve_rc = 0;
+                    break;
+                }
+        }
+    }
     ok = 1;
 done:
     if (!ok) {
@@ -1712,7 +1724,7 @@ void holy_repo_set_free(struct holy_repo_set *set)
 int holy_repo_stage_set(const char *directory, const char *name,
                         const char *root, struct holy_repo_set *set)
 {
-    struct stage_request stage = {root, set, NULL, 0, 0};
+    struct stage_request stage = {root, set, NULL, NULL, 0, 0};
     int result = 6;
     memset(set, 0, sizeof *set);
     if (!name || !*name || !root || !*root) return 2;
@@ -1729,7 +1741,7 @@ int holy_repo_stage_provider(const char *directory, const char *kind,
                              const char *name, const char *root,
                              struct holy_repo_set *set)
 {
-    struct stage_request stage = {root, set, NULL, 0, 1};
+    struct stage_request stage = {root, set, NULL, NULL, 0, 1};
     int result = 6;
     memset(set, 0, sizeof *set);
     if (!kind || (strcmp(kind, "package") && strcmp(kind, "file") &&
@@ -1748,7 +1760,7 @@ int holy_repo_stage_slot(const char *directory, const char *root,
                          const struct holy_package_identity *slot,
                          struct holy_repo_set *set)
 {
-    struct stage_request stage = {root, set, slot, 0, 0};
+    struct stage_request stage = {root, set, slot, NULL, 0, 0};
     int result = 6;
     memset(set, 0, sizeof *set);
     if (!root || !*root || !slot || !slot->name || !slot->os ||
@@ -1830,12 +1842,27 @@ int holy_repo_catalog_index(const char *directory, char digest[65])
 int holy_repo_catalog_index_fast(const char *directory, char digest[65])
 {
     struct holy_repo_set index = {0};
-    struct stage_request stage = {NULL, &index, NULL, 1, 0};
+    struct stage_request stage = {NULL, &index, NULL, NULL, 1, 0};
     int ok = list(directory, NULL, NULL, 1, 0, NULL, NULL, NULL, NULL,
                   NULL, NULL, 0, NULL, NULL, 0, &stage, NULL);
     if (ok) memcpy(digest, index.index, 65);
     else digest[0] = 0;
     return ok;
+}
+
+int holy_repo_catalog_slot_digest(const char *directory,
+                                  const struct holy_package_identity *slot,
+                                  const char *artifact, char index_digest[65])
+{
+    struct holy_repo_set index = {0};
+    struct stage_request stage = {NULL, &index, slot, artifact, 1, 0};
+    int result = 6;
+    if (!slot || !artifact || strlen(artifact) != 64 ||
+        strspn(artifact, "0123456789abcdef") != 64) return 2;
+    if (!list(directory, NULL, NULL, 1, 0, NULL, NULL, NULL, NULL,
+              NULL, NULL, 0, &result, NULL, 0, &stage, NULL)) return 6;
+    memcpy(index_digest, index.index, 65);
+    return result;
 }
 
 static int seal(const char *directory, const char *expected, const char *private_key)

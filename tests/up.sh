@@ -83,6 +83,28 @@ grep -qx "old $old" "$tmp/up.plan"
 grep -qx "new $next" "$tmp/up.plan"
 grep -qx "prepared $plan $tmp/up.plan old $old new $next index $index" "$tmp/out"
 grep -qx 'version 1' "$root/usr/share/update-fixture"
+package 9
+unlisted=$(sha256sum "$repo/update-9.holy" | cut -d ' ' -f 1)
+expect 0 "$bin" cache stage "local:$repo/update-9.holy" --root "$root"
+expect 0 "$bin" db plan-update "$old" "$unlisted" --root "$root"
+sed '1d' "$tmp/out" > "$tmp/unlisted.body"
+unlisted_inner=$(sha256sum "$tmp/unlisted.body" | cut -d ' ' -f 1)
+python3 - "$tmp/up.plan" "$tmp/unlisted.body" "$next" "$unlisted" "$unlisted_inner" "$tmp/unlisted.plan" <<'PY'
+from pathlib import Path
+import sys
+plan, body, old, new, inner, output = sys.argv[1:]
+header = Path(plan).read_bytes().split(b'[update]\n', 1)[0]
+header = header.replace(f'new {old}\n'.encode(), f'new {new}\n'.encode())
+header = header.replace(next(line for line in header.splitlines(keepends=True)
+                             if line.startswith(b'state-plan ')),
+                        f'state-plan {inner}\n'.encode())
+Path(output).write_bytes(header + Path(body).read_bytes())
+PY
+unlisted_plan=$(sha256sum "$tmp/unlisted.plan" | cut -d ' ' -f 1)
+expect 3 "$bin" apply "$tmp/unlisted.plan" --sha256 "$unlisted_plan" --root "$root"
+grep -q 'prepared artifact absent from source slot' "$tmp/err"
+grep -qx 'version 1' "$root/usr/share/update-fixture"
+rm "$repo/update-9.holy"
 expect 3 "$bin" apply "$tmp/up.plan" --sha256 "$(printf '%064d' 0)" --root "$root"
 cp "$repo/current" "$tmp/current"
 cp "$repo/mirror-origin" "$tmp/origin"

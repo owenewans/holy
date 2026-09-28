@@ -334,9 +334,10 @@ done:
 int holy_apply_command(int argc, char **argv)
 {
     const char *root = "/", *approved = NULL;
-    char *snapshot = NULL, *data = NULL, *cursor, *body;
+    char *snapshot = NULL, *old_snapshot = NULL, *data = NULL, *cursor, *body;
     char *source = NULL, *alias = NULL, *catalog = NULL, *index = NULL;
     char *old = NULL, *next = NULL, *inner = NULL, *arch = NULL, *privileged = NULL;
+    struct holy_package_identity old_identity = {0};
     char actual[65], source_id[65], current[65];
     size_t size = 0;
     int input = -1, staged = -1, dir = -1, result = 2;
@@ -384,9 +385,18 @@ int holy_apply_command(int argc, char **argv)
     if (strcmp(source, source_id)) { result = 3; goto done; }
     result = holy_source_catalog(root, alias, catalog, source_id);
     if (result) goto done;
-    if (!holy_repo_catalog_index_fast(catalog, current) || strcmp(current, index)) {
+    old_snapshot = holy_cache_snapshot(old, root);
+    if (!old_snapshot || !holy_package_identity(old_snapshot, &old_identity) ||
+        strcmp(old_identity.digest, old)) { result = 6; goto done; }
+    result = holy_repo_catalog_slot_digest(catalog, &old_identity, next, current);
+    if (result != 0 && result != 3) goto done;
+    if (strcmp(current, index)) {
         fprintf(stderr, "holypkg: prepared catalog generation changed\n");
         result = 3; goto done;
+    }
+    if (result) {
+        fprintf(stderr, "holypkg: prepared artifact absent from source slot\n");
+        goto done;
     }
     result = holy_state_apply_update(inner, old, next,
                                      strcmp(arch, "-") ? arch : NULL,
@@ -399,6 +409,8 @@ done:
     if (staged >= 0) close(staged);
     if (input >= 0) close(input);
     if (snapshot) { unlink(snapshot); free(snapshot); }
+    if (old_snapshot) { unlink(old_snapshot); free(old_snapshot); }
+    holy_package_identity_free(&old_identity);
     free(data); free(source); free(alias); free(catalog); free(index);
     free(old); free(next); free(inner); free(arch); free(privileged);
     return result;

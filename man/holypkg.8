@@ -809,7 +809,9 @@ and index digest, old/new artifact hashes, exact version decisions and the
 complete update plan. It changes only the target cache. Review the file, then
 run apply PLAN --sha256 PLAN_SHA256 with its whole-file SHA-256. Apply snapshots
 and verifies the file, checks its embedded update-plan digest, active source
-and unchanged catalog generation, then rebuilds the database plan under the
+and unchanged catalog generation. It checks that the new artifact belongs to
+the installed slot in that exact index, even when a cached artifact would
+satisfy the embedded database plan. It then rebuilds the plan under the
 writer lock. A changed database, source or payload needs a new plan. Successful
 apply uses the existing journaled cached-update engine; its recovery command
 is db recover --update. This subset prepares one slot at a time. Grouped

@@ -56,6 +56,10 @@ int holy_repo_source_catalog(const char *directory, const char *source_id,
 int holy_repo_catalog_index(const char *directory, char digest[65]);
 /* checks the pinned index and records without opening unrelated payloads. */
 int holy_repo_catalog_index_fast(const char *directory, char digest[65]);
+/* confirm one artifact belongs to the pinned catalog and installed slot. */
+int holy_repo_catalog_slot_digest(const char *directory,
+                                  const struct holy_package_identity *slot,
+                                  const char *artifact, char index_digest[65]);
 /* stages the indexed requirement closure for v5 catalogs; older indexes use the full pool. */
 int holy_repo_stage_set(const char *directory, const char *name,
                         const char *root, struct holy_repo_set *set);
