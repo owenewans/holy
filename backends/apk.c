@@ -555,7 +555,25 @@ int holy_apk_index(const char *input, const char *source, const char *base,
     return apk_index_bound(input, source, base, output, NULL, NULL, NULL, NULL);
 }
 
-int holy_apk_query(const char *directory, const char *query, int info)
+static int indexed_soname(const char *provides, const char *soname)
+{
+    const char *part = provides;
+    size_t length = strlen(soname);
+    if (!strcmp(provides, "-")) return 0;
+    while (*part) {
+        const char *end;
+        while (*part == ' ' || *part == '\t') ++part;
+        if (!*part) break;
+        end = part + strcspn(part, " \t");
+        if ((size_t)(end - part) >= length + 3 &&
+            !strncmp(part, "so:", 3) && !strncmp(part + 3, soname, length) &&
+            ((size_t)(end - part) == length + 3 || part[3 + length] == '=')) return 1;
+        part = end;
+    }
+    return 0;
+}
+
+int holy_apk_query(const char *directory, const char *query, int mode)
 {
     char *line = NULL;
     char expected[65] = {0}, actual[65];
@@ -563,7 +581,9 @@ int holy_apk_query(const char *directory, const char *query, int info)
     struct stat st;
     size_t capacity = 0, matches = 0;
     int dir = -1, fd, result = 2;
-    if (!directory || !query || !*query) return 2;
+    if (!directory || !query || !*query || mode < 0 || mode > 2 ||
+        (mode == 2 && (strchr(query, '/') || strlen(query) > 255 ||
+                       !package_name(query)))) return 2;
     dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dir < 0) { result = 6; goto done; }
     fd = openat(dir, "conversion", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
@@ -605,17 +625,20 @@ int holy_apk_query(const char *directory, const char *query, int info)
             n != 8 || strcmp(v[0], "package")) {
             free(error); holy_tokens_free(v, n); goto done;
         }
-        if ((info && !strcmp(v[1], query)) || (!info && strstr(v[1], query))) {
+        if ((mode == 1 && !strcmp(v[1], query)) ||
+            (mode == 0 && strstr(v[1], query)) ||
+            (mode == 2 && indexed_soname(v[7], query))) {
             ++matches;
-            if (info) {
+            if (mode == 1) {
                 printf("package %s\nversion %s\narch %s\nchecksum %s\nsize %s\ndepend %s\nprovides %s\n",
                        v[1], v[2], v[3], v[4], v[5], v[6], v[7]);
-            } else printf("%s %s %s\n", v[1], v[2], v[3]);
+            } else if (mode == 2) printf("%s %s %s index-hint\n", v[1], v[2], v[3]);
+            else printf("%s %s %s\n", v[1], v[2], v[3]);
         }
         free(error); holy_tokens_free(v, n);
     }
     if (ferror(catalog)) goto done;
-    result = matches ? info && matches > 1 ? 3 : 0 : 4;
+    result = matches ? mode == 1 && matches > 1 ? 3 : 0 : 4;
 done:
     if (result == 2) fputs("holypkg: malformed APK catalog\n", stderr);
     if (catalog) fclose(catalog);

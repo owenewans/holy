@@ -47,12 +47,16 @@ with tempfile.TemporaryDirectory() as scratch:
 
     rows = (b"C:Q1hashone=\nP:alpha\nV:1.2-r0\nA:x86_64\nS:100\nD:beta>=1\n"
             b"\nC:Q1hashtwo=\nP:beta\nV:2.0-r1\nA:x86_64\nS:200\n"
-            b"p:cmd:beta=2.0-r1\n\n")
+            b"p:cmd:beta=2.0-r1 so:libbeta.so.1 so:libbeta.so.10\n\n")
     signed = convert(index("signed.tar.gz", rows, True), "signed")
     assert run("apk", "search", "alpha", "--catalog", signed) == "alpha 1.2-r0 x86_64\n"
     info = run("apk", "info", "alpha", "--catalog", signed)
     assert "depend beta>=1\n" in info and "checksum Q1hashone=\n" in info
     assert "file-coverage unavailable" in (signed / "conversion").read_text()
+    assert run("apk", "providers", "soname:libbeta.so.1", "--catalog", signed) == (
+        "beta 2.0-r1 x86_64 index-hint\n")
+    run("apk", "providers", "soname:libbeta.so.2", "--catalog", signed, status=4)
+    run("apk", "providers", "file:/usr/lib/libbeta.so.1", "--catalog", signed, status=2)
     run("apk", "info", "missing", "--catalog", signed, status=4)
     convert(index("unsigned.tar.gz", rows), "unsigned")
 
@@ -94,6 +98,7 @@ with tempfile.TemporaryDirectory() as scratch:
     edited[-2] = ord("2")
     (signed / "catalog").write_bytes(edited)
     run("apk", "search", "alpha", "--catalog", signed, status=2)
+    run("apk", "providers", "soname:libbeta.so.1", "--catalog", signed, status=2)
 
     convert(index("duplicate.tar.gz", rows + rows), "duplicate", status=2)
     convert(index("missing.tar.gz", b"P:alpha\nV:1\nA:x86_64\nS:1\n"),

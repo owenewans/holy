@@ -164,6 +164,8 @@
   output origin. Optional exact SONAME and file requirements check converted
   payload claims before the fetch receipt becomes complete. The signed HTTPS fixture
   installs, checks and removes an associated output in a disposable root.
+  `apk providers soname:NAME` searches indexed so: claims as hints; the
+  checked import still decides whether a package really provides the SONAME.
   Feeding foreign candidates into the general resolver and full relation
   semantics remain open.
 

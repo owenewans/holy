@@ -1024,7 +1024,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=cbd22fe80e60fb19a7cdaec94c6dee6cd426b9d36f972d310d50a3743f4daee0
+holypkg.8 source=holy version=development sha256=34b2f235b7191446cf340c37b1a8e9e7203447d030b0856448578d3fde3dc765
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1085,30 +1085,32 @@ SYNOPSIS
      --root DIRECTORY]
      holypkg apk info PACKAGE [--catalog DIRECTORY | --source SOURCE --repo REPO
      --root DIRECTORY]
-     holypkg  apk  fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DI-
-     RECTORY | --source SOURCE --repo REPO  --root  DIRECTORY]	[--sha256  HASH]
-     [--ca-file	 FILE]	[--public-key FILE] [--import] [--require-soname SONAME]
+     holypkg  apk  providers  soname:NAME [--catalog DIRECTORY | --source SOURCE
+     --repo REPO --root DIRECTORY]
+     holypkg apk fetch NAME VERSION ARCH --output NEW_DIRECTORY	 [--catalog  DI-
+     RECTORY  |	 --source  SOURCE  --repo REPO --root DIRECTORY] [--sha256 HASH]
+     [--ca-file FILE] [--public-key FILE] [--import]  [--require-soname	 SONAME]
      [--require-file /PATH]
-     holypkg xbps index REPODATA --sha256 HASH --source NAME --base  HTTPS_BASE/
+     holypkg  xbps index REPODATA --sha256 HASH --source NAME --base HTTPS_BASE/
      --output NEW_DIRECTORY [--public-key FILE]
-     holypkg  xbps  sync  HTTPS_BASE/  ARCH --sha256 HASH --source NAME --output
+     holypkg xbps sync HTTPS_BASE/ ARCH --sha256  HASH	--source  NAME	--output
      NEW_DIRECTORY [--ca-file FILE] [--public-key FILE]
      holypkg xbps sync-source ALIAS ARCH --root DIRECTORY --sha256 HASH --output
      NEW_DIRECTORY [--ca-file FILE] [--public-key FILE]
-     holypkg xbps search|info QUERY --catalog DIRECTORY [--source  ALIAS  --root
+     holypkg  xbps  search|info QUERY --catalog DIRECTORY [--source ALIAS --root
      DIRECTORY]
-     holypkg  xbps search|info QUERY --source ALIAS --index-arch ARCH --root DI-
+     holypkg xbps search|info QUERY --source ALIAS --index-arch ARCH --root  DI-
      RECTORY
      holypkg xbps providers SONAME --catalog DIRECTORY
-     holypkg xbps providers SONAME --source ALIAS --index-arch ARCH  --root  DI-
+     holypkg  xbps  providers SONAME --source ALIAS --index-arch ARCH --root DI-
      RECTORY
-     holypkg  xbps  fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DI-
-     RECTORY [--ca-file FILE] [--public-key FILE] [--source ALIAS --root  DIREC-
+     holypkg xbps fetch NAME VERSION ARCH --catalog DIRECTORY  --output	 NEW_DI-
+     RECTORY  [--ca-file FILE] [--public-key FILE] [--source ALIAS --root DIREC-
      TORY] [--import] [--require-soname SONAME]
-     holypkg  xbps  fetch  NAME	 VERSION  ARCH	--source ALIAS --index-arch ARCH
-     --root DIRECTORY  --output	 NEW_DIRECTORY	[--ca-file  FILE]  [--public-key
+     holypkg xbps fetch NAME  VERSION  ARCH  --source  ALIAS  --index-arch  ARCH
+     --root  DIRECTORY	--output  NEW_DIRECTORY	 [--ca-file  FILE] [--public-key
      FILE] [--import] [--require-soname SONAME]
-     holypkg  repo  mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIREC-
+     holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256  --output  NEW_DIREC-
      TORY [--public-key PUBLIC_KEY.pem] [--ca-file FILE]
      holypkg repo seal DIRECTORY [--key PRIVATE_KEY.pem]
      holypkg repo verify DIRECTORY --key PUBLIC_KEY.pem
@@ -1116,17 +1118,17 @@ SYNOPSIS
      holypkg source apply PLAN --sha256 HASH --root DIRECTORY
      holypkg source list --root DIRECTORY
      holypkg source catalog bind ALIAS MIRROR [--root DIRECTORY]
-     holypkg sync SOURCE [--root DIRECTORY] [--output  NEW_DIRECTORY]  [--sha256
+     holypkg  sync  SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256
      INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--commit GIT_COMMIT] [--ca-
      file FILE]
      holypkg orphan [--root DIRECTORY] [--json]
-     holypkg  run  SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC]
+     holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH]  [--libc  LIBC]
      [--view PUBLIC=PRIVATE ...] -- COMMAND [ARGS...]
      holypkg docs --root DIRECTORY --output FILE
      holypkg config check FILE
      holypkg info local:FILE
      holypkg info SOURCE:PACKAGE [--catalog MIRROR] [--root DIRECTORY]
-     holypkg search QUERY [--source SOURCE] [--file] [--fuzzy]	[--catalog  MIR-
+     holypkg  search  QUERY [--source SOURCE] [--file] [--fuzzy] [--catalog MIR-
      ROR] [--root DIRECTORY]
      holypkg verify local:FILE
      holypkg manifest local:FILE
@@ -1135,28 +1137,28 @@ SYNOPSIS
      holypkg provides local:FILE
      holypkg provides local:FILE --json
      holypkg solve local:ROOT [local:CANDIDATE ...]
-     holypkg   solve   local:ROOT   [local:CANDIDATE   ...]   --choose	REQUIRE-
+     holypkg  solve   local:ROOT   [local:CANDIDATE   ...]   --choose	REQUIRE-
      MENT_ID=SHA256 [--json]
      holypkg solve local:ROOT [local:CANDIDATE ...] --json
      holypkg fetch local:FILE --output DIRECTORY
      holypkg fetch local:FILE --extract --output DIRECTORY
-     holypkg fetch SOURCE:PACKAGE [--catalog MIRROR] --output  DIRECTORY  [--ex-
+     holypkg  fetch  SOURCE:PACKAGE [--catalog MIRROR] --output DIRECTORY [--ex-
      tract] [--root DIRECTORY]
-     holypkg  fetch  https://URL  --sha256  SHA256 --output DIRECTORY [--ca-file
+     holypkg fetch https://URL --sha256	 SHA256	 --output  DIRECTORY  [--ca-file
      FILE]
      holypkg pack DIRECTORY --output FILE.holy
      holypkg manifest generate DIRECTORY --output FILE
      holypkg check local:FILE --root DIRECTORY
      holypkg check local:FILE --root DIRECTORY --json
-     holypkg check [SOURCE:PACKAGE] [--root  DIRECTORY]	 [--arch  ARCH]	 [--libc
+     holypkg  check  [SOURCE:PACKAGE]  [--root	DIRECTORY] [--arch ARCH] [--libc
      LIBC] [--json]
      holypkg files SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC]
-     holypkg  why  SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC]
+     holypkg why SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH]  [--libc  LIBC]
      [--json]
      holypkg owner PATH [--root DIRECTORY]
-     holypkg repair SOURCE:PACKAGE  [--root  DIRECTORY]	 [--arch  ARCH]	 [--libc
+     holypkg  repair  SOURCE:PACKAGE  [--root  DIRECTORY]  [--arch ARCH] [--libc
      LIBC] [--plan PLAN_SHA256]
-     holypkg  rm  SOURCE:PACKAGE  [--root DIRECTORY] [--arch ARCH] [--libc LIBC]
+     holypkg rm SOURCE:PACKAGE [--root DIRECTORY] [--arch  ARCH]  [--libc  LIBC]
      [--yes] [--accept-broken]
      holypkg elf FILE
      holypkg scan local:FILE
@@ -1181,17 +1183,17 @@ SYNOPSIS
      holypkg db approve PLAN_SHA256 --root DIRECTORY
      holypkg db recheck --root DIRECTORY
      holypkg db apply --root DIRECTORY
-     holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose  ID=SHA256]
-     [--source	ARTIFACT=SOURCE_ID  ...]  [--accept-arch  SHA256 ...] [--accept-
+     holypkg  db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256]
+     [--source ARTIFACT=SOURCE_ID ...]	[--accept-arch	SHA256	...]  [--accept-
      privileged SHA256 ...] --root DIRECTORY
-     holypkg  db   apply-set   PLAN_SHA256   ROOT_SHA256   [CANDIDATE_SHA256...]
-     [--choose	 ID=SHA256]  [--source	ARTIFACT=SOURCE_ID  ...]  [--accept-arch
+     holypkg   db   apply-set	PLAN_SHA256   ROOT_SHA256  [CANDIDATE_SHA256...]
+     [--choose	ID=SHA256]  [--source  ARTIFACT=SOURCE_ID  ...]	  [--accept-arch
      SHA256 ...] [--accept-privileged SHA256 ...] --root DIRECTORY
      holypkg db recover --finish-set|--continue-set --root DIRECTORY
      holypkg db repair-plan SHA256 --root DIRECTORY
-     holypkg db plan-update  OLD_SHA256	 NEW_SHA256  [--accept-arch  NEW_SHA256]
+     holypkg  db  plan-update  OLD_SHA256  NEW_SHA256 [--accept-arch NEW_SHA256]
      [--accept-privileged NEW_SHA256] --root DIRECTORY
-     holypkg  db  apply-update	PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-arch
+     holypkg db apply-update PLAN_SHA256  OLD_SHA256  NEW_SHA256  [--accept-arch
      NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY
      holypkg db recover --update --root DIRECTORY
      holypkg db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY
@@ -1217,288 +1219,291 @@ SYNOPSIS
 
 DESCRIPTION
    Local pacman, Debian, Slackware, APK and XBPS binary import
-     import snapshots a local pacman tar archive, Debian .deb,	Slackware  pack-
+     import  snapshots	a local pacman tar archive, Debian .deb, Slackware pack-
      age, APK v2 or XBPS package, retains its exact bytes as NEW_DIRECTORY/orig-
-     inal  and	creates	 verified  LZ4-frame .holy outputs. The output directory
-     must not exist. --format selects the adapter explicitly;  --source	 records
-     provenance	 only  and  grants  no registered source identity or trust.  The
+     inal and creates verified LZ4-frame .holy	outputs.  The  output  directory
+     must  not	exist. --format selects the adapter explicitly; --source records
+     provenance only and grants no registered source  identity	or  trust.   The
      command does not install files or execute package code. Without an explicit
-     APK public key, each output records  verification=unverified.  An	explicit
+     APK  public  key,	each output records verification=unverified. An explicit
      key verifies the APK signature but does not grant a registered source iden-
      tity.
 
-     --format  deb  reads  the	Debian ar members debian-binary, control.tar and
+     --format deb reads the Debian ar  members	debian-binary,	control.tar  and
      data.tar in order, including supported compressed variants. It retains con-
-     trol files beneath HOLY/foreign/deb and each control field with its  source
-     line  in  HOLY/origin. Debian maintainer scripts remain review-required and
-     never run during import. Conffiles require config-manifest support and  re-
-     turn  status  3.	Comma-separated	 Depends entries become package require-
-     ments. OR alternatives remain one requirement with version	 constraints  on
+     trol  files beneath HOLY/foreign/deb and each control field with its source
+     line in HOLY/origin. Debian maintainer scripts remain  review-required  and
+     never  run during import. Conffiles require config-manifest support and re-
+     turn status 3.  Comma-separated Depends  entries  become  package	require-
+     ments.  OR	 alternatives remain one requirement with version constraints on
      each branch. The solver records the selected branch and provider in the in-
-     stalled  graph. Constraints use Debian ordering, including epoch, tilde and
-     revision, only against providers in the deb  version  family.  Architecture
-     qualifiers,  Pre-Depends and other unsupported relationships remain attrib-
-     uted foreign requirements that require an explicit decision in the	 current
-     solver.   The automatic cross-source provider search checks every branch of
-     a missing OR group. It stages indexed candidates from  the	 chosen	 source;
-     the  solver then checks each branch's version and requests a choice if sev-
-     eral providers remain valid.   Simple  Provides  names  and  exact	 version
-     claims  become  package capabilities; an unversioned virtual claim does not
+     stalled graph. Constraints use Debian ordering, including epoch, tilde  and
+     revision,	only  against  providers in the deb version family. Architecture
+     qualifiers, Pre-Depends and other unsupported relationships remain	 attrib-
+     uted  foreign requirements that require an explicit decision in the current
+     solver.  The automatic cross-source provider search checks every branch  of
+     a	missing	 OR  group. It stages indexed candidates from the chosen source;
+     the solver then checks each branch's version and requests a choice if  sev-
+     eral  providers  remain  valid.   Simple  Provides	 names and exact version
+     claims become package capabilities; an unversioned virtual claim  does  not
      satisfy a versioned dependency. Unsupported or duplicate claims remain for-
      eign requirements. The converter supports Architecture all, amd64 and i386;
      it checks observed ELF machines against that claim and returns status 3 for
      unknown or mismatched payloads. It does not verify Debian signatures.  When
-     control/md5sums is present, the importer verifies each listed regular  pay-
+     control/md5sums  is present, the importer verifies each listed regular pay-
      load file before writing native outputs. MD5 detects payload mismatch here;
-     it	 does  not  authenticate  the  source archive.	make check-deb exercises
-     valid and malformed ar members, codecs, dependencies,  inactive  hooks  and
+     it does not authenticate the  source  archive.   make  check-deb  exercises
+     valid  and	 malformed  ar members, codecs, dependencies, inactive hooks and
      native install/check/remove in a temporary root.  The Debian reader accepts
-     a	numeric 2.x debian-binary version with following version-file lines, ig-
-     nores additional ar members  after	 data.tar,  and	 checks	 that  the  con-
-     trol/data	compression  matches its member suffix. The version file is lim-
+     a numeric 2.x debian-binary version with following version-file lines,  ig-
+     nores  additional	ar  members  after  data.tar,  and  checks that the con-
+     trol/data compression matches its member suffix. The version file	is  lim-
      ited to 4096 bytes.
 
-     apt index accepts a local Debian Packages index with  an  explicit	 SHA-256
-     pin.  It  keeps the compressed source bytes in original and parses Package,
-     Version, Architecture, Filename, Size,  SHA256,  Depends,	Pre-Depends  and
-     Provides.	 Duplicate  package/version/architecture  entries, unsafe paths,
-     missing hashes, empty indexes and malformed stanzas  fail	conversion.  The
+     apt  index	 accepts  a local Debian Packages index with an explicit SHA-256
+     pin. It keeps the compressed source bytes in original and	parses	Package,
+     Version,  Architecture,  Filename,	 Size,	SHA256, Depends, Pre-Depends and
+     Provides.	Duplicate package/version/architecture	entries,  unsafe  paths,
+     missing  hashes,  empty  indexes and malformed stanzas fail conversion. The
      catalog records its source name, HTTPS base URL, pin and package count. The
      source name is provenance, not a registered source-id. The output directory
-     must  not exist.  apt sync downloads Packages over HTTPS into private stag-
+     must not exist.  apt sync downloads Packages over HTTPS into private  stag-
      ing, checks its explicit SHA-256 pin and creates the same local catalog. It
-     does not authenticate the Debian Release/InRelease	 signature.   apt  sync-
-     signed  downloads	dists/SUITE/Release,  Release.gpg  and COMPONENT/binary-
+     does  not	authenticate  the Debian Release/InRelease signature.  apt sync-
+     signed downloads  dists/SUITE/Release,  Release.gpg  and  COMPONENT/binary-
      ARCH/Packages.gz over HTTPS. It runs gpgv with the selected keyring, checks
-     the Suite or Codename, any Valid-Until deadline, and the signed SHA256  and
-     size  of Packages.gz. It stages the catalog beside the output and publishes
-     it only after all checks pass. The catalog keeps Release, Release.gpg,  the
-     selected  keyring	and  a proof record. Search, info and fetch recheck that
-     proof; deleting it makes the signed catalog invalid. gpgv	is  an	external
-     requirement  for this mode and the selected keyring is trusted for this op-
-     eration. The command does not register that keyring as a source-id	 or  im-
-     plement  the  full APT repository policy. Signed catalog fetch receipts use
+     the  Suite or Codename, any Valid-Until deadline, and the signed SHA256 and
+     size of Packages.gz. It stages the catalog beside the output and  publishes
+     it	 only after all checks pass. The catalog keeps Release, Release.gpg, the
+     selected keyring and a proof record. Search, info and  fetch  recheck  that
+     proof;  deleting  it  makes the signed catalog invalid. gpgv is an external
+     requirement for this mode and the selected keyring is trusted for this  op-
+     eration.  The  command does not register that keyring as a source-id or im-
+     plement the full APT repository policy. Signed catalog fetch  receipts  use
      verification=release-gpgv-user-key. Missing Valid-Until is accepted.  --in-
-     release selects dists/SUITE/InRelease instead of Release  and  Release.gpg.
-     gpgv  checks  the	signature; a strict clearsign reader extracts the signed
+     release  selects  dists/SUITE/InRelease instead of Release and Release.gpg.
+     gpgv checks the signature; a strict clearsign reader  extracts  the  signed
      text. Only that text supplies the index hash and suite policy.  The catalog
-     keeps InRelease, the extracted Release, the keyring  and  a  proof	 record.
-     Queries  recheck  the signature. Fetch receipts use verification=inrelease-
+     keeps  InRelease,	the  extracted	Release, the keyring and a proof record.
+     Queries recheck the signature. Fetch receipts  use	 verification=inrelease-
      gpgv-user-key. Selection is explicit; a failed InRelease fetch or signature
-     does not fall back to detached Release.gpg.  --files also downloads  COMPO-
-     NENT/Contents-ARCH.gz.  Sync  checks  its	signed Release SHA-256 and size,
-     gzip stream and expanded size before publication. The catalog  records  the
-     compressed	 file  and  its	 proof. Catalog reads recheck the file hash, re-
-     trieval time and partial coverage status. A missing signed	 Contents  entry
+     does  not fall back to detached Release.gpg.  --files also downloads COMPO-
+     NENT/Contents-ARCH.gz. Sync checks its signed  Release  SHA-256  and  size,
+     gzip  stream  and expanded size before publication. The catalog records the
+     compressed file and its proof. Catalog reads recheck  the	file  hash,  re-
+     trieval  time  and partial coverage status. A missing signed Contents entry
      fails this requested sync.	 apt sync-source reads an active type apt source
-     from  the	target-root registry. Its public-key is a binary OpenPGP keyring
-     whose SHA-256 is frozen by source plan. The supplied --keyring  must  match
-     that  fingerprint. Sync checks the source again before publication, records
-     its stable source-id and writes a binding in the target database. apt  bind
-     can  replace a binding for a previously verified catalog.	The binding keys
-     source-id, suite, component and index architecture. Search, info and  fetch
-     resolve  these  coordinates  without  --catalog.  Each operation checks the
-     stored catalog path, index,  Release  proof  and  current	source	URL/key.
+     from the target-root registry. Its public-key is a binary	OpenPGP	 keyring
+     whose  SHA-256  is frozen by source plan. The supplied --keyring must match
+     that fingerprint. Sync checks the source again before publication,	 records
+     its  stable source-id and writes a binding in the target database. apt bind
+     can replace a binding for a previously verified catalog.  The binding  keys
+     source-id,	 suite, component and index architecture. Search, info and fetch
+     resolve these coordinates without	--catalog.  Each  operation  checks  the
+     stored  catalog  path,  index,  Release  proof  and current source URL/key.
      Alias renames preserve the binding; a changed source URL or key invalidates
-     it.   With	 an  explicit  --catalog,  --source and --root check the catalog
+     it.  With an explicit --catalog, --source	and  --root  check  the	 catalog
      against the registered source without changing its binding. The package ar-
-     chitecture in apt fetch is distinct from --index-arch.  apt search and  apt
+     chitecture	 in apt fetch is distinct from --index-arch.  apt search and apt
      info read the catalog and recheck its original index digest. Search matches
-     package  name substrings; info requires an exact name and returns decision-
-     required if several versions or  architectures  match.   apt  search  /PATH
-     --file  looks  up	an  exact  file	 path in the verified Contents index and
+     package name substrings; info requires an exact name and returns  decision-
+     required  if  several  versions  or  architectures match.	apt search /PATH
+     --file looks up an exact file path	 in  the  verified  Contents  index  and
      prints matching indexed package names. Without --files coverage is unavail-
-     able and status 6 is returned. An absent match in partial coverage	 is  un-
-     known  and also returns 6.	 Contents is a source hint; the imported package
-     payload must still be checked before a file requirement is satisfied.   apt
+     able  and	status 6 is returned. An absent match in partial coverage is un-
+     known and also returns 6.	Contents is a source hint; the imported	 package
+     payload  must still be checked before a file requirement is satisfied.  apt
      fetch selects an exact name, version and Debian architecture, downloads the
      listed Filename over HTTPS, and checks its SHA-256 and Size. The output re-
-     tains  the original .deb and a selection receipt. With --import, it invokes
-     the local Debian converter and checks the native output identity. The  con-
-     verter  checks  the downloaded DEB hash after staging, then records the se-
+     tains the original .deb and a selection receipt. With --import, it	 invokes
+     the  local Debian converter and checks the native output identity. The con-
+     verter checks the downloaded DEB hash after staging, then records	the  se-
      lected index hash, source URL and verification result in each .holy origin.
-     Signed catalogs also record keyring and Release  signature	 hashes.  Direct
-     local  DEB	 import	 remains  unverified.  Index  and selection receipts say
-     pinned-unverified when only an external pin is available. The  signed  path
+     Signed  catalogs  also  record keyring and Release signature hashes. Direct
+     local DEB import remains  unverified.  Index  and	selection  receipts  say
+     pinned-unverified	when  only an external pin is available. The signed path
      uses the separately selected keyring and Release.gpg. Registered operations
-     include  a	 checked  source-id  in	 their selection receipt.  With --import
-     --require-file /PATH, fetch checks that Contents names the	 selected  pack-
+     include a checked source-id in  their  selection  receipt.	  With	--import
+     --require-file  /PATH,  fetch checks that Contents names the selected pack-
      age, then verifies the exact nondirectory path in the imported receipt. The
-     option  requires  --import.   It  does not install packages. make check-apt
+     option requires --import.	It does not  install  packages.	 make  check-apt
      covers local and HTTPS indexes, tampering, TLS fetch, hash mismatch and im-
      port identity.
 
-     --format slackware reads a .txz, .tgz, .tbz or .tlz tar package and  checks
-     its  compression  against	the filename suffix. It parses the name-version-
-     arch-build filename from the right, preserves the build tag as  the  native
-     release,  and  retains  install/  files  under HOLY/foreign/slackware.  in-
-     stall/doinst.sh is recorded as a review-required shell hook and is not  run
+     --format  slackware reads a .txz, .tgz, .tbz or .tlz tar package and checks
+     its compression against the filename suffix. It  parses  the  name-version-
+     arch-build	 filename  from the right, preserves the build tag as the native
+     release, and retains  install/  files  under  HOLY/foreign/slackware.   in-
+     stall/doinst.sh  is recorded as a review-required shell hook and is not run
      during conversion. Unknown install/ control files become attributed foreign
-     requirements.  Official  Slackware	 packages need not declare dependencies;
-     the  importer  does  not  invent  them.  It  accepts  noarch,  x86_64   and
+     requirements. Official Slackware packages need  not  declare  dependencies;
+     the   importer  does  not	invent	them.  It  accepts  noarch,  x86_64  and
      i386/i486/i586/i686 source architecture labels, then separates observed ELF
      arch/libc outputs.	 An unknown or contradictory claim returns status 3. The
-     Slackware	version family has no automatic comparator yet, so update choice
-     requires review.  make check-slackware covers codecs, links, scripts,  path
-     rejection,	 mixed	ELF outputs and install/check/remove of a converted data
+     Slackware version family has no automatic comparator yet, so update  choice
+     requires  review.	make check-slackware covers codecs, links, scripts, path
+     rejection, mixed ELF outputs and install/check/remove of a	 converted  data
      package.
 
-     --format apk reads two or three concatenated gzip members from  an	 APK  v2
-     package.  It  retains .PKGINFO, optional signatures and control scripts be-
-     neath HOLY/foreign/apk.  When  .PKGINFO  contains	datahash,  the	importer
-     checks  its SHA-256 against the compressed data member before creating out-
-     puts. With --public-key FILE, the importer snapshots an RSA  PEM  key,  re-
+     --format  apk  reads  two or three concatenated gzip members from an APK v2
+     package. It retains .PKGINFO, optional signatures and control  scripts  be-
+     neath  HOLY/foreign/apk.  When  .PKGINFO  contains	 datahash,  the importer
+     checks its SHA-256 against the compressed data member before creating  out-
+     puts.  With  --public-key	FILE, the importer snapshots an RSA PEM key, re-
      quires datahash and a signature member, and verifies the signature over the
-     compressed	 control member. The key filename must match the .SIGN key name.
+     compressed control member. The key filename must match the .SIGN key  name.
      The conversion receipt and each output origin record the algorithm and pub-
-     lic-key SHA-256. The caller must establish the key's  authenticity	 outside
-     the  import  command. Unversioned package, so:SONAME and cmd:COMMAND depen-
-     dencies become exact requirements. Package constraints using the  supported
+     lic-key  SHA-256.	The caller must establish the key's authenticity outside
+     the import command. Unversioned package, so:SONAME and  cmd:COMMAND  depen-
+     dencies  become exact requirements. Package constraints using the supported
      APK v2 number, letter, suffix and revision grammar use APK version ordering
-     only  against  APK-family providers. Unknown version forms, namespaced ver-
-     sioned requirements and other unsupported tokens retain their original  ex-
+     only against APK-family providers. Unknown version forms,	namespaced  ver-
+     sioned  requirements and other unsupported tokens retain their original ex-
      pressions as foreign requirements. APK virtual provides, install-if and re-
-     places  also  require review because their selection and file-ownership se-
-     mantics differ from Holy's simple capabilities. Scripts  remain  review-re-
-     quired  and  do not run during import. The importer accepts noarch, x86 and
-     x86_64 claims and checks observed ELF machines. It rejects	 truncated  gzip
-     members,  extra members and unsafe paths. make check-apk covers these cases
-     and installs/checks/removes a converted data package in a	temporary  root.
+     places also require review because their selection and  file-ownership  se-
+     mantics  differ  from Holy's simple capabilities. Scripts remain review-re-
+     quired and do not run during import. The importer accepts noarch,	x86  and
+     x86_64  claims  and checks observed ELF machines. It rejects truncated gzip
+     members, extra members and unsafe paths. make check-apk covers these  cases
+     and  installs/checks/removes  a converted data package in a temporary root.
      make check-apk-version covers comparisons against Alpine apk-tools 2.14.12.
 
-     --format  xbps  reads  a  Void  XBPS  tar	package,  parses props.plist and
+     --format xbps reads  a  Void  XBPS	 tar  package,	parses	props.plist  and
      files.plist with libplist, and checks payload file size and SHA-256 against
-     the file list.  It compares symlink targets by their resolved  path  inside
-     the  target  root;	 a  relative  archive target and the equivalent absolute
+     the  file	list.  It compares symlink targets by their resolved path inside
+     the target root; a relative archive  target  and  the  equivalent	absolute
      files.plist target match.	It preserves the original property lists beneath
-     HOLY/foreign/xbps and records unverified provenance for a direct local  im-
-     port.  Package  revision becomes the shlib-requires become arch/libc-scoped
-     SONAME  requirements.  Simple  run_depends	 of   the   form   name<version,
-     name<=version,  name>version  or name>=version become package requirements.
-     Holy compares their versions only against XBPS-family providers with  Dewey
-     component	order and the _N revision.  Complex ranges, globs, exact package
-     strings and other XBPS-specific relations	remain	attributed  foreign  re-
-     quirements.  Provides are preserved in origin metadata without creating de-
-     pendencies. INSTALL and  REMOVE  scripts  remain  review-required.	 Unknown
+     HOLY/foreign/xbps	and records unverified provenance for a direct local im-
+     port. Package revision becomes the shlib-requires	become	arch/libc-scoped
+     SONAME   requirements.   Simple   run_depends  of	the  form  name<version,
+     name<=version, name>version or name>=version become  package  requirements.
+     Holy  compares their versions only against XBPS-family providers with Dewey
+     component order and the _N revision.  Complex ranges, globs, exact	 package
+     strings  and  other  XBPS-specific	 relations remain attributed foreign re-
+     quirements. Provides are preserved in origin metadata without creating  de-
+     pendencies.  INSTALL  and	REMOVE	scripts	 remain review-required. Unknown
      file-list fields, unsupported architecture, and ELF/architecture contradic-
-     tions  stop  conversion. make check-xbps-import covers a generated package,
-     ELF-derived SONAME capabilities, dependency selection  and	 malformed  file
-     lists;  make  check-xbps-version  checks  component  and revision ordering.
+     tions stop conversion. make check-xbps-import covers a  generated	package,
+     ELF-derived  SONAME  capabilities,	 dependency selection and malformed file
+     lists; make check-xbps-version  checks  component	and  revision  ordering.
      These do not test the full Void package range.
 
      xbps index reads a local $ARCH-repodata archive after checking its explicit
-     SHA-256. xbps sync retrieves the named architecture's repodata  over  HTTPS
-     with  the same required hash. The catalog stores package name, version, ar-
-     chitecture, archive SHA-256 and size. Search and info read the catalog  af-
-     ter  checking  its digest and the retained repodata. File-index coverage is
+     SHA-256.  xbps  sync retrieves the named architecture's repodata over HTTPS
+     with the same required hash. The catalog stores package name, version,  ar-
+     chitecture,  archive SHA-256 and size. Search and info read the catalog af-
+     ter checking its digest and the retained repodata. File-index  coverage  is
      marked unavailable. The converter also builds a digest-checked capabilities
-     index from	 XBPS  shlib-provides.	xbps  providers	 SONAME	 returns  exact,
-     source-attributed	candidate  hints  without downloading every archive. The
+     index  from  XBPS	shlib-provides.	 xbps  providers  SONAME  returns exact,
+     source-attributed candidate hints without downloading  every  archive.  The
      claim remains unverified until the selected payload is imported and its ELF
-     files are checked. An absent match means no declared hint	in  this  index,
-     not  proof	 that  the  source  lacks the library. The standalone index/sync
-     source name records provenance but does not  register  a  source-id.  sync-
-     source  reads  an	active	type  xbps source from the target-root registry,
-     checks its URL and selected key, and records its  source-id.   Source-aware
+     files  are	 checked.  An absent match means no declared hint in this index,
+     not proof that the source lacks  the  library.  The  standalone  index/sync
+     source  name  records  provenance	but does not register a source-id. sync-
+     source reads an active type xbps  source  from  the  target-root  registry,
+     checks  its  URL and selected key, and records its source-id.  Source-aware
      search/info/fetch check that source-id and the URL against the current reg-
-     istry.  sync-source  binds	 the verified conversion digest and catalog path
-     under the target database lock. Search, info  and	fetch  can  select  that
-     binding  by source alias and index architecture; changed conversion records
-     or catalog bytes fail validation. Bindings survive alias renames  that  re-
-     tain  the	same  source-id. A catalog inside the target root is stored as a
-     root-relative path, so moving that root with its cache preserves the  bind-
-     ing.  With	 --public-key  FILE, index requires that the supplied RSA public
-     key match index-meta.plist and records its SHA-256 fingerprint. The  caller
-     must  establish  the  key's authenticity independently.  The repodata still
+     istry. sync-source binds the verified conversion digest  and  catalog  path
+     under  the	 target	 database  lock.  Search, info and fetch can select that
+     binding by source alias and index architecture; changed conversion	 records
+     or	 catalog  bytes fail validation. Bindings survive alias renames that re-
+     tain the same source-id. A catalog inside the target root is  stored  as  a
+     root-relative  path, so moving that root with its cache preserves the bind-
+     ing. With --public-key FILE, index requires that the  supplied  RSA  public
+     key  match index-meta.plist and records its SHA-256 fingerprint. The caller
+     must establish the key's authenticity independently.   The	 repodata  still
      requires an explicit SHA-256 pin; index-meta.plist alone is not trusted au-
      thority for a new key.
 
-     xbps fetch selects an exact name/version/arch from that catalog,  downloads
-     the  archive  over HTTPS, checks size and SHA-256, and compares props.plist
-     identity with the selected record. With --public-key FILE, fetch  also  re-
-     quires  the index's key fingerprint, retrieves the .sig2 sidecar and checks
+     xbps  fetch selects an exact name/version/arch from that catalog, downloads
+     the archive over HTTPS, checks size and SHA-256, and  compares  props.plist
+     identity  with  the selected record. With --public-key FILE, fetch also re-
+     quires the index's key fingerprint, retrieves the .sig2 sidecar and  checks
      its RSA SHA-256 signature over the archive bytes. The receipt distinguishes
-     hash-pinned from rsa-sha256. With --import,  fetch	 converts  the	verified
-     archive  into  .holy outputs under NEW_DIRECTORY/converted and checks their
-     identity. The converter checks the archive hash  again  after  staging  and
-     records  hash-pinned  or  rsa-sha256 in each output origin. A signed output
-     also records the public key and signature SHA-256. Fetched	 outputs  retain
-     the  selected repodata SHA-256 and credential-free source URL. A direct im-
-     port remains unverified and has no asserted repository  generation.   --re-
+     hash-pinned  from	rsa-sha256.  With  --import, fetch converts the verified
+     archive into .holy outputs under NEW_DIRECTORY/converted and  checks  their
+     identity.	The  converter	checks	the archive hash again after staging and
+     records hash-pinned or rsa-sha256 in each output origin.  A  signed  output
+     also  records  the public key and signature SHA-256. Fetched outputs retain
+     the selected repodata SHA-256 and credential-free source URL. A direct  im-
+     port  remains  unverified and has no asserted repository generation.  --re-
      quire-soname requires --import and checks exact SONAME claims from the con-
-     verted  ELF payload; an index hint alone does not satisfy it.  The complete
-     fetch receipt records source-id for a checked source binding,  whether  im-
-     port  ran,	 and  any verified SONAME. Import failure leaves the archive and
-     incomplete output without a complete fetch receipt. Fetch does not	 install
-     or	 execute the package. The current transport limits one archive to 1 GiB;
-     larger indexed objects return status 6.  An explicit import of the	 fetched
-     digest-named  file creates .holy outputs.	make check-xbps-index covers in-
+     verted ELF payload; an index hint alone does not satisfy it.  The	complete
+     fetch  receipt  records source-id for a checked source binding, whether im-
+     port ran, and any verified SONAME. Import failure leaves  the  archive  and
+     incomplete	 output without a complete fetch receipt. Fetch does not install
+     or execute the package. The current transport limits one archive to 1  GiB;
+     larger  indexed objects return status 6.  An explicit import of the fetched
+     digest-named file creates .holy outputs.  make check-xbps-index covers  in-
      dex parsing, HTTPS sync/fetch, registered source checks, RSA signature ver-
-     ification, conversion and failure cases on a local fixture server. Key  en-
+     ification,	 conversion and failure cases on a local fixture server. Key en-
      rollment and automatic provider discovery remain open.
 
      The apk index command snapshots a local APKINDEX.tar.gz, separates its gzip
-     signature	and  data members, and publishes a sorted local catalog with the
-     original bytes, source alias, base URL  and  SHA-256.  It	checks	required
-     package  identity	fields and duplicate name/version/arch slots. The source
-     alias is provenance, not a registered source-id. A publisher  signature  is
+     signature and data members, and publishes a sorted local catalog  with  the
+     original  bytes,  source  alias,  base  URL and SHA-256. It checks required
+     package identity fields and duplicate name/version/arch slots.  The  source
+     alias  is	provenance, not a registered source-id. A publisher signature is
      retained in the original input; direct apk index conversion records unveri-
-     fied  status.   Package  coverage is complete for the supplied index, while
-     file coverage is unavailable. apk search matches a	 package-name  substring
-     and  apk  info selects an exact name; multiple versions require a decision.
-     Queries verify the catalog hash recorded at conversion. apk  fetch	 obtains
-     the  indexed  APK	over  HTTPS,  checks its recorded size and Q1 SHA-1 com-
-     pressed-control checksum, then  compares  .PKGINFO	 identity  and	optional
+     fied status.  Package coverage is complete for the	 supplied  index,  while
+     file  coverage  is unavailable. apk search matches a package-name substring
+     and apk info selects an exact name; multiple versions require  a  decision.
+     Queries  verify  the catalog hash recorded at conversion. apk fetch obtains
+     the indexed APK over HTTPS, checks its recorded  size  and	 Q1  SHA-1  com-
+     pressed-control  checksum,	 then  compares	 .PKGINFO  identity and optional
      datahash with the compressed data member. --sha256 adds a full artifact di-
      gest supplied by the caller. The output contains the original APK and a se-
-     lection  receipt with index/catalog hashes.  For a bound source with a con-
-     figured RSA key, apk fetch requires --public-key,	checks	its  fingerprint
-     against  the  registered  key, and verifies the APK signature over the com-
-     pressed control member. The receipt records index and package  verification
-     separately.  Direct  fetch without a bound keyed source records the package
-     signature as unverified.  apk sync reads an  active  type	apk  source  and
-     named   repo  from	 the  registered  source  definitions.	It  fetches  AP-
-     KINDEX.tar.gz over HTTPS. A configured RSA public-key freezes the key  fin-
-     gerprint  in  the	source registry. Sync requires the matching --public-key
-     file and verifies the  signed  compressed	index  member  using  RSA/SHA-1,
+     lection receipt with index/catalog hashes.	 For a bound source with a  con-
+     figured  RSA  key,	 apk fetch requires --public-key, checks its fingerprint
+     against the registered key, and verifies the APK signature	 over  the  com-
+     pressed  control member. The receipt records index and package verification
+     separately. Direct fetch without a bound keyed source records  the	 package
+     signature	as  unverified.	  apk  sync  reads an active type apk source and
+     named  repo  from	the  registered	 source	 definitions.  It  fetches   AP-
+     KINDEX.tar.gz  over HTTPS. A configured RSA public-key freezes the key fin-
+     gerprint in the source registry. Sync requires  the  matching  --public-key
+     file  and	verifies  the  signed  compressed  index member using RSA/SHA-1,
      RSA/SHA-256 or RSA/SHA-512 according to the .SIGN filename.  The public-key
-     filename  must  match  the signature key name. trust require needs this key
+     filename must match the signature key name. trust require	needs  this  key
      and a valid signature. Without a configured key, --sha256 pins index bytes;
-     --accept-unsigned confirms the downloaded digest after a  decision-required
-     response.	trust  ignore  permits	an  unpinned  index. Its catalog records
-     source-id and repo. apk fetch --root requires  that  exact	 catalog  to  be
+     --accept-unsigned	confirms the downloaded digest after a decision-required
+     response. trust ignore permits  an	 unpinned  index.  Its	catalog	 records
+     source-id	and  repo.  apk	 fetch	--root requires that exact catalog to be
      bound, checks its source-id, alias, repo and URL against the active defini-
      tion, and checks again before publishing the package.  If the alias changed
-     while  the	 source-id stayed the same, --source names the current alias for
+     while the source-id stayed the same, --source names the current  alias  for
      this check.  apk sync also records an atomic catalog binding under the tar-
-     get database.  apk bind replaces that binding  for	 a  previously	verified
+     get  database.   apk  bind	 replaces that binding for a previously verified
      catalog. A source with a configured key must supply it through --public-key
-     so	 bind can verify the original index signature again; the binding records
-     the verification and key fingerprint. Without a configured key, trust  warn
-     requires  --accept-unsigned  with	the exact index digest. Search, info and
-     fetch can use the bound catalog by source and  repo.  Readers  compare  its
-     saved  index  and	catalog hashes, and reject changed source definitions. A
+     so bind can verify the original index signature again; the binding	 records
+     the  verification and key fingerprint. Without a configured key, trust warn
+     requires --accept-unsigned with the exact index digest.  Search,  info  and
+     fetch  can	 use  the  bound catalog by source and repo. Readers compare its
+     saved index and catalog hashes, and reject changed	 source	 definitions.  A
      catalog inside the target root uses a root-relative binding so the root can
-     be moved.	Direct fetch without --root  records  source-binding  unchecked.
-     Fetch  and	 sync  do  not	install files. With --import, fetch converts the
-     checked archive into .holy outputs	 under	NEW_DIRECTORY/converted,  checks
-     each  output's  name,  version  and architecture, and rechecks the original
-     SHA-256 after staging. Signed packages are verified  again	 during	 import.
-     The output origin records the selected index hash and source URL; its veri-
-     fication  field  describes	 the package signature, not the index signature.
-     --require-soname requires --import and checks exact SONAME	 claims	 derived
-     from  the	imported  ELF  payload.	 An index claim alone cannot satisfy it.
-     --require-file checks one exact nondirectory payload  path	 from  the  con-
-     verted  manifest.	Both requirements need --import and can be combined. Im-
-     port failure leaves the original and an incomplete output	without	 a  com-
-     plete  selection receipt. The APK binding is separate from the native cata-
-     log and general dependency resolver. make check-apk-index covers signed and
-     unsigned fixtures, duplicate entries, truncated gzip, traversal and catalog
-     tampering.	 make check-apk-fetch covers HTTPS, full digest,  size,	 control
-     checksum  and  package  signatures.  The verified index identifies packages
-     through APK v2 Q1 SHA-1 checksums. For a package selected from  a	verified
-     index,  fetch requires keyed source also requires the package signature and
-     matching public-key filename.
+     be	 moved.	  Direct  fetch without --root records source-binding unchecked.
+     Fetch and sync do not install files. apk providers soname:NAME searches ex-
+     act so:NAME entries in the checked APKINDEX. Each result is an index  hint.
+     Use  fetch	 --import  --require-soname NAME to verify the actual ELF before
+     selecting a provider.  With --import, fetch converts  the	checked	 archive
+     into  .holy  outputs  under  NEW_DIRECTORY/converted,  checks each output's
+     name, version and architecture, and rechecks  the	original  SHA-256  after
+     staging.  Signed packages are verified again during import. The output ori-
+     gin records the selected index hash and source URL; its verification  field
+     describes	the package signature, not the index signature. --require-soname
+     requires --import and checks exact SONAME claims derived from the	imported
+     ELF  payload. An index claim alone cannot satisfy it. --require-file checks
+     one exact nondirectory payload path from the converted manifest.  Both  re-
+     quirements	 need  --import	 and  can be combined. Import failure leaves the
+     original and an incomplete output without a complete selection receipt. The
+     APK binding is separate from the native catalog and general dependency  re-
+     solver. make check-apk-index covers signed and unsigned fixtures, duplicate
+     entries,  truncated gzip, traversal and catalog tampering.	 make check-apk-
+     fetch covers HTTPS, full digest, size, control checksum and package  signa-
+     tures.  The  verified  index  identifies  packages	 through APK v2 Q1 SHA-1
+     checksums. For a package selected from a  verified	 index,	 fetch	requires
+     keyed  source  also  requires the package signature and matching public-key
+     filename.
 
      The importer reads .PKGINFO identities, full epoch/version/release strings,
      package relations and original field values. It preserves .PKGINFO, .BUILD-

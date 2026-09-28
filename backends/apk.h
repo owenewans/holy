@@ -16,7 +16,8 @@ int holy_apk_key_fingerprint(const char *public_key, char digest[65]);
 int holy_apk_verify_signature(FILE *signature, FILE *control,
                               const char *public_key, const char *keyname,
                               char algorithm[16]);
-int holy_apk_query(const char *catalog, const char *query, int info);
+/* mode: 0 name search, 1 exact package info, 2 exact indexed SONAME hint. */
+int holy_apk_query(const char *catalog, const char *query, int mode);
 int holy_apk_fetch(const char *catalog, const char *name, const char *version,
                    const char *arch, const char *output, const char *sha256,
                    const char *ca_file, const char *root, const char *source_alias,

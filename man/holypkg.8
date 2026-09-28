@@ -50,6 +50,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apk info PACKAGE [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY]
 .br
+.B holypkg apk providers soname:NAME [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY]
+.br
 .B holypkg apk fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE] [--public-key FILE] [--import] [--require-soname SONAME] [--require-file /PATH]
 .br
 .B holypkg xbps index REPODATA --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--public-key FILE]
@@ -522,7 +524,10 @@ can use the bound catalog by source and repo. Readers compare its saved index
 and catalog hashes, and reject changed source definitions. A catalog inside the
 target root uses a root-relative binding so the root can be moved.
 Direct fetch without --root records source-binding unchecked. Fetch and sync do
-not install files. With --import, fetch converts the checked archive into .holy
+not install files. apk providers soname:NAME searches exact so:NAME entries in
+the checked APKINDEX. Each result is an index hint. Use fetch --import
+--require-soname NAME to verify the actual ELF before selecting a provider.
+With --import, fetch converts the checked archive into .holy
 outputs under NEW_DIRECTORY/converted, checks each output's name, version and
 architecture, and rechecks the original SHA-256 after staging. Signed packages
 are verified again during import. The output origin records the selected index

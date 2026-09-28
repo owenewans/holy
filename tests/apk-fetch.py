@@ -73,7 +73,7 @@ with tempfile.TemporaryDirectory() as scratch:
     signed_package = member([(".SIGN.RSA256.fixture.rsa.pub", package_signature)]) + package
     (signed_dir / "fixture-1.2-r0.apk").write_bytes(signed_package)
     signed_rows = (f"C:{checksum}\nP:fixture\nV:1.2-r0\nA:x86_64\n"
-                   f"S:{len(signed_package)}\n\n").encode()
+                   f"S:{len(signed_package)}\np:so:libfixture.so.1\n\n").encode()
     (tmp / "signed-index-payload.gz").write_bytes(member([("APKINDEX", signed_rows)]))
     signature = subprocess.run(["openssl", "dgst", "-sha256", "-sign",
                                 str(signing_key), str(tmp / "signed-index-payload.gz")],
@@ -152,10 +152,12 @@ with tempfile.TemporaryDirectory() as scratch:
         elf_index = tmp / "elf-index.tar.gz"
         elf_index.write_bytes(member([("APKINDEX", (
             f"C:{elf_checksum}\nP:fixturelib\nV:1.0-r0\nA:x86_64\n"
-            f"S:{len(elf_package)}\n\n").encode())]))
+            f"S:{len(elf_package)}\np:so:libfixture.so.1\n\n").encode())]))
         elf_catalog = tmp / "elf-catalog"
         run("apk", "index", elf_index, "--source", "fixture",
             "--base", base + "elf/", "--output", elf_catalog)
+        assert run("apk", "providers", "soname:libfixture.so.1", "--catalog",
+                   elf_catalog).stdout == "fixturelib 1.0-r0 x86_64 index-hint\n"
         run("apk", "fetch", "fixturelib", "1.0-r0", "x86_64", "--catalog",
             elf_catalog, "--output", tmp / "verified-soname", "--ca-file",
             tmp / "cert.pem", "--import", "--require-soname", "libfixture.so.1",
@@ -276,6 +278,9 @@ with tempfile.TemporaryDirectory() as scratch:
             signed_root, "--public-key", signing_pub)
         assert run("apk", "search", "fixture", "--source", "signed", "--repo",
                    "main", "--root", signed_root).stdout == "fixture 1.2-r0 x86_64\n"
+        assert run("apk", "providers", "soname:libfixture.so.1", "--source",
+                   "signed", "--repo", "main", "--root", signed_root).stdout == (
+                       "fixture 1.2-r0 x86_64 index-hint\n")
         saved_conversion = (tmp / "signed-catalog/conversion").read_text()
         (tmp / "signed-catalog/conversion").write_text(
             saved_conversion.replace("verification rsa-sha256", "verification rsa-sha1"))
@@ -291,6 +296,12 @@ with tempfile.TemporaryDirectory() as scratch:
         assert "verification rsa-sha256" in (
             tmp / "signed-package/selection").read_text()
         assert (tmp / "signed-package/original").read_bytes() == signed_package
+        run("apk", "fetch", "fixture", "1.2-r0", "x86_64", "--source",
+            "signed", "--repo", "main", "--root", signed_root, "--output",
+            tmp / "signed-false-soname", "--ca-file", tmp / "cert.pem",
+            "--public-key", signing_pub, "--import", "--require-soname",
+            "libfixture.so.1", status=4)
+        assert not (tmp / "signed-false-soname/selection").exists()
         signed_origin = origin(next((tmp / "signed-package/converted").glob("*.holy")))
         assert "verification rsa-sha256\n" in signed_origin
         assert "public-key-sha256 " in signed_origin
