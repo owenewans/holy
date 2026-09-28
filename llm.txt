@@ -993,7 +993,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=a10662c33d87410cf93bdb8e2ad7b936581d14e94d5973475801f6aeb6b27054
+holypkg.8 source=holy version=development sha256=9008e2c8880b690b3dd4e5a23743b515031e6b519d56e4df51d3f016e6133e47
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1013,6 +1013,12 @@ SYNOPSIS
      holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
      holypkg import INPUT --source NAME --format pacman|deb|slackware|apk|appim-
      age --output NEW_DIRECTORY [--public-key FILE (apk only)]
+     holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base
+     HTTPS_BASE/ --output NEW_DIRECTORY
+     holypkg apt search QUERY --catalog DIRECTORY
+     holypkg apt info PACKAGE --catalog DIRECTORY
+     holypkg apt fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIREC-
+     TORY [--ca-file FILE] [--import]
      holypkg appimage inspect INPUT
      holypkg appimage extract INPUT --output NEW_DIRECTORY
      holypkg apk  index	 APKINDEX.tar.gz  --source  NAME  --base  URL/	--output
@@ -1163,16 +1169,36 @@ DESCRIPTION
      satisfy a versioned dependency. Unsupported or duplicate claims remain for-
      eign requirements. The converter supports Architecture all, amd64 and i386;
      it checks observed ELF machines against that claim and returns status 3 for
-     unknown  or mismatched payloads. It does not sync APT indexes or verify De-
-     bian signatures.  When control/md5sums is present,	 the  importer	verifies
-     each listed regular payload file before writing native outputs. MD5 detects
-     payload  mismatch	here; it does not authenticate the source archive.  make
-     check-deb exercises valid and malformed ar members,  codecs,  dependencies,
-     inactive  hooks  and  native install/check/remove in a temporary root.  The
-     Debian reader accepts a numeric 2.x debian-binary	version	 with  following
-     version-file  lines,  ignores  additional	ar  members  after data.tar, and
-     checks that the control/data compression matches  its  member  suffix.  The
-     version file is limited to 4096 bytes.
+     unknown or mismatched payloads. It does not verify Debian signatures.  When
+     control/md5sums  is present, the importer verifies each listed regular pay-
+     load file before writing native outputs. MD5 detects payload mismatch here;
+     it does not authenticate the  source  archive.   make  check-deb  exercises
+     valid  and	 malformed  ar members, codecs, dependencies, inactive hooks and
+     native install/check/remove in a temporary root.  The Debian reader accepts
+     a numeric 2.x debian-binary version with following version-file lines,  ig-
+     nores  additional	ar  members  after  data.tar,  and  checks that the con-
+     trol/data compression matches its member suffix. The version file	is  lim-
+     ited to 4096 bytes.
+
+     apt  index	 accepts  a local Debian Packages index with an explicit SHA-256
+     pin. It keeps the compressed source bytes in original and	parses	Package,
+     Version,  Architecture,  Filename,	 Size,	SHA256, Depends, Pre-Depends and
+     Provides.	Duplicate package/version/architecture	entries,  unsafe  paths,
+     missing  hashes,  empty  indexes and malformed stanzas fail conversion. The
+     catalog records its source name, HTTPS base URL, pin and package count. The
+     source name is provenance, not a registered source-id. The output directory
+     must not exist.  apt search and apt info read the catalog and  recheck  its
+     original  index  digest.  Search  matches package name substrings; info re-
+     quires an exact name and returns decision-required if several  versions  or
+     architectures  match.   apt fetch selects an exact name, version and Debian
+     architecture, downloads the listed Filename  over	HTTPS,	and  checks  its
+     SHA-256  and Size. The output retains the original .deb and a selection re-
+     ceipt. With --import, it invokes the local Debian converter and checks  the
+     native output identity. Index and selection receipts say pinned-unverified:
+     an external pin is required, and this path does not check Release/InRelease
+     signatures	 or  bind a registered source-id.  It does not install packages.
+     make check-apt covers local compressed indexes, tampering, TLS fetch,  hash
+     mismatch and import identity.
 
      --format  slackware reads a .txz, .tgz, .tbz or .tlz tar package and checks
      its compression against the filename suffix. It  parses  the  name-version-

@@ -97,8 +97,11 @@
   Debian version ordering within the deb family. Alternatives, Pre-Depends and
   other unsupported relationships stay foreign requirements; conffiles require
   a decision. Verify listed `control/md5sums` files against the payload before
-  conversion; the original MD5 list is not source authentication. APT indexes,
-  signatures and full hook integration remain open.
+  conversion; the original MD5 list is not source authentication. A pinned
+  local APT Packages index now supports name search, exact package metadata,
+  HTTPS fetch with artifact hash/size checks, and optional .deb import. Release
+  signature verification, registered source binding, index sync, solver
+  integration and full hook integration remain open.
 
 - [x] Import local Slackware .txz/.tgz/.tbz/.tlz packages into native outputs.
   Preserve original bytes, filename identity/build tag, install/ metadata and
@@ -432,7 +435,8 @@
   Ed25519 key now rejects unsigned or changed bound catalogs. A rootless
   system-cache workflow remains open.
 - [ ] Implement remaining foreign binary adapters and file indexes with real
-  fixtures: APT indexes, RPM, APK, XBPS, eopkg, homebrew and guix.
+  fixtures: RPM, XBPS, eopkg, homebrew and guix. APT has a pinned local index
+  and HTTPS fetch/import path; APK has a separate index/fetch path.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
   Gentoo and Pacstall recipe conversion with helper environments and split outputs.
 - [ ] Implement Nix closure, Flatpak, Snap, AppImage, Scoop and WinGet imports
