@@ -955,6 +955,7 @@ int main(int argc, char **argv)
         }
         if (argc >= 8 && !strcmp(argv[2], "fetch")) {
             const char *catalog = NULL, *output = NULL, *ca_file = NULL;
+            const char *required_file = NULL;
             const char *source = NULL, *root = NULL;
             const char *suite = NULL, *component = NULL, *index_arch = NULL;
             char *bound = NULL;
@@ -963,6 +964,8 @@ int main(int argc, char **argv)
                 if (!strcmp(argv[i], "--catalog") && !catalog && i + 1 < argc) catalog = argv[++i];
                 else if (!strcmp(argv[i], "--output") && !output && i + 1 < argc) output = argv[++i];
                 else if (!strcmp(argv[i], "--ca-file") && !ca_file && i + 1 < argc) ca_file = argv[++i];
+                else if (!strcmp(argv[i], "--require-file") && !required_file && i + 1 < argc)
+                    required_file = argv[++i];
                 else if (!strcmp(argv[i], "--source") && !source && i + 1 < argc) source = argv[++i];
                 else if (!strcmp(argv[i], "--root") && !root && i + 1 < argc) root = argv[++i];
                 else if (!strcmp(argv[i], "--suite") && !suite && i + 1 < argc) suite = argv[++i];
@@ -981,12 +984,12 @@ int main(int argc, char **argv)
                     catalog = bound;
                 }
                 result = holy_apt_fetch(catalog, argv[3], argv[4], argv[5], output,
-                                        ca_file, imported, root, source);
+                                        ca_file, imported, required_file, root, source);
                 free(bound);
                 return result;
             }
         }
-        fputs("usage: holypkg apt index FILE --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY | apt sync URL --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--ca-file FILE] | apt sync-signed HTTPS_BASE/ SUITE COMPONENT ARCH --source NAME --keyring FILE --output NEW_DIRECTORY [--inrelease] [--files] [--ca-file FILE] | apt sync-source ALIAS SUITE COMPONENT ARCH --root DIRECTORY --keyring FILE --output NEW_DIRECTORY [--inrelease] [--files] [--ca-file FILE] | apt bind ALIAS SUITE COMPONENT INDEX_ARCH CATALOG --root ROOT | apt search|info NAME [--file] --catalog DIRECTORY [--source ALIAS --root ROOT] | apt search|info NAME [--file] --source ALIAS --suite SUITE --component COMPONENT --index-arch ARCH --root ROOT | apt fetch NAME VERSION ARCH [--catalog DIRECTORY | --source ALIAS --suite SUITE --component COMPONENT --index-arch ARCH --root ROOT] --output NEW_DIRECTORY [--ca-file FILE] [--import]\n", stderr);
+        fputs("usage: holypkg apt index FILE --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY | apt sync URL --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--ca-file FILE] | apt sync-signed HTTPS_BASE/ SUITE COMPONENT ARCH --source NAME --keyring FILE --output NEW_DIRECTORY [--inrelease] [--files] [--ca-file FILE] | apt sync-source ALIAS SUITE COMPONENT ARCH --root DIRECTORY --keyring FILE --output NEW_DIRECTORY [--inrelease] [--files] [--ca-file FILE] | apt bind ALIAS SUITE COMPONENT INDEX_ARCH CATALOG --root ROOT | apt search|info NAME [--file] --catalog DIRECTORY [--source ALIAS --root ROOT] | apt search|info NAME [--file] --source ALIAS --suite SUITE --component COMPONENT --index-arch ARCH --root ROOT | apt fetch NAME VERSION ARCH [--catalog DIRECTORY | --source ALIAS --suite SUITE --component COMPONENT --index-arch ARCH --root ROOT] --output NEW_DIRECTORY [--ca-file FILE] [--import] [--require-file /PATH]\n", stderr);
         return 2;
     }
     if (argc > 1 && !strcmp(argv[1], "apply")) return holy_apply_command(argc, argv);

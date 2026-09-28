@@ -65,7 +65,8 @@ with tempfile.TemporaryDirectory() as scratch:
     contents = serve / "dists/stable/main/Contents-all.gz"
     contents.write_bytes(gzip.compress(
         b"FILE LOCATION\nusr/share/fixture main/misc/fixture,main/other/fixture\n"
-        b"usr/share/fixture file main/misc/fixture\n", mtime=0))
+        b"usr/share/fixture file main/misc/fixture\n"
+        b"usr/share/phantom main/misc/fixture\n", mtime=0))
     release = serve / "dists/stable/Release"
     release.write_text("Suite: stable\nDate: Mon, 28 Sep 2026 00:00:00 UTC\n"
                        "Valid-Until: Thu, 31 Dec 2099 00:00:00 UTC\n"
@@ -184,8 +185,22 @@ with tempfile.TemporaryDirectory() as scratch:
         assert missing_verifier.returncode == 6, missing_verifier.stderr
         signed_package = tmp / "signed-package"
         run("apt", "fetch", "fixture", "1:2.0-3", "all", "--catalog", signed,
-            "--output", signed_package, "--ca-file", tmp / "cert.pem", "--import")
+            "--output", signed_package, "--ca-file", tmp / "cert.pem", "--import",
+            "--require-file", "/usr/share/fixture")
         assert "verification release-gpgv-user-key\n" in (signed_package / "selection").read_text()
+        assert 'required-file "/usr/share/fixture"\n' in (
+            signed_package / "selection").read_text()
+        assert "file-provider verified-payload\n" in (signed_package / "selection").read_text()
+        run("apt", "fetch", "fixture", "1:2.0-3", "all", "--catalog", signed,
+            "--output", tmp / "false-file", "--ca-file", tmp / "cert.pem", "--import",
+            "--require-file", "/usr/share/phantom", status=4)
+        assert not (tmp / "false-file/selection").exists()
+        run("apt", "fetch", "fixture", "1:2.0-3", "all", "--catalog", signed,
+            "--output", tmp / "absent-file", "--ca-file", tmp / "cert.pem", "--import",
+            "--require-file", "/missing", status=6)
+        assert not (tmp / "absent-file").exists()
+        run("apt", "fetch", "fixture", "1:2.0-3", "all", "--catalog", signed,
+            "--output", tmp / "no-import", "--require-file", "/usr/share/fixture", status=2)
         inline = tmp / "inline"
         run("apt", "sync-signed", base, "stable", "main", "all", "--source", "debian",
             "--keyring", keyring, "--output", inline, "--inrelease", "--files",
@@ -323,6 +338,12 @@ with tempfile.TemporaryDirectory() as scratch:
         assert run("apt", "search", "/usr/share/fixture", "--file", "--source", "debian",
                    "--suite", "stable", "--component", "main", "--index-arch", "all",
                    "--root", root) == "fixture /usr/share/fixture\n"
+        bound_required = tmp / "bound-required"
+        run("apt", "fetch", "fixture", "1:2.0-3", "all", "--source", "debian",
+            "--suite", "stable", "--component", "main", "--index-arch", "all",
+            "--root", root, "--output", bound_required, "--ca-file", tmp / "cert.pem",
+            "--import", "--require-file", "/usr/share/fixture")
+        assert "file-provider verified-payload\n" in (bound_required / "selection").read_text()
         run("apt", "bind", "debian", "stable", "main", "all", bound,
             "--root", root)
         assert "source-id " in bound_info

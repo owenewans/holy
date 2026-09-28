@@ -11,7 +11,8 @@ int holy_apt_query(const char *catalog, const char *query, int info, int file_se
                    const char *root, const char *source);
 int holy_apt_fetch(const char *catalog, const char *name, const char *version,
                    const char *arch, const char *output, const char *ca_file,
-                   int import, const char *root, const char *source);
+                   int import, const char *required_file,
+                   const char *root, const char *source);
 int holy_apt_bind(const char *root, const char *source, const char *suite,
                   const char *component, const char *index_arch,
                   const char *catalog);

@@ -9,6 +9,7 @@
 #include "../src/package.h"
 #include "../src/source.h"
 #include "../src/state.h"
+#include "../src/verify.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -507,7 +508,7 @@ done:
 }
 
 static int file_query(const char *catalog, const struct apt_index *index,
-                      const char *query)
+                      const char *query, const char *required_package)
 {
     char *path = NULL, line[65536], **found = NULL;
     const char *wanted = query[0] == '/' ? query + 1 : query;
@@ -549,6 +550,10 @@ static int file_query(const char *catalog, const struct apt_index *index,
             for (i = 0; i < index->count; ++i)
                 if (!strcmp(index->entries[i].name, package)) break;
             if (i == index->count) continue;
+            if (required_package) {
+                if (!strcmp(required_package, package)) matches = 1;
+                continue;
+            }
             for (i = 0; i < matches; ++i) if (!strcmp(found[i], package)) break;
             if (i == matches) {
                 char **next;
@@ -569,8 +574,9 @@ done:
     if (gz && gzclose(gz) != Z_OK) result = 2;
     if (result == 6 && !matches)
         fputs("holypkg: no match in partial APT file index; absence is unknown\n", stderr);
-    if (!result) for (i = 0; i < matches; ++i) printf("%s /%s\n", found[i], wanted);
-    for (i = 0; i < matches; ++i) free(found[i]);
+    if (!result && !required_package)
+        for (i = 0; i < matches; ++i) printf("%s /%s\n", found[i], wanted);
+    if (!required_package) for (i = 0; i < matches; ++i) free(found[i]);
     free(found);
     free(path);
     return result;
@@ -587,7 +593,7 @@ int holy_apt_query(const char *catalog, const char *query, int info, int file_se
     if (result) goto done;
     result = check_source(catalog, &index, root, source);
     if (result) goto done;
-    if (file_search) { result = file_query(catalog, &index, query); goto done; }
+    if (file_search) { result = file_query(catalog, &index, query, NULL); goto done; }
     for (i = 0; i < index.count; ++i) {
         const struct apt_entry *e = &index.entries[i];
         if (info ? strcmp(e->name, query) : !strstr(e->name, query)) continue;
@@ -630,10 +636,41 @@ static char *package_url(const char *base, const char *filename)
     return url;
 }
 
-static int imported_identity(const char *path, const struct apt_entry *selected)
+struct required_file_visit { const char *path; int found; };
+
+static int collect_required_file(void *opaque, const struct holy_manifest_entry *entry)
+{
+    struct required_file_visit *required = opaque;
+    if (!entry->directory && !strcmp(entry->path, required->path)) required->found = 1;
+    return 1;
+}
+
+static int safe_required_file(const char *path)
+{
+    const char *part, *end;
+    size_t length;
+    if (!path || path[0] != '/' || !path[1] || strlen(path) > 1024) return 0;
+    part = path + 1;
+    while (*part) {
+        size_t i;
+        end = strchr(part, '/');
+        length = end ? (size_t)(end - part) : strlen(part);
+        if (!length || (length == 1 && part[0] == '.') ||
+            (length == 2 && part[0] == '.' && part[1] == '.')) return 0;
+        for (i = 0; i < length; ++i)
+            if ((unsigned char)part[i] < 32 || (unsigned char)part[i] == 127) return 0;
+        if (!end) break;
+        part = end + 1;
+    }
+    return *part != 0;
+}
+
+static int imported_identity(const char *path, const struct apt_entry *selected,
+                             const char *required_file)
 {
     DIR *dir = opendir(path);
     struct dirent *entry;
+    struct required_file_visit required = {required_file ? required_file + 1 : NULL, 0};
     size_t count = 0;
     int ok = 0;
     if (!dir) return 0;
@@ -647,7 +684,6 @@ static int imported_identity(const char *path, const struct apt_entry *selected)
         if (!filename) goto done;
         sprintf(filename, "%s/%s", path, entry->d_name);
         if (!holy_package_identity(filename, &identity)) { free(filename); goto done; }
-        free(filename);
         if (strcmp(identity.name, selected->name) ||
             strcmp(identity.version, selected->version) ||
             (!strcmp(selected->arch, "all") && strcmp(identity.arch, "noarch")) ||
@@ -655,13 +691,17 @@ static int imported_identity(const char *path, const struct apt_entry *selected)
              strcmp(identity.arch, "noarch")) ||
             (!strcmp(selected->arch, "i386") && strcmp(identity.arch, "x86") &&
              strcmp(identity.arch, "noarch"))) {
-            holy_package_identity_free(&identity); goto done;
+            holy_package_identity_free(&identity); free(filename); goto done;
         }
         holy_package_identity_free(&identity);
+        if (required_file && !holy_verify_visit(filename, collect_required_file, &required)) {
+            free(filename); goto done;
+        }
+        free(filename);
         ++count;
         errno = 0;
     }
-    ok = count && !errno;
+    ok = count && !errno && (!required_file || required.found);
 done:
     closedir(dir);
     return ok;
@@ -669,7 +709,8 @@ done:
 
 int holy_apt_fetch(const char *catalog, const char *name, const char *version,
                    const char *arch, const char *output, const char *ca_file,
-                   int import, const char *root, const char *source)
+                   int import, const char *required_file,
+                   const char *root, const char *source)
 {
     struct apt_index index = {0};
     const struct apt_entry *selected = NULL;
@@ -682,7 +723,8 @@ int holy_apt_fetch(const char *catalog, const char *name, const char *version,
         int order;
         if (!catalog || !token(name) || !version ||
             !holy_deb_version_compare(version, version, &order) ||
-            !token(arch) || !output) return 2;
+            !token(arch) || !output ||
+            (required_file && (!import || !safe_required_file(required_file)))) return 2;
     }
     result = read_catalog(catalog, &index);
     if (result) goto done;
@@ -695,6 +737,10 @@ int holy_apt_fetch(const char *catalog, const char *name, const char *version,
         }
     }
     if (!selected) { result = 4; goto done; }
+    if (required_file) {
+        result = file_query(catalog, &index, required_file, name);
+        if (result) goto done;
+    }
     url = package_url(index.base, selected->filename);
     if (!url) { result = 2; goto done; }
     result = 1;
@@ -720,7 +766,7 @@ int holy_apt_fetch(const char *catalog, const char *name, const char *version,
         sprintf(original, "%s/original", output);
         result = holy_import_deb(original, index.source, converted);
         if (result) goto done;
-        if (!imported_identity(converted, selected)) { result = 4; goto done; }
+        if (!imported_identity(converted, selected, required_file)) { result = 4; goto done; }
     }
     fd = openat(dir, "selection", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (fd < 0) { result = 1; goto done; }
@@ -733,6 +779,10 @@ int holy_apt_fetch(const char *catalog, const char *name, const char *version,
     fputs("\nname ", receipt); quote(receipt, name);
     fputs("\nversion ", receipt); quote(receipt, version);
     fputs("\narch ", receipt); quote(receipt, arch);
+    if (required_file) {
+        fputs("\nrequired-file ", receipt); quote(receipt, required_file);
+        fputs("\nfile-provider verified-payload", receipt);
+    }
     if (root) fprintf(receipt, "\nsource-id %s\nsource-binding checked", index.source_id);
     fprintf(receipt, "\nindex-sha256 %s\nartifact-sha256 %s\nsize %llu\nverification %s\nimported %s\nstate complete\n",
             index.hash, selected->sha256, selected->size,

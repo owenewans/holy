@@ -30,9 +30,9 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apt info PACKAGE --source ALIAS --suite SUITE --component COMPONENT --index-arch ARCH --root DIRECTORY
 .br
-.B holypkg apt fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--source ALIAS --root DIRECTORY] [--ca-file FILE] [--import]
+.B holypkg apt fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--source ALIAS --root DIRECTORY] [--ca-file FILE] [--import] [--require-file /PATH]
 .br
-.B holypkg apt fetch NAME VERSION ARCH --source ALIAS --suite SUITE --component COMPONENT --index-arch ARCH --root DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--import]
+.B holypkg apt fetch NAME VERSION ARCH --source ALIAS --suite SUITE --component COMPONENT --index-arch ARCH --root DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--import] [--require-file /PATH]
 .br
 .B holypkg appimage inspect INPUT
 .br
@@ -335,6 +335,10 @@ Debian converter and checks the native output identity. Index and selection
 receipts say pinned-unverified when only an external pin is available. The
 signed path uses the separately selected keyring and Release.gpg. Registered
 operations include a checked source-id in their selection receipt.
+With --import --require-file /PATH, fetch checks that Contents names the
+selected package, then verifies the exact nondirectory path in the imported
+.holy manifest. A false Contents claim fails without a successful selection
+receipt. The option requires --import.
 It does not install packages. make check-apt covers local and HTTPS indexes,
 tampering, TLS fetch, hash mismatch and import identity.
 .PP

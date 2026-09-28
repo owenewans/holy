@@ -110,8 +110,10 @@
   query/fetch. Optional --files fetches a signed Contents index and supports
   exact path lookup, including source-bound catalogs. Coverage is marked
   partial; an absent match stays unknown. It remains a hint until
-  the selected payload confirms the file. An inverted index, solver integration
-  and full hook integration remain open.
+  the selected payload confirms the file. apt fetch --import --require-file
+  checks the Contents hint and the converted .holy payload before recording
+  a file provider in its fetch receipt. An inverted index, automatic candidate
+  fetch, solver integration and full hook integration remain open.
 
 - [x] Import local Slackware .txz/.tgz/.tbz/.tlz packages into native outputs.
   Preserve original bytes, filename identity/build tag, install/ metadata and
