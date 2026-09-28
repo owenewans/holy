@@ -204,7 +204,7 @@ cp "$tmp/other-repo/auto-child.holy" "$tmp/third-repo/auto-child.holy"
 "$bin" repo index "$tmp/third-repo" > "$tmp/out"
 "$bin" repo seal "$tmp/third-repo" > "$tmp/out"
 third_index=$(sed -n 's/^sha256 //p' "$tmp/third-repo/current")
-printf '[source fixture]\ntype holy-http\nurl https://fixture.example/holy/\n[source other]\ntype holy-http\nurl https://other.example/holy/\n[source third]\ntype holy-http\nurl https://third.example/holy/\n' > "$tmp/three-sources"
+printf '[source fixture]\ntype holy-http\nurl https://fixture.example/holy/\n[source other]\ntype holy-http\nurl https://other.example/holy/\n[source third]\ntype holy-http\nurl https://third.example/holy/\n[source foreign]\ntype apk\nrepo main https://foreign.example/alpine/\n' > "$tmp/three-sources"
 "$bin" source plan --config "$tmp/three-sources" --root "$tmp/root" > "$tmp/plan"
 plan=$(sha256sum "$tmp/plan" | cut -d ' ' -f 1)
 "$bin" source apply "$tmp/plan" --sha256 "$plan" --root "$tmp/root" > "$tmp/out"

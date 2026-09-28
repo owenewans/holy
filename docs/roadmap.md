@@ -174,6 +174,8 @@
   for an explicitly associated imported output. The shared set resolver and
   installed graph check it alongside native packages; automatic foreign
   candidate discovery remains open.
+  Native automatic provider search now skips active foreign source families
+  instead of counting their absent native mirror as unavailable.
   Feeding foreign candidates into the general resolver and full relation
   semantics remain open.
 

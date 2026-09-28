@@ -635,6 +635,47 @@ done:
     return result;
 }
 
+int holy_source_type(const char *root, const char *alias, char **type)
+{
+    struct registry registry = {0};
+    unsigned long long generation;
+    char *data = NULL;
+    size_t i;
+    int dir, result = 1;
+    if (!root || !alias || !*alias || !type) return 2;
+    *type = NULL;
+    dir = holy_state_lock(root, 0, &generation, &result);
+    if (dir < 0) return result;
+    data = load_registry(dir, &registry);
+    if (!data) goto done;
+    result = 6;
+    for (i = 0; i < registry.count; ++i)
+        if (registry.items[i].active && !strcmp(registry.items[i].alias, alias)) {
+            const char *line = registry.items[i].definition;
+            while (*line) {
+                const char *end = strchr(line, '\n');
+                char **v = NULL;
+                size_t n = 0;
+                if (!end || !tokens(line, (size_t)(end - line), &v, &n)) {
+                    holy_tokens_free(v, n); result = 2; goto done;
+                }
+                if (n == 2 && !strcmp(v[0], "type")) {
+                    *type = strdup(v[1]);
+                    holy_tokens_free(v, n);
+                    result = *type ? 0 : 1;
+                    goto done;
+                }
+                holy_tokens_free(v, n);
+                line = end + 1;
+            }
+            result = 2;
+            break;
+        }
+done:
+    free(data); clear_registry(&registry); close(dir);
+    return result;
+}
+
 int holy_source_known_id(const char *root, const char *alias, char output[65])
 {
     struct registry registry = {0};

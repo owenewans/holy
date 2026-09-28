@@ -11,6 +11,8 @@ int holy_source_list(const char *root);
 int holy_source_active_aliases(const char *root, char ***aliases, size_t *count);
 /* resolves one active alias under a shared database lock; shell-style status. */
 int holy_source_active_id(const char *root, const char *alias, char output[65]);
+/* returns the owned configured backend family for an active alias. */
+int holy_source_type(const char *root, const char *alias, char **type);
 /* resolves an alias retained in the registry, including inactive origins. */
 int holy_source_known_id(const char *root, const char *alias, char output[65]);
 /* reads an active APK repository; caller owns the returned URL. */

@@ -1130,6 +1130,8 @@ add probes active bound native catalogs for that edge before staging foreign
 artifacts. One matching source with complete coverage supplies its providers
 and in-source closure. Multiple matching sources, or a match alongside an
 unavailable catalog, list the source aliases and ask for one alias on a TTY.
+Active foreign sources are skipped during this native-catalog probe; their
+absence of a native mirror is not counted as a failed native lookup.
 For a scanned ELF SONAME edge, the source probe checks the consumer's machine,
 runtime, strong version needs and provider-attributed imported symbols against
 each indexed candidate. A same-name library missing such a symbol is not offered.

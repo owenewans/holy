@@ -648,9 +648,17 @@ static int add_source(int argc, char **argv)
         }
         for (a = 0; a < alias_count; ++a) {
             char *path = NULL;
+            char *family = NULL;
             char candidate_id[65];
             int probe;
             if (!strcmp(aliases[a], alias)) continue;
+            probe = holy_source_type(root, aliases[a], &family);
+            if (probe) { result = probe; break; }
+            if (strcmp(family, "holy-http") && strcmp(family, "holy-git")) {
+                free(family);
+                continue;
+            }
+            free(family);
             probe = holy_source_catalog_path_fast(root, aliases[a], &path);
             if (!probe) probe = holy_source_catalog(root, aliases[a], path, candidate_id);
             if (!probe) probe = !strcmp(missing.kind, "soname") && missing.path ?
