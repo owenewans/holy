@@ -14,9 +14,11 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apk index APKINDEX.tar.gz --source NAME --base URL/ --output NEW_DIRECTORY
 .br
-.B holypkg apk sync SOURCE REPO --root DIRECTORY --output NEW_DIRECTORY [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE]
+.B holypkg apk verify-index FILE --public-key FILE
 .br
-.B holypkg apk bind SOURCE REPO CATALOG --root DIRECTORY [--accept-unsigned HASH]
+.B holypkg apk sync SOURCE REPO --root DIRECTORY --output NEW_DIRECTORY [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] [--public-key FILE]
+.br
+.B holypkg apk bind SOURCE REPO CATALOG --root DIRECTORY [--accept-unsigned HASH] [--public-key FILE]
 .br
 .B holypkg apk search QUERY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY]
 .br
@@ -272,7 +274,7 @@ signature and data members, and publishes a sorted local catalog with the
 original bytes, source alias, base URL and SHA-256. It checks required package
 identity fields and duplicate name/version/arch slots. The source alias is
 provenance, not a registered source-id. A publisher signature is retained in
-the original input but is not verified; conversion records unverified status.
+the original input; direct apk index conversion records unverified status.
 Package coverage is complete for the supplied index, while file coverage is
 unavailable. apk search matches a package-name substring and apk info selects
 an exact name; multiple versions require a decision. Queries verify the
@@ -281,19 +283,29 @@ HTTPS, checks its recorded size and Q1 SHA-1 compressed-control checksum, then
 compares .PKGINFO identity and optional datahash with the compressed data
 member. --sha256 adds a full artifact digest supplied by the caller. The output
 contains the original APK and a selection receipt with index/catalog hashes.
-The index publisher signature is not verified, so the receipt says unverified.
+Package publisher signatures are not checked by apk fetch; its receipt records
+the separate index-verification status and marks the package signature unverified.
 apk sync reads an active type apk source and named repo from the registered
-source definitions. It fetches APKINDEX.tar.gz over HTTPS. --sha256 pins its
+source definitions. It fetches APKINDEX.tar.gz over HTTPS. A configured RSA
+public-key freezes the key fingerprint in the source registry. Sync requires
+the matching --public-key file and verifies the signed compressed index member
+using RSA/SHA-1, RSA/SHA-256 or RSA/SHA-512 according to the .SIGN filename.
+The public-key filename must match the signature key name. trust require needs
+this key and a valid signature. Without a configured key, --sha256 pins index
 bytes; --accept-unsigned confirms the downloaded digest after a decision-required
-response. trust ignore permits an unpinned index; trust require rejects APK sync
-until publisher signature verification exists. Its catalog records source-id and
-repo. apk fetch --root checks that this source-id, alias, repo and URL still
-match an active definition, and checks again before publishing the package.
+response. trust ignore permits an unpinned index. Its catalog records source-id and
+repo. apk fetch --root requires that exact catalog to be bound, checks its
+source-id, alias, repo and URL against the active definition, and checks again
+before publishing the package.
 If the alias changed while the source-id stayed the same, --source names the
 current alias for this check.
 apk sync also records an atomic catalog binding under the target database.
-apk bind replaces that binding for a previously verified catalog; trust warn
-requires --accept-unsigned with the exact index digest. Search, info and fetch
+apk bind replaces that binding for a previously verified catalog. A source
+with a configured key must supply it through --public-key so bind can verify
+the original index signature again; the binding records the verification and
+key fingerprint. Without a
+configured key, trust warn requires --accept-unsigned with the exact index
+digest. Search, info and fetch
 can use the bound catalog by source and repo. Readers compare its saved index
 and catalog hashes, and reject changed source definitions. A catalog inside the
 target root uses a root-relative binding so the root can be moved.
@@ -303,6 +315,10 @@ general dependency resolver. make check-apk-index
 covers signed and unsigned fixtures, duplicate entries, truncated gzip,
 traversal and catalog tampering.
 make check-apk-fetch covers HTTPS, full digest, size and control checksum.
+The verified index still identifies packages through APK v2 Q1 SHA-1 checksums;
+the separate package signature is not part of this check. For a package selected
+from a verified index, fetch requires .PKGINFO datahash and checks it against
+the compressed data member.
 .PP
 The importer reads .PKGINFO identities, full epoch/version/release strings,
 package relations and original field values. It preserves .PKGINFO, .BUILDINFO,

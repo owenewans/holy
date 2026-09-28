@@ -692,9 +692,12 @@ int main(int argc, char **argv)
     if (argc > 1 && !strcmp(argv[1], "run")) return holy_run(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "apply")) return holy_apply_command(argc, argv);
     if (argc > 2 && !strcmp(argv[1], "apk")) {
+        if (argc == 6 && !strcmp(argv[2], "verify-index") &&
+            !strcmp(argv[4], "--public-key"))
+            return holy_apk_verify_index(argv[3], argv[5]);
         if (argc >= 9 && (argc & 1) && !strcmp(argv[2], "sync")) {
             const char *root = NULL, *output = NULL, *sha256 = NULL;
-            const char *accepted = NULL, *ca_file = NULL;
+            const char *accepted = NULL, *ca_file = NULL, *public_key = NULL;
             int i;
             for (i = 5; i < argc; i += 2) {
                 if (!strcmp(argv[i], "--root") && !root) root = argv[i + 1];
@@ -702,20 +705,28 @@ int main(int argc, char **argv)
                 else if (!strcmp(argv[i], "--sha256") && !sha256) sha256 = argv[i + 1];
                 else if (!strcmp(argv[i], "--accept-unsigned") && !accepted) accepted = argv[i + 1];
                 else if (!strcmp(argv[i], "--ca-file") && !ca_file) ca_file = argv[i + 1];
+                else if (!strcmp(argv[i], "--public-key") && !public_key) public_key = argv[i + 1];
                 else break;
             }
             if (i == argc && root && output && !(sha256 && accepted))
                 return holy_apk_sync(root, argv[3], argv[4], output, sha256,
-                                     accepted, ca_file);
+                                     accepted, ca_file, public_key);
         }
         if (argc == 10 && !strcmp(argv[2], "index") && !strcmp(argv[4], "--source") &&
             !strcmp(argv[6], "--base") && !strcmp(argv[8], "--output"))
             return holy_apk_index(argv[3], argv[5], argv[7], argv[9]);
-        if ((argc == 8 || argc == 10) && !strcmp(argv[2], "bind") &&
-            !strcmp(argv[6], "--root") &&
-            (argc == 8 || !strcmp(argv[8], "--accept-unsigned")))
-            return holy_apk_bind(argv[7], argv[3], argv[4], argv[5],
-                                 argc == 10 ? argv[9] : NULL);
+        if ((argc == 8 || argc == 10 || argc == 12) &&
+            !strcmp(argv[2], "bind") && !strcmp(argv[6], "--root")) {
+            const char *accepted = NULL, *public_key = NULL;
+            int i;
+            for (i = 8; i < argc; i += 2) {
+                if (!strcmp(argv[i], "--accept-unsigned") && !accepted) accepted = argv[i + 1];
+                else if (!strcmp(argv[i], "--public-key") && !public_key) public_key = argv[i + 1];
+                else break;
+            }
+            if (i == argc) return holy_apk_bind(argv[7], argv[3], argv[4], argv[5],
+                                                  accepted, public_key);
+        }
         if (argc >= 6 && !(argc & 1) &&
             (!strcmp(argv[2], "search") || !strcmp(argv[2], "info"))) {
             const char *catalog = NULL, *source_alias = NULL, *repo = NULL, *root = NULL;
@@ -769,7 +780,7 @@ int main(int argc, char **argv)
                 return result;
             }
         }
-        fputs("usage: holypkg apk sync SOURCE REPO --root DIRECTORY --output NEW_DIRECTORY [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] | apk bind SOURCE REPO CATALOG --root DIRECTORY [--accept-unsigned HASH] | apk index FILE --source NAME --base URL --output NEW_DIRECTORY | apk search|info NAME [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] | apk fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE]\n", stderr);
+        fputs("usage: holypkg apk verify-index FILE --public-key FILE | apk sync SOURCE REPO --root DIRECTORY --output NEW_DIRECTORY [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] [--public-key FILE] | apk bind SOURCE REPO CATALOG --root DIRECTORY [--accept-unsigned HASH] [--public-key FILE] | apk index FILE --source NAME --base URL --output NEW_DIRECTORY | apk search|info NAME [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] | apk fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DIRECTORY | --source SOURCE --repo REPO --root DIRECTORY] [--sha256 HASH] [--ca-file FILE]\n", stderr);
         return 2;
     }
     if (argc > 1 && !strcmp(argv[1], "search") && argc > 2)

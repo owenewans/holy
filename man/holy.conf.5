@@ -96,6 +96,8 @@ associations. Parent policy during package selection remains unimplemented.
 .PP
 A registered APK source uses type apk and one or more repo NAME HTTPS_BASE/
 entries. holypkg apk sync names the repo, obtains its APKINDEX.tar.gz and writes
-a source-id-bearing catalog and target-root binding. APK publisher signatures are still unverified;
-trust require therefore rejects APK sync. See holypkg(8) for the digest
-confirmation and fetch sequence.
+a source-id-bearing catalog and target-root binding. public-key points to an RSA
+PEM public key for APK sources; source plan freezes its SHA-256 fingerprint.
+trust require needs that key and a valid APKINDEX signature. The matching key
+file is supplied to apk sync through --public-key. The APK package signature
+remains unverified. See holypkg(8) for the digest confirmation and fetch sequence.

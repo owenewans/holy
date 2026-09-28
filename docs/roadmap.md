@@ -128,8 +128,13 @@
   registered-source path. Sync now binds the catalog to the source/repo in the
   target database; search, info and fetch can find it by source/repo. The
   binding detects catalog tampering and survives relocation of a target root.
-  Feeding foreign candidates into the general resolver, publisher signatures
-  and full relation semantics remain open.
+  APKINDEX RSA signatures now verify against the registered public-key
+  fingerprint. A `trust require` Alpine v3.22 main index with 5647 packages
+  passed using the key extracted from `alpine-keys` 2.5-r0. That extraction
+  tests signature mechanics; it does not establish the key's out-of-band
+  authenticity. Package signatures,
+  feeding foreign candidates into the general resolver and full relation
+  semantics remain open.
 
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.
 - [x] Plan and atomically apply a source identity registry under the database

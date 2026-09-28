@@ -7,6 +7,7 @@
 #include "fetch.h"
 #include "sign.h"
 #include "git.h"
+#include "../backends/apk.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -220,7 +221,8 @@ static int parse_registry(const char *data, struct registry *r)
             ok = hash(v[4], id) && !strcmp(id, v[1]) && r->count < 10000 &&
                  !(n == 6 && !strcmp(v[5], "require") &&
                    (strstr(v[4], "type \"holy-http\"\n") ||
-                    strstr(v[4], "type \"holy-git\"\n")));
+                    strstr(v[4], "type \"holy-git\"\n") ||
+                    strstr(v[4], "type \"apk\"\n")));
             for (i = 0; ok && i < r->count; ++i)
                 if (!strcmp(r->items[i].id, id) || (active && r->items[i].active && !strcmp(r->items[i].alias, v[2]))) ok = 0;
             grown = ok ? realloc(r->items, (r->count + 1) * sizeof *grown) : NULL;
@@ -387,14 +389,18 @@ int holy_source_plan(const char *path, const char *root)
         }
         if (key_entry) {
             key_path = source_key_path(key_entry);
-            if (!key_path || !holy_public_key_hex(key_path, key)) {
-                fprintf(stderr, "holypkg: invalid Ed25519 public key at %s:%zu\n",
+            if (!key_path ||
+                (!strcmp(e->values[0], "apk") ?
+                 !holy_apk_key_fingerprint(key_path, key) :
+                 !holy_public_key_hex(key_path, key))) {
+                fprintf(stderr, "holypkg: invalid %s public key at %s:%zu\n",
+                        !strcmp(e->values[0], "apk") ? "APK RSA" : "Ed25519",
                         key_entry->file, key_entry->line);
                 free(key_path); free(trust); result = 2; goto done;
             }
             free(key_path);
         } else if (raw_entry) {
-            if (!valid_hash(raw_entry->values[0])) {
+            if (!strcmp(e->values[0], "apk") || !valid_hash(raw_entry->values[0])) {
                 fprintf(stderr, "holypkg: invalid Ed25519 raw key at %s:%zu\n",
                         raw_entry->file, raw_entry->line);
                 free(trust); result = 2; goto done;
@@ -402,7 +408,8 @@ int holy_source_plan(const char *path, const char *root)
             memcpy(key, raw_entry->values[0], 65);
         }
         if ((!strcmp(e->values[0], "holy-http") ||
-             !strcmp(e->values[0], "holy-git")) &&
+             !strcmp(e->values[0], "holy-git") ||
+             !strcmp(e->values[0], "apk")) &&
             !strcmp(trust, "require") && !key[0]) {
             fprintf(stderr, "holypkg: [%s] trust require needs public-key\n", e->section);
             free(trust); result = 2; goto done;
@@ -665,7 +672,7 @@ static char *native_endpoint(const char *definition, int *git)
 }
 
 int holy_source_apk_repo(const char *root, const char *alias, const char *repo,
-                         char id[65], char **url, char **trust)
+                         char id[65], char **url, char **trust, char key[65])
 {
     struct registry registry = {0};
     char *data = NULL, *selected = NULL;
@@ -674,6 +681,7 @@ int holy_source_apk_repo(const char *root, const char *alias, const char *repo,
     size_t i;
     int dir, result = 1, apk = 0;
     id[0] = 0;
+    if (key) key[0] = 0;
     *url = NULL;
     *trust = NULL;
     if (!alias || !*alias || !strcmp(alias, "local") || !repo || !*repo) return 2;
@@ -708,9 +716,10 @@ int holy_source_apk_repo(const char *root, const char *alias, const char *repo,
     if (!*trust) { result = 1; goto done; }
     *url = selected; selected = NULL;
     memcpy(id, registry.items[i].id, 65);
+    if (key) memcpy(key, registry.items[i].key, 65);
     result = 0;
 done:
-    if (result) { free(*url); free(*trust); *url = NULL; *trust = NULL; id[0] = 0; }
+    if (result) { free(*url); free(*trust); *url = NULL; *trust = NULL; id[0] = 0; if (key) key[0] = 0; }
     free(selected); free(data); clear_registry(&registry); close(dir);
     return result;
 }

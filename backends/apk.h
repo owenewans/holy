@@ -10,15 +10,19 @@ int holy_apk_gzip_parts(const char *snapshot, FILE *parts[3],
 
 int holy_apk_index(const char *input, const char *source, const char *base,
                    const char *output);
+int holy_apk_verify_index(const char *input, const char *public_key);
+int holy_apk_key_fingerprint(const char *public_key, char digest[65]);
 int holy_apk_query(const char *catalog, const char *query, int info);
 int holy_apk_fetch(const char *catalog, const char *name, const char *version,
                    const char *arch, const char *output, const char *sha256,
                    const char *ca_file, const char *root, const char *source_alias);
 int holy_apk_sync(const char *root, const char *source, const char *repo,
                   const char *output, const char *sha256,
-                  const char *accept_unsigned, const char *ca_file);
+                  const char *accept_unsigned, const char *ca_file,
+                  const char *public_key);
 int holy_apk_bind(const char *root, const char *source, const char *repo,
-                  const char *catalog, const char *accepted);
+                  const char *catalog, const char *accepted,
+                  const char *public_key);
 /* returns an owned verified catalog path for an active source and repo. */
 int holy_apk_catalog_path(const char *root, const char *source, const char *repo,
                           char **catalog);

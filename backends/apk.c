@@ -10,6 +10,7 @@
 #include <archive_entry.h>
 #include <errno.h>
 #include <openssl/evp.h>
+#include <openssl/pem.h>
 #include <stdint.h>
 #include <strings.h>
 #include <stdlib.h>
@@ -239,6 +240,144 @@ done:
     return ok;
 }
 
+static int verify_signature_member(FILE *signature, FILE *payload,
+                                   const char *public_key, const char *keyname,
+                                   char algorithm[16])
+{
+    struct archive *archive = archive_read_new();
+    struct archive_entry *entry;
+    EVP_PKEY *key = NULL;
+    EVP_MD_CTX *context = NULL;
+    FILE *keyfile = NULL;
+    const EVP_MD *method = NULL;
+    unsigned char signature_bytes[4096], buffer[65536];
+    char descriptor[64];
+    size_t got;
+    int status, found = 0, ok = 0;
+    if (!archive) return 0;
+    if (!*keyname || strlen(keyname) > 255) goto done;
+    keyfile = fopen(public_key, "r");
+    if (!keyfile) goto done;
+    key = PEM_read_PUBKEY(keyfile, NULL, NULL, NULL);
+    if (!key || EVP_PKEY_base_id(key) != EVP_PKEY_RSA) goto done;
+    snprintf(descriptor, sizeof descriptor, "/proc/self/fd/%d", fileno(signature));
+    if (archive_read_support_filter_gzip(archive) != ARCHIVE_OK ||
+        archive_read_support_format_tar(archive) != ARCHIVE_OK ||
+        archive_read_open_filename(archive, descriptor, 65536) != ARCHIVE_OK) goto done;
+    while ((status = archive_read_next_header(archive, &entry)) == ARCHIVE_OK) {
+        const char *name = archive_entry_pathname(entry), *tail;
+        la_int64_t size = archive_entry_size(entry);
+        if (!name || strncmp(name, ".SIGN.", 6) || size < 0 || size > 4096 ||
+            archive_entry_filetype(entry) != AE_IFREG || archive_entry_hardlink(entry) ||
+            archive_entry_symlink(entry)) goto done;
+        tail = name + 6;
+        if (!strncmp(tail, "RSA256.", 7) && !strcmp(tail + 7, keyname)) {
+            method = EVP_sha256(); strcpy(algorithm, "rsa-sha256");
+        } else if (!strncmp(tail, "RSA512.", 7) && !strcmp(tail + 7, keyname)) {
+            method = EVP_sha512(); strcpy(algorithm, "rsa-sha512");
+        } else if (!strncmp(tail, "RSA.", 4) && !strcmp(tail + 4, keyname)) {
+            method = EVP_sha1(); strcpy(algorithm, "rsa-sha1");
+        } else {
+            if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
+            continue;
+        }
+        if (found++ || !size) goto done;
+        {
+            size_t used = 0;
+            while (used < (size_t)size) {
+                la_ssize_t read_size = archive_read_data(archive, signature_bytes + used,
+                                                           (size_t)size - used);
+                if (read_size <= 0) goto done;
+                used += (size_t)read_size;
+            }
+        }
+        context = EVP_MD_CTX_new();
+        if (!context || EVP_DigestVerifyInit(context, NULL, method, NULL, key) != 1 ||
+            fseek(payload, 0, SEEK_SET)) goto done;
+        while ((got = fread(buffer, 1, sizeof buffer, payload)) != 0)
+            if (EVP_DigestVerifyUpdate(context, buffer, got) != 1) goto done;
+        if (ferror(payload) || EVP_DigestVerifyFinal(context, signature_bytes,
+                                                     (size_t)size) != 1) goto done;
+    }
+    ok = status == ARCHIVE_EOF && found == 1;
+done:
+    if (keyfile) fclose(keyfile);
+    if (context) EVP_MD_CTX_free(context);
+    if (key) EVP_PKEY_free(key);
+    archive_read_free(archive);
+    return ok;
+}
+
+int holy_apk_key_fingerprint(const char *public_key, char digest[65])
+{
+    EVP_PKEY *key = NULL;
+    FILE *file = NULL;
+    unsigned char *der = NULL, *cursor, bytes[32];
+    unsigned length;
+    int size, result = 0;
+    size_t i;
+    if (!public_key || !digest) return 0;
+    file = fopen(public_key, "r");
+    if (!file) goto done;
+    key = PEM_read_PUBKEY(file, NULL, NULL, NULL);
+    if (!key || EVP_PKEY_base_id(key) != EVP_PKEY_RSA) goto done;
+    size = i2d_PUBKEY(key, NULL);
+    if (size <= 0 || size > 8192 || !(der = malloc((size_t)size))) goto done;
+    cursor = der;
+    if (i2d_PUBKEY(key, &cursor) != size ||
+        EVP_Digest(der, (size_t)size, bytes, &length, EVP_sha256(), NULL) != 1 ||
+        length != 32) goto done;
+    for (i = 0; i < 32; ++i) snprintf(digest + i * 2, 3, "%02x", bytes[i]);
+    result = 1;
+done:
+    if (file) fclose(file);
+    if (key) EVP_PKEY_free(key);
+    free(der);
+    return result;
+}
+
+static int verify_index_key(const char *input, const char *public_key,
+                            const char *keyname, char algorithm[16])
+{
+    FILE *parts[3] = {0};
+    struct stat st;
+    char digests[3][65] = {{0}}, *snapshot = NULL, *bytes = NULL;
+    size_t size = 0, i;
+    int fd = -1, count, result = 4;
+    if (!input || !public_key || !*public_key || !keyname) return 2;
+    fd = open(input, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size < 0 || st.st_size > 64LL * 1024 * 1024) { result = 6; goto done; }
+    snapshot = holy_stage_fd(fd, "holy-apk-verify");
+    if (!snapshot) { result = 1; goto done; }
+    count = holy_apk_gzip_parts(snapshot, parts, digests, 64ULL * 1024 * 1024);
+    if (count != 2 || !read_index_tar(parts[0], 1, &bytes, &size) ||
+        !read_index_tar(parts[1], 0, &bytes, &size) ||
+        !verify_signature_member(parts[0], parts[1], public_key, keyname,
+                                 algorithm)) goto done;
+    result = 0;
+done:
+    for (i = 0; i < 3; ++i) if (parts[i]) fclose(parts[i]);
+    if (fd >= 0) close(fd);
+    if (snapshot) { unlink(snapshot); free(snapshot); }
+    free(bytes);
+    return result;
+}
+
+int holy_apk_verify_index(const char *input, const char *public_key)
+{
+    char algorithm[16] = {0};
+    const char *keyname;
+    int result;
+    if (!public_key) return 2;
+    keyname = strrchr(public_key, '/');
+    keyname = keyname ? keyname + 1 : public_key;
+    result = verify_index_key(input, public_key, keyname, algorithm);
+    if (result) fprintf(stderr, "holypkg: APK index signature verification failed (status %d)\n", result);
+    else printf("verified APKINDEX %s\n", algorithm);
+    return result;
+}
+
 static int hash_fd(int fd, char output[65])
 {
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
@@ -311,7 +450,8 @@ static int base_url(const char *url)
 }
 
 static int apk_index_bound(const char *input, const char *source, const char *base,
-                           const char *output, const char *source_id, const char *repo)
+                           const char *output, const char *source_id, const char *repo,
+                           const char *verification, const char *key_hash)
 {
     struct apk_index index = {0};
     struct stat st;
@@ -377,8 +517,11 @@ static int apk_index_bound(const char *input, const char *source, const char *ba
     fputs("format holy-apk-index-record-1\nsource-name ", record); quote(record, source);
     fputs("\nbase-url ", record); quote(record, base);
     if (source_id) { fprintf(record, "\nsource-id %s\nrepo ", source_id); quote(record, repo); }
-    fprintf(record, "\noriginal-sha256 %s\ncatalog-sha256 %s\nverification unverified\npackage-coverage complete\nfile-coverage unavailable\npackages %zu\nstate complete\n",
-            digest, catalog_digest, index.count);
+    fprintf(record, "\noriginal-sha256 %s\ncatalog-sha256 %s\nverification %s\n",
+            digest, catalog_digest, verification ? verification : "unverified");
+    if (key_hash) fprintf(record, "public-key-sha256 %s\n", key_hash);
+    fprintf(record, "package-coverage complete\nfile-coverage unavailable\npackages %zu\nstate complete\n",
+            index.count);
     {
         int failed = ferror(record);
         if (fflush(record) || fsync(fileno(record))) failed = 1;
@@ -404,7 +547,7 @@ done:
 int holy_apk_index(const char *input, const char *source, const char *base,
                    const char *output)
 {
-    return apk_index_bound(input, source, base, output, NULL, NULL);
+    return apk_index_bound(input, source, base, output, NULL, NULL, NULL, NULL);
 }
 
 int holy_apk_query(const char *directory, const char *query, int info)
@@ -480,6 +623,7 @@ done:
 struct apk_selection {
     char *source, *base, *checksum, *repo;
     char source_id[65];
+    char verification[16], key_hash[65];
     unsigned long long size;
     char index_hash[65], catalog_hash[65];
 };
@@ -537,6 +681,16 @@ static int select_package(const char *directory, const char *name,
                 holy_tokens_free(v, n); goto done;
             }
             memcpy(selection->source_id, v[1], 65);
+        } else if (n == 2 && !strcmp(v[0], "verification")) {
+            if (selection->verification[0] || strlen(v[1]) >= sizeof selection->verification) {
+                holy_tokens_free(v, n); goto done;
+            }
+            strcpy(selection->verification, v[1]);
+        } else if (n == 2 && !strcmp(v[0], "public-key-sha256")) {
+            if (selection->key_hash[0] || !hex_digest(v[1])) {
+                holy_tokens_free(v, n); goto done;
+            }
+            memcpy(selection->key_hash, v[1], 65);
         } else if (n == 2 && !strcmp(v[0], "original-sha256") && hex_digest(v[1])) {
             memcpy(selection->index_hash, v[1], 65);
         } else if (n == 2 && !strcmp(v[0], "catalog-sha256") && hex_digest(v[1])) {
@@ -548,7 +702,13 @@ static int select_package(const char *directory, const char *name,
     }
     if (ferror(file) || matches != 1 || !selection->source || !selection->base ||
         !selection->index_hash[0] || !selection->catalog_hash[0] ||
-        !base_url(selection->base) || (!!selection->repo != !!selection->source_id[0])) goto done;
+        !base_url(selection->base) || (!!selection->repo != !!selection->source_id[0]) ||
+        (!strcmp(selection->verification, "unverified") && selection->key_hash[0]) ||
+        (strcmp(selection->verification, "unverified") &&
+         strcmp(selection->verification, "rsa-sha1") &&
+         strcmp(selection->verification, "rsa-sha256") &&
+         strcmp(selection->verification, "rsa-sha512")) ||
+        (strcmp(selection->verification, "unverified") && !selection->key_hash[0])) goto done;
     fclose(file); file = NULL;
     fd = openat(dir, "original", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
@@ -626,19 +786,21 @@ static int binding_directory(int database, int create)
 }
 
 int holy_apk_bind(const char *root, const char *source, const char *repo,
-                  const char *catalog, const char *accepted)
+                  const char *catalog, const char *accepted,
+                  const char *public_key)
 {
     struct apk_selection selected = {0};
-    char id[65], name[130], temporary[43] = {0};
+    char id[65], source_key[65], name[130], temporary[43] = {0};
+    char checked_key[65], algorithm[16] = {0};
     char *base = NULL, *trust = NULL, *path = NULL, *root_path = NULL, *record = NULL;
+    char *original = NULL, *key_snapshot = NULL;
     unsigned long long generation;
     size_t size = 0, used = 0;
     FILE *stream = NULL;
     int database = -1, dir = -1, fd = -1, result;
     if (!root || !source || !repo || !catalog || (accepted && !hex_digest(accepted))) return 2;
-    result = holy_source_apk_repo(root, source, repo, id, &base, &trust);
+    result = holy_source_apk_repo(root, source, repo, id, &base, &trust, source_key);
     if (result) goto done;
-    if (!strcmp(trust, "require")) { result = 6; goto done; }
     path = realpath(catalog, NULL);
     if (!path) { result = 6; goto done; }
     result = select_package(path, NULL, NULL, NULL, &selected);
@@ -646,8 +808,23 @@ int holy_apk_bind(const char *root, const char *source, const char *repo,
         strcmp(selected.repo, repo) || strcmp(selected.base, base)) {
         result = 6; goto done;
     }
+    if (source_key[0] ? strcmp(selected.key_hash, source_key) ||
+                        !strcmp(selected.verification, "unverified") :
+                        !strcmp(trust, "require")) { result = 6; goto done; }
+    if (source_key[0]) {
+        const char *keyname = public_key ? strrchr(public_key, '/') : NULL;
+        keyname = keyname ? keyname + 1 : public_key;
+        key_snapshot = public_key ? holy_stage_local(public_key, "holy-apk-key") : NULL;
+        if (!key_snapshot || !holy_apk_key_fingerprint(key_snapshot, checked_key) ||
+            strcmp(checked_key, source_key)) { result = 6; goto done; }
+        original = malloc(strlen(path) + 10);
+        if (!original) { result = 1; goto done; }
+        sprintf(original, "%s/original", path);
+        result = verify_index_key(original, key_snapshot, keyname, algorithm);
+        if (result || strcmp(algorithm, selected.verification)) { result = 4; goto done; }
+    } else if (public_key) { result = 2; goto done; }
     if (accepted && strcmp(accepted, selected.index_hash)) { result = 4; goto done; }
-    if (!accepted && strcmp(trust, "ignore")) {
+    if (!accepted && !source_key[0] && strcmp(trust, "ignore")) {
         fprintf(stderr, "holypkg: decision-required unsigned APK index source=%s repo=%s sha256=%s; --accept-unsigned %s confirms binding\n",
                 id, repo, selected.index_hash, selected.index_hash);
         result = 3; goto done;
@@ -657,10 +834,11 @@ int holy_apk_bind(const char *root, const char *source, const char *repo,
     if (!root_path) { result = 6; goto done; }
     stream = open_memstream(&record, &size);
     if (!stream) { result = 1; goto done; }
-    fprintf(stream, "format holy-apk-binding-1\nsource-id %s\nrepo ", id);
+    fprintf(stream, "format holy-apk-binding-2\nsource-id %s\nrepo ", id);
     quote(stream, repo);
-    fprintf(stream, "\nindex-sha256 %s\ncatalog-sha256 %s\n%s ",
-            selected.index_hash, selected.catalog_hash,
+    fprintf(stream, "\nindex-sha256 %s\ncatalog-sha256 %s\nverification %s\npublic-key-sha256 %s\n%s ",
+            selected.index_hash, selected.catalog_hash, selected.verification,
+            selected.key_hash[0] ? selected.key_hash : "-",
             strcmp(root_path, "/") && !strncmp(path, root_path, strlen(root_path)) &&
             path[strlen(root_path)] == '/' ? "root-path" : "path");
     quote(stream, strcmp(root_path, "/") && !strncmp(path, root_path, strlen(root_path)) &&
@@ -698,7 +876,8 @@ done:
         close(dir);
     }
     if (database >= 0) close(database);
-    free(base); free(trust); free(path); free(root_path); free(record);
+    free(base); free(trust); free(path); free(root_path); free(record); free(original);
+    if (key_snapshot) { unlink(key_snapshot); free(key_snapshot); }
     free_selection(&selected);
     return result;
 }
@@ -720,16 +899,18 @@ int holy_apk_catalog_path(const char *root, const char *source, const char *repo
 {
     struct apk_selection selected = {0};
     struct stat st;
-    char id[65], name[130], *base = NULL, *trust = NULL;
+    char id[65], source_key[65], name[130], *base = NULL, *trust = NULL;
     char *saved_id = NULL, *saved_repo = NULL, *index = NULL, *hash = NULL;
+    char *verification = NULL, *saved_key = NULL;
     char *path = NULL, *root_path = NULL, *joined = NULL, *key = NULL;
     unsigned long long generation;
     FILE *file = NULL;
     int database = -1, dir = -1, fd = -1, result, root_relative = 0;
     *catalog = NULL;
-    result = holy_source_apk_repo(root, source, repo, id, &base, &trust);
+    result = holy_source_apk_repo(root, source, repo, id, &base, &trust, source_key);
     if (result) goto done;
-    if (!strcmp(trust, "require") || !binding_name(id, repo, name)) {
+    if ((!source_key[0] && !strcmp(trust, "require")) ||
+        !binding_name(id, repo, name)) {
         result = 6; goto done;
     }
     database = holy_state_lock(root, 0, &generation, &result);
@@ -749,9 +930,12 @@ int holy_apk_catalog_path(const char *root, const char *source, const char *repo
     saved_repo = binding_field(file, "repo");
     index = binding_field(file, "index-sha256");
     hash = binding_field(file, "catalog-sha256");
-    if (!key || strcmp(key, "holy-apk-binding-1") || !saved_id || strcmp(saved_id, id) ||
+    verification = binding_field(file, "verification");
+    saved_key = binding_field(file, "public-key-sha256");
+    if (!key || strcmp(key, "holy-apk-binding-2") || !saved_id || strcmp(saved_id, id) ||
         !saved_repo || strcmp(saved_repo, repo) || !index || !hex_digest(index) ||
-        !hash || !hex_digest(hash)) { result = 6; goto done; }
+        !hash || !hex_digest(hash) || !verification || !saved_key ||
+        (strcmp(saved_key, "-") && !hex_digest(saved_key))) { result = 6; goto done; }
     {
         char *line = NULL, **v = NULL, *error = NULL;
         size_t capacity = 0, n = 0;
@@ -790,7 +974,11 @@ int holy_apk_catalog_path(const char *root, const char *source, const char *repo
     result = select_package(path, NULL, NULL, NULL, &selected);
     if (result || strcmp(selected.source_id, id) ||
         strcmp(selected.repo, repo) || strcmp(selected.base, base) ||
-        strcmp(selected.index_hash, index) || strcmp(selected.catalog_hash, hash)) {
+        strcmp(selected.index_hash, index) || strcmp(selected.catalog_hash, hash) ||
+        strcmp(selected.verification, verification) ||
+        strcmp(selected.key_hash[0] ? selected.key_hash : "-", saved_key) ||
+        (source_key[0] && (strcmp(selected.key_hash, source_key) ||
+                           !strcmp(selected.verification, "unverified")))) {
         result = 6; goto done;
     }
     *catalog = path; path = NULL; result = 0;
@@ -801,7 +989,8 @@ done:
     if (dir >= 0) close(dir);
     if (database >= 0) close(database);
     free(base); free(trust); free(saved_id); free(saved_repo);
-    free(index); free(hash); free(path); free(root_path); free(joined); free(key);
+    free(index); free(hash); free(verification); free(saved_key);
+    free(path); free(root_path); free(joined); free(key);
     free_selection(&selected);
     return result;
 }
@@ -830,7 +1019,7 @@ done:
 
 static int control_identity(FILE *control, const char *name,
                             const char *version, const char *arch,
-                            const char *datahash)
+                            const char *datahash, int require_datahash)
 {
     struct archive *reader = archive_read_new();
     struct archive_entry *entry;
@@ -875,7 +1064,7 @@ static int control_identity(FILE *control, const char *name,
             else if (!strncmp(line, "arch = ", 7)) { value = line + 7; if (fields & 4 || strcmp(value, arch)) goto done; fields |= 4; }
             else if (!strncmp(line, "datahash = ", 11)) { value = line + 11; if (fields & 8 || strcasecmp(value, datahash)) goto done; fields |= 8; }
         }
-        result = (fields & 7) == 7;
+        result = (fields & 7) == 7 && (!require_datahash || (fields & 8));
     }
 done:
     free(bytes);
@@ -893,7 +1082,8 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
     char digests[3][65] = {{0}}, digest[65] = {0}, template[] = "/tmp/holy-apk-fetch-XXXXXX";
     char *url = NULL, *filename = NULL, *downloaded = NULL;
     char *registered_base = NULL, *registered_trust = NULL;
-    char registered_id[65];
+    char *bound_catalog = NULL, *canonical_catalog = NULL;
+    char registered_id[65], registered_key[65];
     int dir = -1, temp = 0, count, result = 1, i;
     size_t length;
     if (!catalog || !name || !version || !arch || !output ||
@@ -906,11 +1096,23 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
         if (!selection.source_id[0]) { result = 2; goto done; }
         result = holy_source_apk_repo(root, source_alias ? source_alias : selection.source,
                                       selection.repo,
-                                      registered_id, &registered_base, &registered_trust);
+                                      registered_id, &registered_base, &registered_trust,
+                                      registered_key);
         if (result) goto done;
         if (strcmp(registered_id, selection.source_id) ||
             strcmp(registered_base, selection.base) ||
-            !strcmp(registered_trust, "require")) { result = 6; goto done; }
+            (registered_key[0] && (strcmp(registered_key, selection.key_hash) ||
+                                   !strcmp(selection.verification, "unverified"))) ||
+            (!registered_key[0] && !strcmp(registered_trust, "require"))) {
+            result = 6; goto done;
+        }
+        result = holy_apk_catalog_path(root,
+                                       source_alias ? source_alias : selection.source,
+                                       selection.repo, &bound_catalog);
+        canonical_catalog = realpath(catalog, NULL);
+        if (result || !canonical_catalog || strcmp(canonical_catalog, bound_catalog)) {
+            result = 6; goto done;
+        }
     }
     if (strncmp(selection.base, "https://", 8)) { result = 6; goto done; }
     length = strlen(name) + strlen(version) + 6;
@@ -931,19 +1133,30 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
         (unsigned long long)st.st_size != selection.size) { result = 4; goto done; }
     count = holy_apk_gzip_parts(downloaded, parts, digests, 4ULL * 1024 * 1024 * 1024);
     if (count < 2 || count > 3 || !check_q1(parts[count - 2], selection.checksum) ||
-        !control_identity(parts[count - 2], name, version, arch, digests[count - 1])) {
+        !control_identity(parts[count - 2], name, version, arch, digests[count - 1],
+                          strcmp(selection.verification, "unverified") != 0)) {
         result = 4; goto done;
     }
     if (root) {
         char refreshed_id[65];
+        char refreshed_key[65];
         char *refreshed_base = NULL, *refreshed_trust = NULL;
+        char *refreshed_catalog = NULL;
         result = holy_source_apk_repo(root, source_alias ? source_alias : selection.source,
                                       selection.repo,
-                                      refreshed_id, &refreshed_base, &refreshed_trust);
+                                      refreshed_id, &refreshed_base, &refreshed_trust,
+                                      refreshed_key);
         if (!result && (strcmp(refreshed_id, registered_id) ||
                         strcmp(refreshed_base, registered_base) ||
-                        strcmp(refreshed_trust, registered_trust))) result = 3;
+                        strcmp(refreshed_trust, registered_trust) ||
+                        strcmp(refreshed_key, registered_key))) result = 3;
         free(refreshed_base); free(refreshed_trust);
+        if (result) goto done;
+        result = holy_apk_catalog_path(root,
+                                       source_alias ? source_alias : selection.source,
+                                       selection.repo, &refreshed_catalog);
+        if (!result && strcmp(refreshed_catalog, canonical_catalog)) result = 3;
+        free(refreshed_catalog);
         if (result) goto done;
     }
     result = 1;
@@ -971,8 +1184,11 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
             quote(receipt, source_alias ? source_alias : selection.source);
         }
     }
-    fprintf(receipt, "\nindex-sha256 %s\ncatalog-sha256 %s\noriginal-sha256 %s\ncontrol-checksum %s\nverification unverified\nstate complete\n",
-            selection.index_hash, selection.catalog_hash, digest, selection.checksum);
+    fprintf(receipt, "\nindex-sha256 %s\ncatalog-sha256 %s\nindex-verification %s\n",
+            selection.index_hash, selection.catalog_hash, selection.verification);
+    if (selection.key_hash[0]) fprintf(receipt, "index-key-sha256 %s\n", selection.key_hash);
+    fprintf(receipt, "original-sha256 %s\ncontrol-checksum %s\nverification unverified\nstate complete\n",
+            digest, selection.checksum);
     {
         int failed = ferror(receipt);
         if (fflush(receipt) || fsync(fileno(receipt))) failed = 1;
@@ -990,18 +1206,21 @@ done:
     if (temp) rmdir(template);
     free(downloaded); free(url); free(filename);
     free(registered_base); free(registered_trust);
+    free(bound_catalog); free(canonical_catalog);
     free_selection(&selection);
     return result;
 }
 
 int holy_apk_sync(const char *root, const char *source, const char *repo,
                   const char *output, const char *sha256,
-                  const char *accept_unsigned, const char *ca_file)
+                  const char *accept_unsigned, const char *ca_file,
+                  const char *public_key)
 {
-    char id[65], current_id[65], digest[65] = {0};
+    char id[65], current_id[65], source_key[65], current_key[65];
+    char supplied_key[65] = {0}, digest[65] = {0}, algorithm[16] = {0};
     char template[] = "/tmp/holy-apk-sync-XXXXXX";
     char *base = NULL, *trust = NULL, *current_base = NULL, *current_trust = NULL;
-    char *url = NULL, *downloaded = NULL;
+    char *url = NULL, *downloaded = NULL, *key_snapshot = NULL;
     struct stat st;
     int temp = 0, result;
     if (!root || !source || !repo || !output || !*output ||
@@ -1009,12 +1228,19 @@ int holy_apk_sync(const char *root, const char *source, const char *repo,
         (accept_unsigned && !hex_digest(accept_unsigned)) ||
         (sha256 && accept_unsigned)) return 2;
     if (lstat(output, &st) == 0 || errno != ENOENT) return 2;
-    result = holy_source_apk_repo(root, source, repo, id, &base, &trust);
+    result = holy_source_apk_repo(root, source, repo, id, &base, &trust, source_key);
     if (result) goto done;
-    if (!strcmp(trust, "require")) {
-        fputs("holypkg: APK publisher signatures are not verified for trust require\n", stderr);
+    if (source_key[0] && public_key)
+        key_snapshot = holy_stage_local(public_key, "holy-apk-key");
+    if ((source_key[0] && (!key_snapshot ||
+                           !holy_apk_key_fingerprint(key_snapshot, supplied_key))) ||
+        (public_key && !source_key[0]) ||
+        (!source_key[0] && !strcmp(trust, "require"))) {
+        fputs("holypkg: APK source needs its configured RSA public key\n", stderr);
         result = 6; goto done;
     }
+    if (source_key[0] && strcmp(source_key, supplied_key)) { result = 4; goto done; }
+    if (source_key[0] && accept_unsigned) { result = 2; goto done; }
     url = holy_fetch_child_url(base, "APKINDEX.tar.gz");
     if (!url || !mkdtemp(template)) { result = 1; goto done; }
     temp = 1;
@@ -1022,21 +1248,33 @@ int holy_apk_sync(const char *root, const char *source, const char *repo,
     if (result) goto done;
     if (sha256 && strcmp(sha256, digest)) { result = 4; goto done; }
     if (accept_unsigned && strcmp(accept_unsigned, digest)) { result = 4; goto done; }
-    if (!sha256 && !accept_unsigned && strcmp(trust, "ignore")) {
+    downloaded = malloc(strlen(template) + 66);
+    if (!downloaded) { result = 1; goto done; }
+    sprintf(downloaded, "%s/%s", template, digest);
+    if (source_key[0]) {
+        const char *keyname = strrchr(public_key, '/');
+        keyname = keyname ? keyname + 1 : public_key;
+        result = verify_index_key(downloaded, key_snapshot, keyname, algorithm);
+        if (result) goto done;
+    }
+    if (!source_key[0] && !sha256 && !accept_unsigned && strcmp(trust, "ignore")) {
         fprintf(stderr, "holypkg: decision-required unsigned APK index source=%s repo=%s sha256=%s; --accept-unsigned %s confirms this generation\n",
                 id, repo, digest, digest);
         result = 3; goto done;
     }
     result = holy_source_apk_repo(root, source, repo, current_id,
-                                  &current_base, &current_trust);
+                                  &current_base, &current_trust, current_key);
     if (result) goto done;
     if (strcmp(id, current_id) || strcmp(base, current_base) ||
-        strcmp(trust, current_trust)) { result = 3; goto done; }
-    downloaded = malloc(strlen(template) + 66);
-    if (!downloaded) { result = 1; goto done; }
-    sprintf(downloaded, "%s/%s", template, digest);
-    result = apk_index_bound(downloaded, source, base, output, id, repo);
-    if (!result) result = holy_apk_bind(root, source, repo, output, digest);
+        strcmp(trust, current_trust) || strcmp(source_key, current_key)) {
+        result = 3; goto done;
+    }
+    result = apk_index_bound(downloaded, source, base, output, id, repo,
+                             source_key[0] ? algorithm : NULL,
+                             source_key[0] ? source_key : NULL);
+    if (!result) result = holy_apk_bind(root, source, repo, output,
+                                        source_key[0] ? NULL : digest,
+                                        source_key[0] ? public_key : NULL);
 done:
     if (result && result != 3)
         fprintf(stderr, "holypkg: APK source sync failed (status %d)\n", result);
@@ -1047,6 +1285,7 @@ done:
         rmdir(template);
     }
     free(downloaded); free(url); free(base); free(trust);
+    if (key_snapshot) { unlink(key_snapshot); free(key_snapshot); }
     free(current_base); free(current_trust);
     return result;
 }

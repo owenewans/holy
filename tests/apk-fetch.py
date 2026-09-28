@@ -49,6 +49,22 @@ with tempfile.TemporaryDirectory() as scratch:
             f"S:{len(package)}\n\n").encode()
     (tmp / "APKINDEX.tar.gz").write_bytes(member([("APKINDEX", rows)]))
     (serve / "APKINDEX.tar.gz").write_bytes((tmp / "APKINDEX.tar.gz").read_bytes())
+    signed_dir = serve / "signed"
+    signed_dir.mkdir()
+    (signed_dir / "fixture-1.2-r0.apk").write_bytes(package)
+    signing_key = tmp / "index.key"
+    signing_pub = tmp / "fixture.rsa.pub"
+    subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt",
+                    "rsa_keygen_bits:2048", "-out", str(signing_key)],
+                   capture_output=True, check=True)
+    subprocess.run(["openssl", "pkey", "-in", str(signing_key), "-pubout",
+                    "-out", str(signing_pub)], capture_output=True, check=True)
+    signature = subprocess.run(["openssl", "dgst", "-sha256", "-sign",
+                                str(signing_key), str(tmp / "APKINDEX.tar.gz")],
+                               capture_output=True, check=True).stdout
+    signed_bytes = member([(".SIGN.RSA256.fixture.rsa.pub", signature)]) + (
+        tmp / "APKINDEX.tar.gz").read_bytes()
+    (signed_dir / "APKINDEX.tar.gz").write_bytes(signed_bytes)
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
                     "-days", "1", "-keyout", str(tmp / "key.pem"), "-out",
                     str(tmp / "cert.pem"), "-subj", "/CN=localhost",
@@ -137,8 +153,11 @@ with tempfile.TemporaryDirectory() as scratch:
         source_id = next(line.split()[1] for line in bound.splitlines()
                          if line.startswith("source-id "))
         assert len(source_id) == 64 and "repo \"main\"" in bound
+        run("apk", "fetch", "fixture", "1.2-r0", "x86_64", "--catalog",
+            tmp / "bound-catalog", "--output", tmp / "unbound-package",
+            "--root", root, "--ca-file", tmp / "cert.pem", status=6)
         bound_fetch = ("apk", "fetch", "fixture", "1.2-r0", "x86_64",
-                       "--catalog", tmp / "bound-catalog", "--output",
+                       "--catalog", root / "pinned-catalog", "--output",
                        tmp / "bound-package", "--root", root, "--ca-file",
                        tmp / "cert.pem")
         run(*bound_fetch)
@@ -156,20 +175,87 @@ with tempfile.TemporaryDirectory() as scratch:
         assert "active-source-name \"renamed\"" in (
             tmp / "renamed-source/selection").read_text()
         config.write_text(f'[source renamed]\ntype apk\nrepo main "{base}"\ntrust require\n')
-        register()
-        rejected_sync = list(sync)
-        rejected_sync[rejected_sync.index("fixture")] = "renamed"
-        rejected_sync[rejected_sync.index("--output") + 1] = tmp / "require-rejected"
-        run(*rejected_sync, "--sha256", index_hash, status=6)
-        assert not (tmp / "require-rejected").exists()
-        run("apk", "search", "fixture", "--source", "renamed", "--repo",
-            "main", "--root", root, status=6)
+        run("source", "plan", "--config", config, "--root", root, status=2)
         config.write_text('[source fixture]\ntype apk\nrepo main "https://localhost:1/"\n')
         register()
         changed_fetch = list(bound_fetch)
         changed_fetch[changed_fetch.index("--output") + 1] = tmp / "changed-source"
         run(*changed_fetch, status=6)
         assert not (tmp / "changed-source").exists()
+
+        signed_root = tmp / "signed-root"
+        signed_root.mkdir()
+        run("db", "init", "--root", signed_root)
+        signed_conf = tmp / "signed.conf"
+        signed_conf.write_text(f'[source signed]\ntype apk\nrepo main "{base}signed/"\n'
+                               f'trust require\npublic-key "{signing_pub}"\n')
+        signed_plan = run("source", "plan", "--config", signed_conf,
+                          "--root", signed_root).stdout
+        (tmp / "signed.plan").write_text(signed_plan)
+        run("source", "apply", tmp / "signed.plan", "--sha256",
+            hashlib.sha256(signed_plan.encode()).hexdigest(), "--root", signed_root)
+        signed_sync = ("apk", "sync", "signed", "main", "--root", signed_root,
+                       "--output", tmp / "signed-catalog", "--ca-file", tmp / "cert.pem")
+        run(*signed_sync, status=6)
+        wrong_key_dir = tmp / "wrong-key"
+        wrong_key_dir.mkdir()
+        subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt",
+                        "rsa_keygen_bits:2048", "-out", str(wrong_key_dir / "private.key")],
+                       capture_output=True, check=True)
+        subprocess.run(["openssl", "pkey", "-in", str(wrong_key_dir / "private.key"),
+                        "-pubout", "-out", str(wrong_key_dir / signing_pub.name)],
+                       capture_output=True, check=True)
+        run(*signed_sync, "--public-key", wrong_key_dir / signing_pub.name, status=4)
+        run(*signed_sync, "--public-key", signing_pub)
+        assert "verification rsa-sha256" in (tmp / "signed-catalog/conversion").read_text()
+        run("apk", "bind", "signed", "main", tmp / "signed-catalog", "--root",
+            signed_root, status=6)
+        run("apk", "bind", "signed", "main", tmp / "signed-catalog", "--root",
+            signed_root, "--public-key", signing_pub)
+        assert run("apk", "search", "fixture", "--source", "signed", "--repo",
+                   "main", "--root", signed_root).stdout == "fixture 1.2-r0 x86_64\n"
+        saved_conversion = (tmp / "signed-catalog/conversion").read_text()
+        (tmp / "signed-catalog/conversion").write_text(
+            saved_conversion.replace("verification rsa-sha256", "verification rsa-sha1"))
+        run("apk", "search", "fixture", "--source", "signed", "--repo",
+            "main", "--root", signed_root, status=6)
+        (tmp / "signed-catalog/conversion").write_text(saved_conversion)
+        run("apk", "fetch", "fixture", "1.2-r0", "x86_64", "--source",
+            "signed", "--repo", "main", "--root", signed_root, "--output",
+            tmp / "signed-package", "--ca-file", tmp / "cert.pem")
+        assert "index-verification rsa-sha256" in (
+            tmp / "signed-package/selection").read_text()
+        changed_index = bytearray(signed_bytes)
+        changed_index[-13] ^= 1
+        (signed_dir / "APKINDEX.tar.gz").write_bytes(changed_index)
+        changed_sync = list(signed_sync)
+        changed_sync[changed_sync.index("--output") + 1] = tmp / "changed-signed-index"
+        run(*changed_sync, "--public-key", signing_pub, status=4)
+        assert not (tmp / "changed-signed-index").exists()
+        (signed_dir / "APKINDEX.tar.gz").write_bytes(signed_bytes)
+        nohash_control = member([(".PKGINFO",
+                                  b"pkgname = fixture\npkgver = 1.2-r0\narch = x86_64\n")])
+        nohash_package = nohash_control + data
+        nohash_checksum = "Q1" + base64.b64encode(
+            hashlib.sha1(nohash_control).digest()).decode()
+        nohash_rows = (f"C:{nohash_checksum}\nP:fixture\nV:1.2-r0\nA:x86_64\n"
+                       f"S:{len(nohash_package)}\n\n").encode()
+        nohash_index = tmp / "nohash-index.gz"
+        nohash_index.write_bytes(member([("APKINDEX", nohash_rows)]))
+        nohash_signature = subprocess.run(
+            ["openssl", "dgst", "-sha256", "-sign", str(signing_key),
+             str(nohash_index)], capture_output=True, check=True).stdout
+        (signed_dir / "APKINDEX.tar.gz").write_bytes(
+            member([(".SIGN.RSA256.fixture.rsa.pub", nohash_signature)]) +
+            nohash_index.read_bytes())
+        (signed_dir / "fixture-1.2-r0.apk").write_bytes(nohash_package)
+        nohash_sync = list(signed_sync)
+        nohash_sync[nohash_sync.index("--output") + 1] = tmp / "nohash-catalog"
+        run(*nohash_sync, "--public-key", signing_pub)
+        run("apk", "fetch", "fixture", "1.2-r0", "x86_64", "--source",
+            "signed", "--repo", "main", "--root", signed_root, "--output",
+            tmp / "nohash-package", "--ca-file", tmp / "cert.pem", status=4)
+        assert not (tmp / "nohash-package").exists()
 
         fetch("bad-hash", status=4, extra=("--sha256", "0" * 64))
         assert not (tmp / "bad-hash").exists()

@@ -56,6 +56,40 @@ with tempfile.TemporaryDirectory() as scratch:
     run("apk", "info", "missing", "--catalog", signed, status=4)
     convert(index("unsigned.tar.gz", rows), "unsigned")
 
+    private_key = tmp / "fixture.key"
+    public_key = tmp / "fixture.rsa.pub"
+    subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt",
+                    "rsa_keygen_bits:2048", "-out", str(private_key)],
+                   capture_output=True, check=True)
+    subprocess.run(["openssl", "pkey", "-in", str(private_key), "-pubout",
+                    "-out", str(public_key)], capture_output=True, check=True)
+    payload = tar([("APKINDEX", rows)])
+    payload_path = tmp / "index-payload.gz"
+    payload_path.write_bytes(payload)
+    signature = subprocess.run(["openssl", "dgst", "-sha256", "-sign",
+                                str(private_key), str(payload_path)],
+                               capture_output=True, check=True).stdout
+    signed_index = tmp / "verified.tar.gz"
+    signed_index.write_bytes(tar([(".SIGN.RSA256.fixture.rsa.pub", signature)]) + payload)
+    assert "verified APKINDEX rsa-sha256" in run("apk", "verify-index",
+                                                  signed_index, "--public-key", public_key)
+    run("apk", "verify-index", tmp / "unsigned.tar.gz", "--public-key",
+        public_key, status=4)
+    changed = bytearray(signed_index.read_bytes())
+    changed[-13] ^= 1
+    (tmp / "changed.tar.gz").write_bytes(changed)
+    run("apk", "verify-index", tmp / "changed.tar.gz", "--public-key",
+        public_key, status=4)
+    wrong_dir = tmp / "wrong"
+    wrong_dir.mkdir()
+    wrong_key = wrong_dir / public_key.name
+    subprocess.run(["openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt",
+                    "rsa_keygen_bits:2048", "-out", str(wrong_dir / "private.key")],
+                   capture_output=True, check=True)
+    subprocess.run(["openssl", "pkey", "-in", str(wrong_dir / "private.key"),
+                    "-pubout", "-out", str(wrong_key)], capture_output=True, check=True)
+    run("apk", "verify-index", signed_index, "--public-key", wrong_key, status=4)
+
     edited = bytearray((signed / "catalog").read_bytes())
     edited[-2] = ord("2")
     (signed / "catalog").write_bytes(edited)
