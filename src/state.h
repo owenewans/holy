@@ -73,6 +73,9 @@ int holy_state_probe_source_bindings(const char *const *digests, size_t count,
                                     size_t privileged_count);
 int holy_state_finish_set(const char *root_path);
 int holy_state_continue_set(const char *root_path);
+/* reviewed postinstall hook configuration; a running journal needs explicit retry. */
+int holy_state_configure(const char *digest, const char *approved,
+                         const char *root_path, int retry);
 
 /* missing-only repair; NULL digest resumes a recorded repair. */
 int holy_state_repair(const char *digest, const char *approved, const char *root_path);

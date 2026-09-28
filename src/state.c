@@ -33,6 +33,7 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #ifndef O_PATH
@@ -57,6 +58,8 @@ static int loader_directories(const struct holy_elf_info *elf, const char *consu
 static void free_loader_directories(char **directories, size_t count);
 static int loader_file_match(const char *directory, const char *path,
                              const char *name);
+static int write_all(int fd, const void *data, size_t length);
+static int set_generation(int dir, unsigned long long generation);
 
 static int native_architecture(const char *host, const char *target)
 {
@@ -399,7 +402,7 @@ static int installed_valid(int dir)
         }
         if (ok && (fstatat(item, "hooks", &(struct stat){0}, AT_SYMLINK_NOFOLLOW) == 0 ||
                    fstatat(item, "hooks-state", &(struct stat){0}, AT_SYMLINK_NOFOLLOW) == 0)) {
-            char expected[96], actual[96], digest[65];
+            char expected[96], completed[96], actual[96], digest[65];
             struct stat hooks_stat, state_stat;
             int fd;
             if (fstatat(item, "hooks", &hooks_stat, AT_SYMLINK_NOFOLLOW) ||
@@ -411,12 +414,21 @@ static int installed_valid(int dir)
                 if (!instance_record_digest(item, "hooks", digest)) ok = 0;
                 if (ok) {
                     int length = snprintf(expected, sizeof expected, "skipped sha256 %s\n", digest);
+                    int completed_length = snprintf(completed, sizeof completed,
+                                                    "completed sha256 %s\n", digest);
+                    ssize_t got;
                     fd = openat(item, "hooks-state", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
                     if (fd < 0 || fstat(fd, &state_stat) || !S_ISREG(state_stat.st_mode) ||
                         (state_stat.st_mode & 0022) ||
                         (state_stat.st_uid != 0 && state_stat.st_uid != geteuid()) ||
-                        state_stat.st_size != length || read(fd, actual, (size_t)length) != length ||
-                        memcmp(actual, expected, (size_t)length)) ok = 0;
+                        length >= (int)sizeof expected ||
+                        completed_length >= (int)sizeof completed) ok = 0;
+                    else {
+                        got = read(fd, actual, sizeof actual);
+                        if ((got != length || memcmp(actual, expected, (size_t)length)) &&
+                            (got != completed_length ||
+                             memcmp(actual, completed, (size_t)completed_length))) ok = 0;
+                    }
                     if (fd >= 0) close(fd);
                 }
             }
@@ -436,6 +448,17 @@ static int installed_valid(int dir)
     close(installed);
     if (!ok) fprintf(stderr, "holypkg: invalid installed entries\n");
     return ok;
+}
+
+static int hook_skipped(int item)
+{
+    char prefix[8];
+    int fd = openat(item, "hooks-state", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    ssize_t got;
+    if (fd < 0) return 0;
+    got = read(fd, prefix, sizeof prefix);
+    close(fd);
+    return got == (ssize_t)sizeof prefix && !memcmp(prefix, "skipped ", sizeof prefix);
 }
 
 static int journal_exists(int dir)
@@ -504,6 +527,16 @@ done:
 
 static int transaction_pending(int dir, unsigned long long generation)
 {
+    int transactions = child_dir(dir, "transactions", 0);
+    struct stat hook;
+    int hook_pending;
+    if (transactions < 0) return -1;
+    hook_pending = !fstatat(transactions, "hook-journal", &hook, AT_SYMLINK_NOFOLLOW);
+    if (!hook_pending && errno != ENOENT) hook_pending = -1;
+    if (hook_pending > 0 && (!S_ISREG(hook.st_mode) || (hook.st_mode & 0022) ||
+        (hook.st_uid != 0 && hook.st_uid != geteuid()))) hook_pending = -1;
+    close(transactions);
+    if (hook_pending) return hook_pending;
     int result = update_pending(dir);
     if (result) return result;
     result = set_journal_present(dir);
@@ -1150,6 +1183,393 @@ done:
     if (installed >= 0) close(installed);
     if (database >= 0) close(database);
     if (result) digest[0] = 0;
+    return result;
+}
+
+struct hook_step {
+    char *interpreter;
+    char *path;
+    char *body;
+    size_t length;
+};
+
+struct hook_plan {
+    struct hook_step steps[64];
+    size_t count;
+    char hash[65];
+};
+
+static void free_hook_plan(struct hook_plan *plan)
+{
+    size_t i;
+    for (i = 0; i < plan->count; ++i) {
+        free(plan->steps[i].interpreter);
+        free(plan->steps[i].path);
+        free(plan->steps[i].body);
+    }
+}
+
+static int hook_body(int root, int files, const char *path, const char *expected,
+                     char **body, size_t *length)
+{
+    struct open_how how = {0};
+    struct stat st;
+    unsigned char digest[32];
+    unsigned int n;
+    char actual[65];
+    int fd = -1, ok = 0;
+    size_t used = 0, i;
+    if (!valid_owner_path(path) || holy_install_manifest_owns(files, path) != 1 ||
+        holy_install_check_path(files, root, path) != 1) return 0;
+    how.flags = O_RDONLY | O_CLOEXEC;
+    how.resolve = RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS | RESOLVE_NO_SYMLINKS;
+    fd = (int)syscall(SYS_openat2, root, path, &how, sizeof how);
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+        st.st_size > 1024 * 1024) goto done;
+    *body = malloc((size_t)st.st_size + 1);
+    if (!*body) goto done;
+    while (used < (size_t)st.st_size) {
+        ssize_t got = read(fd, *body + used, (size_t)st.st_size - used);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) goto done;
+        used += (size_t)got;
+    }
+    for (i = 0; i < used; ++i)
+        if (((unsigned char)(*body)[i] < 32 && (*body)[i] != '\n' && (*body)[i] != '\t') ||
+            (unsigned char)(*body)[i] == 127) goto done;
+    (*body)[used] = 0;
+    if (EVP_Digest(*body, used, digest, &n, EVP_sha256(), NULL) != 1 || n != 32) goto done;
+    for (i = 0; i < 32; ++i) snprintf(actual + i * 2, 3, "%02x", digest[i]);
+    if (strcmp(actual, expected)) goto done;
+    *length = used;
+    ok = 1;
+done:
+    if (!ok) { free(*body); *body = NULL; }
+    if (fd >= 0) close(fd);
+    return ok;
+}
+
+static int hook_interpreter_digest(int root, const char *path, char output[65])
+{
+    struct open_how how = {0};
+    struct stat st;
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    unsigned char buffer[8192], digest[32];
+    unsigned int size;
+    ssize_t got;
+    int fd, ok = 0;
+    size_t i;
+    if (!ctx) return 0;
+    how.flags = O_RDONLY | O_CLOEXEC;
+    how.resolve = RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS;
+    fd = (int)syscall(SYS_openat2, root, path, &how, sizeof how);
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) || !(st.st_mode & 0111) ||
+        EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1) goto done;
+    for (;;) {
+        got = read(fd, buffer, sizeof buffer);
+        if (got < 0 && errno == EINTR) continue;
+        if (got < 0) goto done;
+        if (!got) break;
+        if (EVP_DigestUpdate(ctx, buffer, (size_t)got) != 1) goto done;
+    }
+    if (EVP_DigestFinal_ex(ctx, digest, &size) != 1 || size != 32) goto done;
+    for (i = 0; i < 32; ++i) snprintf(output + i * 2, 3, "%02x", digest[i]);
+    ok = 1;
+done:
+    if (fd >= 0) close(fd);
+    EVP_MD_CTX_free(ctx);
+    return ok;
+}
+
+static int prepare_hook_plan(int root, int item, const char *artifact,
+                             unsigned long long generation, struct hook_plan *plan)
+{
+    char *hooks = update_record(item, "hooks"), *cursor;
+    char number[32], device[96];
+    struct stat st;
+    EVP_MD_CTX *hash = EVP_MD_CTX_new();
+    unsigned char bytes[32];
+    unsigned int n;
+    int files = -1, ok = 0;
+    size_t i, line = 0;
+    if (!hooks || !*hooks || !hash || fstat(root, &st)) goto done;
+    files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (files < 0) goto done;
+    snprintf(device, sizeof device, "%ju:%ju", (uintmax_t)st.st_dev, (uintmax_t)st.st_ino);
+    snprintf(number, sizeof number, "%llu", generation);
+    if (EVP_DigestInit_ex(hash, EVP_sha256(), NULL) != 1 ||
+        !hash_text(hash, "holy-hook-plan-1") || !hash_text(hash, device) ||
+        !hash_text(hash, number) || !hash_text(hash, artifact) || !hash_text(hash, hooks)) goto done;
+    for (cursor = hooks; *cursor; ) {
+        char *end = strchr(cursor, '\n'), **v = NULL, *error = NULL;
+        char interpreter_hash[65];
+        size_t count = 0;
+        struct hook_step *step;
+        if (!end || plan->count >= 64 ||
+            !holy_lex(cursor, (size_t)(end - cursor), &v, &count,
+                      "installed/hooks", ++line, &error)) {
+            free(error); holy_tokens_free(v, count); goto done;
+        }
+        if (!count) { holy_tokens_free(v, count); cursor = end + 1; continue; }
+        if (count != 6 || strcmp(v[0], "hook") || strcmp(v[1], "postinstall") ||
+            v[2][0] != '/' || !valid_owner_path(v[2] + 1) ||
+            !valid_owner_path(v[3]) || strcmp(v[4], "sha256") ||
+            !valid_digest(v[5])) {
+            holy_tokens_free(v, count); goto done;
+        }
+        step = &plan->steps[plan->count];
+        step->interpreter = strdup(v[2]);
+        step->path = strdup(v[3]);
+        if (!step->interpreter || !step->path ||
+            !hook_interpreter_digest(root, step->interpreter, interpreter_hash) ||
+            !hook_body(root, files, step->path, v[5], &step->body, &step->length) ||
+            !hash_text(hash, v[2]) || !hash_text(hash, v[3]) ||
+            !hash_text(hash, v[5]) || !hash_text(hash, interpreter_hash) ||
+            !hash_text(hash, step->body)) {
+            free(step->interpreter); free(step->path); free(step->body);
+            memset(step, 0, sizeof *step);
+            holy_tokens_free(v, count); goto done;
+        }
+        ++plan->count;
+        holy_tokens_free(v, count);
+        cursor = end + 1;
+    }
+    if (!plan->count || EVP_DigestFinal_ex(hash, bytes, &n) != 1 || n != 32) goto done;
+    for (i = 0; i < 32; ++i) snprintf(plan->hash + i * 2, 3, "%02x", bytes[i]);
+    ok = 1;
+done:
+    if (files >= 0) close(files);
+    EVP_MD_CTX_free(hash);
+    free(hooks);
+    return ok;
+}
+
+static int hook_journal_write(int transactions, unsigned long long generation,
+                              const char *artifact, const char *plan,
+                              const char *stage, size_t next)
+{
+    char record[320], temporary[43] = {0};
+    int fd, ok = 0;
+    int length = snprintf(record, sizeof record,
+        "format holy-hook-journal-1\ngeneration %llu\nartifact %s\nplan %s\nstage %s\nnext %zu\n",
+        generation, artifact, plan, stage, next);
+    if (length < 0 || length >= (int)sizeof record) return 0;
+    fd = holy_temporary_at(transactions, temporary);
+    if (fd < 0) return 0;
+    if (write_all(fd, record, (size_t)length) && !fsync(fd) && !close(fd)) {
+        fd = -1;
+        if (!renameat(transactions, temporary, transactions, "hook-journal") &&
+            !fsync(transactions)) ok = 1;
+    }
+    if (fd >= 0) close(fd);
+    if (!ok) unlinkat(transactions, temporary, 0);
+    return ok;
+}
+
+static int hook_journal_read(int transactions, unsigned long long *generation,
+                             char artifact[65], char plan[65],
+                             char stage[8], size_t *next)
+{
+    char *record = update_record(transactions, "hook-journal"), canonical[320];
+    unsigned long long saved;
+    unsigned long index;
+    char digest[65], checksum[65], phase[8], extra;
+    int n, result = 0;
+    if (!record || strlen(record) > 319 ||
+        sscanf(record, "format holy-hook-journal-1\ngeneration %llu\nartifact %64[0-9a-f]\nplan %64[0-9a-f]\nstage %7[a-z]\nnext %lu\n%c",
+               &saved, digest, checksum, phase, &index, &extra) != 5 ||
+        !valid_digest(digest) || !valid_digest(checksum) ||
+        (strcmp(phase, "ready") && strcmp(phase, "running"))) goto done;
+    n = snprintf(canonical, sizeof canonical,
+        "format holy-hook-journal-1\ngeneration %llu\nartifact %s\nplan %s\nstage %s\nnext %lu\n",
+        saved, digest, checksum, phase, index);
+    if (n < 0 || n >= (int)sizeof canonical || strcmp(record, canonical)) goto done;
+    *generation = saved; *next = (size_t)index;
+    strcpy(artifact, digest); strcpy(plan, checksum); strcpy(stage, phase);
+    result = 1;
+done:
+    free(record);
+    return result;
+}
+
+static int hook_journal_clean_temps(int transactions)
+{
+    DIR *list = directory_stream(transactions);
+    struct dirent *entry;
+    int ok = 1;
+    if (!list) return 0;
+    errno = 0;
+    while ((entry = readdir(list))) {
+        struct stat st;
+        if (!temporary_name(entry->d_name)) { errno = 0; continue; }
+        if (fstatat(transactions, entry->d_name, &st, AT_SYMLINK_NOFOLLOW) ||
+            !S_ISREG(st.st_mode) || (st.st_mode & 0022) ||
+            (st.st_uid != 0 && st.st_uid != geteuid()) ||
+            unlinkat(transactions, entry->d_name, 0)) { ok = 0; break; }
+        errno = 0;
+    }
+    if (!entry && errno) ok = 0;
+    closedir(list);
+    return ok && !fsync(transactions);
+}
+
+static int run_hook_step(int root, const struct hook_step *step, int *exit_status)
+{
+    pid_t child;
+    int status;
+    char *script = malloc(strlen(step->path) + 2);
+    *exit_status = -1;
+    if (!script) return 0;
+    script[0] = '/';
+    strcpy(script + 1, step->path);
+    child = fork();
+    if (child < 0) { free(script); return 0; }
+    if (!child) {
+        char *const argv[] = {step->interpreter, script, NULL};
+        char *const env[] = {"PATH=/usr/bin:/bin", "HOME=/", "LANG=C", NULL};
+        if (fchdir(root) || chroot(".") || chdir("/")) _exit(127);
+        execve(step->interpreter, argv, env);
+        _exit(127);
+    }
+    free(script);
+    while (waitpid(child, &status, 0) < 0) if (errno != EINTR) return 0;
+    if (WIFEXITED(status)) *exit_status = WEXITSTATUS(status);
+    else if (WIFSIGNALED(status)) *exit_status = 128 + WTERMSIG(status);
+    return *exit_status == 0;
+}
+
+static int complete_hooks(int item, int transactions, int dir,
+                          unsigned long long generation)
+{
+    char hooks_hash[65], completed[96], existing[96];
+    struct stat st;
+    int fd, n;
+    if (!instance_record_digest(item, "hooks", hooks_hash)) return 0;
+    n = snprintf(completed, sizeof completed, "completed sha256 %s\n", hooks_hash);
+    if (n < 0 || n >= (int)sizeof completed) return 0;
+    fd = openat(transactions, "hook-state-new", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd >= 0) {
+        int written = write_all(fd, completed, (size_t)n) && !fsync(fd);
+        if (close(fd)) written = 0;
+        if (!written || fsync(transactions)) return 0;
+    } else if (errno == EEXIST) {
+        fd = openat(transactions, "hook-state-new", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+            st.st_size != n || (st.st_mode & 0022) ||
+            (st.st_uid != 0 && st.st_uid != geteuid()) ||
+            read(fd, existing, (size_t)n) != n || memcmp(existing, completed, (size_t)n)) {
+            if (fd >= 0) close(fd);
+            return 0;
+        }
+        close(fd);
+    } else return 0;
+    if (renameat(transactions, "hook-state-new", item, "hooks-state") ||
+        fsync(transactions) || fsync(item)) return 0;
+    if (!set_generation(dir, generation + 1) ||
+        unlinkat(transactions, "hook-journal", 0) || fsync(transactions)) return 0;
+    return 1;
+}
+
+int holy_state_configure(const char *digest, const char *approved,
+                         const char *root_path, int retry)
+{
+    struct hook_plan plan = {0};
+    unsigned long long generation = 0, saved_generation = 0;
+    char saved_artifact[65], saved_plan[65], stage[8];
+    int root = -1, dir = -1, installed = -1, item = -1, transactions = -1;
+    int result = 1;
+    size_t i, next = 0;
+    if (!valid_digest(digest) || (approved && !valid_digest(approved))) return 2;
+    root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0) goto done;
+    if (!retry) {
+        dir = holy_state_lock(root_path, approved != NULL, &generation, &result);
+        if (dir < 0) goto done;
+    } else {
+        dir = state_dir_at(root, 0);
+        if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+            !read_generation(dir, &generation) || !installed_valid(dir)) goto done;
+    }
+    result = 1;
+    installed = child_dir(dir, "installed", 0);
+    transactions = child_dir(dir, "transactions", 0);
+    item = installed < 0 ? -1 : child_dir(installed, digest, 0);
+    if (transactions < 0 || item < 0) { result = 6; goto done; }
+    if (retry) {
+        if (!hook_journal_read(transactions, &saved_generation, saved_artifact,
+                               saved_plan, stage, &next) ||
+            (saved_generation != generation && saved_generation + 1 != generation) ||
+            strcmp(saved_artifact, digest)) {
+            result = 5; goto done;
+        }
+        if (!hook_journal_clean_temps(transactions)) { result = 5; goto done; }
+        if (saved_generation + 1 == generation) {
+            char *record = update_record(item, "hooks-state");
+            int completed = record && !strncmp(record, "completed sha256 ", 17) &&
+                !strcmp(stage, "ready");
+            free(record);
+            if (!completed || unlinkat(transactions, "hook-journal", 0) || fsync(transactions)) {
+                result = 5; goto done;
+            }
+            printf("configured %s generation %llu recovered\n", digest, generation);
+            result = 0; goto done;
+        }
+    } else if (!hook_skipped(item)) { result = 6; goto done; }
+    result = 6;
+    if (!prepare_hook_plan(root, item, digest, generation, &plan)) goto done;
+    if (retry) {
+        if (strcmp(saved_plan, plan.hash) || next > plan.count) { result = 5; goto done; }
+    } else if (!approved) {
+        printf("configure-plan generation %llu artifact %s hooks %zu sha256 %s read-only\n",
+               generation, digest, plan.count, plan.hash);
+        for (i = 0; i < plan.count; ++i) {
+            printf("hook %zu postinstall interpreter %s script /%s uid 0 root %s\n",
+                   i, plan.steps[i].interpreter, plan.steps[i].path, root_path);
+            fwrite(plan.steps[i].body, 1, plan.steps[i].length, stdout);
+            if (!plan.steps[i].length || plan.steps[i].body[plan.steps[i].length - 1] != '\n') putchar('\n');
+        }
+        result = ferror(stdout) ? 1 : 0;
+        goto done;
+    } else if (strcmp(approved, plan.hash)) { result = 3; goto done; }
+    if (geteuid() != 0) { result = 6; goto done; }
+    if (!retry) {
+        if (!hook_journal_write(transactions, generation, digest, plan.hash, "ready", 0)) {
+            result = 1; goto done;
+        }
+    } else if (!strcmp(stage, "running")) {
+        fprintf(stderr, "holypkg: retrying hook %zu after unknown result by explicit request\n", next);
+    }
+    result = 5;
+    for (i = next; i < plan.count; ++i) {
+        int succeeded, exit_status;
+        if (!hook_journal_write(transactions, generation, digest, plan.hash, "running", i)) goto done;
+        if (flock(dir, LOCK_UN)) goto done;
+        succeeded = run_hook_step(root, &plan.steps[i], &exit_status);
+        if (flock(dir, LOCK_EX)) goto done;
+        {
+            unsigned long long current;
+            if (!read_generation(dir, &current) || current != generation ||
+                !installed_valid(dir)) goto done;
+        }
+        if (!succeeded) {
+            fprintf(stderr, "holypkg: hook %zu exit=%d, external effects unknown; explicit retry required\n",
+                    i, exit_status);
+            goto done;
+        }
+        if (!hook_journal_write(transactions, generation, digest, plan.hash, "ready", i + 1)) goto done;
+    }
+    if (!complete_hooks(item, transactions, dir, generation)) goto done;
+    printf("configured %s generation %llu hooks %zu\n", digest, generation + 1, plan.count);
+    result = 0;
+done:
+    if (result && result != 3 && result != 6 && result != 5)
+        fprintf(stderr, "holypkg: hook configuration failed (status %d)\n", result);
+    free_hook_plan(&plan);
+    if (item >= 0) close(item);
+    if (transactions >= 0) close(transactions);
+    if (installed >= 0) close(installed);
+    if (dir >= 0) close(dir);
+    if (root >= 0) close(root);
     return result;
 }
 
@@ -2072,7 +2492,7 @@ static int check_all(int installed, int root, unsigned long long generation, int
             if (files >= 0) close(files);
             close(item); goto done;
         }
-        skipped = !fstatat(item, "hooks-state", &(struct stat){0}, AT_SYMLINK_NOFOLLOW);
+        skipped = hook_skipped(item);
         if (skipped && !collect_finding(&records[count], "HOLY/hooks", "skipped-hook", NULL)) {
             close(files); close(item); goto done;
         }
@@ -2166,7 +2586,7 @@ int holy_state_check(const char *digest, const char *root_path, int json)
     item = child_dir(installed, digest, 0);
     if (item < 0) { result = 6; goto done; }
     if (!instance_architecture(item, record.architecture)) goto done;
-    if (!fstatat(item, "hooks-state", &(struct stat){0}, AT_SYMLINK_NOFOLLOW) &&
+    if (hook_skipped(item) &&
         !collect_finding(&record, "HOLY/hooks", "skipped-hook", NULL)) goto done;
     files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (files < 0) goto done;

@@ -214,6 +214,12 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db recover --finish-set|--continue-set --root DIRECTORY
 .br
+.B holypkg db configure-plan SHA256 --root DIRECTORY
+.br
+.B holypkg db configure-apply PLAN_SHA256 SHA256 --root DIRECTORY
+.br
+.B holypkg db configure-recover SHA256 --retry --root DIRECTORY
+.br
 .B holypkg db repair-plan SHA256 --root DIRECTORY
 .br
 .B holypkg db plan-update OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY
@@ -969,6 +975,28 @@ prints the hook records for review. The skip decision enters the plan digest and
 set journal; apply requires the same flag. Installed state retains the hooks,
 transform and a hash-bound hooks-state record. check reports skipped-hook with
 status 4. An unrelated artifact cannot consume this decision.
+.PP
+db configure-plan reviews native postinstall records with the syntax
+.B hook postinstall INTERPRETER RELATIVE_SCRIPT_PATH sha256 DIGEST
+in HOLY/hooks. The interpreter is an absolute target-root path. The script
+is a regular file owned by the installed package and its digest must match.
+The command shows each script body, interpreter, root and UID, then prints a
+plan hash without running code. The hash also binds the interpreter file bytes.
+Foreign-script records and other phases remain
+unsupported by this command. db configure-apply requires that hash and root
+privileges; it runs each reviewed script through its interpreter inside a chroot
+of the selected root with PATH=/usr/bin:/bin, HOME=/ and LANG=C. Hooks may
+change files outside their package manifest.
+The manager does not claim isolation from arbitrary root code.
+.PP
+Before each hook, configure-apply synchronizes a running record in
+transactions/hook-journal. A successful hook advances the record. A failed
+hook or crash leaves status 5 and requires db configure-recover --retry before
+that hook runs again. The user must inspect external effects before retrying.
+After all hooks succeed, hooks-state becomes completed and the database
+generation advances. A pending hook journal blocks other package operations.
+The current command handles native postinstall hooks after installation;
+preinstall, editing, service consent and automatic configure during add remain open.
 .PP
 Repeated --accept-privileged SHA256 confirms installation of regular executable
 files with setuid in that exact selected artifact. Without it, plan-set returns

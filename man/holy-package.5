@@ -109,8 +109,11 @@ A requirement of kind foreign preserves an unsupported source expression. The
 current solver reports unsupported semantics instead of dropping that requirement.
 Foreign hooks may be skipped by an explicit artifact-scoped --skip-hooks decision
 during set installation. The installed package then carries hooks-state with the
-hash of HOLY/hooks and reports installed-unconfigured in check. Hook execution,
-editing and service consent remain unimplemented. HOLY/transform records
+hash of HOLY/hooks and reports installed-unconfigured in check. Native
+postinstall records can be reviewed and executed through db configure-plan and
+db configure-apply. A completed hooks-state retains the same hash. Foreign
+script execution, preinstall, editing and service consent remain unimplemented.
+HOLY/transform records
 changes already applied to the normalized payload; installation never executes
 that record. Archive verification does not authorize hook execution.
 .SH INSTALLED GRAPH

@@ -381,7 +381,14 @@
   set installation. Print hook records before the decision, bind the skip to
   plan and journal, retain hooks/transform in installed state, report
   skipped-hook as installed-unconfigured, and cover add/check/remove fixtures.
-  Executing or editing hooks and recovering interrupted external effects remain open.
+  Native postinstall execution is covered below. Editing hooks and handling
+  foreign phases or unknown external effects without explicit retry remain open.
+- [x] Review and run native postinstall scripts from installed packages in the
+  target root with an interpreter named by the hook record. A separate plan
+  binds root, generation, artifact and script bytes; a persisted journal
+  records running/ready stages. An unknown result needs an explicit retry,
+  and a user-namespace fixture covers failure, recovery and success. Foreign
+  scripts, preinstall and automatic execution during add remain open.
 - [x] Prepare regular-file and relative-symlink replacements beside their target,
   verify bytes and metadata before publication, and retry individual add/replace/
   remove transitions after interruption. Reject drift and preserve complete old

@@ -450,7 +450,7 @@ SEE ALSO
      holy-image(7), holypkg(8)
 
 Holy				 September 2026			    HOLY-INIT(8)
-holy-package.5 source=holy version=development sha256=7dd6cfc93ef24f893367c81e9d065eb0c05783c0e0bba2fd0b2871eb962d8add
+holy-package.5 source=holy version=development sha256=1bed55a4d4681c8b487b8ee553d6352ff068f108712a9118dcc5310b7b85fe40
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -565,10 +565,12 @@ FOREIGN IMPORT RECORDS
      requirement.  Foreign hooks may be skipped by an  explicit	 artifact-scoped
      --skip-hooks  decision  during set installation. The installed package then
      carries hooks-state with the hash of HOLY/hooks and  reports  installed-un-
-     configured	 in  check.  Hook  execution, editing and service consent remain
-     unimplemented. HOLY/transform records changes already applied to  the  nor-
-     malized payload; installation never executes that record. Archive verifica-
-     tion does not authorize hook execution.
+     configured	 in  check.  Native postinstall records can be reviewed and exe-
+     cuted through db configure-plan and db configure-apply. A completed  hooks-
+     state  retains the same hash. Foreign script execution, preinstall, editing
+     and service consent remain unimplemented.	HOLY/transform	records	 changes
+     already applied to the normalized payload; installation never executes that
+     record. Archive verification does not authorize hook execution.
 
 INSTALLED GRAPH
      New  local installations use holy-instance-4 state, or holy-instance-5 when
@@ -1096,7 +1098,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=b777ce8e1172d20de090dff9453c360044d8c7c6c86284379da58fea507efbc7
+holypkg.8 source=holy version=development sha256=934c4045c0511270a66f7f5e6961c68b60dd8b5f0c8dc93313a175ff998b0ad2
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1289,6 +1291,9 @@ SYNOPSIS
      SHA256 ...] [--accept-privileged  SHA256  ...]  [--skip-hooks  SHA256  ...]
      --root DIRECTORY
      holypkg db recover --finish-set|--continue-set --root DIRECTORY
+     holypkg db configure-plan SHA256 --root DIRECTORY
+     holypkg db configure-apply PLAN_SHA256 SHA256 --root DIRECTORY
+     holypkg db configure-recover SHA256 --retry --root DIRECTORY
      holypkg db repair-plan SHA256 --root DIRECTORY
      holypkg  db  plan-update  OLD_SHA256  NEW_SHA256 [--accept-arch NEW_SHA256]
      [--accept-privileged NEW_SHA256] --root DIRECTORY
@@ -2045,6 +2050,29 @@ DESCRIPTION
      state retains the hooks, transform and  a	hash-bound  hooks-state	 record.
      check reports skipped-hook with status 4. An unrelated artifact cannot con-
      sume this decision.
+
+     db	 configure-plan	 reviews native postinstall records with the syntax hook
+     postinstall INTERPRETER RELATIVE_SCRIPT_PATH sha256 DIGEST	 in  HOLY/hooks.
+     The  interpreter  is  an absolute target-root path. The script is a regular
+     file owned by the installed package and its digest must match.  The command
+     shows each script body, interpreter, root and UID, then prints a plan  hash
+     without running code. The hash also binds the interpreter file bytes.  For-
+     eign-script records and other phases remain unsupported by this command. db
+     configure-apply  requires	that  hash and root privileges; it runs each re-
+     viewed script through its interpreter inside a chroot of the selected  root
+     with  PATH=/usr/bin:/bin, HOME=/ and LANG=C. Hooks may change files outside
+     their package manifest.  The manager does not claim  isolation  from  arbi-
+     trary root code.
+
+     Before each hook, configure-apply synchronizes a running record in transac-
+     tions/hook-journal. A successful hook advances the record. A failed hook or
+     crash leaves status 5 and requires db configure-recover --retry before that
+     hook  runs	 again.	 The user must inspect external effects before retrying.
+     After all hooks succeed, hooks-state becomes  completed  and  the	database
+     generation	 advances.  A  pending	hook journal blocks other package opera-
+     tions.  The current command handles native postinstall hooks after	 instal-
+     lation; preinstall, editing, service consent and automatic configure during
+     add remain open.
 
      Repeated  --accept-privileged  SHA256 confirms installation of regular exe-
      cutable files with setuid in that	exact  selected	 artifact.  Without  it,

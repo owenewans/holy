@@ -276,6 +276,7 @@ grep -qx 'hello' "$tmp/hooks-root/usr/bin/hello"
 grep -qx "skipped sha256 $(sha256sum "$tmp/payload/HOLY/hooks" | cut -d ' ' -f 1)" "$tmp/hooks-root/var/lib/holypkg/installed/$hooks/hooks-state"
 if "$bin" db check "$hooks" --root "$tmp/hooks-root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 grep -qx "skipped-hook $hooks installed-unconfigured" "$tmp/out"
+if "$bin" db configure-plan "$hooks" --root "$tmp/hooks-root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 if "$bin" db check "$hooks" --root "$tmp/hooks-root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 grep -Fq '"code":"skipped-hook","severity":"warning"' "$tmp/out"
 cp "$tmp/hooks-root/var/lib/holypkg/installed/$hooks/hooks-state" "$tmp/hooks-state-saved"
