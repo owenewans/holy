@@ -416,27 +416,3 @@
   install/removal and recovery after removing either or both dynamic libc runtimes.
 - [ ] Run compiler/SDK, language, GUI, graphics, gaming, workstation and foreign
   source cases with pinned artifacts, logs, elapsed time and explicit coverage.
-
-## README audit
-
-Public repositories returned by the paginated GitHub API on 2026-09-28.
-Private or unavailable repositories were not readable. Holy keeps the common
-centered intro and short build entry; command details live in man pages.
-
-| Repository | Commit | README style |
-| --- | --- | --- |
-| holy | 1267a2677cf0 | Centered logo, build entry |
-| holypkg | fa952bff0918 | Centered title, features, build, usage, trust |
-| owenboring | 32cdd32a1156 | Centered title, features, install, usage |
-| owenboringssl | 29c391474155 | Centered title, features, install, usage |
-| owenclave | a7f130bed646 | Centered title, features, install, configuration |
-| owencode | 7aed704abb57 | Centered title, features, install, configuration |
-| owendots | e2370340dee4 | Centered title, features, USB install, build |
-| owenewans | d9a1ec2b30da | Centered profile |
-| owenlivekit | 1e529614874f | Centered title, features, install, usage |
-| owenslackinstall | 851e11eedfec | Centered title, features, install, usage |
-| owensurf | f5b8dfbd7d67 | Centered title, features, install, usage |
-| snolc | d71069837c12 | Centered title, install, components |
-| snolc-modules | bdc701687ac4 | Centered title, modules, build |
-| snolcng | 1b62a48370c3 | Centered title, build, profiles |
-| snolpkg | 7298b8badee8 | Centered title, build, setup, trust |
