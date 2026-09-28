@@ -4,6 +4,7 @@
 #include "apt.h"
 #include "../src/fetch.h"
 #include "../src/stage.h"
+#include "../src/source.h"
 
 #include <curl/curl.h>
 #include <openssl/evp.h>
@@ -88,6 +89,11 @@ done:
     EVP_MD_CTX_free(ctx);
     if (fd >= 0) close(fd);
     return ok;
+}
+
+int holy_apt_key_fingerprint(const char *keyring, char hash[65])
+{
+    return keyring && hash && hash_file(keyring, hash, NULL, 1024 * 1024);
 }
 
 static int copy_file(const char *source, const char *target, off_t limit)
@@ -245,10 +251,12 @@ done:
     return result;
 }
 
-int holy_apt_release_sync(const char *base, const char *suite,
-                          const char *component, const char *arch,
-                          const char *source, const char *keyring,
-                          const char *output, const char *ca_file)
+static int sync_release(const char *base, const char *suite,
+                        const char *component, const char *arch,
+                        const char *source, const char *keyring,
+                        const char *output, const char *ca_file,
+                        const char *root, const char *source_id,
+                        const char *source_key, const char *source_trust)
 {
     char *staging = NULL, *catalog = NULL, *key_copy = NULL;
     char *dists = NULL, *suite_url = NULL, *component_url = NULL, *arch_url = NULL;
@@ -297,6 +305,7 @@ int holy_apt_release_sync(const char *base, const char *suite,
     key_copy = holy_stage_local(keyring, "holy-apt-key");
     if (!key_copy || !release || !signature ||
         !hash_file(key_copy, key_hash, NULL, 1024 * 1024)) { result = 6; goto done; }
+    if (source_key && strcmp(source_key, key_hash)) { result = 4; goto done; }
     result = verify_signature(key_copy, signature, release);
     if (result) goto done;
     if (!release_entry(release, relative, suite, expected_hash, &expected_size)) {
@@ -334,12 +343,28 @@ int holy_apt_release_sync(const char *base, const char *suite,
         int verified = holy_apt_verify_release(catalog, expected_hash);
         if (verified != 1) { result = verified == -2 ? 6 : 4; goto done; }
     }
+    if (source_id) {
+        char current_id[65], current_key[65];
+        char *current_base = NULL, *current_trust = NULL;
+        result = holy_source_apt(root, source, current_id, &current_base,
+                                 &current_trust, current_key);
+        if (!result && (strcmp(current_id, source_id) ||
+                        strcmp(current_key, source_key) ||
+                        strcmp(current_base, base) ||
+                        strcmp(current_trust, source_trust))) result = 3;
+        free(current_base); free(current_trust);
+        if (result) goto done;
+    }
     free(target); target = path_name(catalog, "conversion");
     if (!target) { result = 1; goto done; }
     {
         int marker = open(target, O_WRONLY | O_APPEND | O_NOFOLLOW | O_CLOEXEC);
-        static const char line[] = "release-required yes\n";
-        if (marker < 0 || write(marker, line, sizeof line - 1) != (ssize_t)(sizeof line - 1) ||
+        char line[128];
+        int length = source_id ? snprintf(line, sizeof line,
+                                          "release-required yes\nsource-id %s\n", source_id) :
+                                 snprintf(line, sizeof line, "release-required yes\n");
+        if (marker < 0 || length < 0 || length >= (int)sizeof line ||
+            write(marker, line, (size_t)length) != length ||
             fsync(marker)) {
             if (marker >= 0) close(marker);
             result = 1; goto done;
@@ -381,5 +406,36 @@ done:
     free(arch_url); free(release_url); free(signature_url); free(index_url);
     free(release); free(signature); free(index); free(target);
     if (result) fprintf(stderr, "holypkg: APT signed sync failed (status %d)\n", result);
+    return result;
+}
+
+int holy_apt_release_sync(const char *base, const char *suite,
+                          const char *component, const char *arch,
+                          const char *source, const char *keyring,
+                          const char *output, const char *ca_file)
+{
+    return sync_release(base, suite, component, arch, source, keyring,
+                        output, ca_file, NULL, NULL, NULL, NULL);
+}
+
+int holy_apt_release_sync_source(const char *root, const char *alias,
+                                 const char *suite, const char *component,
+                                 const char *arch, const char *keyring,
+                                 const char *output, const char *ca_file)
+{
+    char id[65], key[65], actual[65];
+    char *base = NULL, *trust = NULL, *snapshot = NULL;
+    int result = holy_source_apt(root, alias, id, &base, &trust, key);
+    if (result) goto done;
+    snapshot = keyring ? holy_stage_local(keyring, "holy-apt-source-key") : NULL;
+    if (!key[0] || !snapshot || !holy_apt_key_fingerprint(snapshot, actual)) {
+        result = 6; goto done;
+    }
+    if (strcmp(key, actual)) { result = 4; goto done; }
+    result = sync_release(base, suite, component, arch, alias, snapshot,
+                          output, ca_file, root, id, key, trust);
+done:
+    if (snapshot) { unlink(snapshot); free(snapshot); }
+    free(base); free(trust);
     return result;
 }

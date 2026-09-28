@@ -7,6 +7,7 @@
 #include "../src/fetch.h"
 #include "../src/import.h"
 #include "../src/package.h"
+#include "../src/source.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -37,6 +38,7 @@ struct apt_index {
     size_t count, capacity;
     char *source, *base;
     char hash[65];
+    char source_id[65];
     int release_verified;
 };
 
@@ -444,6 +446,8 @@ static int read_catalog(const char *catalog, struct apt_index *index)
         else if (!strcmp(v[0], "source-name") && !index->source) index->source = strdup(v[1]);
         else if (!strcmp(v[0], "base-url") && !index->base) index->base = strdup(v[1]);
         else if (!strcmp(v[0], "index-sha256") && !index->hash[0] && digest(v[1])) strcpy(index->hash, v[1]);
+        else if (!strcmp(v[0], "source-id") && !index->source_id[0] && digest(v[1]))
+            strcpy(index->source_id, v[1]);
         else if (!strcmp(v[0], "state") && !strcmp(v[1], "complete")) seen |= 2;
         else if (!strcmp(v[0], "release-required") && !strcmp(v[1], "yes")) release_required = 1;
         holy_tokens_free(v, n);
@@ -476,13 +480,39 @@ done:
     return status;
 }
 
-int holy_apt_query(const char *catalog, const char *query, int info)
+static int check_source(const char *catalog, const struct apt_index *index,
+                        const char *root, const char *source)
+{
+    char id[65], key[65], actual[65];
+    char *base = NULL, *trust = NULL, *key_file = NULL;
+    int result;
+    if (!root && !source) return 0;
+    if (!root || !source) return 2;
+    result = holy_source_apt(root, source, id, &base, &trust, key);
+    if (result) goto done;
+    if (!index->release_verified || !index->source_id[0] ||
+        strcmp(index->source_id, id) || strcmp(index->base, base) || !key[0]) {
+        result = 4; goto done;
+    }
+    key_file = malloc(strlen(catalog) + sizeof "/keyring");
+    if (!key_file) { result = 1; goto done; }
+    sprintf(key_file, "%s/keyring", catalog);
+    if (!holy_apt_key_fingerprint(key_file, actual) || strcmp(actual, key)) result = 4;
+done:
+    free(base); free(trust); free(key_file);
+    return result;
+}
+
+int holy_apt_query(const char *catalog, const char *query, int info,
+                   const char *root, const char *source)
 {
     struct apt_index index = {0};
     size_t i, matches = 0;
     int result;
     if (!catalog || !query || !*query) return 2;
     result = read_catalog(catalog, &index);
+    if (result) goto done;
+    result = check_source(catalog, &index, root, source);
     if (result) goto done;
     for (i = 0; i < index.count; ++i) {
         const struct apt_entry *e = &index.entries[i];
@@ -492,6 +522,7 @@ int holy_apt_query(const char *catalog, const char *query, int info)
             printf("package %s\nversion %s\narch %s\nfilename %s\nsize %llu\nsha256 %s\n",
                    e->name, e->version, e->arch, e->filename, e->size, e->sha256);
             printf("verification %s\n", index.release_verified ? "release-gpgv-user-key" : "pinned-unverified");
+            if (root) printf("source-id %s\nsource-binding checked\n", index.source_id);
             fputs("depends ", stdout); quote(stdout, e->depends ? e->depends : "-"); fputc('\n', stdout);
             fputs("pre-depends ", stdout); quote(stdout, e->pre_depends ? e->pre_depends : "-"); fputc('\n', stdout);
             fputs("provides ", stdout); quote(stdout, e->provides ? e->provides : "-"); fputc('\n', stdout);
@@ -562,7 +593,7 @@ done:
 
 int holy_apt_fetch(const char *catalog, const char *name, const char *version,
                    const char *arch, const char *output, const char *ca_file,
-                   int import)
+                   int import, const char *root, const char *source)
 {
     struct apt_index index = {0};
     const struct apt_entry *selected = NULL;
@@ -578,6 +609,8 @@ int holy_apt_fetch(const char *catalog, const char *name, const char *version,
             !token(arch) || !output) return 2;
     }
     result = read_catalog(catalog, &index);
+    if (result) goto done;
+    result = check_source(catalog, &index, root, source);
     if (result) goto done;
     for (i = 0; i < index.count; ++i) {
         const struct apt_entry *e = &index.entries[i];
@@ -624,6 +657,7 @@ int holy_apt_fetch(const char *catalog, const char *name, const char *version,
     fputs("\nname ", receipt); quote(receipt, name);
     fputs("\nversion ", receipt); quote(receipt, version);
     fputs("\narch ", receipt); quote(receipt, arch);
+    if (root) fprintf(receipt, "\nsource-id %s\nsource-binding checked", index.source_id);
     fprintf(receipt, "\nindex-sha256 %s\nartifact-sha256 %s\nsize %llu\nverification %s\nimported %s\nstate complete\n",
             index.hash, selected->sha256, selected->size,
             index.release_verified ? "release-gpgv-user-key" : "pinned-unverified",

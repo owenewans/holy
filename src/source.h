@@ -16,6 +16,9 @@ int holy_source_known_id(const char *root, const char *alias, char output[65]);
 /* reads an active APK repository; caller owns the returned URL. */
 int holy_source_apk_repo(const char *root, const char *alias, const char *repo,
                          char id[65], char **url, char **trust, char key[65]);
+/* reads an active APT source with a single HTTPS repository base. */
+int holy_source_apt(const char *root, const char *alias,
+                    char id[65], char **url, char **trust, char key[65]);
 /* checks one explicit sealed mirror against the active source definition. */
 int holy_source_catalog(const char *root, const char *alias,
                         const char *catalog, char source_id[65]);

@@ -18,11 +18,13 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apt sync-signed HTTPS_BASE/ SUITE COMPONENT ARCH --source NAME --keyring FILE --output NEW_DIRECTORY [--ca-file FILE]
 .br
-.B holypkg apt search QUERY --catalog DIRECTORY
+.B holypkg apt sync-source ALIAS SUITE COMPONENT ARCH --root DIRECTORY --keyring FILE --output NEW_DIRECTORY [--ca-file FILE]
 .br
-.B holypkg apt info PACKAGE --catalog DIRECTORY
+.B holypkg apt search QUERY --catalog DIRECTORY [--source ALIAS --root DIRECTORY]
 .br
-.B holypkg apt fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--import]
+.B holypkg apt info PACKAGE --catalog DIRECTORY [--source ALIAS --root DIRECTORY]
+.br
+.B holypkg apt fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--source ALIAS --root DIRECTORY] [--ca-file FILE] [--import]
 .br
 .B holypkg appimage inspect INPUT
 .br
@@ -278,6 +280,15 @@ external requirement for this mode and the selected keyring is trusted for
 this operation. The command does not register that keyring as a source-id or
 implement the full APT repository policy. Signed catalog fetch receipts use
 verification=release-gpgv-user-key. Missing Valid-Until is accepted.
+.B apt sync-source
+reads an active type apt source from the target-root registry. Its public-key
+is a binary OpenPGP keyring whose SHA-256 is frozen by source plan. The supplied
+--keyring must match that fingerprint. Sync checks the source again before
+publication and records its stable source-id. Search, info and fetch with
+--source and --root verify the current source-id, base URL and keyring hash
+against the catalog. Alias renames preserve the binding; a changed source URL
+or key invalidates it. This is an explicit catalog path workflow; automatic
+catalog discovery and a database binding remain open.
 .B apt search
 and
 .B apt info
@@ -290,8 +301,8 @@ Filename over HTTPS, and checks its SHA-256 and Size. The output retains the
 original .deb and a selection receipt. With --import, it invokes the local
 Debian converter and checks the native output identity. Index and selection
 receipts say pinned-unverified when only an external pin is available. The
-signed path uses the separately selected keyring and Release.gpg; source-id
-binding remains open.
+signed path uses the separately selected keyring and Release.gpg. Registered
+operations include a checked source-id in their selection receipt.
 It does not install packages. make check-apt covers local and HTTPS indexes,
 tampering, TLS fetch, hash mismatch and import identity.
 .PP

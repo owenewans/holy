@@ -102,3 +102,10 @@ trust require needs that key and a valid APKINDEX signature. The matching key
 file is supplied to apk sync and apk fetch through --public-key. Fetch verifies
 the bound APK package signature with the same registered key. See holypkg(8)
 for the digest confirmation and fetch sequence.
+.PP
+A registered APT source uses type apt and one url HTTPS_BASE/. public-key points
+to a binary OpenPGP keyring; source plan freezes its SHA-256. trust require
+needs that key. holypkg apt sync-source requires the same keyring and records
+the stable source-id in its signed catalog. Queries and fetches can check the
+current registry with --source and --root. The keyring is selected by the user;
+adding a source does not import public keys from the network.

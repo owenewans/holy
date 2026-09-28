@@ -102,7 +102,9 @@
   HTTPS fetch with artifact hash/size checks, and optional .deb import. A
   Release.gpg path now verifies a user-selected OpenPGP keyring, suite,
   Valid-Until when present, and signed index hash/size; catalogs keep evidence
-  for rechecking. InRelease, registered source binding, config-driven sync, solver
+  for rechecking. Registered APT sources now pin an OpenPGP keyring hash;
+  sync-source and source-aware query/fetch check the source-id, URL and key.
+  InRelease, automatic catalog binding/discovery, solver
   integration and full hook integration remain open.
 
 - [x] Import local Slackware .txz/.tgz/.tbz/.tlz packages into native outputs.

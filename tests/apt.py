@@ -194,6 +194,65 @@ with tempfile.TemporaryDirectory() as scratch:
             "--keyring", keyring, "--output", tmp / "wrong-suite",
             "--ca-file", tmp / "cert.pem", status=4)
         assert not (tmp / "wrong-suite").exists()
+        release.write_bytes(signed_release)
+        subprocess.run(["gpg", "--homedir", str(gnupg), "--batch", "--yes",
+                        "--detach-sign", "--output", str(signed_dir / "Release.gpg"),
+                        str(release)], capture_output=True, check=True)
+
+        root = tmp / "root"
+        root.mkdir()
+        run("db", "init", "--root", root)
+        config = tmp / "holy.conf"
+
+        def register(alias, url):
+            config.write_text(f"[source {alias}]\ntype apt\nurl \"{url}\"\n"
+                              f"trust require\npublic-key \"{keyring}\"\n")
+            plan = run("source", "plan", "--config", config, "--root", root)
+            plan_path = tmp / "plan"
+            plan_path.write_text(plan)
+            run("source", "apply", plan_path, "--sha256",
+                hashlib.sha256(plan_path.read_bytes()).hexdigest(), "--root", root)
+
+        register("debian", base)
+        bound = tmp / "bound"
+        run("apt", "sync-source", "debian", "stable", "main", "all",
+            "--root", root, "--keyring", keyring, "--output", bound,
+            "--ca-file", tmp / "cert.pem")
+        wrong_keyring = tmp / "wrong-keyring.gpg"
+        wrong_keyring.write_bytes(b"wrong keyring")
+        run("apt", "sync-source", "debian", "stable", "main", "all",
+            "--root", root, "--keyring", wrong_keyring,
+            "--output", tmp / "wrong-bound-key", "--ca-file", tmp / "cert.pem", status=4)
+        assert not (tmp / "wrong-bound-key").exists()
+        bound_info = run("apt", "info", "fixture", "--catalog", bound,
+                         "--source", "debian", "--root", root)
+        assert "source-binding checked\n" in bound_info
+        assert "source-id " in bound_info
+        conversion = (bound / "conversion").read_text()
+        (bound / "conversion").write_text("\n".join(
+            line for line in conversion.splitlines() if not line.startswith("source-id ")) + "\n")
+        run("apt", "info", "fixture", "--catalog", bound,
+            "--source", "debian", "--root", root, status=4)
+        (bound / "conversion").write_text(conversion)
+        bound_package = tmp / "bound-package"
+        run("apt", "fetch", "fixture", "1:2.0-3", "all", "--catalog", bound,
+            "--output", bound_package, "--source", "debian", "--root", root,
+            "--ca-file", tmp / "cert.pem", "--import")
+        assert "source-binding checked\n" in (bound_package / "selection").read_text()
+        run("apt", "info", "fixture", "--catalog", signed,
+            "--source", "debian", "--root", root, status=4)
+        register("renamed", base)
+        assert "source-binding checked\n" in run(
+            "apt", "info", "fixture", "--catalog", bound,
+            "--source", "renamed", "--root", root)
+        run("apt", "info", "fixture", "--catalog", bound,
+            "--source", "debian", "--root", root, status=6)
+        register("renamed", base + "other/")
+        run("apt", "info", "fixture", "--catalog", bound,
+            "--source", "renamed", "--root", root, status=4)
+        config.write_text(f"[source broken]\ntype apt\n"
+                          f"repo main \"{base}\"\ntrust require\npublic-key \"{keyring}\"\n")
+        run("source", "plan", "--config", config, "--root", root, status=2)
         assert (catalog / "original").read_bytes() == packages.read_bytes()
         assert run("apt", "search", "fixture", "--catalog", catalog) == "fixture 1:2.0-3 all\n"
         info = run("apt", "info", "fixture", "--catalog", catalog)
