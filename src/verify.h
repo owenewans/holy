@@ -21,6 +21,9 @@ typedef int (*holy_manifest_visit)(void *context,
 
 /* lexical target-root containment; this does not resolve other symlinks. */
 int holy_safe_link(const char *path, const char *target);
+/* caller owns the normalized relative path; NULL means unsafe or too long. */
+char *holy_relative_link_path(const char *path, size_t alias_length,
+                              const char *target, const char *suffix);
 
 /* checks the regular-file subset of HOLY/files without extracting files. */
 int holy_verify(const char *path);

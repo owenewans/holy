@@ -50,6 +50,43 @@ int holy_safe_link(const char *path, const char *target)
     return 1;
 }
 
+char *holy_relative_link_path(const char *path, size_t alias_length,
+                              const char *target, const char *suffix)
+{
+    char *joined, *part, *save, *out;
+    char **parts;
+    size_t prefix = 0, depth = 0, length = 0, capacity, i;
+    if (!path || !target || !suffix || !*target || target[0] == '/' ||
+        alias_length > strlen(path) || strlen(path) + strlen(target) + strlen(suffix) > 65536) return NULL;
+    for (i = 0; i < alias_length; ++i) if (path[i] == '/') prefix = i + 1;
+    capacity = prefix + strlen(target) + strlen(suffix) + 2;
+    joined = malloc(capacity);
+    if (!joined) return NULL;
+    snprintf(joined, capacity, "%.*s%s%s", (int)prefix, path, target, suffix);
+    parts = calloc(capacity, sizeof *parts);
+    if (!parts) { free(joined); return NULL; }
+    for (part = strtok_r(joined, "/", &save); part; part = strtok_r(NULL, "/", &save)) {
+        if (!strcmp(part, ".")) continue;
+        if (!strcmp(part, "..")) {
+            if (!depth) { free(parts); free(joined); return NULL; }
+            --depth;
+        } else parts[depth++] = part;
+    }
+    if (!depth) { free(parts); free(joined); return NULL; }
+    out = malloc(capacity);
+    if (out) {
+        for (i = 0; i < depth; ++i) {
+            size_t n = strlen(parts[i]);
+            if (i) out[length++] = '/';
+            memcpy(out + length, parts[i], n);
+            length += n;
+        }
+        out[length] = 0;
+    }
+    free(parts); free(joined);
+    return out;
+}
+
 static int compare(const void *a, const void *b)
 {
     const struct payload *x = a, *y = b;

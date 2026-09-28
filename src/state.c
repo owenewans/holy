@@ -24,6 +24,7 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <linux/openat2.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,10 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+
+#ifndef O_PATH
+#define O_PATH 010000000
+#endif
 
 static int set_journal_present(int dir);
 static int update_pending(int dir);
@@ -2573,16 +2578,98 @@ static int installed_requirement(void *context, const char *id,
     return strcmp(kind, "package") || add_installed_candidates(context, name, NULL);
 }
 
+static int installed_link_step(int root, const char *path, size_t *alias_length,
+                               char **target)
+{
+    const char *end = path;
+    struct open_how how = {0};
+    *target = NULL;
+    how.flags = O_PATH | O_NOFOLLOW | O_CLOEXEC;
+    how.resolve = RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS;
+    while (*end) {
+        char *prefix;
+        struct stat st;
+        int fd;
+        ssize_t length;
+        end = strchr(end, '/');
+        if (!end) end = path + strlen(path);
+        prefix = strndup(path, (size_t)(end - path));
+        if (!prefix) return 1;
+        fd = (int)syscall(SYS_openat2, root, prefix, &how, sizeof how);
+        free(prefix);
+        if (fd < 0) return errno == ENOENT ? 0 : errno == ENOSYS ? 6 : 1;
+        if (fstat(fd, &st)) { close(fd); return 1; }
+        if (S_ISLNK(st.st_mode)) {
+            *target = malloc(65537);
+            if (!*target) { close(fd); return 1; }
+            length = readlinkat(fd, "", *target, 65536);
+            close(fd);
+            if (length <= 0 || length == 65536) {
+                free(*target); *target = NULL; return 3;
+            }
+            (*target)[length] = 0;
+            *alias_length = (size_t)(end - path);
+            return 2;
+        }
+        close(fd);
+        if (!*end) break;
+        ++end;
+    }
+    return 0;
+}
+
+static int installed_script_candidates(struct installed_candidates *catalog,
+                                        int root, const char *interpreter)
+{
+    char *path = strdup(interpreter + 1), *visited[16] = {0};
+    size_t hop, i;
+    int result = 1;
+    if (!path) return 1;
+    for (hop = 0; hop < 16; ++hop) {
+        size_t alias_length = 0;
+        char *target = NULL, *next;
+        int step;
+        for (i = 0; i < hop; ++i) if (!strcmp(visited[i], path)) {
+            result = 3; goto done;
+        }
+        visited[hop] = strdup(path);
+        if (!visited[hop]) goto done;
+        step = installed_link_step(root, path, &alias_length, &target);
+        if (step == 6 || step == 3 || step == 1) { result = step; goto done; }
+        if (step == 0) {
+            result = add_installed_candidates(catalog, NULL, path) ? 0 : 1;
+            break;
+        }
+        next = holy_relative_link_path(path, alias_length, target,
+                                       path + alias_length);
+        free(target);
+        if (!next) { result = 3; goto done; }
+        path[alias_length] = 0;
+        if (!add_installed_candidates(catalog, NULL, path)) {
+            free(next); goto done;
+        }
+        free(path);
+        path = next;
+    }
+    if (hop == 16) result = 3;
+done:
+    for (i = 0; i < 16; ++i) free(visited[i]);
+    free(path);
+    return result;
+}
+
 static int discover_installed(const char *root_path, int dir,
                               const char *const *digests, size_t *count, char ***output)
 {
     struct installed_candidates catalog = {-1, NULL, 0, root_path};
     size_t i, j, k;
-    int result = 1;
+    int root = -1, result = 1;
     catalog.digests = calloc(10000, sizeof *catalog.digests);
     if (!catalog.digests) return 1;
     catalog.installed = child_dir(dir, "installed", 0);
     if (catalog.installed < 0) goto done;
+    root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0) goto done;
     for (i = 0; i < *count; ++i) {
         catalog.digests[i] = strdup(digests[i]);
         if (!catalog.digests[i]) goto done;
@@ -2606,14 +2693,17 @@ static int discover_installed(const char *root_path, int dir,
                     ok = add_installed_candidates(&catalog, NULL, elf->needed[k] + 1);
         }
         for (j = 0; ok && j < scan.script_count; ++j)
-            if (scan.scripts[j].kind == 1)
-                ok = add_installed_candidates(&catalog, NULL,
-                        scan.scripts[j].interpreter + 1);
+            if (scan.scripts[j].kind == 1) {
+                int status = installed_script_candidates(&catalog, root,
+                                                         scan.scripts[j].interpreter);
+                if (status) { result = status; ok = 0; }
+            }
         holy_scan_free(&scan);
-        if (!ok) { result = 6; goto done; }
+        if (!ok) { if (result == 1) result = 6; goto done; }
     }
     result = 0;
 done:
+    if (root >= 0) close(root);
     if (catalog.installed >= 0) close(catalog.installed);
     *count = catalog.count;
     *output = catalog.digests;

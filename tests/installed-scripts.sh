@@ -145,4 +145,28 @@ if "$bin" db rm "$merged" --root "$root2" > "$tmp/out" 2> "$tmp/err"; then exit 
 if "$bin" db rm "$shell_link" --root "$root2" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 if "$bin" db rm "$busybox" --root "$root2" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 
+root3="$tmp/root3"
+mkdir -p "$root3/usr/bin"
+"$bin" db init --root "$root3" > "$tmp/out"
+for name in busybox shell-link merged-bin shell-script; do
+    "$bin" cache stage "local:$tmp/$name.holy" --root "$root3" > "$tmp/out"
+done
+for artifact in "$busybox" "$shell_link" "$merged"; do
+    "$bin" db plan-set "$artifact" --root "$root3" > "$tmp/out"
+    plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+    "$bin" db apply-set "$plan" "$artifact" --root "$root3" > "$tmp/out"
+done
+"$bin" db plan-set "$script" --root "$root3" > "$tmp/out"
+grep -q "provider $merged path-alias /bin" "$tmp/out"
+grep -q "provider $shell_link path-alias /usr/bin/sh" "$tmp/out"
+grep -q "provider $busybox shebang /usr/bin/busybox" "$tmp/out"
+plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+"$bin" db apply-set "$plan" "$script" --root "$root3" > "$tmp/out"
+"$bin" db check "$script" --root "$root3" --json > "$tmp/out"
+grep -q '"state":"pass"' "$tmp/out"
+"$bin" db rm "$shell_link" --accept-broken --root "$root3" > "$tmp/out" 2> "$tmp/err"
+if "$bin" db check "$script" --root "$root3" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+grep -q '"code":"broken-provider"' "$tmp/out"
+grep -q '"code":"missing-interpreter"' "$tmp/out"
+
 printf 'installed script checks passed\n'
