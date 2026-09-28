@@ -120,6 +120,54 @@ done
     --holypkg "$bin" > "$tmp/result"
 ./holyinstall --apply "$tmp/image-install.plan" --holypkg "$bin" > "$tmp/result"
 "$bin" db check --all --root "$tmp/image-root" > "$tmp/result"
+mkdir -p "$tmp/cross-fixture" "$tmp/cross-other" "$tmp/cross-root" \
+    "$tmp/cross-image/work" "$tmp/cross-image/inputs" \
+    "$tmp/cross-image/packages" "$tmp/cross-image/mirrors"
+cp "$tmp/repo/fixture.holy" "$tmp/cross-fixture/"
+cp "$tmp/repo/helper.holy" "$tmp/cross-other/"
+"$bin" repo index "$tmp/cross-fixture" > "$tmp/result"
+"$bin" repo seal "$tmp/cross-fixture" > "$tmp/result"
+"$bin" repo index "$tmp/cross-other" > "$tmp/result"
+"$bin" repo seal "$tmp/cross-other" > "$tmp/result"
+fixture_index=$(sed -n 's/^sha256 //p' "$tmp/cross-fixture/current")
+other_index=$(sed -n 's/^sha256 //p' "$tmp/cross-other/current")
+printf '[source fixture]\ntype holy-http\nurl "https://fixture.example/holy/"\n[source other]\ntype holy-http\nurl "https://other.example/holy/"\n' > "$tmp/cross-sources.conf"
+"$bin" db init --root "$tmp/cross-root" > "$tmp/result"
+"$bin" source plan --config "$tmp/cross-sources.conf" --root "$tmp/cross-root" > "$tmp/cross-source.plan"
+cross_plan=$(sha256sum "$tmp/cross-source.plan")
+"$bin" source apply "$tmp/cross-source.plan" --sha256 "${cross_plan%% *}" \
+    --root "$tmp/cross-root" > "$tmp/result"
+"$bin" source list --root "$tmp/cross-root" > "$tmp/cross-image/work/source-list"
+other_id=$(sed -n 's/^source \([0-9a-f]*\) "other" active$/\1/p' "$tmp/cross-image/work/source-list")
+test "${#other_id}" -eq 64
+printf 'format holy-mirror-1\nurl "https://fixture.example/holy/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$fixture_index" "$source_id" > "$tmp/cross-fixture/mirror-origin"
+printf 'format holy-mirror-1\nurl "https://other.example/holy/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$other_index" "$other_id" > "$tmp/cross-other/mirror-origin"
+cp -R "$tmp/cross-fixture" "$tmp/cross-image/mirrors/fixture"
+cp -R "$tmp/cross-other" "$tmp/cross-image/mirrors/other"
+: > "$tmp/cross-image/build.record"
+sh tools/image-package-stage.sh "$bin" "$tmp/cross-image" x86_64 \
+    --source fixture fixture --source other helper
+grep -q '^source-root fixture:fixture selected-with-external-requirements ' \
+    "$tmp/cross-image/build.record"
+test "$(wc -l < "$tmp/cross-image/work/add-sources")" -eq 2
+if "$bin" solve "local:$tmp/cross-image/inputs/add-0001.holy" \
+    > "$tmp/result" 2> "$tmp/error"; then exit 1; else test "$?" -eq 4; fi
+printf '[install]\nroot "%s"\n' "$tmp/cross-root" > "$tmp/cross-install.conf"
+for label in add-0001 add-0002; do
+    artifact="$tmp/cross-image/packages/$label.holy"
+    digest=$(sha256sum "$artifact")
+    digest=${digest%% *}
+    "$bin" cache stage "local:$artifact" --root "$tmp/cross-root" > "$tmp/result"
+    source=$(awk -v label="$label" '$1 == label {print $2}' "$tmp/cross-image/work/add-sources")
+    printf 'artifact %s\nsource %s %s\n' "$digest" "$digest" "$source" \
+        >> "$tmp/cross-install.conf"
+done
+./holyinstall --config "$tmp/cross-install.conf" --plan "$tmp/cross-install.plan" \
+    --holypkg "$bin" > "$tmp/result"
+./holyinstall --apply "$tmp/cross-install.plan" --holypkg "$bin" > "$tmp/result"
+"$bin" db check --all --root "$tmp/cross-root" > "$tmp/result"
 printf 'fixture build plan\n' > "$tmp/image/plan"
 printf 'fixture install plan\n' > "$tmp/image/install.plan"
 python3 tools/image-host-tools.py "$tmp/image/host-tools.jsonl" sh python3

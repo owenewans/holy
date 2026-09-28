@@ -9,6 +9,13 @@
   and passed the same two-boot contract. Both `--export-inputs` bundles passed
   SHA-256 verification. Cross-source dependency choices and portable host-tool
   export remain open.
+- [x] Stage an exact package when its native catalog cannot close a dependency,
+  then resolve it with an explicitly added package from another pinned source
+  in holyinstall's frozen set plan. A fixture rejects the root alone, installs
+  both artifacts with their separate source IDs, and checks the installed DB.
+  A full x86_64 ext4 image with two sealed source mirrors passed two QEMU boots;
+  its exported input bundle passed SHA-256 verification. Automatic cross-source
+  provider discovery remains open.
 - [x] Fetch pinned bootstrap inputs over HTTPS into an explicit directory,
   verify SHA-256 before publication, and reject altered cached files. On
   x86_64, local builds produced musl 1.2.5, static BusyBox 1.37.0,
@@ -672,8 +679,9 @@
   package inputs, mirrors and plans separately. The builder records direct host
   tool paths and hashes, but does not archive their dependency closure. The
   explicit build-only path records untested and exits 6. The local-input and
-  sealed-mirror builds above pass full QEMU gates. Cross-source dependency
-  selection and relocatable installation remain open.
+  sealed-mirror builds above pass full QEMU gates. Explicit cross-source
+  choices now work; automatic provider discovery and relocatable installation
+  remain open.
 
 ## Acceptance gates
 

@@ -49,10 +49,35 @@ while test "$#" -gt 0; do
             source_id=$(awk -v name="\"$alias\"" \
                 '$1 == "source" && $3 == name && $4 == "active" {print $2}' "$work/source-list")
             test "${#source_id}" -eq 64 || exit 6
-            "$bin" repo solve "$out/mirrors/$alias" "$package_name" \
-                > "$work/solve-$alias-$package_name.record"
-            sed -n 's/^selected \([0-9a-f]*\)$/\1/p' \
-                "$work/solve-$alias-$package_name.record" > "$work/selected"
+            if "$bin" repo solve "$out/mirrors/$alias" "$package_name" \
+                > "$work/solve-$alias-$package_name.record"; then
+                sed -n 's/^selected \([0-9a-f]*\)$/\1/p' \
+                    "$work/solve-$alias-$package_name.record" > "$work/selected"
+            else
+                status=$?
+                case "$status" in 4|6) ;; *) exit "$status" ;; esac
+                "$bin" repo search "$out/mirrors/$alias" "$package_name" \
+                    > "$work/search-$alias-$package_name.record"
+                awk -v name="\"$package_name\"" '
+                    $1 == "package" && $2 == name {
+                        for (i = 3; i <= NF; ++i)
+                            if (length($i) == 64 && $i ~ /^[0-9a-f]+$/) {
+                                print $i; break
+                            }
+                    }
+                ' "$work/search-$alias-$package_name.record" > "$work/selected"
+                count=$(wc -l < "$work/selected")
+                if test "$count" -eq 0; then
+                    echo "source $alias package $package_name is absent" >&2
+                    exit 6
+                fi
+                if test "$count" -ne 1; then
+                    echo "source $alias package $package_name has $count exact candidates; explicit choice required" >&2
+                    exit 3
+                fi
+                printf 'source-root %s:%s selected-with-external-requirements %s\n' \
+                    "$alias" "$package_name" "$(cat "$work/selected")" >> "$record"
+            fi
             test -s "$work/selected" || exit 6
             while IFS= read -r digest; do
                 test "${#digest}" -eq 64 || exit 6

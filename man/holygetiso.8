@@ -64,8 +64,11 @@ An "add ALIAS:PACKAGE" entry fetches a named package from a pinned native
 source. The builder solves that package's dependency closure within its sealed
 catalog, copies each selected .holy into inputs, registers the source under
 the image root and binds each artifact's source ID in holyinstall's frozen set
-plan. A dependency requiring another source needs an explicit resolution step
-and currently stops the build. Boot core package fields still require local
+plan. When that catalog lacks a requirement, the builder may stage one exact
+PACKAGE candidate and let the final set plan check it alongside other explicit
+"add ALIAS:PACKAGE" entries. The config must name the provider in its own
+source; an absent or ambiguous exact package fails. The builder records this
+fallback in build.record. Boot core package fields still require local
 artifacts because the builder normalizes those artifacts into new unsigned
 Holy packages. Added packages must target the image architecture or noarch; x86 packages are
 also accepted in an x86_64 image. Duplicate package names fail before plan
@@ -111,10 +114,10 @@ builder writes "result untested" after producing the image and returns 6.
 A successful process exit alone does not certify
 hardware, a desktop or all packages named in the Holy specification.
 .SH LIMITS
-This bootstrap command supports holy-http and holy-git sources and same-catalog dependency
-closures for additional packages,
+This bootstrap command supports holy-http and holy-git sources, same-catalog
+dependency closures and explicit cross-source package choices for additional packages,
 while boot core inputs remain local. It does not yet implement cross-source
-dependency selection, every package policy or a portable export of build
+provider discovery, every package policy or a portable export of build
 tools. It is kept in-tree until those inputs and profiles can be
 resolved without the source checkout.
 .SH SEE ALSO

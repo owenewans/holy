@@ -735,7 +735,7 @@ SOURCE IDENTITIES
      ture.
 
 Holy				 September 2026			    HOLY.CONF(5)
-holygetiso.8 source=holy version=development sha256=a8c43f3648c34655dc3a8183a9ebfcabf653f0775af1e74128847bf4f2b1d9c3
+holygetiso.8 source=holy version=development sha256=850f9e51ebf27e0fab7fa37da6cd55d8015147d264dc7d5a5e8a14da1df9956a
 HOLYGETISO(8)		      System Administration		   HOLYGETISO(8)
 
 NAME
@@ -805,14 +805,17 @@ CONFIGURATION
 	    builder  solves  that package's dependency closure within its sealed
 	    catalog, copies each  selected  .holy  into	 inputs,  registers  the
 	    source  under  the image root and binds each artifact's source ID in
-	    holyinstall's frozen set plan. A dependency requiring another source
-	    needs an explicit resolution step and  currently  stops  the  build.
-	    Boot  core	package fields still require local artifacts because the
-	    builder normalizes those artifacts into new unsigned Holy  packages.
-	    Added  packages  must  target  the image architecture or noarch; x86
-	    packages are also accepted in an  x86_64  image.  Duplicate	 package
-	    names  fail	 before plan generation. The package manager checks pay-
-	    load ownership and dependencies.
+	    holyinstall's frozen set plan. When that catalog  lacks  a	require-
+	    ment,  the builder may stage one exact PACKAGE candidate and let the
+	    final set plan check it alongside other explicit "add ALIAS:PACKAGE"
+	    entries. The config must name the provider in its own source; an ab-
+	    sent or ambiguous exact package  fails.  The  builder  records  this
+	    fallback in build.record. Boot core package fields still require lo-
+	    cal	 artifacts  because  the builder normalizes those artifacts into
+	    new unsigned Holy packages. Added packages must target the image ar-
+	    chitecture or noarch; x86 packages are also accepted  in  an  x86_64
+	    image.  Duplicate  package	names  fail  before plan generation. The
+	    package manager checks payload ownership and dependencies.
 
      [source NAME]
 	    Each used native source requires type holy-http or	holy-git,  "url"
@@ -857,12 +860,12 @@ STATUS
      all packages named in the Holy specification.
 
 LIMITS
-     This bootstrap command supports holy-http and holy-git  sources  and  same-
-     catalog dependency closures for additional packages, while boot core inputs
-     remain  local. It does not yet implement cross-source dependency selection,
-     every package policy or a portable export of build tools. It  is  kept  in-
-     tree  until  those	 inputs	 and profiles can be resolved without the source
-     checkout.
+     This bootstrap command supports holy-http and holy-git sources,  same-cata-
+     log dependency closures and explicit cross-source package choices for addi-
+     tional  packages,	while boot core inputs remain local. It does not yet im-
+     plement cross-source provider discovery, every package policy or a portable
+     export of build tools. It is kept in-tree until those inputs  and	profiles
+     can be resolved without the source checkout.
 
 SEE ALSO
      holy-image(7), holypkg(8), holyinstall(8), holy.conf(5)
