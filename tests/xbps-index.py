@@ -145,13 +145,20 @@ def main():
             plan.write_text(run("source", "plan", "--config", config, "--root", target))
             run("source", "apply", plan, "--sha256",
                 hashlib.sha256(plan.read_bytes()).hexdigest(), "--root", target)
-            registered = root / "registered"
+            registered = target / "cache"
             run("xbps", "sync-source", "fixture", "x86_64", "--root", target,
                 "--sha256", signed_hash, "--output", registered,
                 "--ca-file", root / "cert.pem", "--public-key", public_key)
             assert "source-id " in (registered / "conversion").read_text()
             assert package_hash in run("xbps", "info", "fixture", "--catalog", registered,
                                        "--source", "fixture", "--root", target)
+            assert package_hash in run("xbps", "info", "fixture", "--source", "fixture",
+                                       "--index-arch", "x86_64", "--root", target)
+            run("xbps", "fetch", "fixture", "1.0_1", "x86_64",
+                "--source", "fixture", "--index-arch", "x86_64", "--root", target,
+                "--output", root / "bound-fetch", "--ca-file", root / "cert.pem",
+                "--public-key", public_key)
+            assert (root / "bound-fetch" / package_hash).read_bytes() == package
             run("xbps", "fetch", "fixture", "1.0_1", "x86_64",
                 "--catalog", registered, "--output", root / "registered-fetch",
                 "--source", "fixture", "--root", target,
@@ -162,15 +169,38 @@ def main():
                 "--ca-file", root / "cert.pem", status=6)
             run("xbps", "info", "fixture", "--catalog", signed_sync,
                 "--source", "fixture", "--root", target, status=6)
+            conversion = registered / "conversion"
+            saved_conversion = conversion.read_bytes()
+            conversion.write_bytes(saved_conversion + b"x-test changed\n")
+            run("xbps", "info", "fixture", "--source", "fixture",
+                "--index-arch", "x86_64", "--root", target, status=6)
+            conversion.write_bytes(saved_conversion)
+            renamed = root / "renamed.conf"
+            renamed.write_text(config.read_text().replace("source fixture", "source void"))
+            renamed_plan = root / "renamed.plan"
+            renamed_plan.write_text(run("source", "plan", "--config", renamed,
+                                        "--root", target))
+            run("source", "apply", renamed_plan, "--sha256",
+                hashlib.sha256(renamed_plan.read_bytes()).hexdigest(), "--root", target)
+            assert package_hash in run("xbps", "info", "fixture", "--source", "void",
+                                       "--index-arch", "x86_64", "--root", target)
+            moved_target = root / "moved-target"
+            target.rename(moved_target)
+            target = moved_target
+            registered = target / "cache"
+            assert package_hash in run("xbps", "info", "fixture", "--source", "void",
+                                       "--index-arch", "x86_64", "--root", target)
             rotated = root / "rotated.conf"
-            rotated.write_text(config.read_text().replace(base, "https://localhost:65535/"))
+            rotated.write_text(renamed.read_text().replace(base, "https://localhost:65535/"))
             rotated_plan = root / "rotated.plan"
             rotated_plan.write_text(run("source", "plan", "--config", rotated,
                                         "--root", target))
             run("source", "apply", rotated_plan, "--sha256",
                 hashlib.sha256(rotated_plan.read_bytes()).hexdigest(), "--root", target)
             run("xbps", "info", "fixture", "--catalog", registered,
-                "--source", "fixture", "--root", target, status=6)
+                "--source", "void", "--root", target, status=6)
+            run("xbps", "info", "fixture", "--source", "void", "--index-arch",
+                "x86_64", "--root", target, status=6)
             signed_fetch = root / "signed-fetch"
             run("xbps", "fetch", "fixture", "1.0_1", "x86_64", "--catalog", signed_catalog,
                 "--output", signed_fetch, "--ca-file", root / "cert.pem",

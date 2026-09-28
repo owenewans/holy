@@ -119,4 +119,6 @@ of its public-key encoding. trust require needs that key. xbps sync-source
 checks the selected key against the registry and the index metadata. It also
 requires an explicit repodata SHA-256 pin. Source-aware queries check the
 catalog's source-id, URL and recorded key fingerprint. Fetch requires the
-same key file and verifies the package .sig2 signature.
+same key file and verifies the package .sig2 signature. sync-source also binds
+the catalog's conversion digest under the target database; later queries can
+select that binding by source and index architecture.

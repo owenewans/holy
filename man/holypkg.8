@@ -60,7 +60,11 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg xbps search|info QUERY --catalog DIRECTORY [--source ALIAS --root DIRECTORY]
 .br
+.B holypkg xbps search|info QUERY --source ALIAS --index-arch ARCH --root DIRECTORY
+.br
 .B holypkg xbps fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE] [--source ALIAS --root DIRECTORY]
+.br
+.B holypkg xbps fetch NAME VERSION ARCH --source ALIAS --index-arch ARCH --root DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE]
 .br
 .B holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--public-key PUBLIC_KEY.pem] [--ca-file FILE]
 .br
@@ -421,8 +425,13 @@ unavailable. The standalone index/sync source name records provenance but does
 not register a source-id. sync-source reads an active type xbps source from the
 target-root registry, checks its URL and selected key, and records its source-id.
 Source-aware search/info/fetch check that source-id and the URL against the
-current registry. They still require an explicit catalog path; persistent
-source binding is not implemented. With --public-key FILE, index requires that
+current registry. sync-source binds the verified conversion digest and catalog
+path under the target database lock. Search, info and fetch can select that
+binding by source alias and index architecture; changed conversion records or
+catalog bytes fail validation. Bindings survive alias renames that retain the
+same source-id. A catalog inside the target root is stored as a root-relative
+path, so moving that root with its cache preserves the binding. With
+--public-key FILE, index requires that
 the supplied RSA public key match index-meta.plist and records its SHA-256
 fingerprint. The caller must establish the key's authenticity independently.
 The repodata still requires an explicit SHA-256 pin; index-meta.plist alone is
@@ -439,7 +448,7 @@ transport limits one archive to 1 GiB; larger indexed objects return status 6.
 An explicit import of the fetched digest-named file creates .holy outputs.
 make check-xbps-index covers index parsing, HTTPS sync/fetch, registered source
 checks, RSA signature verification, conversion and failure cases on a local
-fixture server. Persistent source binding and key enrollment remain open.
+fixture server. Key enrollment and automatic provider discovery remain open.
 .PP
 The apk index command snapshots a local APKINDEX.tar.gz, separates its gzip
 signature and data members, and publishes a sorted local catalog with the

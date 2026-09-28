@@ -463,9 +463,12 @@
   A pinned repodata catalog supports HTTPS sync, search, info and archive fetch.
   An explicit RSA public key can match index metadata and verify package .sig2.
   A registered XBPS source can now pin the RSA key, URL and source-id during
-  sync-source; source-aware search/info/fetch check those fields. Complex
-  patterns remain review-required. Persistent catalog binding, key enrollment
-  and a file index remain open.
+  sync-source, then bind the catalog conversion digest in the target database.
+  Source-aware search/info/fetch resolve that binding by index architecture and
+  reject changed catalog data or source definitions. Root-relative bindings
+  survive moving a target root with its cache. Complex patterns remain
+  review-required. Key enrollment, automatic provider discovery and a file
+  index remain open.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
   Gentoo and Pacstall recipe conversion with helper environments and split outputs.
 - [ ] Implement Nix closure, Flatpak, Snap, AppImage, Scoop and WinGet imports
