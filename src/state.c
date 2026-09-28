@@ -2618,8 +2618,32 @@ static int installed_link_step(int root, const char *path, size_t *alias_length,
     return 0;
 }
 
+static int candidate_link_step(const struct holy_scan_result *scans, size_t count,
+                                const char *path, size_t *alias_length,
+                                const char **target)
+{
+    size_t i, j;
+    *alias_length = 0;
+    *target = NULL;
+    for (i = 0; i < count; ++i) for (j = 0; j < scans[i].symlink_count; ++j) {
+        const struct holy_scanned_symlink *link = &scans[i].symlinks[j];
+        size_t length = strlen(link->path);
+        if (strncmp(path, link->path, length) ||
+            (path[length] && path[length] != '/')) continue;
+        if (length > *alias_length) {
+            *alias_length = length;
+            *target = link->target;
+        } else if (length == *alias_length && strcmp(*target, link->target)) {
+            return 3;
+        }
+    }
+    return *target ? 2 : 0;
+}
+
 static int installed_script_candidates(struct installed_candidates *catalog,
-                                        int root, const char *interpreter)
+                                        int root, const char *interpreter,
+                                        const struct holy_scan_result *initial,
+                                        size_t initial_count)
 {
     char *path = strdup(interpreter + 1), *visited[16] = {0};
     size_t hop, i;
@@ -2628,7 +2652,9 @@ static int installed_script_candidates(struct installed_candidates *catalog,
     for (hop = 0; hop < 16; ++hop) {
         size_t alias_length = 0;
         char *target = NULL, *next;
-        int step;
+        const char *candidate_target = NULL;
+        size_t candidate_length = 0;
+        int step, candidate_step;
         for (i = 0; i < hop; ++i) if (!strcmp(visited[i], path)) {
             result = 3; goto done;
         }
@@ -2636,6 +2662,17 @@ static int installed_script_candidates(struct installed_candidates *catalog,
         if (!visited[hop]) goto done;
         step = installed_link_step(root, path, &alias_length, &target);
         if (step == 6 || step == 3 || step == 1) { result = step; goto done; }
+        candidate_step = candidate_link_step(initial, initial_count, path,
+                                             &candidate_length, &candidate_target);
+        if (candidate_step == 3) { free(target); result = 3; goto done; }
+        if (step == 0 && candidate_step == 2) {
+            next = holy_relative_link_path(path, candidate_length,
+                                            candidate_target, path + candidate_length);
+            if (!next) { result = 3; goto done; }
+            free(path);
+            path = next;
+            continue;
+        }
         if (step == 0) {
             result = add_installed_candidates(catalog, NULL, path) ? 0 : 1;
             break;
@@ -2662,7 +2699,8 @@ static int discover_installed(const char *root_path, int dir,
                               const char *const *digests, size_t *count, char ***output)
 {
     struct installed_candidates catalog = {-1, NULL, 0, root_path};
-    size_t i, j, k;
+    struct holy_scan_result *initial = NULL;
+    size_t i, j, k, initial_count = *count;
     int root = -1, result = 1;
     catalog.digests = calloc(10000, sizeof *catalog.digests);
     if (!catalog.digests) return 1;
@@ -2670,39 +2708,53 @@ static int discover_installed(const char *root_path, int dir,
     if (catalog.installed < 0) goto done;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0) goto done;
+    initial = calloc(initial_count, sizeof *initial);
+    if (!initial) goto done;
     for (i = 0; i < *count; ++i) {
+        char *snapshot;
         catalog.digests[i] = strdup(digests[i]);
         if (!catalog.digests[i]) goto done;
         ++catalog.count;
+        snapshot = holy_cache_snapshot(catalog.digests[i], root_path);
+        if (!snapshot) { result = 6; goto done; }
+        j = holy_scan_collect(snapshot, &initial[i]);
+        unlink(snapshot); free(snapshot);
+        if (!j) { result = 6; goto done; }
     }
     for (i = 0; i < catalog.count; ++i) {
-        struct holy_scan_result scan = {0};
+        struct holy_scan_result extra = {0};
+        struct holy_scan_result *scan = i < initial_count ? &initial[i] : &extra;
         char *snapshot = holy_cache_snapshot(catalog.digests[i], root_path);
         int ok;
         if (!snapshot) { result = 6; goto done; }
         ok = holy_deps_visit(snapshot, installed_requirement, &catalog) &&
-             holy_scan_collect(snapshot, &scan);
+             (i < initial_count || holy_scan_collect(snapshot, scan));
         unlink(snapshot);
         free(snapshot);
-        for (j = 0; ok && j < scan.count; ++j) {
-            const struct holy_elf_info *elf = &scan.files[j].elf;
+        for (j = 0; ok && j < scan->count; ++j) {
+            const struct holy_elf_info *elf = &scan->files[j].elf;
             if (elf->interpreter && elf->interpreter[0] == '/')
                 ok = add_installed_candidates(&catalog, NULL, elf->interpreter + 1);
             for (k = 0; ok && k < elf->needed_count; ++k)
                 if (elf->needed[k][0] == '/')
                     ok = add_installed_candidates(&catalog, NULL, elf->needed[k] + 1);
         }
-        for (j = 0; ok && j < scan.script_count; ++j)
-            if (scan.scripts[j].kind == 1) {
+        for (j = 0; ok && j < scan->script_count; ++j)
+            if (scan->scripts[j].kind == 1) {
                 int status = installed_script_candidates(&catalog, root,
-                                                         scan.scripts[j].interpreter);
+                                                         scan->scripts[j].interpreter,
+                                                         initial, initial_count);
                 if (status) { result = status; ok = 0; }
             }
-        holy_scan_free(&scan);
+        if (i >= initial_count) holy_scan_free(&extra);
         if (!ok) { if (result == 1) result = 6; goto done; }
     }
     result = 0;
 done:
+    if (initial) {
+        for (i = 0; i < initial_count; ++i) holy_scan_free(&initial[i]);
+        free(initial);
+    }
     if (root >= 0) close(root);
     if (catalog.installed >= 0) close(catalog.installed);
     *count = catalog.count;

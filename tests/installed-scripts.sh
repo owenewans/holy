@@ -169,4 +169,44 @@ if "$bin" db check "$script" --root "$root3" --json > "$tmp/out" 2> "$tmp/err"; 
 grep -q '"code":"broken-provider"' "$tmp/out"
 grep -q '"code":"missing-interpreter"' "$tmp/out"
 
+root4="$tmp/root4"
+mkdir -p "$root4/usr/bin"
+"$bin" db init --root "$root4" > "$tmp/out"
+for name in busybox shell-link merged-bin shell-script; do
+    "$bin" cache stage "local:$tmp/$name.holy" --root "$root4" > "$tmp/out"
+done
+for artifact in "$busybox" "$shell_link"; do
+    "$bin" db plan-set "$artifact" --root "$root4" > "$tmp/out"
+    plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+    "$bin" db apply-set "$plan" "$artifact" --root "$root4" > "$tmp/out"
+done
+"$bin" db plan-set "$script" "$merged" --root "$root4" > "$tmp/out"
+grep -q "provider $merged path-alias /bin" "$tmp/out"
+grep -q "provider $shell_link path-alias /usr/bin/sh" "$tmp/out"
+grep -q "provider $busybox shebang /usr/bin/busybox" "$tmp/out"
+plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+"$bin" db apply-set "$plan" "$script" "$merged" --root "$root4" > "$tmp/out"
+"$bin" db check "$script" --root "$root4" --json > "$tmp/out"
+grep -q '"state":"pass"' "$tmp/out"
+
+root5="$tmp/root5"
+mkdir -p "$root5/usr/bin"
+"$bin" db init --root "$root5" > "$tmp/out"
+for name in busybox shell-link merged-bin shell-script; do
+    "$bin" cache stage "local:$tmp/$name.holy" --root "$root5" > "$tmp/out"
+done
+for artifact in "$busybox" "$merged"; do
+    "$bin" db plan-set "$artifact" --root "$root5" > "$tmp/out"
+    plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+    "$bin" db apply-set "$plan" "$artifact" --root "$root5" > "$tmp/out"
+done
+"$bin" db plan-set "$script" "$shell_link" --root "$root5" > "$tmp/out"
+grep -q "provider $merged path-alias /bin" "$tmp/out"
+grep -q "provider $shell_link path-alias /usr/bin/sh" "$tmp/out"
+grep -q "provider $busybox shebang /usr/bin/busybox" "$tmp/out"
+plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+"$bin" db apply-set "$plan" "$script" "$shell_link" --root "$root5" > "$tmp/out"
+"$bin" db check "$script" --root "$root5" --json > "$tmp/out"
+grep -q '"state":"pass"' "$tmp/out"
+
 printf 'installed script checks passed\n'

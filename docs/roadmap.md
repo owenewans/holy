@@ -165,7 +165,8 @@
   env/malformed scripts, block removal of a needed interpreter, and report
   installed interpreter drift. Resolve relative symlink chains in the supplied
   candidate set and protect each selected alias provider. Discover installed
-  alias owners for a later script installation using root-confined lookup.
+  alias owners for a later script installation using root-confined lookup,
+  including chains split between installed and new packages.
 - [ ] Handle hooks, service consent, modified configs, overrides, rollback and
   recovery of each interrupted mutation phase.
 - [x] Prepare regular-file and relative-symlink replacements beside their target,

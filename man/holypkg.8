@@ -833,7 +833,8 @@ installed state and block provider removal unless the
 caller accepts broken dependents. The planner requires a decision for env,
 malformed shebangs and paths it cannot resolve. For a newly added script,
 the planner reads existing relative aliases inside the target root and
-adds their installed owners and final ELF owner to the candidate set.
+aliases in the supplied .holy candidates, then adds reachable installed
+owners and the final ELF owner to the candidate set.
 This discovery needs openat2 with root-confined path resolution; when the
 syscall is unavailable it returns a requirement error.
 Foreign architecture, including x86 on x86_64, returns requirement error 6
