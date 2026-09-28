@@ -284,6 +284,7 @@ check-root: check-install-payload
 check-install: holyinstall holypkg
 	sh tests/installer.sh ./holyinstall ./holypkg
 	python3 tests/installer-disk.py ./holyinstall
+	sh tests/install-source-stage.sh ./holypkg
 
 .PHONY: check-install-vm
 check-install-vm:

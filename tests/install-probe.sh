@@ -46,6 +46,12 @@ while read -r mode path; do
     $bb chmod "$mode" "/mnt/holy/$path"
 done < /usr/share/holy/install-directories
 $pkg db init --root /mnt/holy > /run/install-db
+stage=sources
+sh /usr/lib/holy/install-source-stage.sh "$pkg" /usr/share/holy / \
+    /mnt/holy /run/install-source-bindings "$bb"
+if test -f /usr/share/holy/install-sources.conf; then
+    echo 'HOLY-INSTALL-1 sources registered'
+fi
 echo 'HOLY-INSTALL-1 scaffold ready'
 
 stage=packages
@@ -58,6 +64,7 @@ while read -r digest; do
     printf 'artifact %s\n' "$digest" >> /run/install.conf
     echo "HOLY-INSTALL-1 staged $digest"
 done < /usr/share/holy/install-artifacts
+$bb cat /run/install-source-bindings >> /run/install.conf
 doas_digest=$($bb cat /etc/holy/doas.sha256)
 test "${#doas_digest}" -eq 64
 if $installer --config /run/install.conf --plan /run/install-unapproved.plan \
@@ -78,6 +85,11 @@ test "$($bb cat /mnt/holy/var/lib/holypkg/generation)" = 0
 $installer --apply /run/install.plan --holypkg "$pkg" > /run/install-apply
 test "$($bb cat /mnt/holy/var/lib/holypkg/generation)" = 1
 $pkg db check --all --root /mnt/holy > /run/install-check
+while read -r kind digest source_id; do
+    $bb grep -q "^source $source_id " \
+        "/mnt/holy/var/lib/holypkg/installed/$digest/source"
+    echo "HOLY-INSTALL-1 source $digest $source_id"
+done < /usr/share/holy/install-source-bindings
 echo 'HOLY-INSTALL-1 package-set committed'
 
 stage=doas

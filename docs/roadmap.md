@@ -669,7 +669,11 @@
   filesystem choices. The implemented blank-disk GPT/ext4/FAT path uses
   reviewed plans and `holypkg --root`; account login has a VM fixture.
   Config and text menu now bind selected artifacts to registered source IDs
-  through frozen plan format 4 and retain that provenance at install.
+  through frozen plan format 4 and retain that provenance at install. The live
+  install fixture now carries its source config and artifact bindings into the
+  target root, copies embedded pinned mirrors, and checks installed source
+  records. A disposable-root fixture verifies source preservation and fetch
+  after root relocation. A source-attributed full installed-disk VM run remains.
 - [ ] Implement `holygetiso` with explicit inputs, installed man bundle and a
   boot-validated ISO for each target architecture. The first in-tree C99
   frontend now parses a single explicit local-input config, records its hash

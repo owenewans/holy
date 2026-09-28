@@ -344,8 +344,11 @@ cp "$work/holy-init" "$tree/DATA/usr/bin/holy-init"
 cp "$project/profiles/dinit/"* "$tree/DATA/etc/dinit.d/"
 cp "$project/tests/boot-probe.sh" "$tree/DATA/usr/lib/holy/boot-probe.sh"
 cp "$project/tests/install-probe.sh" "$tree/DATA/usr/lib/holy/install-probe.sh"
+cp "$project/tools/install-source-stage.sh" \
+    "$tree/DATA/usr/lib/holy/install-source-stage.sh"
 chmod 0644 "$tree/DATA/usr/lib/holy/boot-probe.sh"
 chmod 0644 "$tree/DATA/usr/lib/holy/install-probe.sh"
+chmod 0644 "$tree/DATA/usr/lib/holy/install-source-stage.sh"
 cp "$out/packages/boot-fixture.holy" "$tree/DATA/usr/share/holy/fixture.holy"
 chmod 0644 "$tree/DATA/usr/share/holy/fixture.holy"
 cp "$out/packages/boot-fixture-root.holy" "$tree/DATA/usr/share/holy/fixture-root.holy"
@@ -403,6 +406,7 @@ ln -s busybox "$tree/DATA/usr/bin/sh"
 ln -s usr/bin/holy-init "$tree/DATA/init"
 sha256sum "$project/src/early-init.c" "$project/tests/boot-probe.sh" \
     "$project/tests/install-probe.sh" \
+    "$project/tools/install-source-stage.sh" \
     "$project/profiles/dinit/"* > "$tree/HOLY/origin"
 pack holy-boot
 metadata holy-base bootstrap noarch
@@ -522,6 +526,16 @@ printf 'documentation-sha256 %s\n' "${docs_hash%% *}" >> "$record"
 tail -n 1 "$out/llm.txt" > "$out/docs.record"
 if test "$install_test" = 1; then
     sed -n 's/^artifact //p' "$work/install.conf" > "$root/usr/share/holy/install-artifacts"
+    sed -n 's/^source /source /p' "$work/install.conf" \
+        > "$root/usr/share/holy/install-source-bindings"
+    if test -f "$out/inputs/sources.conf"; then
+        cp "$out/inputs/sources.conf" "$root/usr/share/holy/install-sources.conf"
+        cp "$out/inputs/source-aliases" "$root/usr/share/holy/install-source-aliases"
+        sha256sum "$root/usr/share/holy/install-sources.conf" \
+            "$root/usr/share/holy/install-source-aliases" >> "$record"
+    else
+        test ! -s "$root/usr/share/holy/install-source-bindings" || exit 6
+    fi
     python3 - "$root" "$root/usr/share/holy/install-directories" <<'PY'
 import os
 import pathlib
@@ -545,7 +559,8 @@ with open(sys.argv[2], 'w', encoding='utf-8') as output:
             output.write(f'{mode:04o} {relative}\n')
 PY
     sha256sum "$root/usr/share/holy/install-artifacts" \
-        "$root/usr/share/holy/install-directories" >> "$record"
+        "$root/usr/share/holy/install-directories" \
+        "$root/usr/share/holy/install-source-bindings" >> "$record"
 fi
 if test "$network_recovery" = fixture; then
     for abi in glibc musl; do

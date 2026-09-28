@@ -180,7 +180,11 @@ stage. Its static storage tools come from STORAGE_TOOLS_PACKAGE, which the
 builder installs into the live image but excludes from the installed base.
 The guest mounts the target root, stages its local .holy
 archives, reviews and applies one holyinstall package plan containing doas
-and its setuid approval. It generates the
+and its setuid approval. When the live image has configured sources, the guest
+registers the same source IDs in the target root, copies embedded pinned
+mirrors, and binds source-attributed artifacts in that plan. It verifies the
+installed source records before declaring the package set committed. The
+source config remains at /etc/holy.conf on the installed disk. It generates the
 installed man bundle, and copies kernel, initramfs and Limine files from the
 ISO to the ESP. The runner shuts down that guest after serial success markers,
 then forks the installed overlay for separate BIOS and UEFI disk boots. Both
