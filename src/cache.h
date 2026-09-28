@@ -3,6 +3,9 @@
 
 /* stages a verified local native package in the target root cache only. */
 int holy_cache_stage_local(const char *source, const char *root_path);
+/* on success copies the verified artifact digest into output when non-NULL. */
+int holy_cache_stage_local_digest(const char *source, const char *root_path,
+                                   char output[65]);
 /* verifies one cached object by digest without changing the target root. */
 int holy_cache_verify(const char *digest, const char *root_path);
 /* same verification without success output; returns one for a valid object. */

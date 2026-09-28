@@ -23,6 +23,68 @@
 #include <locale.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
+static int add_local(int argc, char **argv)
+{
+    const char **inputs = NULL, **digests = NULL;
+    char (*hashes)[65] = NULL;
+    const char *root = "/", *choice = NULL;
+    char plan[65], answer[16];
+    size_t count = 0, i, j;
+    int yes = 0, noninteractive = 0, root_seen = 0, result = 2;
+    if (argc < 3 || strncmp(argv[2], "local:", 6) || !argv[2][6]) goto done;
+    inputs = calloc((size_t)argc, sizeof *inputs);
+    digests = calloc((size_t)argc, sizeof *digests);
+    hashes = calloc((size_t)argc, sizeof *hashes);
+    if (!inputs || !digests || !hashes) { result = 1; goto done; }
+    inputs[count++] = argv[2] + 6;
+    for (i = 3; i < (size_t)argc; ++i) {
+        if (!strcmp(argv[i], "--candidate") && i + 1 < (size_t)argc &&
+            !strncmp(argv[i + 1], "local:", 6) && argv[i + 1][6]) {
+            inputs[count++] = argv[++i] + 6;
+        } else if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < (size_t)argc &&
+                   argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) {
+            root = argv[++i]; root_seen = 1;
+        } else if (!strcmp(argv[i], "--choose") && !choice && i + 1 < (size_t)argc &&
+                   argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) {
+            choice = argv[++i];
+        } else if (!strcmp(argv[i], "--yes") && !yes) yes = 1;
+        else if (!strcmp(argv[i], "--noninteractive") && !noninteractive) noninteractive = 1;
+        else goto done;
+    }
+    if (count > 10000) goto done;
+    for (i = 0; i < count; ++i) {
+        if (!holy_cache_stage_local_digest(inputs[i], root, hashes[i])) {
+            result = 1; goto done;
+        }
+        for (j = 0; j < i; ++j) if (!strcmp(hashes[j], hashes[i])) goto done;
+        digests[i] = hashes[i];
+    }
+    result = holy_state_set(digests, count, choice, NULL, root,
+                            NULL, 0, NULL, 0, NULL, 0, plan);
+    if (result) goto done;
+    if (!yes) {
+        if (noninteractive || !isatty(STDIN_FILENO)) {
+            fprintf(stderr, "holypkg: decision-required plan=%s; rerun with --yes after review\n", plan);
+            result = 3; goto done;
+        }
+        if (fflush(stdout) || fprintf(stderr, "Apply plan %s to %s? [y/N] ", plan, root) < 0 ||
+            fflush(stderr)) { result = 1; goto done; }
+        if (!fgets(answer, sizeof answer, stdin) ||
+             (strcmp(answer, "y\n") && strcmp(answer, "Y\n") &&
+             strcmp(answer, "yes\n") && strcmp(answer, "YES\n"))) {
+            result = 3; goto done;
+        }
+    }
+    result = holy_state_set(digests, count, choice, plan, root,
+                            NULL, 0, NULL, 0, NULL, 0, NULL);
+done:
+    if (result == 2)
+        fputs("usage: holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
+    free(hashes); free(digests); free(inputs);
+    return result;
+}
 
 int main(int argc, char **argv)
 {
@@ -32,6 +94,8 @@ int main(int argc, char **argv)
     int ok;
 
     setlocale(LC_CTYPE, "");
+
+    if (argc > 1 && !strcmp(argv[1], "add")) return add_local(argc, argv);
 
     if (argc > 1 && !strcmp(argv[1], "import")) {
         if (argc == 9 && !strcmp(argv[3], "--source") && !strcmp(argv[5], "--format") &&
@@ -316,7 +380,7 @@ int main(int argc, char **argv)
         if (count) result = holy_state_set(digests, count, choice,
                                           start == 4 ? argv[3] : NULL, argv[argc - 1],
                                           bindings, binding_count, accepted_arch, accepted_count,
-                                          accepted_privileged, privileged_count);
+                                          accepted_privileged, privileged_count, NULL);
 set_done:
         free(digests); free(bindings); free(accepted_arch); free(accepted_privileged);
         return result;
@@ -417,7 +481,7 @@ set_done:
         !strcmp(argv[3], "--root") && !strcmp(argv[5], "--json"))
         return holy_check_local(argv[2] + 6, argv[4], 1);
     if (argc != 4 || strcmp(argv[1], "config") || strcmp(argv[2], "check")) {
-        fprintf(stderr, "usage: holypkg config check FILE | holypkg info|verify|manifest|scan local:FILE | holypkg manifest generate DIRECTORY --output FILE | holypkg requirements|provides local:FILE [--json] | holypkg solve local:ROOT [local:CANDIDATE...] [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE] | holypkg pack DIRECTORY --output FILE.holy | holypkg check|preview local:FILE --root DIRECTORY [--json] | holypkg cache stage local:FILE --root DIRECTORY | holypkg cache verify SHA256 --root DIRECTORY | holypkg db init|status|cancel|recover|preflight|plan|recheck|apply --root DIRECTORY | holypkg db recover --abort-empty|--continue|--finish-apply --root DIRECTORY | holypkg db check SHA256|--all --root DIRECTORY [--json] | holypkg db rm SHA256 [--accept-broken] --root DIRECTORY | holypkg db owner PATH --root DIRECTORY | holypkg db status|preflight --root DIRECTORY --json | holypkg db reserve SHA256 --root DIRECTORY | holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID...] [--accept-arch SHA256...] [--accept-privileged SHA256...] --root DIRECTORY | holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID...] [--accept-arch SHA256...] [--accept-privileged SHA256...] --root DIRECTORY | holypkg db recover --finish-set|--continue-set|--repair --root DIRECTORY | holypkg db plan-update OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY | holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY | holypkg db recover --update --root DIRECTORY | holypkg db repair-plan SHA256 --root DIRECTORY | holypkg db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY | holypkg db approve PLAN_SHA256 --root DIRECTORY | holypkg elf FILE | holypkg repo index|list|seal DIRECTORY | holypkg repo search DIRECTORY NAME | holypkg repo solve DIRECTORY NAME [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg repo providers DIRECTORY KIND NAME [--json] | holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY\n");
+        fprintf(stderr, "usage: holypkg add local:FILE [--candidate local:FILE...] [--choose ID=SHA256] [--root DIRECTORY] [--yes] [--noninteractive] | holypkg config check FILE | holypkg info|verify|manifest|scan local:FILE | holypkg manifest generate DIRECTORY --output FILE | holypkg requirements|provides local:FILE [--json] | holypkg solve local:ROOT [local:CANDIDATE...] [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE] | holypkg pack DIRECTORY --output FILE.holy | holypkg check|preview local:FILE --root DIRECTORY [--json] | holypkg cache stage local:FILE --root DIRECTORY | holypkg cache verify SHA256 --root DIRECTORY | holypkg db init|status|cancel|recover|preflight|plan|recheck|apply --root DIRECTORY | holypkg db recover --abort-empty|--continue|--finish-apply --root DIRECTORY | holypkg db check SHA256|--all --root DIRECTORY [--json] | holypkg db rm SHA256 [--accept-broken] --root DIRECTORY | holypkg db owner PATH --root DIRECTORY | holypkg db status|preflight --root DIRECTORY --json | holypkg db reserve SHA256 --root DIRECTORY | holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID...] [--accept-arch SHA256...] [--accept-privileged SHA256...] --root DIRECTORY | holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID...] [--accept-arch SHA256...] [--accept-privileged SHA256...] --root DIRECTORY | holypkg db recover --finish-set|--continue-set|--repair --root DIRECTORY | holypkg db plan-update OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY | holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY | holypkg db recover --update --root DIRECTORY | holypkg db repair-plan SHA256 --root DIRECTORY | holypkg db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY | holypkg db approve PLAN_SHA256 --root DIRECTORY | holypkg elf FILE | holypkg repo index|list|seal DIRECTORY | holypkg repo search DIRECTORY NAME | holypkg repo solve DIRECTORY NAME [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg repo providers DIRECTORY KIND NAME [--json] | holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY\n");
         return 2;
     }
     path = argv[3];

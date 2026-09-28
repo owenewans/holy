@@ -2,6 +2,8 @@
 .SH NAME
 holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
+.B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--root DIRECTORY] [--yes] [--noninteractive]
+.br
 .B holypkg import INPUT --source NAME --format pacman|deb --output NEW_DIRECTORY
 .br
 .B holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--ca-file FILE]
@@ -630,6 +632,23 @@ before the database generation changes. Recovery uses that record if removal
 stopped after the instance left the installed directory, and retains the
 decision when it completes.
 Grouped removal remains pending.
+.PP
+add local:FILE stages a verified native artifact in the selected target-root
+cache, builds a read-only package-set plan and shows its selected packages,
+providers and plan hash. --candidate adds local archives to the resolver pool;
+only selected packages are installed. --choose binds one stable requirement ID
+to an exact provider artifact hash. The default root is /. Local archive
+metadata cannot assign a trusted source-id.
+.PP
+With a terminal, add asks for y before applying the displayed plan. An n answer
+leaves installed state unchanged. Without a terminal, add returns 3 after
+printing the plan and stages no installed files. --noninteractive forces this
+behavior unless --yes is also given. --yes approves only the exact plan displayed by this invocation;
+the engine rebuilds it under the writer lock and refuses a changed generation,
+artifact or provider choice. --yes does not approve an unresolved dependency,
+foreign architecture or privileged payload. The cache may retain staged
+objects after a declined or unresolved operation. Automatic doas escalation,
+source lookup and script execution are not part of this local subset.
 .PP
 The db plan command reads the prepared reservation at the current database
 generation. It verifies a private snapshot of the cached artifact, checks

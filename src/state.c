@@ -3226,12 +3226,14 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
                    const char *approved, const char *root_path,
                    const char *const *bindings, size_t binding_count,
                    const char *const *accepted_arch, size_t accepted_count,
-                   const char *const *accepted_privileged, size_t privileged_count)
+                   const char *const *accepted_privileged, size_t privileged_count,
+                   char plan_hash[65])
 {
     struct install_set set = {0};
     unsigned long long generation;
     int root = -1, dir = -1, installed = -1, transactions = -1, result = 1, journaled = 0;
     size_t i;
+    if (plan_hash) plan_hash[0] = 0;
     if ((approved && !valid_digest(approved)) || (choice && !set_choice_valid(choice))) return 2;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     dir = root < 0 ? -1 : state_dir_at(root, 0);
@@ -3244,6 +3246,7 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
                        accepted_arch, accepted_count, accepted_privileged, privileged_count, &set);
     if (result) goto done;
     if (!approved) {
+        if (plan_hash) memcpy(plan_hash, set.hash, 65);
         printf("plan-set generation %llu root %s artifacts %zu paths %zu sha256 %s read-only\n",
                generation, set.resolution.root, set.count, set.paths, set.hash);
         for (i = 0; i < set.count; ++i)

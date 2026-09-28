@@ -152,6 +152,7 @@ check: check-pacman check-deb holypkg tests/resolution check-init check-solver c
 	sh tests/repo.sh ./holypkg
 	sh tests/state.sh ./holypkg
 	sh tests/sets.sh ./holypkg
+	sh tests/add.sh ./holypkg
 	sh tests/update.sh ./holypkg
 	sh tests/update-privileged.sh ./holypkg
 	sh tests/directories.sh ./holypkg
@@ -186,6 +187,7 @@ check-root: check-install-payload
 	python3 tests/architecture.py ./holypkg
 	sh tests/state.sh ./holypkg
 	sh tests/sets.sh ./holypkg
+	sh tests/add.sh ./holypkg
 	sh tests/update-privileged.sh ./holypkg
 	sh tests/orphan.sh ./holypkg
 	sh tests/dynamic.sh ./holypkg

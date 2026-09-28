@@ -49,13 +49,15 @@ static int cache_directory(const char *root_path, int create)
     return -1;
 }
 
-int holy_cache_stage_local(const char *source, const char *root_path)
+int holy_cache_stage_local_digest(const char *source, const char *root_path,
+                                   char output[65])
 {
     struct holy_package_identity identity = {0};
     struct stat st;
     char name[70];
     char *snapshot = holy_stage_local(source, "holy-cache");
     int current = -1, ok = 0;
+    if (output) output[0] = 0;
     if (!snapshot || !holy_verify_with_output(snapshot, 0) ||
         !holy_scan_local_with_output(snapshot, 0) ||
         !holy_deps_local_with_output(snapshot, 0) ||
@@ -68,6 +70,7 @@ int holy_cache_stage_local(const char *source, const char *root_path)
         !S_ISREG(st.st_mode) || st.st_uid != geteuid() ||
         (st.st_mode & 0022)) goto done;
     printf("%s/var/cache/holypkg/objects/sha256/%s\n", root_path, name);
+    if (output) memcpy(output, identity.digest, 65);
     ok = 1;
 done:
     if (!ok) fprintf(stderr, "holypkg: cache stage failed; inspect target cache\n");
@@ -75,6 +78,11 @@ done:
     holy_package_identity_free(&identity);
     if (snapshot) { unlink(snapshot); free(snapshot); }
     return ok;
+}
+
+int holy_cache_stage_local(const char *source, const char *root_path)
+{
+    return holy_cache_stage_local_digest(source, root_path, NULL);
 }
 
 char *holy_cache_snapshot(const char *digest, const char *root_path)
