@@ -25,6 +25,13 @@ def tar(items):
     return content.getvalue()
 
 
+def origin(package):
+    data = subprocess.run(["lz4", "-d", "-c", str(package)],
+                          capture_output=True, check=True).stdout
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as archive:
+        return archive.extractfile("HOLY/origin").read().decode()
+
+
 def deb(package_name="fixture"):
     control = (f"Package: {package_name}\nVersion: 1:2.0-3\nArchitecture: all\n"
                "Description: fixture\n").encode()
@@ -188,6 +195,10 @@ with tempfile.TemporaryDirectory() as scratch:
             "--output", signed_package, "--ca-file", tmp / "cert.pem", "--import",
             "--require-file", "/usr/share/fixture")
         assert "verification release-gpgv-user-key\n" in (signed_package / "selection").read_text()
+        signed_origin = origin(next((signed_package / "converted").glob("*.holy")))
+        assert "verification release-gpgv-user-key\n" in signed_origin
+        assert f"keyring-sha256 {hashlib.sha256((signed / 'keyring').read_bytes()).hexdigest()}\n" in signed_origin
+        assert f"signature-sha256 {hashlib.sha256((signed / 'release.gpg').read_bytes()).hexdigest()}\n" in signed_origin
         assert 'required-file "/usr/share/fixture"\n' in (
             signed_package / "selection").read_text()
         assert "file-provider verified-payload\n" in (signed_package / "selection").read_text()
@@ -211,9 +222,12 @@ with tempfile.TemporaryDirectory() as scratch:
             "apt", "info", "fixture", "--catalog", inline)
         inline_package = tmp / "inline-package"
         run("apt", "fetch", "fixture", "1:2.0-3", "all", "--catalog", inline,
-            "--output", inline_package, "--ca-file", tmp / "cert.pem")
+            "--output", inline_package, "--ca-file", tmp / "cert.pem", "--import")
         assert "verification inrelease-gpgv-user-key\n" in (
             inline_package / "selection").read_text()
+        inline_origin = origin(next((inline_package / "converted").glob("*.holy")))
+        assert "verification inrelease-gpgv-user-key\n" in inline_origin
+        assert f"signature-sha256 {hashlib.sha256((inline / 'inrelease').read_bytes()).hexdigest()}\n" in inline_origin
         inline_bytes = (inline / "inrelease").read_bytes()
         (inline / "inrelease").write_bytes(inline_bytes + b"damage")
         run("apt", "search", "fixture", "--catalog", inline, status=2)
@@ -401,6 +415,14 @@ with tempfile.TemporaryDirectory() as scratch:
         assert "imported yes\nstate complete\n" in (fetched / "selection").read_text()
         native = list((fetched / "converted").glob("*.holy"))
         assert len(native) == 1
+        pinned_origin = origin(native[0])
+        assert "verification pinned-unverified\n" in pinned_origin
+        assert f"index-sha256 {hashlib.sha256(packages.read_bytes()).hexdigest()}\n" in pinned_origin
+        assert f'source-url "{base}"\n' in pinned_origin
+        direct = tmp / "direct-import"
+        run("import", fetched / "original", "--source", "debian", "--format", "deb",
+            "--output", direct)
+        assert "verification unverified\n" in origin(next(direct.glob("*.holy")))
         run("verify", "local:" + str(native[0]))
         run("apt", "fetch", "fixture", "1:2.0-3", "all", "--catalog", catalog,
             "--output", tmp / "no-ca", status=6)

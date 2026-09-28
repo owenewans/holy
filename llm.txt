@@ -1024,7 +1024,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=b0d05e2ad25cc3aaea046058b3b0d635156c72ac2c9ad6da2b8684123136e6a3
+holypkg.8 source=holy version=development sha256=b543638f4c7b03a6d1bfccc9ca2d0ad01aacd8e8fec2e2dca5efff1eb93a7cf9
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1313,15 +1313,19 @@ DESCRIPTION
      fetch selects an exact name, version and Debian architecture, downloads the
      listed Filename over HTTPS, and checks its SHA-256 and Size. The output re-
      tains the original .deb and a selection receipt. With --import, it	 invokes
-     the local Debian converter and checks the native output identity. Index and
-     selection	receipts  say  pinned-unverified  when	only  an external pin is
-     available. The signed path uses the separately  selected  keyring	and  Re-
-     lease.gpg.	 Registered  operations include a checked source-id in their se-
-     lection receipt.  With --import --require-file  /PATH,  fetch  checks  that
-     Contents  names  the selected package, then verifies the exact nondirectory
-     path in the imported receipt. The option requires --import.   It  does  not
-     install packages. make check-apt covers local and HTTPS indexes, tampering,
-     TLS fetch, hash mismatch and import identity.
+     the  local Debian converter and checks the native output identity. The con-
+     verter checks the downloaded DEB hash after staging, then records	the  se-
+     lected index hash, source URL and verification result in each .holy origin.
+     Signed  catalogs  also  record keyring and Release signature hashes. Direct
+     local DEB import remains  unverified.  Index  and	selection  receipts  say
+     pinned-unverified	when  only an external pin is available. The signed path
+     uses the separately selected keyring and Release.gpg. Registered operations
+     include a checked source-id in  their  selection  receipt.	  With	--import
+     --require-file  /PATH,  fetch checks that Contents names the selected pack-
+     age, then verifies the exact nondirectory path in the imported receipt. The
+     option requires --import.	It does not  install  packages.	 make  check-apt
+     covers local and HTTPS indexes, tampering, TLS fetch, hash mismatch and im-
+     port identity.
 
      --format  slackware reads a .txz, .tgz, .tbz or .tlz tar package and checks
      its compression against the filename suffix. It  parses  the  name-version-

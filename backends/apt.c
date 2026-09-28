@@ -707,6 +707,29 @@ done:
     return ok;
 }
 
+static int apt_proof_hashes(const char *catalog, int inline_signature,
+                            char key_hash[65], char signature_hash[65])
+{
+    struct stat st;
+    int dir = open(catalog, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int fd = -1, ok = 0;
+    if (dir < 0) return 0;
+    fd = openat(dir, "keyring", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size > 1024 * 1024 || !file_hash(fd, key_hash)) goto done;
+    close(fd); fd = -1;
+    fd = openat(dir, inline_signature ? "inrelease" : "release.gpg",
+                O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size > (inline_signature ? 8 : 1) * 1024 * 1024 ||
+        !file_hash(fd, signature_hash)) goto done;
+    ok = 1;
+done:
+    if (fd >= 0) close(fd);
+    close(dir);
+    return ok;
+}
+
 int holy_apt_fetch(const char *catalog, const char *name, const char *version,
                    const char *arch, const char *output, const char *ca_file,
                    int import, const char *required_file,
@@ -715,6 +738,8 @@ int holy_apt_fetch(const char *catalog, const char *name, const char *version,
     struct apt_index index = {0};
     const struct apt_entry *selected = NULL;
     char downloaded[65] = {0}, *url = NULL, *converted = NULL, *original = NULL;
+    char key_hash[65] = {0}, signature_hash[65] = {0};
+    const char *verification;
     struct stat st;
     FILE *receipt = NULL;
     size_t i;
@@ -730,6 +755,9 @@ int holy_apt_fetch(const char *catalog, const char *name, const char *version,
     if (result) goto done;
     result = check_source(catalog, &index, root, source);
     if (result) goto done;
+    verification = index.release_verified == 2 ? "inrelease-gpgv-user-key" :
+                   index.release_verified == 1 ? "release-gpgv-user-key" :
+                   "pinned-unverified";
     for (i = 0; i < index.count; ++i) {
         const struct apt_entry *e = &index.entries[i];
         if (!strcmp(e->name, name) && !strcmp(e->version, version) && !strcmp(e->arch, arch)) {
@@ -758,13 +786,24 @@ int holy_apt_fetch(const char *catalog, const char *name, const char *version,
     result = 1;
     if (linkat(dir, downloaded, dir, "original", 0) || fsync(dir)) goto done;
     if (import) {
+        if (index.release_verified &&
+            !apt_proof_hashes(catalog, index.release_verified == 2,
+                              key_hash, signature_hash)) { result = 4; goto done; }
+        if (index.release_verified &&
+            holy_apt_verify_release(catalog, index.hash) != index.release_verified) {
+            result = 4; goto done;
+        }
         converted = malloc(strlen(output) + sizeof "/converted");
         if (!converted) goto done;
         sprintf(converted, "%s/converted", output);
         original = malloc(strlen(output) + sizeof "/original");
         if (!original) { result = 1; goto done; }
         sprintf(original, "%s/original", output);
-        result = holy_import_deb(original, index.source, converted);
+        result = holy_import_deb_verified(original, index.source, converted,
+                                          selected->sha256, verification,
+                                          index.release_verified ? key_hash : NULL,
+                                          index.release_verified ? signature_hash : NULL,
+                                          index.hash, index.base);
         if (result) goto done;
         if (!imported_identity(converted, selected, required_file)) { result = 4; goto done; }
     }
@@ -786,8 +825,7 @@ int holy_apt_fetch(const char *catalog, const char *name, const char *version,
     if (root) fprintf(receipt, "\nsource-id %s\nsource-binding checked", index.source_id);
     fprintf(receipt, "\nindex-sha256 %s\nartifact-sha256 %s\nsize %llu\nverification %s\nimported %s\nstate complete\n",
             index.hash, selected->sha256, selected->size,
-            index.release_verified == 2 ? "inrelease-gpgv-user-key" :
-            index.release_verified == 1 ? "release-gpgv-user-key" : "pinned-unverified",
+            verification,
             import ? "yes" : "no");
     {
         int failed = ferror(receipt);

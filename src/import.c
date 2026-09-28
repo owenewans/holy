@@ -1302,7 +1302,8 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
     fprintf(files[5], "\noriginal-sha256 %s\nverification %s\nconverter holy-%s-1\noriginal-version ",
             hash, verification ? verification : "unverified", family);
     token(files[5], version); fputc('\n', files[5]);
-    if (key_hash && fprintf(files[5], "public-key-sha256 %s\n", key_hash) < 0) goto done;
+    if (key_hash && fprintf(files[5], "%s %s\n",
+                            deb ? "keyring-sha256" : "public-key-sha256", key_hash) < 0) goto done;
     if (signature_hash && fprintf(files[5], "signature-sha256 %s\n", signature_hash) < 0) goto done;
     if (index_hash && fprintf(files[5], "index-sha256 %s\n", index_hash) < 0) goto done;
     if (source_url) {
@@ -1618,7 +1619,12 @@ done:
     return result;
 }
 
-int holy_import_deb(const char *input_path, const char *source, const char *output)
+static int lower_digest(const char *value);
+
+int holy_import_deb_verified(const char *input_path, const char *source, const char *output,
+                             const char *expected_hash, const char *verification,
+                             const char *key_hash, const char *signature_hash,
+                             const char *index_hash, const char *source_url)
 {
     struct foreign_input input = {0};
     struct deb_metadata metadata = {0};
@@ -1627,14 +1633,28 @@ int holy_import_deb(const char *input_path, const char *source, const char *outp
     FILE *receipt = NULL;
     int input_fd = -1, output_fd = -1, result = 1, common;
     size_t i;
-    if (!*source || !strcmp(source, "local")) return 2;
+    if (!input_path || !source || !output || !*source || !strcmp(source, "local") ||
+        !verification ||
+        (strcmp(verification, "unverified") && strcmp(verification, "pinned-unverified") &&
+         strcmp(verification, "release-gpgv-user-key") &&
+         strcmp(verification, "inrelease-gpgv-user-key")) ||
+        (strcmp(verification, "unverified") &&
+         (!lower_digest(expected_hash) || !lower_digest(index_hash) || !source_url)) ||
+        (!strcmp(verification, "unverified") &&
+         (expected_hash || index_hash || source_url || key_hash || signature_hash)) ||
+        ((key_hash || signature_hash) &&
+         (!lower_digest(key_hash) || !lower_digest(signature_hash))) ||
+        (!strcmp(verification, "pinned-unverified") && (key_hash || signature_hash)) ||
+        (strstr(verification, "gpgv") && (!key_hash || !signature_hash))) return 2;
     for (i = 0; source[i]; ++i)
         if ((unsigned char)source[i] <= 32 || source[i] == ':' || source[i] == '/' || source[i] == '@') return 2;
     input_fd = open(input_path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
     if (input_fd < 0 || fstat(input_fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
         st.st_size > 1024LL * 1024 * 1024) { result = 6; goto done; }
     snapshot = holy_stage_fd(input_fd, "holy-import");
-    if (!snapshot || !input_hash(snapshot, hash) || mkdir(output, 0700)) goto done;
+    if (!snapshot || !input_hash(snapshot, hash)) goto done;
+    if (expected_hash && strcmp(expected_hash, hash)) { result = 4; goto done; }
+    if (mkdir(output, 0700)) goto done;
     output_fd = open(output, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (output_fd < 0 || fstat(output_fd, &st) || st.st_uid != geteuid() ||
         (st.st_mode & 0777) != 0700 || !preserve_original(snapshot, output_fd)) goto done;
@@ -1674,10 +1694,18 @@ int holy_import_deb(const char *input_path, const char *source, const char *outp
         if (!receipt) { close(fd); goto done; }
     }
     fprintf(receipt, "format holy-import-record-1\nfamily deb\nconverter holy-deb-1\noriginal-sha256 %s\nsource-name ", hash);
-    token(receipt, source); fputs("\nverification unverified\n", receipt);
+    token(receipt, source); fprintf(receipt, "\nverification %s\n", verification);
+    if (key_hash) fprintf(receipt, "keyring-sha256 %s\n", key_hash);
+    if (signature_hash) fprintf(receipt, "signature-sha256 %s\n", signature_hash);
+    if (index_hash) fprintf(receipt, "index-sha256 %s\n", index_hash);
+    if (source_url) {
+        fputs("source-url ", receipt); token(receipt, source_url);
+        fputc('\n', receipt);
+    }
     for (i = 0; i < input.group_count; ++i)
         if (!write_output(&input, NULL, &metadata, NULL, NULL, NULL, source, hash, output, output_fd,
-                          receipt, (int)i, NULL, NULL, NULL, NULL, NULL)) goto done;
+                          receipt, (int)i, verification, key_hash, signature_hash,
+                          index_hash, source_url)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
     if (fclose(receipt)) { receipt = NULL; goto done; }
@@ -1692,6 +1720,12 @@ done:
     if (snapshot) { unlink(snapshot); free(snapshot); }
     free_deb(&metadata); free_input(&input);
     return result;
+}
+
+int holy_import_deb(const char *input_path, const char *source, const char *output)
+{
+    return holy_import_deb_verified(input_path, source, output, NULL,
+                                    "unverified", NULL, NULL, NULL, NULL);
 }
 
 int holy_import_slackware(const char *input_path, const char *source, const char *output)

@@ -355,7 +355,11 @@ be checked before a file requirement is satisfied.
 selects an exact name, version and Debian architecture, downloads the listed
 Filename over HTTPS, and checks its SHA-256 and Size. The output retains the
 original .deb and a selection receipt. With --import, it invokes the local
-Debian converter and checks the native output identity. Index and selection
+Debian converter and checks the native output identity. The converter checks
+the downloaded DEB hash after staging, then records the selected index hash,
+source URL and verification result in each .holy origin. Signed catalogs also
+record keyring and Release signature hashes. Direct local DEB import remains
+unverified. Index and selection
 receipts say pinned-unverified when only an external pin is available. The
 signed path uses the separately selected keyring and Release.gpg. Registered
 operations include a checked source-id in their selection receipt.
