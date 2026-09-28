@@ -263,9 +263,10 @@ done:
 }
 
 struct source_candidate {
-    char *alias, *name, *catalog, *next_catalog;
+    char *alias, *kind, *name, *catalog, *next_catalog;
     char source_id[65], next_id[65];
     struct holy_repo_set staged, next;
+    int provider;
 };
 
 static int add_source(int argc, char **argv)
@@ -317,6 +318,26 @@ static int add_source(int argc, char **argv)
             if (!strcmp(item->alias, "local") || !strcmp(item->alias, alias)) goto done;
             ++extra_count;
         }
+        else if (!strcmp(argv[i], "--candidate-provider") && i + 1 < (size_t)argc) {
+            const char *ref = argv[++i], *first = strchr(ref, ':'), *second;
+            struct source_candidate *item = &extras[extra_count];
+            if (!first || first == ref || !(second = strchr(first + 1, ':')) ||
+                second == first + 1 || !second[1]) goto done;
+            item->alias = malloc((size_t)(first - ref) + 1);
+            item->kind = malloc((size_t)(second - first));
+            item->name = malloc(strlen(second + 1) + 1);
+            if (!item->alias || !item->kind || !item->name) { result = 1; goto done; }
+            memcpy(item->alias, ref, (size_t)(first - ref));
+            item->alias[first - ref] = 0;
+            memcpy(item->kind, first + 1, (size_t)(second - first - 1));
+            item->kind[second - first - 1] = 0;
+            strcpy(item->name, second + 1);
+            if (!strcmp(item->alias, "local") || !strcmp(item->alias, alias) ||
+                (strcmp(item->kind, "package") && strcmp(item->kind, "file") &&
+                 strcmp(item->kind, "command") && strcmp(item->kind, "soname"))) goto done;
+            item->provider = 1;
+            ++extra_count;
+        }
         else if (!strcmp(argv[i], "--accept-arch") && i + 1 < (size_t)argc &&
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2))
             accepted_arch[arch_count++] = argv[++i];
@@ -344,7 +365,10 @@ static int add_source(int argc, char **argv)
         if (result) goto done;
         result = holy_source_catalog(root, item->alias, item->catalog, item->source_id);
         if (result) goto done;
-        result = holy_repo_stage_set(item->catalog, item->name, root, &item->staged);
+        result = item->provider ?
+            holy_repo_stage_provider(item->catalog, item->kind, item->name,
+                                     root, &item->staged) :
+            holy_repo_stage_set(item->catalog, item->name, root, &item->staged);
         if (result) goto done;
         for (j = 0; j < item->staged.count; ++j) {
             char *binding;
@@ -400,7 +424,10 @@ static int add_source(int argc, char **argv)
         if (result || strcmp(item->catalog, item->next_catalog)) { result = 3; goto done; }
         result = holy_source_catalog(root, item->alias, item->catalog, item->next_id);
         if (result || strcmp(item->source_id, item->next_id)) { result = 3; goto done; }
-        result = holy_repo_stage_set(item->catalog, item->name, root, &item->next);
+        result = item->provider ?
+            holy_repo_stage_provider(item->catalog, item->kind, item->name,
+                                     root, &item->next) :
+            holy_repo_stage_set(item->catalog, item->name, root, &item->next);
         if (result || strcmp(item->staged.index, item->next.index) ||
             item->staged.count != item->next.count) { result = 3; goto done; }
         for (j = 0; j < item->staged.count; ++j)
@@ -415,10 +442,10 @@ static int add_source(int argc, char **argv)
                                             accepted_privileged, privileged_count, NULL);
 done:
     if (result == 2)
-        fputs("usage: holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
+        fputs("usage: holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
     for (i = 0; i < binding_count; ++i) free((void *)bindings[i]);
     for (i = 0; extras && i < (size_t)argc; ++i) {
-        free(extras[i].alias); free(extras[i].name);
+        free(extras[i].alias); free(extras[i].kind); free(extras[i].name);
         free(extras[i].catalog); free(extras[i].next_catalog);
         holy_repo_set_free(&extras[i].staged);
         holy_repo_set_free(&extras[i].next);

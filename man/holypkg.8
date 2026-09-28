@@ -4,7 +4,7 @@ holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
 .B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
-.B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
+.B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
 .B holypkg up SOURCE:PACKAGE --prepare --output NEW_FILE [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--root DIRECTORY]
 .br
@@ -770,6 +770,13 @@ and rejects an artifact hash offered by two candidate sources. It checks each
 candidate mirror's source-id, index digest and staged hashes again before
 apply. The root catalog index is saved in the transaction journal; the exact
 selected artifact hashes and source bindings are saved for every source.
+.B --candidate-provider SOURCE:KIND:NAME
+selects matching packages by exact indexed package, file, command or SONAME
+facts from the named source, then stages their in-source dependency closure.
+The selected package still undergoes payload and resolver checks. The option
+requires a native index with complete dependency, file and SONAME records;
+an unavailable index returns status 6. Multiple matching packages remain
+candidates for the reviewed provider choice.
 Automatic discovery and ranking across sources remain open. Hooks and
 transforms remain outside the supported installation subset.
 .PP

@@ -329,10 +329,11 @@
   packages to the registered source-id, and bind index digest to the reviewed
   plan and recovery journal. Reject changed catalogs before apply. A faulted
   generation update recovers from the version-5 journal without network access.
-  Explicit `--candidate SOURCE:PACKAGE` now combines bound catalogs in one
-  reviewed set, rechecks each source before apply and preserves selected
-  source IDs. Automatic cross-source discovery/ranking and indexed on-demand
-  candidate retrieval remain open.
+  Explicit `--candidate SOURCE:PACKAGE` combines bound catalogs in one reviewed
+  set. `--candidate-provider SOURCE:KIND:NAME` stages exact indexed package,
+  file, command or SONAME providers and their local closure. Both recheck each
+  source before apply and preserve selected source IDs. Automatic cross-source
+  discovery and ranking remain open.
 - [x] Query an active holy-http source through an explicit synced mirror with
   `search QUERY --source ALIAS` and `info ALIAS:PACKAGE`. Verify source identity,
   pinned index and matching artifacts before returning exact names; report missing and

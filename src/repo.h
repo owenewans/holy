@@ -59,6 +59,10 @@ int holy_repo_catalog_index_fast(const char *directory, char digest[65]);
 /* stages the indexed requirement closure for v5 catalogs; older indexes use the full pool. */
 int holy_repo_stage_set(const char *directory, const char *name,
                         const char *root, struct holy_repo_set *set);
+/* stage exact indexed providers and their in-source dependency closure. */
+int holy_repo_stage_provider(const char *directory, const char *kind,
+                             const char *name, const char *root,
+                             struct holy_repo_set *set);
 /* stages only indexed versions in one installed source slot. */
 int holy_repo_stage_slot(const char *directory, const char *root,
                          const struct holy_package_identity *slot,

@@ -29,9 +29,15 @@ build unrelated ''
 build foreign-root foreign-dep
 build foreign-dep ''
 build foreign-unused ''
+build provider-root external-package
+build external-package ''
+build external-file-root /usr/share/external-file file
+build external-file ''
 mkdir -p "$tmp/other-repo"
 mv "$tmp/repo/foreign-dep.holy" "$tmp/other-repo/foreign-dep.holy"
 mv "$tmp/repo/foreign-unused.holy" "$tmp/other-repo/foreign-unused.holy"
+mv "$tmp/repo/external-package.holy" "$tmp/other-repo/external-package.holy"
+mv "$tmp/repo/external-file.holy" "$tmp/other-repo/external-file.holy"
 case "$(uname -m)" in
     x86_64)
         arch=x86_64
@@ -92,6 +98,9 @@ MAP
         "$bin" pack "$tmp/tree" --output "$tmp/repo/$name.holy" > "$tmp/out"
     done
 fi
+if test -n "$arch"; then
+    mv "$tmp/repo/helper.holy" "$tmp/other-repo/helper.holy"
+fi
 "$bin" repo index "$tmp/repo" > "$tmp/out"
 "$bin" repo seal "$tmp/repo" > "$tmp/out"
 "$bin" repo index "$tmp/other-repo" > "$tmp/out"
@@ -125,6 +134,21 @@ test -f "$tmp/root/usr/share/foreign-dep"
 test ! -e "$tmp/root/usr/share/foreign-unused"
 grep -q "$other_id" "$tmp/root/var/lib/holypkg/installed/$foreign_hash/source"
 "$bin" db check --all --root "$tmp/root" > "$tmp/out"
+"$bin" add fixture:provider-root --candidate-provider other:package:external-package \
+    --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"
+test -f "$tmp/root/usr/share/external-package"
+if "$bin" add fixture:external-file-root \
+    --candidate-provider other:file:/usr/share/missing-provider \
+    --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"; then
+    exit 1
+else
+    test "$?" -eq 6
+fi
+"$bin" add fixture:external-file-root \
+    --candidate-provider other:file:/usr/share/external-file \
+    --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"
+test -f "$tmp/root/usr/share/external-file"
+"$bin" db check --all --root "$tmp/root" > "$tmp/out"
 if test -n "$arch"; then
     grep -q '"GOOD_1"' "$tmp/repo/index"
     grep -q '"BAD_1"' "$tmp/repo/index"
@@ -157,7 +181,8 @@ test ! -e "$tmp/root/var/cache/holypkg/objects/sha256/$unrelated.holy"
 test -f "$tmp/root/usr/share/file-root"
 test -f "$tmp/root/usr/share/file-provider"
 if test -n "$arch"; then
-    "$bin" add fixture:script --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"
+    "$bin" add fixture:script --candidate-provider other:command:closure-helper \
+        --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"
     test -x "$tmp/root/usr/bin/closure-helper"
     test -x "$tmp/root/usr/bin/closure-script"
 fi
