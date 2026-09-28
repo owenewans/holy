@@ -219,12 +219,12 @@
   A later set also discovers installed providers for ELF DT_NEEDED SONAME edges.
   Indexed installed SONAME lookup remains open.
 - [x] Install a bare DT_NEEDED SONAME when the consumer has an ordered list of
-  literal absolute RUNPATH/RPATH directories and the chosen provider owns the
+  absolute or $ORIGIN-relative RUNPATH/RPATH directories and the chosen provider owns the
   first existing DIRECTORY/SONAME with matching ABI and required symbol versions.
   A provider-owned symlink chain to a versioned library is accepted. Cached
   replacements revalidate every selected SONAME edge. Installed check reads
   verified target-root ELF files and reports provider, alias or earlier-path
-  shadowing drift. Tokenized/default loader search, cross-package aliases and
+  shadowing drift. Other loader tokens and default search, cross-package aliases and
   plugins remain open.
 - [x] Resolve direct absolute shebangs in native package sets against exact
   executable ELF paths. Save the selected provider edge, reject unresolved

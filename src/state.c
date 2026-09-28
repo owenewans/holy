@@ -52,7 +52,7 @@ static char *update_record(int dir, const char *name);
 static int installed_fields(int item, const char *const *keys,
                              const char *const *values, size_t fields);
 static int valid_owner_path(const char *path);
-static int loader_directories(const struct holy_elf_info *elf,
+static int loader_directories(const struct holy_elf_info *elf, const char *consumer,
                               char ***directories, size_t *count);
 static void free_loader_directories(char **directories, size_t count);
 static int loader_file_match(const char *directory, const char *path,
@@ -1731,6 +1731,7 @@ struct graph_elf {
 
 struct graph_soname {
     const struct holy_elf_info *consumer;
+    const char *consumer_path;
     const char *name;
     int root, files;
     int found, arch, versions, path_ok;
@@ -1799,7 +1800,8 @@ static int graph_provider_elf(void *context, const char *path, int fd)
         char **directories = NULL;
         size_t count = 0, directory;
         match->versions = 1;
-        if (loader_directories(match->consumer, &directories, &count)) {
+        if (loader_directories(match->consumer, match->consumer_path,
+                               &directories, &count)) {
             for (directory = 0; directory < count; ++directory) {
                 struct open_how how = {0};
                 char *alias;
@@ -1851,6 +1853,7 @@ static int check_soname_edge(int installed, int root, const char *consumer,
             if (!strcmp(captured.info.needed[i], name)) break;
         if (i == captured.info.needed_count) goto done;
         match.consumer = &captured.info;
+        match.consumer_path = path;
     }
     match.name = name;
     provider_files = openat(provider, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
@@ -2713,7 +2716,7 @@ static int set_claims_valid(struct install_set *set)
     return 1;
 }
 
-static int loader_directories(const struct holy_elf_info *elf,
+static int loader_directories(const struct holy_elf_info *elf, const char *consumer,
                               char ***directories, size_t *count)
 {
     const char *path = elf->runpath ? elf->runpath : elf->rpath;
@@ -2727,11 +2730,33 @@ static int loader_directories(const struct holy_elf_info *elf,
         char *directory;
         end = strchr(start, ':');
         length = end ? (size_t)(end - start) : strlen(start);
-        if (length < 2 || start[0] != '/' || start[length - 1] == '/' ||
-            memchr(start, '$', length)) goto fail;
-        directory = strndup(start, length);
-        if (!directory) goto fail;
-        if (!valid_owner_path(directory + 1)) { free(directory); goto fail; }
+        if (length < 2 || start[length - 1] == '/') goto fail;
+        if (start[0] == '/') {
+            if (memchr(start, '$', length)) goto fail;
+            directory = strndup(start, length);
+            if (!directory) goto fail;
+            if (!valid_owner_path(directory + 1)) { free(directory); goto fail; }
+        } else if (length >= 7 && !memcmp(start, "$ORIGIN", 7) &&
+                   (length == 7 || start[7] == '/') && consumer && *consumer) {
+            char *relative;
+            const char *suffix = start + 7;
+            size_t prefix = 0, k;
+            for (k = 0; consumer[k]; ++k) if (consumer[k] == '/') prefix = k + 1;
+            if (!prefix) goto fail;
+            if (length == 7) relative = strndup(consumer, prefix - 1);
+            else {
+                char *tail = strndup(suffix + 1, length - 8);
+                relative = tail ? holy_relative_link_path(consumer, strlen(consumer),
+                                                          tail, "") : NULL;
+                free(tail);
+            }
+            if (!relative || !valid_owner_path(relative)) { free(relative); goto fail; }
+            directory = malloc(strlen(relative) + 2);
+            if (!directory) { free(relative); goto fail; }
+            directory[0] = '/';
+            strcpy(directory + 1, relative);
+            free(relative);
+        } else goto fail;
         if (used == capacity) {
             size_t next = capacity ? capacity * 2 : 4;
             char **grown;
@@ -2809,7 +2834,7 @@ static int explicit_elf_paths(const char *snapshot, int allow_soname)
         for (j = 0; j < file->elf.needed_count; ++j) {
             char **directories = NULL;
             size_t directory_count = 0;
-            int known = allow_soname && loader_directories(&file->elf,
+            int known = allow_soname && loader_directories(&file->elf, file->path,
                                                             &directories, &directory_count);
             free_loader_directories(directories, directory_count);
             if (file->elf.needed[j][0] != '/' && !known) {
@@ -2852,7 +2877,7 @@ static int selected_soname_paths(const struct holy_resolution *resolution,
             if (!strcmp(consumer.files[k].path, edge->path)) {
                 file = &consumer.files[k]; break;
             }
-        if (!file || !loader_directories(&file->elf,
+        if (!file || !loader_directories(&file->elf, file->path,
                                          &directories, &directory_count)) goto edge_done;
         for (j = 0; j < count; ++j)
             if (!strcmp(digests[j], edge->provider)) break;

@@ -983,7 +983,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=2b64a732fd417c8d7548d9a678b5ee0e0e1a928ab1a517edcfcee598592a0d5b
+holypkg.8 source=holy version=development sha256=9727135ae5fc5eeeb859549ba0bdb154cc8909b482a051d097142b479aba7e98
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1605,15 +1605,17 @@ DESCRIPTION
 
      Dynamic sets require literal absolute PT_INTERP paths.  Absolute  DT_NEEDED
      paths  must  name exact provider payload paths. For a bare SONAME, the con-
-     sumer must have a nonempty list of literal absolute RUNPATH or RPATH direc-
-     tories. The selected provider must own a matching ELF file at the first ex-
-     isting DIRECTORY/SONAME, or own its symlink chain. The planner  checks  ar-
-     chitecture,  runtime,  symbols  and version needs, and rejects tokenized or
-     empty path entries.  It rejects a later provider when an earlier  directory
-     contains a file at the same SONAME. Installed check repeats this path-order
-     check against the target root. Cached replacements use the same validation.
-     Loader defaults, tokenized paths and aliases crossing package ownership re-
-     main  unresolved.	 Parent	 directories  must  exist or be declared in that
+     sumer must have a nonempty list of absolute RUNPATH or  RPATH  directories,
+     or	 directories  based  on $ORIGIN. Holy resolves $ORIGIN from the consumer
+     path inside target root and rejects traversal above that root. The selected
+     provider must own a matching ELF file at the first existing  DIRECTORY/SON-
+     AME,  or  own  its symlink chain. The planner checks architecture, runtime,
+     symbols and version needs, and rejects unknown tokens  or	empty  path  en-
+     tries.   It  rejects  a later provider when an earlier directory contains a
+     file at the same SONAME. Installed	 check	repeats	 this  path-order  check
+     against  the  target  root.  Cached  replacements	use the same validation.
+     Loader defaults, other tokens paths and aliases crossing package  ownership
+     remain  unresolved.   Parent  directories must exist or be declared in that
      package manifest; installation does not traverse  symlinked  parents.  This
      interface	does  not  automatically  rewrite  ELF	files  or resolve loader
      aliases.
