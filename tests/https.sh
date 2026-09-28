@@ -93,6 +93,31 @@ expect 0 "$bin" sync fixture --root "$tmp/source-root" --sha256 "$index" \
     --output "$tmp/source-mirror" --ca-file "$tmp/cert.pem"
 grep -qx "source-id $source_id" "$tmp/source-mirror/mirror-origin"
 cmp "$tmp/serve/current" "$tmp/source-mirror/current"
+expect 0 "$bin" search https-second --source fixture --catalog "$tmp/source-mirror" \
+    --root "$tmp/source-root"
+grep -q '^package "https-second" ' "$tmp/result"
+grep -qx 'listed 1 packages' "$tmp/result"
+grep -qx "source-id $source_id" "$tmp/result"
+expect 0 "$bin" search missing --source fixture --catalog "$tmp/source-mirror" \
+    --root "$tmp/source-root"
+grep -qx 'listed 0 packages' "$tmp/result"
+expect 0 "$bin" info fixture:https-second --catalog "$tmp/source-mirror" \
+    --root "$tmp/source-root"
+grep -q '^package "https-second" ' "$tmp/result"
+grep -qx "source-id $source_id" "$tmp/result"
+test "$(wc -l < "$tmp/result")" -eq 2
+expect 6 "$bin" info fixture:missing --catalog "$tmp/source-mirror" \
+    --root "$tmp/source-root"
+test ! -s "$tmp/result"
+expect 6 "$bin" search https-second --source wrong --catalog "$tmp/source-mirror" \
+    --root "$tmp/source-root"
+expect 2 "$bin" info fixture:https-second --root "$tmp/source-root"
+cp -a "$tmp/source-mirror" "$tmp/changed-source-mirror"
+printf broken >> "$tmp/changed-source-mirror/native.holy"
+expect 6 "$bin" search https-second --source fixture --catalog "$tmp/changed-source-mirror" \
+    --root "$tmp/source-root"
+expect 6 "$bin" info fixture:https-second --catalog "$tmp/changed-source-mirror" \
+    --root "$tmp/source-root"
 mkdir "$tmp/add-root"
 expect 0 "$bin" db init --root "$tmp/add-root"
 expect 0 "$bin" source plan --config "$tmp/source.conf" --root "$tmp/add-root"

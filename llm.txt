@@ -811,7 +811,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=047a0c3ef30764805de015676ee7cedd9dde26560966569db3f967d461d88872
+holypkg.8 source=holy version=development sha256=70d355a9c24a463f685d56c176bfe2fc152af64f45ad90681877be6674187a8e
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -837,6 +837,8 @@ SYNOPSIS
      holypkg docs --root DIRECTORY --output FILE
      holypkg config check FILE
      holypkg info local:FILE
+     holypkg info SOURCE:PACKAGE --catalog MIRROR [--root DIRECTORY]
+     holypkg search QUERY --source SOURCE --catalog MIRROR [--root DIRECTORY]
      holypkg verify local:FILE
      holypkg manifest local:FILE
      holypkg requirements local:FILE
@@ -1833,14 +1835,25 @@ DESCRIPTION
      inspection.  --abort-empty	 applies only to an installing journal, never to
      removal. This command does not remove dependents.
 
-     The info command reads an LZ4-frame-compressed tar archive and  prints  the
-     seven  required  fields  from  HOLY/meta. It reads archive data without ex-
+     The local info command reads an LZ4-frame-compressed tar archive and prints
+     the seven required fields from HOLY/meta. It reads archive data without ex-
      tracting or executing it. It checks for repeated metadata	and  unsupported
      format  versions.	 It  prints the SHA-256 digest of the input archive.  It
      rejects archive entries outside HOLY and DATA, including dot segments.   It
      requires  all  seven HOLY metadata members as regular files and rejects du-
      plicate members.  It does not validate the payload manifest, hashes, signa-
      tures or installability.
+
+     search QUERY --source SOURCE --catalog MIRROR verifies the active source-id
+     and URL against the sealed mirror record, then checks the complete	 indexed
+     catalog  and  prints  exact  package-name	matches. A missing name prints a
+     zero-count summary. info SOURCE:PACKAGE performs the same checks and prints
+     one package record with its artifact hash and source-id. No  match	 returns
+     unavailable (6); multiple matches return decision-required (3) because this
+     interface	has  no	 arch/libc  selector yet. Both commands read the catalog
+     without installing or running package code. The mirror  is	 unsigned  local
+     provenance,  not  publisher  authentication.  Persistent  source discovery,
+     fuzzy search, file search and multi-source results remain open.
 
      The  verify  command  checks  regular  DATA  files	 against  the  supported
      HOLY/files	 records,  including  size,  mode, numeric owner and SHA-256. It

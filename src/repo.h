@@ -21,6 +21,8 @@ int holy_repo_mirror_source(const char *base, const char *digest, const char *ou
 int holy_repo_index(const char *directory);
 int holy_repo_list(const char *directory);
 int holy_repo_search(const char *directory, const char *query);
+/* verifies the catalog and returns one exact package record or a choice status. */
+int holy_repo_info_name(const char *directory, const char *name);
 int holy_repo_seal(const char *directory);
 int holy_repo_providers(const char *directory, const char *kind,
                         const char *name, int json);

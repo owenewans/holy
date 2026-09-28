@@ -149,6 +149,49 @@ done:
     return result;
 }
 
+static int query_source(int argc, char **argv, int search)
+{
+    const char *root = "/", *catalog = NULL, *alias = NULL, *name = NULL;
+    const char *separator = search ? NULL : strchr(argv[2], ':');
+    char source_id[65], *owned_alias = NULL;
+    int i, root_seen = 0, result = 2;
+    if (search) name = argv[2];
+    else {
+        if (!separator || separator == argv[2] || !separator[1] ||
+            strchr(separator + 1, ':')) goto done;
+        owned_alias = malloc((size_t)(separator - argv[2]) + 1);
+        if (!owned_alias) { result = 1; goto done; }
+        memcpy(owned_alias, argv[2], (size_t)(separator - argv[2]));
+        owned_alias[separator - argv[2]] = 0;
+        alias = owned_alias;
+        name = separator + 1;
+    }
+    for (i = 3; i < argc; ++i) {
+        if (search && !strcmp(argv[i], "--source") && !alias && i + 1 < argc &&
+            argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) alias = argv[++i];
+        else if (!strcmp(argv[i], "--catalog") && !catalog && i + 1 < argc &&
+                 argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) catalog = argv[++i];
+        else if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < argc &&
+                 argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) {
+            root = argv[++i]; root_seen = 1;
+        } else goto done;
+    }
+    if (!name || !*name || !alias || !*alias || !catalog || !*catalog ||
+        !strcmp(alias, "local")) goto done;
+    result = holy_source_catalog(root, alias, catalog, source_id);
+    if (!result) {
+        result = search ? (holy_repo_search(catalog, name) ? 0 : 6) :
+                          holy_repo_info_name(catalog, name);
+        if (!result) printf("source-id %s\n", source_id);
+    }
+done:
+    if (result == 2) fprintf(stderr,
+        search ? "usage: holypkg search QUERY --source SOURCE --catalog MIRROR [--root DIRECTORY]\n" :
+                 "usage: holypkg info SOURCE:PACKAGE --catalog MIRROR [--root DIRECTORY]\n");
+    free(owned_alias);
+    return result;
+}
+
 static int add_source(int argc, char **argv)
 {
     const char *separator = strchr(argv[2], ':');
@@ -242,6 +285,11 @@ int main(int argc, char **argv)
             return add_source(argc, argv);
         return add_local(argc, argv);
     }
+    if (argc > 1 && !strcmp(argv[1], "search") && argc > 2)
+        return query_source(argc, argv, 1);
+    if (argc > 2 && !strcmp(argv[1], "info") &&
+        strncmp(argv[2], "local:", 6))
+        return query_source(argc, argv, 0);
 
     if (argc > 1 && !strcmp(argv[1], "import")) {
         if (argc == 9 && !strcmp(argv[3], "--source") && !strcmp(argv[5], "--format") &&

@@ -239,6 +239,11 @@
   generation update recovers from the version-5 journal without network access.
   Persistent source discovery, signed indexes, multi-source ranking and indexed
   on-demand candidate retrieval remain open.
+- [x] Query an active holy-http source through an explicit synced mirror with
+  `search QUERY --source ALIAS` and `info ALIAS:PACKAGE`. Verify source identity,
+  full catalog and artifacts before returning exact names; report missing and
+  ambiguous info queries without mutating the target. Fuzzy/file search and
+  persistent source discovery remain open.
 - [ ] Implement remaining foreign binary adapters and file indexes with real
   fixtures: APT indexes, RPM, APK, XBPS, Slackware, eopkg, homebrew and guix.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,

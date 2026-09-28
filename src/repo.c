@@ -618,17 +618,25 @@ static int list(const char *directory, const char *query,
         }
     }
     {
-        size_t matches = 0;
+        size_t matches = 0, only = count;
         for (j = 0; j < count; ++j) {
             if (query && strcmp(objects[j].identity.name, query)) continue;
             if (provider_kind && !objects[j].provider_match) continue;
             if (emit == 1 && !record(stdout, &objects[j])) goto done;
             if (emit == 2) candidate_json(&objects[j]);
+            if (emit == 3) only = j;
             ++matches;
         }
         if (emit == 1) printf("listed %zu %s\n", matches,
                               provider_kind ? "candidates" : "packages");
         if (emit == 2) printf("{\"schema\":\"holy-repo-candidates-1\",\"type\":\"summary\",\"count\":%zu}\n", matches);
+        if (emit == 3) {
+            *solve_rc = matches > 1 ? 3 : matches ? 0 : 6;
+            if (matches == 1 && !record(stdout, &objects[only])) goto done;
+            if (matches != 1)
+                fprintf(stderr, "holypkg: repository package %s\n",
+                        matches ? "requires an architecture/ABI choice" : "not found");
+        }
     }
     ok = 1;
 done:
@@ -673,6 +681,15 @@ int holy_repo_search(const char *directory, const char *query)
         return 0;
     }
     return list(directory, query, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL);
+}
+
+int holy_repo_info_name(const char *directory, const char *name)
+{
+    int result = 6;
+    if (!name || !*name) return 2;
+    if (!list(directory, name, NULL, 1, 3, NULL, NULL, NULL, NULL,
+              NULL, NULL, 0, &result, NULL, 0, NULL)) return 6;
+    return result;
 }
 
 int holy_repo_providers(const char *directory, const char *kind,
