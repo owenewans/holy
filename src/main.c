@@ -28,17 +28,22 @@
 static int add_local(int argc, char **argv)
 {
     const char **inputs = NULL, **digests = NULL;
+    const char **accepted_arch = NULL, **accepted_privileged = NULL;
     char (*hashes)[65] = NULL;
     const char *root = "/", *choice = NULL, *association = NULL;
     const char *bindings[1];
     char plan[65], answer[16], source_id[65], binding[130];
-    size_t count = 0, i, j;
+    size_t count = 0, arch_count = 0, privileged_count = 0, i, j;
     int yes = 0, noninteractive = 0, root_seen = 0, result = 2;
     if (argc < 3 || strncmp(argv[2], "local:", 6) || !argv[2][6]) goto done;
     inputs = calloc((size_t)argc, sizeof *inputs);
     digests = calloc((size_t)argc, sizeof *digests);
+    accepted_arch = calloc((size_t)argc, sizeof *accepted_arch);
+    accepted_privileged = calloc((size_t)argc, sizeof *accepted_privileged);
     hashes = calloc((size_t)argc, sizeof *hashes);
-    if (!inputs || !digests || !hashes) { result = 1; goto done; }
+    if (!inputs || !digests || !accepted_arch || !accepted_privileged || !hashes) {
+        result = 1; goto done;
+    }
     inputs[count++] = argv[2] + 6;
     for (i = 3; i < (size_t)argc; ++i) {
         if (!strcmp(argv[i], "--candidate") && i + 1 < (size_t)argc &&
@@ -54,6 +59,12 @@ static int add_local(int argc, char **argv)
                    i + 1 < (size_t)argc && argv[i + 1][0] &&
                    strncmp(argv[i + 1], "--", 2)) {
             association = argv[++i];
+        } else if (!strcmp(argv[i], "--accept-arch") && i + 1 < (size_t)argc &&
+                   argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) {
+            accepted_arch[arch_count++] = argv[++i];
+        } else if (!strcmp(argv[i], "--accept-privileged") && i + 1 < (size_t)argc &&
+                   argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) {
+            accepted_privileged[privileged_count++] = argv[++i];
         } else if (!strcmp(argv[i], "--yes") && !yes) yes = 1;
         else if (!strcmp(argv[i], "--noninteractive") && !noninteractive) noninteractive = 1;
         else goto done;
@@ -74,7 +85,8 @@ static int add_local(int argc, char **argv)
     }
     result = holy_state_set(digests, count, choice, NULL, root,
                             association ? bindings : NULL, association ? 1 : 0,
-                            NULL, 0, NULL, 0, plan);
+                            accepted_arch, arch_count,
+                            accepted_privileged, privileged_count, plan);
     if (result) goto done;
     if (!yes) {
         if (noninteractive || !isatty(STDIN_FILENO)) {
@@ -91,11 +103,13 @@ static int add_local(int argc, char **argv)
     }
     result = holy_state_set(digests, count, choice, plan, root,
                             association ? bindings : NULL, association ? 1 : 0,
-                            NULL, 0, NULL, 0, NULL);
+                            accepted_arch, arch_count,
+                            accepted_privileged, privileged_count, NULL);
 done:
     if (result == 2)
-        fputs("usage: holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
+        fputs("usage: holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
     free(hashes); free(digests); free(inputs);
+    free(accepted_arch); free(accepted_privileged);
     return result;
 }
 

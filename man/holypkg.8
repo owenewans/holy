@@ -2,7 +2,7 @@
 .SH NAME
 holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
-.B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--root DIRECTORY] [--yes] [--noninteractive]
+.B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
 .B holypkg import INPUT --source NAME --format pacman|deb --output NEW_DIRECTORY
 .br
@@ -646,16 +646,24 @@ under the database lock and binds that ID into the reviewed plan. This flag
 does not infer provenance from archive metadata, verify a publisher signature
 or associate the candidate dependency archives. The association requires a
 registered active source and is checked again before apply.
+.B --accept-arch SHA256
+confirms placement of one selected artifact whose architecture differs from
+the native target. It does not change the target metadata or prove execution.
+.B --accept-privileged SHA256
+confirms setuid placement for one selected artifact. Both options may be
+repeated for distinct artifact hashes. The plan records each decision and
+apply checks it again; an approval for a previous version is not inherited.
 .PP
 With a terminal, add asks for y before applying the displayed plan. An n answer
 leaves installed state unchanged. Without a terminal, add returns 3 after
 printing the plan and stages no installed files. --noninteractive forces this
 behavior unless --yes is also given. --yes approves only the exact plan displayed by this invocation;
 the engine rebuilds it under the writer lock and refuses a changed generation,
-artifact or provider choice. --yes does not approve an unresolved dependency,
-foreign architecture or privileged payload. The cache may retain staged
-objects after a declined or unresolved operation. Automatic doas escalation,
-source lookup and script execution are not part of this local subset.
+artifact or provider choice. --yes does not resolve missing dependencies.
+Architecture and setuid decisions require their exact-hash flags. The cache
+may retain staged objects after a declined or unresolved operation. Automatic
+doas escalation, source lookup and script execution are not part of this local
+subset.
 .PP
 The db plan command reads the prepared reservation at the current database
 generation. It verifies a private snapshot of the cached artifact, checks

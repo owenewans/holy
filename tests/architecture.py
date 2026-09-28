@@ -142,6 +142,21 @@ with tempfile.TemporaryDirectory(prefix="holy-architecture-") as scratch:
     run("db", "rm", app[1], "--root", root)
     run("db", "rm", privileged_library[1], "--root", root)
 
+    cli_root = tmp / "cli-add"
+    cli_root.mkdir()
+    run("db", "init", "--root", cli_root)
+    add = ("add", "local:" + str(app[0]), "--candidate",
+           "local:" + str(privileged_library[0]), "--root", cli_root, "--yes")
+    run(*add, status=3)
+    assert not (cli_root / "opt/arch-app").exists()
+    run(*add, "--accept-arch", app[1], status=3)
+    run(*add, "--accept-arch", app[1], "--accept-arch", privileged_library[1],
+        status=3)
+    run(*add, "--accept-arch", app[1], "--accept-arch", privileged_library[1],
+        "--accept-privileged", privileged_library[1])
+    assert (cli_root / "opt/arch-lib").stat().st_mode & 0o4000
+    run("db", "check", "--all", "--root", cli_root)
+
     dynamic = "interpreter /" in run("elf", binary)
     if dynamic or os.environ.get("HOLY_TEST_STATIC_UPDATE_FAULT") == "1":
         environment = os.environ.copy()

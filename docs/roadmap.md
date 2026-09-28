@@ -139,8 +139,10 @@
 - [x] Expose local .holy installation as holypkg add with explicit candidate
   archives, a displayed set plan, terminal approval or scoped --yes, and
   decision-required behavior without a terminal. Explicit root-artifact
-  association resolves an active source alias to its immutable ID. Remote source
-  lookup and hooks remain outside this local entry point.
+  association resolves an active source alias to its immutable ID. Exact-hash
+  CLI decisions permit non-native architecture placement and setuid payloads;
+  the engine retains both in its plan and journal. Remote source lookup and
+  hooks remain outside this local entry point.
 - [x] Install glibc/musl dynamic sets with explicit interpreter and DT_NEEDED
   payload paths; execute real fixtures in a disposable x86_64 root. Report broken
   selected provider files through installed check. Ordinary SONAME search and
