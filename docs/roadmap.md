@@ -160,7 +160,7 @@
   accepts an explicit RSA public key, verifies the package signature, and
   records algorithm and key fingerprint in each output origin. `apk fetch
   --import` now converts the verified download into `.holy`, rechecks the
-  package hash and signature, and records the selected index hash and URL in
+  package hash and signature, and records the selected index hash and artifact URL in
   output origin. Optional exact SONAME and file requirements check converted
   payload claims before the fetch receipt becomes complete. The signed HTTPS fixture
   installs, checks and removes an associated output in a disposable root.

@@ -1024,7 +1024,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=34b2f235b7191446cf340c37b1a8e9e7203447d030b0856448578d3fde3dc765
+holypkg.8 source=holy version=development sha256=fa8b44140b2c91260b0569f557dced3afd12ba0e2d3f13657afd665b7244daea
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1489,21 +1489,21 @@ DESCRIPTION
      into  .holy  outputs  under  NEW_DIRECTORY/converted,  checks each output's
      name, version and architecture, and rechecks  the	original  SHA-256  after
      staging.  Signed packages are verified again during import. The output ori-
-     gin records the selected index hash and source URL; its verification  field
-     describes	the package signature, not the index signature. --require-soname
-     requires --import and checks exact SONAME claims derived from the	imported
-     ELF  payload. An index claim alone cannot satisfy it. --require-file checks
-     one exact nondirectory payload path from the converted manifest.  Both  re-
-     quirements	 need  --import	 and  can be combined. Import failure leaves the
-     original and an incomplete output without a complete selection receipt. The
-     APK binding is separate from the native catalog and general dependency  re-
-     solver. make check-apk-index covers signed and unsigned fixtures, duplicate
-     entries,  truncated gzip, traversal and catalog tampering.	 make check-apk-
-     fetch covers HTTPS, full digest, size, control checksum and package  signa-
-     tures.  The  verified  index  identifies  packages	 through APK v2 Q1 SHA-1
-     checksums. For a package selected from a  verified	 index,	 fetch	requires
-     keyed  source  also  requires the package signature and matching public-key
-     filename.
+     gin records the selected index hash and fetched artifact URL; its verifica-
+     tion field describes the package signature, not the index signature.  --re-
+     quire-soname  requires --import and checks exact SONAME claims derived from
+     the imported ELF payload. An index claim alone  cannot  satisfy  it.  --re-
+     quire-file	 checks	 one  exact nondirectory payload path from the converted
+     manifest. Both requirements need --import and can be combined. Import fail-
+     ure leaves the original and an incomplete output without a complete  selec-
+     tion  receipt. The APK binding is separate from the native catalog and gen-
+     eral dependency resolver. make check-apk-index covers signed  and	unsigned
+     fixtures,	duplicate entries, truncated gzip, traversal and catalog tamper-
+     ing.  make check-apk-fetch covers HTTPS, full digest, size, control  check-
+     sum  and package signatures. The verified index identifies packages through
+     APK v2 Q1 SHA-1 checksums. For a package selected from  a	verified  index,
+     fetch  requires keyed source also requires the package signature and match-
+     ing public-key filename.
 
      The importer reads .PKGINFO identities, full epoch/version/release strings,
      package relations and original field values. It preserves .PKGINFO, .BUILD-

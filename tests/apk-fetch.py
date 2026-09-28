@@ -121,7 +121,7 @@ with tempfile.TemporaryDirectory() as scratch:
         imported_origin = origin(next((tmp / "imported/converted").glob("*.holy")))
         assert "verification unverified\n" in imported_origin
         assert f"index-sha256 {hashlib.sha256((tmp / 'APKINDEX.tar.gz').read_bytes()).hexdigest()}\n" in imported_origin
-        assert f'source-url "{base}"\n' in imported_origin
+        assert f'source-url "{base}fixture-1.2-r0.apk"\n' in imported_origin
         fetch("invalid-soname-flags", status=2,
               extra=("--require-soname", "libfixture.so.1"))
         fetch("false-soname", status=4,

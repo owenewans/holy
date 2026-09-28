@@ -1297,7 +1297,7 @@ int holy_apk_fetch(const char *catalog, const char *name, const char *version,
         result = holy_import_apk_verified(original, selection.source, converted,
                                           registered_key[0] ? public_key : NULL,
                                           digest, registered_key[0] ? registered_key : NULL,
-                                          selection.index_hash, selection.base);
+                                          selection.index_hash, url);
         free(original);
         if (result) goto done;
         if (!imported_claim(converted, name, version, arch, required_soname,

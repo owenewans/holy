@@ -531,7 +531,7 @@ With --import, fetch converts the checked archive into .holy
 outputs under NEW_DIRECTORY/converted, checks each output's name, version and
 architecture, and rechecks the original SHA-256 after staging. Signed packages
 are verified again during import. The output origin records the selected index
-hash and source URL; its verification field describes the package signature,
+hash and fetched artifact URL; its verification field describes the package signature,
 not the index signature. --require-soname requires --import and checks exact
 SONAME claims derived from the imported ELF payload. An index claim alone
 cannot satisfy it. --require-file checks one exact nondirectory payload path
