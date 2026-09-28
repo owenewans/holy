@@ -188,6 +188,10 @@
   roots. Ignore stale edges belonging to removed consumers; detect unreachable
   cycles and preserve shared providers. The read-only command works without cache
   artifacts and refuses incomplete, missing-provider or unknown-graph snapshots.
+- [x] Show one shortest installed dependency path from an explicit root with
+  `why SOURCE:PACKAGE`. Report an unreachable dependency as orphan and reject
+  incomplete or malformed graphs. The source-instance and orphan fixtures
+  cover graph traversal after package removal.
 - [ ] Complete source-aware installed slots and version families; extend transactions to
   replacements, complete dynamic-library contexts and grouped removal. The
   explicit --accept-broken removal path now retains consumers and reports their

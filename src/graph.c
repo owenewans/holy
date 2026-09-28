@@ -182,25 +182,48 @@ static void quoted(const char *text, int json)
     putchar('"');
 }
 
+static void free_graph(struct graph *graph)
+{
+    size_t i, j;
+    for (i = 0; i < graph->count; ++i) {
+        struct vertex *v = &graph->vertices[i];
+        for (j = 0; j < v->count; ++j) free(v->providers[j]);
+        free(v->providers); free(v->links); free(v->name);
+    }
+    free(graph->vertices);
+}
+
+static int load_graph(const char *root, struct graph *graph)
+{
+    size_t i, j;
+    int result = holy_state_visit(root, collect, graph, &graph->generation);
+    if (result) return result;
+    for (i = 0; i < graph->count; ++i) {
+        struct vertex *v = &graph->vertices[i];
+        v->links = calloc(v->count ? v->count : 1, sizeof *v->links);
+        if (!v->links) return 1;
+        for (j = 0; j < v->count; ++j) {
+            v->links[j] = lookup(graph, v->providers[j]);
+            if (v->links[j] == graph->count) {
+                fprintf(stderr, "holypkg: missing graph provider consumer=%s provider=%s\n",
+                        v->digest, v->providers[j]);
+                return 4;
+            }
+        }
+    }
+    return 0;
+}
+
 int holy_orphan(const char *root, int json)
 {
     struct graph graph = {0};
     size_t *queue = NULL, head = 0, tail = 0, roots = 0, orphans = 0, i, j;
-    int result = holy_state_visit(root, collect, &graph, &graph.generation);
+    int result = load_graph(root, &graph);
     if (result) goto done;
     queue = calloc(graph.count ? graph.count : 1, sizeof *queue);
     if (!queue) { result = 1; goto done; }
     for (i = 0; i < graph.count; ++i) {
         struct vertex *v = &graph.vertices[i];
-        v->links = calloc(v->count ? v->count : 1, sizeof *v->links);
-        if (!v->links) { result = 1; goto done; }
-        for (j = 0; j < v->count; ++j) {
-            v->links[j] = lookup(&graph, v->providers[j]);
-            if (v->links[j] == graph.count) {
-                fprintf(stderr, "holypkg: missing graph provider consumer=%s provider=%s\n", v->digest, v->providers[j]);
-                result = 4; goto done;
-            }
-        }
         if (v->explicit) { v->reached = 1; queue[tail++] = i; ++roots; }
     }
     while (head < tail) {
@@ -234,11 +257,87 @@ done:
         fprintf(stderr, "holypkg: orphan analysis unavailable: %s\n", code);
         if (json) printf("{\"schema\":\"holy-orphan-1\",\"type\":\"error\",\"code\":\"%s\",\"status\":%d}\n", code, result);
     }
-    for (i = 0; i < graph.count; ++i) {
-        struct vertex *v = &graph.vertices[i];
-        for (j = 0; j < v->count; ++j) free(v->providers[j]);
-        free(v->providers); free(v->links); free(v->name);
+    free(queue); free_graph(&graph);
+    return result;
+}
+
+int holy_why(const char *digest, const char *root, int json)
+{
+    struct graph graph = {0};
+    size_t *queue = NULL, *parent = NULL, *chain = NULL;
+    size_t i, j, head = 0, tail = 0, target, length = 0;
+    int result;
+    if (!digest || strlen(digest) != 64 ||
+        strspn(digest, "0123456789abcdef") != 64) return 2;
+    result = load_graph(root, &graph);
+    if (result) goto done;
+    target = lookup(&graph, digest);
+    if (target == graph.count) { result = 6; goto done; }
+    queue = calloc(graph.count, sizeof *queue);
+    parent = malloc(graph.count * sizeof *parent);
+    chain = malloc(graph.count * sizeof *chain);
+    if (!queue || !parent || !chain) { result = 1; goto done; }
+    for (i = 0; i < graph.count; ++i) parent[i] = graph.count;
+    for (i = 0; i < graph.count; ++i) if (graph.vertices[i].explicit) {
+        parent[i] = i;
+        queue[tail++] = i;
     }
-    free(queue); free(graph.vertices);
+    while (head < tail && parent[target] == graph.count) {
+        struct vertex *v = &graph.vertices[queue[head++]];
+        size_t from = (size_t)(v - graph.vertices);
+        for (j = 0; j < v->count; ++j) {
+            size_t to = v->links[j];
+            if (parent[to] == graph.count) {
+                parent[to] = from;
+                queue[tail++] = to;
+            }
+        }
+    }
+    if (parent[target] != graph.count) {
+        for (i = target; ; i = parent[i]) {
+            chain[length++] = i;
+            if (parent[i] == i) break;
+        }
+        for (i = length; i > 0; --i) {
+            struct vertex *v = &graph.vertices[chain[i - 1]];
+            if (json) {
+                printf("{\"schema\":\"holy-why-1\",\"type\":\"path\",\"depth\":%zu,\"artifact\":\"%s\",\"name\":",
+                       length - i, v->digest);
+                quoted(v->name, 1);
+                printf(",\"reason\":\"%s\"}\n", v->explicit ? "explicit" : "dependency");
+            } else {
+                printf("path %zu %s ", length - i, v->digest);
+                quoted(v->name, 0);
+                printf(" reason=%s\n", v->explicit ? "explicit" : "dependency");
+            }
+        }
+    } else {
+        struct vertex *v = &graph.vertices[target];
+        if (json) {
+            printf("{\"schema\":\"holy-why-1\",\"type\":\"orphan\",\"artifact\":\"%s\",\"name\":",
+                   v->digest);
+            quoted(v->name, 1);
+            puts(",\"reason\":\"unreachable-from-explicit\"}");
+        } else {
+            printf("orphan %s ", v->digest);
+            quoted(v->name, 0);
+            puts(" reason=dependency unreachable-from-explicit");
+        }
+    }
+    if (json)
+        printf("{\"schema\":\"holy-why-1\",\"type\":\"summary\",\"artifact\":\"%s\",\"generation\":%llu,\"reachable\":%s,\"depth\":%zu}\n",
+               digest, graph.generation, length ? "true" : "false", length);
+    else printf("generation %llu read-only\n", graph.generation);
+    if (ferror(stdout)) result = 1;
+done:
+    if (result) {
+        const char *code = result == 5 ? "incomplete-transaction" :
+                           result == 6 ? "unavailable-instance-or-graph" :
+                           result == 4 ? "missing-provider" : "invalid-state";
+        fprintf(stderr, "holypkg: why unavailable: %s\n", code);
+        if (json) printf("{\"schema\":\"holy-why-1\",\"type\":\"error\",\"code\":\"%s\",\"status\":%d}\n",
+                         code, result);
+    }
+    free(queue); free(parent); free(chain); free_graph(&graph);
     return result;
 }

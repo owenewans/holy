@@ -80,6 +80,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg files SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC]
 .br
+.B holypkg why SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--json]
+.br
 .B holypkg rm SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--yes] [--accept-broken]
 .br
 .B holypkg elf FILE
@@ -685,6 +687,14 @@ confirmation. Without a terminal it returns decision-required status 3;
 --yes confirms removal of that selected artifact. --accept-broken separately
 permits removal despite dependent installed packages. The database engine
 rechecks files, dependency edges and journal state under its writer lock.
+.PP
+why SOURCE:PACKAGE reads the installed graph and prints one shortest saved
+dependency path from an explicit root to that package. A package with no path
+from an explicit root is marked orphan. The command reads no cached archives
+and makes no changes. It refuses incomplete or malformed installed graphs and
+missing provider instances. JSON output uses schema holy-why-1 with path,
+orphan and summary events. The path reports package identities; exact
+requirement names remain in the saved graph and are not included in this view.
 .PP
 add local:FILE stages a verified native artifact in the selected target-root
 cache, builds a read-only package-set plan and shows its selected packages,

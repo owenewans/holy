@@ -95,6 +95,10 @@ expect 0 "$bin" check second:lib --root "$root" --json
 grep -q "\"artifact\":\"$lib\"" "$tmp/out"
 expect 0 "$bin" files renamed:app --root "$root"
 grep -qx '"/usr/share/app"' "$tmp/out"
+expect 0 "$bin" why renamed:app --root "$root"
+grep -qx "path 0 $app \"app\" reason=explicit" "$tmp/out"
+expect 0 "$bin" why second:lib --root "$root" --json
+grep -q "\"type\":\"path\",\"depth\":1,\"artifact\":\"$lib\"" "$tmp/out"
 printf 'drift\n' > "$root/usr/share/app"
 expect 0 "$bin" files renamed:app --root "$root"
 grep -qx '"/usr/share/app"' "$tmp/out"
@@ -145,6 +149,8 @@ expect 1 "$bin" db status --root "$root"
 cp "$tmp/saved-state" "$db/installed/$app/state"
 expect 0 "$bin" db rm "$extra" --root "$root"
 expect 0 "$bin" rm renamed:app --root "$root" --yes
+expect 0 "$bin" why second:lib --root "$root" --json
+grep -q "\"type\":\"orphan\",\"artifact\":\"$lib\"" "$tmp/out"
 expect 0 "$bin" rm second:lib --root "$root" --yes
 test ! -e "$db/installed/$app"
 test ! -e "$db/installed/$lib"

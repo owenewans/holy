@@ -359,8 +359,9 @@ static int installed_ref(int argc, char **argv, int operation)
     char source_id[65], digest[65], answer[16], *alias = NULL;
     int root_seen = 0, json = 0, yes = 0, accept_broken = 0;
     int remove_package = operation == 1, list_files = operation == 2;
+    int explain = operation == 3;
     int result = 2, i;
-    if (!remove_package && !list_files && (argc == 2 ||
+    if (!remove_package && !list_files && !explain && (argc == 2 ||
         (argc > 2 && !strncmp(argv[2], "--", 2)))) {
         for (i = 2; i < argc; ++i) {
             if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < argc)
@@ -395,6 +396,7 @@ static int installed_ref(int argc, char **argv, int operation)
     result = holy_state_find_slot(root, source_id, separator + 1, arch, libc, digest);
     if (result) goto done;
     if (list_files) { result = holy_state_files(digest, root); goto done; }
+    if (explain) { result = holy_why(digest, root, json); goto done; }
     if (!remove_package) { result = holy_state_check(digest, root, json); goto done; }
     if (!yes) {
         if (!isatty(STDIN_FILENO)) {
@@ -414,8 +416,8 @@ static int installed_ref(int argc, char **argv, int operation)
 done:
     if (result == 2)
         fprintf(stderr, "usage: holypkg %s %s [--root DIRECTORY] [--arch ARCH] [--libc LIBC] %s\n",
-                remove_package ? "rm" : list_files ? "files" : "check",
-                remove_package || list_files ? "SOURCE:PACKAGE" : "[SOURCE:PACKAGE]",
+                remove_package ? "rm" : list_files ? "files" : explain ? "why" : "check",
+                remove_package || list_files || explain ? "SOURCE:PACKAGE" : "[SOURCE:PACKAGE]",
                 remove_package ? "[--yes] [--accept-broken]" : list_files ? "" : "[--json]");
     free(alias);
     return result;
@@ -825,6 +827,8 @@ set_done:
         return installed_ref(argc, argv, 1);
     if (argc > 1 && !strcmp(argv[1], "files"))
         return installed_ref(argc, argv, 2);
+    if (argc > 1 && !strcmp(argv[1], "why"))
+        return installed_ref(argc, argv, 3);
     if (argc > 1 && !strcmp(argv[1], "check") &&
         (argc == 2 || (argc > 2 && strncmp(argv[2], "local:", 6))))
         return installed_ref(argc, argv, 0);
