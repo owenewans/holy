@@ -373,6 +373,39 @@ done:
     return result;
 }
 
+int holy_apt_sync(const char *url, const char *expected, const char *source,
+                  const char *base, const char *output, const char *ca_file)
+{
+    char temporary[] = "/tmp/holy-apt-sync-XXXXXX";
+    char actual[65] = {0};
+    char *downloaded = NULL, *probe = NULL;
+    struct stat st;
+    int result;
+    if (!url || !digest(expected) || !token(source) || !strcmp(source, "local") ||
+        !base || !output || !*output ||
+        (lstat(output, &st) == 0 || errno != ENOENT)) return 2;
+    probe = holy_fetch_child_url(base, "probe");
+    if (!probe) return 2;
+    free(probe);
+    if (!mkdtemp(temporary)) return 1;
+    result = holy_fetch_https_foreign(url, temporary, ca_file, actual);
+    if (result) goto done;
+    downloaded = malloc(strlen(temporary) + 66);
+    if (!downloaded) { result = 1; goto done; }
+    sprintf(downloaded, "%s/%s", temporary, actual);
+    if (strcmp(actual, expected)) {
+        fprintf(stderr, "holypkg: APT index hash mismatch: expected %s, received %s\n",
+                expected, actual);
+        result = 4; goto done;
+    }
+    result = holy_apt_index(downloaded, expected, source, base, output);
+done:
+    if (downloaded) unlink(downloaded);
+    free(downloaded);
+    rmdir(temporary);
+    return result;
+}
+
 static int read_catalog(const char *catalog, struct apt_index *index)
 {
     char *line = NULL, *data = NULL, *error = NULL;

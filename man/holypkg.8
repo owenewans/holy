@@ -14,6 +14,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY
 .br
+.B holypkg apt sync HTTPS_URL --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--ca-file FILE]
+.br
 .B holypkg apt search QUERY --catalog DIRECTORY
 .br
 .B holypkg apt info PACKAGE --catalog DIRECTORY
@@ -258,6 +260,10 @@ Duplicate package/version/architecture entries, unsafe paths, missing hashes,
 empty indexes and malformed stanzas fail conversion. The catalog records its source name,
 HTTPS base URL, pin and package count. The source name is provenance, not a
 registered source-id. The output directory must not exist.
+.B apt sync
+downloads Packages over HTTPS into private staging, checks its explicit SHA-256
+pin and creates the same local catalog. It does not authenticate the Debian
+Release/InRelease signature.
 .B apt search
 and
 .B apt info
@@ -271,7 +277,7 @@ original .deb and a selection receipt. With --import, it invokes the local
 Debian converter and checks the native output identity. Index and selection
 receipts say pinned-unverified: an external pin is required, and this path
 does not check Release/InRelease signatures or bind a registered source-id.
-It does not install packages. make check-apt covers local compressed indexes,
+It does not install packages. make check-apt covers local and HTTPS indexes,
 tampering, TLS fetch, hash mismatch and import identity.
 .PP
 --format slackware reads a .txz, .tgz, .tbz or .tlz tar package and checks its

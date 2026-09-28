@@ -872,6 +872,12 @@ int main(int argc, char **argv)
     if (argc > 1 && !strcmp(argv[1], "up")) return holy_up_command(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "run")) return holy_run(argc, argv);
     if (argc > 2 && !strcmp(argv[1], "apt")) {
+        if ((argc == 12 || argc == 14) && !strcmp(argv[2], "sync") &&
+            !strcmp(argv[4], "--sha256") && !strcmp(argv[6], "--source") &&
+            !strcmp(argv[8], "--base") && !strcmp(argv[10], "--output") &&
+            (argc == 12 || !strcmp(argv[12], "--ca-file")))
+            return holy_apt_sync(argv[3], argv[5], argv[7], argv[9], argv[11],
+                                 argc == 14 ? argv[13] : NULL);
         if (argc == 12 && !strcmp(argv[2], "index") &&
             !strcmp(argv[4], "--sha256") && !strcmp(argv[6], "--source") &&
             !strcmp(argv[8], "--base") && !strcmp(argv[10], "--output"))
@@ -892,7 +898,7 @@ int main(int argc, char **argv)
             if (i == argc && catalog && output)
                 return holy_apt_fetch(catalog, argv[3], argv[4], argv[5], output, ca_file, imported);
         }
-        fputs("usage: holypkg apt index FILE --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY | apt search|info NAME --catalog DIRECTORY | apt fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--import]\n", stderr);
+        fputs("usage: holypkg apt index FILE --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY | apt sync URL --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--ca-file FILE] | apt search|info NAME --catalog DIRECTORY | apt fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--import]\n", stderr);
         return 2;
     }
     if (argc > 1 && !strcmp(argv[1], "apply")) return holy_apply_command(argc, argv);

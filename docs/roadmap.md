@@ -98,9 +98,9 @@
   other unsupported relationships stay foreign requirements; conffiles require
   a decision. Verify listed `control/md5sums` files against the payload before
   conversion; the original MD5 list is not source authentication. A pinned
-  local APT Packages index now supports name search, exact package metadata,
+  local or HTTPS APT Packages index with an explicit pin now supports name search, exact package metadata,
   HTTPS fetch with artifact hash/size checks, and optional .deb import. Release
-  signature verification, registered source binding, index sync, solver
+  signature verification, registered source binding, config-driven sync, solver
   integration and full hook integration remain open.
 
 - [x] Import local Slackware .txz/.tgz/.tbz/.tlz packages into native outputs.

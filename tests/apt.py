@@ -60,6 +60,8 @@ with tempfile.TemporaryDirectory() as scratch:
            "Depends: first (>= 2),\n second | third\nDescription: fixture\n long text\n\n").encode()
     packages = tmp / "Packages.gz"
     packages.write_bytes(gzip.compress(row, mtime=0))
+    (serve / "dists/stable/main/binary-all").mkdir(parents=True)
+    (serve / "dists/stable/main/binary-all/Packages.gz").write_bytes(packages.read_bytes())
     bad_rows = [
         row + row,
         row.replace(b"pool/main/f/fixture/fixture_2.0_all.deb", b"../outside.deb"),
@@ -105,6 +107,20 @@ with tempfile.TemporaryDirectory() as scratch:
             return output
 
         catalog = index("catalog", packages.read_bytes())
+        remote = tmp / "remote"
+        packages_url = base + "dists/stable/main/binary-all/Packages.gz"
+        run("apt", "sync", packages_url, "--sha256",
+            hashlib.sha256(packages.read_bytes()).hexdigest(), "--source", "debian",
+            "--base", base, "--output", remote, "--ca-file", tmp / "cert.pem")
+        assert (remote / "original").read_bytes() == packages.read_bytes()
+        assert run("apt", "search", "fixture", "--catalog", remote) == "fixture 1:2.0-3 all\n"
+        run("apt", "sync", packages_url, "--sha256", "0" * 64,
+            "--source", "debian", "--base", base, "--output", tmp / "remote-wrong",
+            "--ca-file", tmp / "cert.pem", status=4)
+        assert not (tmp / "remote-wrong").exists()
+        run("apt", "sync", packages_url, "--sha256",
+            hashlib.sha256(packages.read_bytes()).hexdigest(), "--source", "debian",
+            "--base", base, "--output", tmp / "remote-no-ca", status=6)
         assert (catalog / "original").read_bytes() == packages.read_bytes()
         assert run("apt", "search", "fixture", "--catalog", catalog) == "fixture 1:2.0-3 all\n"
         info = run("apt", "info", "fixture", "--catalog", catalog)
