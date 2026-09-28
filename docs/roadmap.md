@@ -180,6 +180,8 @@
   optional repo name; APK file coverage still reports unavailable.
   The common fetch CLI now selects a bound APK artifact by source, version,
   architecture and repository, with package verification and optional import.
+  The common sync CLI accepts APK sources and a named repository, using the
+  registered signing key and the APK index verifier.
   Feeding foreign candidates into the general resolver and full relation
   semantics remain open.
 

@@ -279,6 +279,15 @@ with tempfile.TemporaryDirectory() as scratch:
         run(*signed_sync, "--public-key", wrong_key_dir / signing_pub.name, status=4)
         run(*signed_sync, "--public-key", signing_pub)
         assert "verification rsa-sha256" in (tmp / "signed-catalog/conversion").read_text()
+        run("sync", "signed", "--root", signed_root,
+            "--output", tmp / "generic-ambiguous-sync", status=3)
+        run("sync", "signed", "--repo", "main", "--root", signed_root,
+            "--output", tmp / "generic-missing-key-sync", "--ca-file",
+            tmp / "cert.pem", status=6)
+        run("sync", "signed", "--repo", "main", "--root", signed_root,
+            "--output", tmp / "generic-signed-catalog", "--ca-file",
+            tmp / "cert.pem", "--public-key", signing_pub)
+        assert "verification rsa-sha256" in (tmp / "generic-signed-catalog/conversion").read_text()
         run("apk", "bind", "signed", "main", tmp / "signed-catalog", "--root",
             signed_root, status=6)
         run("apk", "bind", "signed", "main", tmp / "signed-catalog", "--root",

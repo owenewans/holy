@@ -90,6 +90,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg sync SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256 INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--commit GIT_COMMIT] [--ca-file FILE]
 .br
+.B holypkg sync APK_SOURCE [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] [--public-key FILE]
+.br
 .B holypkg orphan [--root DIRECTORY] [--json]
 .br
 .B holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--view PUBLIC=PRIVATE ...] -- COMMAND [ARGS...]
@@ -527,6 +529,12 @@ digest. Search, info and fetch
 can use the bound catalog by source and repo. Readers compare its saved index
 and catalog hashes, and reject changed source definitions. A catalog inside the
 target root uses a root-relative binding so the root can be moved.
+.PP
+The common sync APK_SOURCE command calls the same APK verifier and binds its
+result. A single configured repository is selected when --repo is absent;
+multiple repositories require --repo and return decision-required (3). APK
+sync requires --output. --commit applies only to holy-git sources.
+.PP
 Direct fetch without --root records source-binding unchecked. Fetch and sync do
 not install files. apk providers soname:NAME searches exact so:NAME entries in
 the hash-bound SONAME index generated from APKINDEX. Each result is an index hint. Use fetch --import

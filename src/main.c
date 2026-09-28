@@ -243,8 +243,7 @@ static int fetch_source(int argc, char **argv)
         goto done;
     }
     if (repo || version || arch || sha256 || ca_file || public_key || import ||
-        required_soname || required_file ||
-        (strcmp(family, "holy-http") && strcmp(family, "holy-git"))) {
+        required_soname || required_file) {
         result = 2; goto done;
     }
     if (!catalog) {
@@ -1526,9 +1525,15 @@ int main(int argc, char **argv)
     if (argc > 1 && !strcmp(argv[1], "sync")) {
         const char *root = "/", *digest = NULL, *accepted = NULL;
         const char *output = NULL, *ca_file = NULL, *commit = NULL;
+        const char *repo = NULL, *public_key = NULL;
+        char *family = NULL;
+        char **repos = NULL;
+        size_t repo_count = 0, j;
+        int result;
         int i, root_seen = 0, valid = argc >= 3;
         for (i = 3; valid && i < argc; i += 2) {
-            if (i + 1 >= argc) { valid = 0; break; }
+            if (i + 1 >= argc || !argv[i + 1][0] ||
+                !strncmp(argv[i + 1], "--", 2)) { valid = 0; break; }
             if (!strcmp(argv[i], "--root") && !root_seen) {
                 root = argv[i + 1]; root_seen = 1;
             }
@@ -1537,11 +1542,40 @@ int main(int argc, char **argv)
             else if (!strcmp(argv[i], "--output") && !output) output = argv[i + 1];
             else if (!strcmp(argv[i], "--ca-file") && !ca_file) ca_file = argv[i + 1];
             else if (!strcmp(argv[i], "--commit") && !commit) commit = argv[i + 1];
+            else if (!strcmp(argv[i], "--repo") && !repo) repo = argv[i + 1];
+            else if (!strcmp(argv[i], "--public-key") && !public_key) public_key = argv[i + 1];
             else valid = 0;
         }
-        if (valid && !(digest && accepted))
-            return holy_source_sync(argv[2], root, digest, accepted, output, ca_file, commit);
-        fputs("usage: holypkg sync SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256 INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--commit GIT_COMMIT] [--ca-file FILE]\n", stderr);
+        if (valid && !(digest && accepted)) {
+            result = holy_source_type(root, argv[2], &family);
+            if (result) return result;
+            if (!strcmp(family, "apk")) {
+                free(family);
+                if (commit || !output) goto sync_usage;
+                if (!repo) {
+                    result = holy_source_apk_repos(root, argv[2], &repos, &repo_count);
+                    if (result) return result;
+                    if (repo_count != 1) {
+                        fprintf(stderr, "holypkg: APK source %s has %zu repositories; select --repo\n",
+                                argv[2], repo_count);
+                        result = 3; goto sync_done;
+                    }
+                    repo = repos[0];
+                }
+                result = holy_apk_sync(root, argv[2], repo, output, digest,
+                                       accepted, ca_file, public_key);
+sync_done:
+                for (j = 0; j < repo_count; ++j) free(repos[j]);
+                free(repos);
+                return result;
+            }
+            free(family);
+            if (!repo && !public_key)
+                return holy_source_sync(argv[2], root, digest, accepted, output,
+                                        ca_file, commit);
+        }
+sync_usage:
+        fputs("usage: holypkg sync SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256 INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--commit GIT_COMMIT] [--ca-file FILE] | holypkg sync APK_SOURCE [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] [--public-key FILE]\n", stderr);
         return 2;
     }
 
