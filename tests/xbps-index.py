@@ -208,6 +208,33 @@ def main():
                 "--sha256", signed_hash, "--output", registered,
                 "--ca-file", root / "cert.pem", "--public-key", public_key)
             assert "source-id " in (registered / "conversion").read_text()
+            generic_target = root / "generic-target"
+            generic_target.mkdir()
+            run("db", "init", "--root", generic_target)
+            generic_plan = root / "generic.plan"
+            generic_plan.write_text(run("source", "plan", "--config", config,
+                                        "--root", generic_target))
+            run("source", "apply", generic_plan, "--sha256",
+                hashlib.sha256(generic_plan.read_bytes()).hexdigest(),
+                "--root", generic_target)
+            run("sync", "fixture", "--arch", "x86_64", "--root", generic_target,
+                "--sha256", signed_hash, "--output", root / "generic-cache",
+                "--ca-file", root / "cert.pem", status=6)
+            run("sync", "fixture", "--arch", "x86_64", "--root", generic_target,
+                "--sha256", signed_hash, "--output", root / "generic-cache",
+                "--ca-file", root / "cert.pem", "--public-key", public_key)
+            assert "source-id " in (root / "generic-cache/conversion").read_text()
+            run("fetch", "fixture:fixture", "--root", target,
+                "--output", root / "generic-missing-version", status=3)
+            run("fetch", "fixture:fixture", "--version", "1.0_1",
+                "--arch", "x86_64", "--root", target,
+                "--output", root / "generic-missing-key", status=6)
+            run("fetch", "fixture:fixture", "--version", "1.0_1",
+                "--arch", "x86_64", "--root", target,
+                "--output", root / "generic-fetch", "--ca-file", root / "cert.pem",
+                "--public-key", public_key, "--import")
+            assert (root / "generic-fetch" / package_hash).read_bytes() == package
+            assert "imported yes" in (root / "generic-fetch/conversion").read_text()
             assert package_hash in run("xbps", "info", "fixture", "--catalog", registered,
                                        "--source", "fixture", "--root", target)
             assert package_hash in run("xbps", "info", "fixture", "--source", "fixture",

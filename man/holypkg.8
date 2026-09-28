@@ -92,6 +92,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg sync APK_SOURCE [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] [--public-key FILE]
 .br
+.B holypkg sync XBPS_SOURCE --arch ARCH --sha256 HASH --output NEW_DIRECTORY [--root DIRECTORY] [--ca-file FILE] [--public-key FILE]
+.br
 .B holypkg orphan [--root DIRECTORY] [--json]
 .br
 .B holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--view PUBLIC=PRIVATE ...] -- COMMAND [ARGS...]
@@ -131,6 +133,8 @@ holypkg \- Holy local package tooling prototype
 .B holypkg fetch SOURCE:PACKAGE [--catalog MIRROR] --output DIRECTORY [--extract] [--root DIRECTORY]
 .br
 .B holypkg fetch APK_SOURCE:PACKAGE --version VERSION --arch ARCH [--repo REPO] --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--sha256 HASH] [--import] [--require-soname SONAME] [--require-file /PATH]
+.br
+.B holypkg fetch XBPS_SOURCE:PACKAGE --version VERSION --arch ARCH --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--import] [--require-soname SONAME]
 .br
 .B holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE]
 .br
@@ -461,6 +465,13 @@ the supplied RSA public key match index-meta.plist and records its SHA-256
 fingerprint. The caller must establish the key's authenticity independently.
 The repodata still requires an explicit SHA-256 pin; index-meta.plist alone is
 not trusted authority for a new key.
+.PP
+The common sync XBPS_SOURCE command takes --arch and an explicit repodata
+--sha256. It verifies the registered source and key, then binds the catalog.
+The common fetch XBPS_SOURCE:PACKAGE command takes --version and --arch,
+checks the bound catalog and registered key, and uses the same archive verifier
+and optional import as xbps fetch. A missing version or architecture returns
+decision-required (3).
 .PP
 xbps fetch selects an exact name/version/arch from that catalog, downloads
 the archive over HTTPS, checks size and SHA-256, and compares props.plist

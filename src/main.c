@@ -242,6 +242,26 @@ static int fetch_source(int argc, char **argv)
                                 import, required_soname, required_file);
         goto done;
     }
+    if (!strcmp(family, "xbps")) {
+        if (extract || repo || sha256 || required_file ||
+            (required_soname && !import)) { result = 2; goto done; }
+        if (!version || !arch) {
+            fprintf(stderr, "holypkg: XBPS fetch needs --version and --arch for %s:%s\n",
+                    alias, separator + 1);
+            result = 3; goto done;
+        }
+        if (!catalog) {
+            result = holy_xbps_catalog_path(root, alias, arch, &bound_catalog);
+            if (result) goto done;
+            catalog = bound_catalog;
+        }
+        result = xbps_registered_catalog(root, alias, catalog, public_key, 1);
+        if (!result)
+            result = holy_xbps_fetch(catalog, separator + 1, version, arch,
+                                     output, ca_file, public_key, 1, import,
+                                     required_soname);
+        goto done;
+    }
     if (repo || version || arch || sha256 || ca_file || public_key || import ||
         required_soname || required_file) {
         result = 2; goto done;
@@ -255,7 +275,7 @@ static int fetch_source(int argc, char **argv)
     if (!result) result = holy_repo_fetch_name(catalog, separator + 1, output, extract);
 done:
     if (result == 2)
-        fputs("usage: holypkg fetch SOURCE:PACKAGE [--catalog MIRROR] --output DIRECTORY [--extract] [--root DIRECTORY] | holypkg fetch APK_SOURCE:PACKAGE --version VERSION --arch ARCH [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--sha256 HASH] [--import] [--require-soname SONAME] [--require-file /PATH]\n", stderr);
+        fputs("usage: holypkg fetch SOURCE:PACKAGE [--catalog MIRROR] --output DIRECTORY [--extract] [--root DIRECTORY] | holypkg fetch APK_SOURCE:PACKAGE --version VERSION --arch ARCH [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--sha256 HASH] [--import] [--require-soname SONAME] [--require-file /PATH] | holypkg fetch XBPS_SOURCE:PACKAGE --version VERSION --arch ARCH --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--import] [--require-soname SONAME]\n", stderr);
     for (j = 0; j < repo_count; ++j) free(repos[j]);
     free(repos);
     free(alias); free(bound_catalog); free(family);
@@ -1525,7 +1545,7 @@ int main(int argc, char **argv)
     if (argc > 1 && !strcmp(argv[1], "sync")) {
         const char *root = "/", *digest = NULL, *accepted = NULL;
         const char *output = NULL, *ca_file = NULL, *commit = NULL;
-        const char *repo = NULL, *public_key = NULL;
+        const char *repo = NULL, *public_key = NULL, *arch = NULL;
         char *family = NULL;
         char **repos = NULL;
         size_t repo_count = 0, j;
@@ -1544,6 +1564,7 @@ int main(int argc, char **argv)
             else if (!strcmp(argv[i], "--commit") && !commit) commit = argv[i + 1];
             else if (!strcmp(argv[i], "--repo") && !repo) repo = argv[i + 1];
             else if (!strcmp(argv[i], "--public-key") && !public_key) public_key = argv[i + 1];
+            else if (!strcmp(argv[i], "--arch") && !arch) arch = argv[i + 1];
             else valid = 0;
         }
         if (valid && !(digest && accepted)) {
@@ -1551,7 +1572,7 @@ int main(int argc, char **argv)
             if (result) return result;
             if (!strcmp(family, "apk")) {
                 free(family);
-                if (commit || !output) goto sync_usage;
+                if (commit || arch || !output) goto sync_usage;
                 if (!repo) {
                     result = holy_source_apk_repos(root, argv[2], &repos, &repo_count);
                     if (result) return result;
@@ -1569,13 +1590,34 @@ sync_done:
                 free(repos);
                 return result;
             }
+            if (!strcmp(family, "xbps")) {
+                char id[65], registered_key[65], supplied[65];
+                char *base = NULL, *trust = NULL;
+                free(family);
+                if (!arch || !digest || !output || repo || accepted || commit)
+                    goto sync_usage;
+                result = holy_source_xbps(root, argv[2], id, &base, &trust,
+                                          registered_key);
+                if (result) return result;
+                if ((registered_key[0] &&
+                     (!public_key || !holy_xbps_key_fingerprint(public_key, supplied) ||
+                      strcmp(supplied, registered_key))) ||
+                    (!registered_key[0] && public_key)) result = 6;
+                else {
+                    result = holy_xbps_sync(base, arch, argv[2], output,
+                                            digest, ca_file, public_key, id);
+                    if (!result) result = holy_xbps_bind(root, argv[2], arch, output);
+                }
+                free(base); free(trust);
+                return result;
+            }
             free(family);
-            if (!repo && !public_key)
+            if (!repo && !public_key && !arch)
                 return holy_source_sync(argv[2], root, digest, accepted, output,
                                         ca_file, commit);
         }
 sync_usage:
-        fputs("usage: holypkg sync SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256 INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--commit GIT_COMMIT] [--ca-file FILE] | holypkg sync APK_SOURCE [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] [--public-key FILE]\n", stderr);
+        fputs("usage: holypkg sync SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256 INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--commit GIT_COMMIT] [--ca-file FILE] | holypkg sync APK_SOURCE [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] [--public-key FILE] | holypkg sync XBPS_SOURCE --arch ARCH --sha256 HASH --output NEW_DIRECTORY [--root DIRECTORY] [--ca-file FILE] [--public-key FILE]\n", stderr);
         return 2;
     }
 

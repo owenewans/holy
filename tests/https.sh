@@ -527,11 +527,7 @@ cp "$tmp/serve/index" "$tmp/serve/claims/index"
 second=$(sha256sum "$tmp/serve/space?#.holy" | cut -d ' ' -f 1)
 printf 'claim %s package forged any any - fixture\n' "$second" >> "$tmp/serve/claims/index"
 cp "$tmp/serve/native.holy" "$tmp/serve/space?#.holy" "$tmp/serve/claims/"
-python3 - "$tmp/serve/oversized/index" <<'PY'
-import sys
-with open(sys.argv[1], 'wb') as stream:
-    stream.write(b'x' * (17 * 1024 * 1024))
-PY
+truncate -s 129M "$tmp/serve/oversized/index"
 for variant in claims oversized; do
     sum=$(sha256sum "$tmp/serve/$variant/index" | cut -d ' ' -f 1)
     cp "$tmp/serve/$variant/index" "$tmp/serve/$variant/index.$sum"

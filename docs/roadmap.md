@@ -491,7 +491,10 @@
   sync-source, then bind the catalog conversion digest in the target database.
   Source-aware search/info/fetch resolve that binding by index architecture and
   reject changed catalog data or source definitions. Root-relative bindings
-  survive moving a target root with its cache. A separate digest-checked
+  survive moving a target root with its cache.
+  Common sync/fetch now use the same registered-source checks for XBPS, with
+  explicit index architecture and version at the CLI.
+  A separate digest-checked
   shlib-provides index now gives exact SONAME candidate hints from Void metadata,
   including source-bound queries. Foreign binary import now derives SONAME
   provides from classified ELF payloads, so a selected archive can supply
