@@ -162,7 +162,7 @@ src/%.o: src/%.c $(wildcard src/*.h) $(wildcard backends/*.h) .build-config
 check-init: holy-init
 	@./holy-init >/dev/null 2>&1; test $$? -eq 2
 
-check: check-pacman check-deb check-slackware check-apk check-apk-version check-apk-index check-native-version holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
+check: check-pacman check-deb check-slackware check-apk check-apk-version check-apk-index check-apk-fetch check-native-version holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg
@@ -217,6 +217,10 @@ check-apk-version: tests/apk-version-helper
 .PHONY: check-apk-index
 check-apk-index: holypkg
 	python3 tests/apk-index.py ./holypkg
+
+.PHONY: check-apk-fetch
+check-apk-fetch: holypkg
+	python3 tests/apk-fetch.py ./holypkg
 
 tests/apk-version-helper: tests/apk-version.c backends/apk-version.c backends/apk-version.h .build-config
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o $@ tests/apk-version.c backends/apk-version.c

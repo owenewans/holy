@@ -294,10 +294,11 @@ int holy_fetch_https_signature(const char *base, const char *digest,
 }
 
 static int https_object(const char *url, const char *expected,
-                        const char *output, const char *ca_file, int native, int emit)
+                        const char *output, const char *ca_file, int native,
+                        int emit, char actual[65])
 {
     struct download transfer = { .fd = -1, .hash = NULL, .bytes = 0,
-                                .limit = native ? 1024 * 1024 * 1024 : 16 * 1024 * 1024 };
+                                .limit = native || actual ? 1024 * 1024 * 1024 : 16 * 1024 * 1024 };
     CURL *curl = NULL;
     struct stat st;
     struct timespec started, now;
@@ -307,8 +308,8 @@ static int https_object(const char *url, const char *expected,
     char *path = NULL;
     size_t i, output_length;
     int dir = -1, previous = -1, result = 1, initialized = 0, redirect;
-    if (!expected || strlen(expected) != 64) return 2;
-    for (i = 0; i < 64; ++i)
+    if ((!expected && !actual) || (expected && strlen(expected) != 64)) return 2;
+    if (expected) for (i = 0; i < 64; ++i)
         if (!((expected[i] >= '0' && expected[i] <= '9') ||
               (expected[i] >= 'a' && expected[i] <= 'f'))) return 2;
     if (!secure_url(url)) {
@@ -378,7 +379,7 @@ static int https_object(const char *url, const char *expected,
     for (i = 0; i < 32; ++i) snprintf(name + i * 2, 3, "%02x", digest[i]);
     if (native) memcpy(name + 64, ".holy", 6);
     else name[64] = 0;
-    if (strncmp(name, expected, 64)) { result = 4; goto done; }
+    if (expected && strncmp(name, expected, 64)) { result = 4; goto done; }
     output_length = strlen(output);
     if (output_length > (size_t)-1 - sizeof temporary - 2) { result = 1; goto done; }
     path = malloc(output_length + sizeof temporary + 2);
@@ -395,10 +396,11 @@ static int https_object(const char *url, const char *expected,
             memcmp(prior, digest, 32)) { result = 4; goto done; }
     }
     if (fsync(dir)) goto done;
+    if (actual) memcpy(actual, name, 65);
     if (emit) printf("%s/%s\n", output, name);
     result = 0;
 done:
-    if (result) fprintf(stderr, "holypkg: pinned HTTPS fetch failed (status %d)\n", result);
+    if (result) fprintf(stderr, "holypkg: HTTPS object fetch failed (status %d)\n", result);
     free(path);
     if (previous >= 0) close(previous);
     if (curl) curl_easy_cleanup(curl);
@@ -413,11 +415,19 @@ done:
 int holy_fetch_https(const char *url, const char *expected,
                      const char *output, const char *ca_file, int emit)
 {
-    return https_object(url, expected, output, ca_file, 1, emit);
+    return https_object(url, expected, output, ca_file, 1, emit, NULL);
 }
 
 int holy_fetch_https_data(const char *url, const char *expected,
                           const char *output, const char *ca_file)
 {
-    return https_object(url, expected, output, ca_file, 0, 0);
+    return https_object(url, expected, output, ca_file, 0, 0, NULL);
+}
+
+int holy_fetch_https_foreign(const char *url, const char *output,
+                             const char *ca_file, char digest[65])
+{
+    if (!digest) return 2;
+    digest[0] = 0;
+    return https_object(url, NULL, output, ca_file, 0, 0, digest);
 }

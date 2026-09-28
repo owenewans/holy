@@ -2,12 +2,14 @@
 #include "apk.h"
 #include "../src/config.h"
 #include "../src/stage.h"
+#include "../src/fetch.h"
 
 #include <archive.h>
 #include <archive_entry.h>
 #include <errno.h>
 #include <openssl/evp.h>
 #include <stdint.h>
+#include <strings.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -463,5 +465,269 @@ done:
     if (record) fclose(record);
     if (dir >= 0) close(dir);
     free(line);
+    return result;
+}
+
+struct apk_selection {
+    char *source, *base, *checksum;
+    unsigned long long size;
+    char index_hash[65], catalog_hash[65];
+};
+
+static void free_selection(struct apk_selection *selection)
+{
+    free(selection->source); free(selection->base); free(selection->checksum);
+}
+
+static int hex_digest(const char *value)
+{
+    return strlen(value) == 64 && strspn(value, "0123456789abcdef") == 64;
+}
+
+static int select_package(const char *directory, const char *name,
+                          const char *version, const char *arch,
+                          struct apk_selection *selection)
+{
+    FILE *file = NULL;
+    char *line = NULL, *snapshot = NULL;
+    size_t capacity = 0, matches = 0;
+    struct stat st;
+    char actual[65];
+    int dir = -1, fd = -1, result = 2;
+    dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir < 0) { result = 6; goto done; }
+    fd = openat(dir, "conversion", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size > 4096) {
+        result = 6; goto done;
+    }
+    file = fdopen(fd, "r");
+    if (!file) goto done;
+    fd = -1;
+    while (1) {
+        char **v = NULL, *error = NULL;
+        size_t n = 0;
+        ssize_t got = getline(&line, &capacity, file);
+        if (got < 0) break;
+        if (got > 4096 || !holy_lex(line, (size_t)got, &v, &n,
+                                     "APK conversion", 0, &error)) {
+            free(error); holy_tokens_free(v, n); goto done;
+        }
+        if (n == 2 && !strcmp(v[0], "source-name")) {
+            if (selection->source) { holy_tokens_free(v, n); goto done; }
+            selection->source = strdup(v[1]);
+        } else if (n == 2 && !strcmp(v[0], "base-url")) {
+            if (selection->base) { holy_tokens_free(v, n); goto done; }
+            selection->base = strdup(v[1]);
+        } else if (n == 2 && !strcmp(v[0], "original-sha256") && hex_digest(v[1])) {
+            memcpy(selection->index_hash, v[1], 65);
+        } else if (n == 2 && !strcmp(v[0], "catalog-sha256") && hex_digest(v[1])) {
+            memcpy(selection->catalog_hash, v[1], 65);
+        } else if (n == 2 && !strcmp(v[0], "state") && !strcmp(v[1], "complete")) {
+            ++matches;
+        }
+        free(error); holy_tokens_free(v, n);
+    }
+    if (ferror(file) || matches != 1 || !selection->source || !selection->base ||
+        !selection->index_hash[0] || !selection->catalog_hash[0] ||
+        !base_url(selection->base)) goto done;
+    fclose(file); file = NULL;
+    fd = openat(dir, "original", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size > 64LL * 1024 * 1024 || !hash_fd(fd, actual) ||
+        strcmp(actual, selection->index_hash)) goto done;
+    close(fd); fd = -1;
+    fd = openat(dir, "catalog", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size > 64LL * 1024 * 1024) goto done;
+    snapshot = holy_stage_fd(fd, "holy-apk-catalog");
+    close(fd); fd = -1;
+    if (!snapshot || !hash_file(snapshot, actual) || strcmp(actual, selection->catalog_hash)) goto done;
+    file = fopen(snapshot, "r");
+    if (!file || getline(&line, &capacity, file) < 0 ||
+        strcmp(line, "format holy-apk-catalog-1\n")) goto done;
+    matches = 0;
+    while (1) {
+        char **v = NULL, *error = NULL;
+        size_t n = 0;
+        ssize_t got = getline(&line, &capacity, file);
+        if (got < 0) break;
+        if (got > 65536 || !holy_lex(line, (size_t)got, &v, &n,
+                                     "APK catalog", 0, &error) ||
+            n != 8 || strcmp(v[0], "package")) {
+            free(error); holy_tokens_free(v, n); goto done;
+        }
+        if (!strcmp(v[1], name) && !strcmp(v[2], version) && !strcmp(v[3], arch)) {
+            char *end;
+            if (++matches > 1) { free(error); holy_tokens_free(v, n); goto done; }
+            selection->checksum = strdup(v[4]);
+            errno = 0;
+            selection->size = strtoull(v[5], &end, 10);
+            if (!selection->checksum || errno || *end || !*v[5]) {
+                free(error); holy_tokens_free(v, n); goto done;
+            }
+        }
+        free(error); holy_tokens_free(v, n);
+    }
+    if (ferror(file)) goto done;
+    result = matches == 1 ? 0 : 4;
+done:
+    if (file) fclose(file);
+    if (fd >= 0) close(fd);
+    if (dir >= 0) close(dir);
+    if (snapshot) { unlink(snapshot); free(snapshot); }
+    free(line);
+    return result;
+}
+
+static int check_q1(FILE *control, const char *checksum)
+{
+    unsigned char expected[24], actual[EVP_MAX_MD_SIZE], buffer[65536];
+    EVP_MD_CTX *hash = EVP_MD_CTX_new();
+    unsigned length = 0;
+    size_t got;
+    int decoded, ok = 0;
+    if (!hash) return 0;
+    if (strlen(checksum) != 30 || strncmp(checksum, "Q1", 2) ||
+        checksum[29] != '=') goto done;
+    decoded = EVP_DecodeBlock(expected, (const unsigned char *)checksum + 2, 28);
+    if (decoded != 21 || fseek(control, 0, SEEK_SET) ||
+        EVP_DigestInit_ex(hash, EVP_sha1(), NULL) != 1) goto done;
+    while ((got = fread(buffer, 1, sizeof buffer, control)) != 0)
+        if (EVP_DigestUpdate(hash, buffer, got) != 1) goto done;
+    ok = !ferror(control) && EVP_DigestFinal_ex(hash, actual, &length) == 1 &&
+         length == 20 && !memcmp(actual, expected, 20);
+done:
+    EVP_MD_CTX_free(hash);
+    return ok;
+}
+
+static int control_identity(FILE *control, const char *name,
+                            const char *version, const char *arch,
+                            const char *datahash)
+{
+    struct archive *reader = archive_read_new();
+    struct archive_entry *entry;
+    char descriptor[64], *bytes = NULL, *line, *save = NULL;
+    unsigned seen = 0;
+    int result = 0, status;
+    if (!reader) return 0;
+    snprintf(descriptor, sizeof descriptor, "/proc/self/fd/%d", fileno(control));
+    if (archive_read_support_filter_all(reader) != ARCHIVE_OK ||
+        archive_read_support_format_tar(reader) != ARCHIVE_OK ||
+        archive_read_open_filename(reader, descriptor, 65536) != ARCHIVE_OK) goto done;
+    while ((status = archive_read_next_header(reader, &entry)) == ARCHIVE_OK) {
+        const char *path = archive_entry_pathname(entry);
+        if (path && (!strcmp(path, ".PKGINFO") || !strcmp(path, "./.PKGINFO"))) {
+            la_int64_t size = archive_entry_size(entry);
+            if (seen || size < 0 || size > 1024 * 1024 ||
+                archive_entry_filetype(entry) != AE_IFREG) goto done;
+            bytes = malloc((size_t)size + 1);
+            if (!bytes) goto done;
+            {
+                size_t used = 0;
+                while (used < (size_t)size) {
+                    la_ssize_t got = archive_read_data(reader, bytes + used, (size_t)size - used);
+                    if (got <= 0) goto done;
+                    used += (size_t)got;
+                }
+            }
+            if (memchr(bytes, 0, (size_t)size)) goto done;
+            bytes[size] = 0;
+            seen = 1;
+        } else if (archive_read_data_skip(reader) != ARCHIVE_OK) goto done;
+    }
+    if (status != ARCHIVE_EOF || !seen) goto done;
+    {
+        unsigned fields = 0;
+        for (line = strtok_r(bytes, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+            const char *value;
+            size_t length = strlen(line);
+            if (length && line[length - 1] == '\r') line[length - 1] = 0;
+            if (!strncmp(line, "pkgname = ", 10)) { value = line + 10; if (fields & 1 || strcmp(value, name)) goto done; fields |= 1; }
+            else if (!strncmp(line, "pkgver = ", 9)) { value = line + 9; if (fields & 2 || strcmp(value, version)) goto done; fields |= 2; }
+            else if (!strncmp(line, "arch = ", 7)) { value = line + 7; if (fields & 4 || strcmp(value, arch)) goto done; fields |= 4; }
+            else if (!strncmp(line, "datahash = ", 11)) { value = line + 11; if (fields & 8 || strcasecmp(value, datahash)) goto done; fields |= 8; }
+        }
+        result = (fields & 7) == 7;
+    }
+done:
+    free(bytes);
+    archive_read_free(reader);
+    return result;
+}
+
+int holy_apk_fetch(const char *catalog, const char *name, const char *version,
+                   const char *arch, const char *output, const char *sha256,
+                   const char *ca_file)
+{
+    struct apk_selection selection = {0};
+    FILE *parts[3] = {0}, *receipt = NULL;
+    struct stat st;
+    char digests[3][65] = {{0}}, digest[65] = {0}, template[] = "/tmp/holy-apk-fetch-XXXXXX";
+    char *url = NULL, *filename = NULL, *downloaded = NULL;
+    int dir = -1, temp = 0, count, result = 1, i;
+    size_t length;
+    if (!catalog || !name || !version || !arch || !output ||
+        !package_name(name) || !package_name(version) || !package_name(arch) ||
+        (sha256 && !hex_digest(sha256))) return 2;
+    result = select_package(catalog, name, version, arch, &selection);
+    if (result) goto done;
+    if (strncmp(selection.base, "https://", 8)) { result = 6; goto done; }
+    length = strlen(name) + strlen(version) + 6;
+    filename = malloc(length);
+    if (!filename) { result = 1; goto done; }
+    snprintf(filename, length, "%s-%s.apk", name, version);
+    url = holy_fetch_child_url(selection.base, filename);
+    if (!url) { result = 2; goto done; }
+    if (!mkdtemp(template)) { result = 1; goto done; }
+    temp = 1;
+    result = holy_fetch_https_foreign(url, template, ca_file, digest);
+    if (result) goto done;
+    if (sha256 && strcmp(sha256, digest)) { result = 4; goto done; }
+    downloaded = malloc(strlen(template) + 66);
+    if (!downloaded) { result = 1; goto done; }
+    sprintf(downloaded, "%s/%s", template, digest);
+    if (stat(downloaded, &st) || !S_ISREG(st.st_mode) ||
+        (unsigned long long)st.st_size != selection.size) { result = 4; goto done; }
+    count = holy_apk_gzip_parts(downloaded, parts, digests, 4ULL * 1024 * 1024 * 1024);
+    if (count < 2 || count > 3 || !check_q1(parts[count - 2], selection.checksum) ||
+        !control_identity(parts[count - 2], name, version, arch, digests[count - 1])) {
+        result = 4; goto done;
+    }
+    result = 1;
+    if (mkdir(output, 0700)) goto done;
+    dir = open(output, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir < 0 || !copy_original(downloaded, dir)) goto done;
+    {
+        int fd = openat(dir, "selection", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+        if (fd < 0) goto done;
+        receipt = fdopen(fd, "w");
+        if (!receipt) { close(fd); goto done; }
+    }
+    fputs("format holy-apk-selection-1\nsource-name ", receipt); quote(receipt, selection.source);
+    fputs("\nbase-url ", receipt); quote(receipt, selection.base);
+    fputs("\nurl ", receipt); quote(receipt, url);
+    fputs("\nname ", receipt); quote(receipt, name);
+    fputs("\nversion ", receipt); quote(receipt, version);
+    fputs("\narch ", receipt); quote(receipt, arch);
+    fprintf(receipt, "\nindex-sha256 %s\ncatalog-sha256 %s\noriginal-sha256 %s\ncontrol-checksum %s\nverification unverified\nstate complete\n",
+            selection.index_hash, selection.catalog_hash, digest, selection.checksum);
+    {
+        int failed = ferror(receipt);
+        if (fflush(receipt) || fsync(fileno(receipt))) failed = 1;
+        if (fclose(receipt)) failed = 1;
+        receipt = NULL;
+        if (failed || fsync(dir)) goto done;
+    }
+    result = 0;
+done:
+    if (result) fprintf(stderr, "holypkg: APK fetch failed (status %d)\n", result);
+    if (receipt) fclose(receipt);
+    if (dir >= 0) close(dir);
+    for (i = 0; i < 3; ++i) if (parts[i]) fclose(parts[i]);
+    if (downloaded) unlink(downloaded);
+    if (temp) rmdir(template);
+    free(downloaded); free(url); free(filename);
+    free_selection(&selection);
     return result;
 }

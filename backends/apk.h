@@ -11,5 +11,8 @@ int holy_apk_gzip_parts(const char *snapshot, FILE *parts[3],
 int holy_apk_index(const char *input, const char *source, const char *base,
                    const char *output);
 int holy_apk_query(const char *catalog, const char *query, int info);
+int holy_apk_fetch(const char *catalog, const char *name, const char *version,
+                   const char *arch, const char *output, const char *sha256,
+                   const char *ca_file);
 
 #endif

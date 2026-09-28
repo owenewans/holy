@@ -118,7 +118,10 @@
   A rootless APKINDEX.tar.gz parser now retains the original signed or unsigned
   index, publishes a hash-bound local catalog and answers search/info without
   installation. An Alpine v3.22 main/x86_64 index with 5647 packages passed
-  manual import and lookup. Registered source sync, package-object verification,
+  manual import and lookup. `apk fetch` now retrieves a selected package over
+  HTTPS, checks index size and Q1 control checksum, .PKGINFO identity and
+  datahash, and retains the original with a selection receipt. Local HTTPS
+  fixtures and Alpine scdoc 1.11.3-r0 passed. Registered source sync,
   publisher signatures and full relation semantics remain open.
 
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.

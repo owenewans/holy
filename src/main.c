@@ -699,7 +699,19 @@ int main(int argc, char **argv)
             if (!strcmp(argv[2], "search")) return holy_apk_query(argv[5], argv[3], 0);
             if (!strcmp(argv[2], "info")) return holy_apk_query(argv[5], argv[3], 1);
         }
-        fputs("usage: holypkg apk index FILE --source NAME --base URL --output NEW_DIRECTORY | apk search|info NAME --catalog DIRECTORY\n", stderr);
+        if ((argc == 10 || argc == 12 || argc == 14) && !strcmp(argv[2], "fetch") &&
+            !strcmp(argv[6], "--catalog") && !strcmp(argv[8], "--output")) {
+            const char *sha256 = NULL, *ca_file = NULL;
+            int i;
+            for (i = 10; i < argc; i += 2) {
+                if (!strcmp(argv[i], "--sha256") && !sha256) sha256 = argv[i + 1];
+                else if (!strcmp(argv[i], "--ca-file") && !ca_file) ca_file = argv[i + 1];
+                else break;
+            }
+            if (i == argc) return holy_apk_fetch(argv[7], argv[3], argv[4], argv[5],
+                                                   argv[9], sha256, ca_file);
+        }
+        fputs("usage: holypkg apk index FILE --source NAME --base URL --output NEW_DIRECTORY | apk search|info NAME --catalog DIRECTORY | apk fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--sha256 HASH] [--ca-file FILE]\n", stderr);
         return 2;
     }
     if (argc > 1 && !strcmp(argv[1], "search") && argc > 2)
