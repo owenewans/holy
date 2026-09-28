@@ -2,7 +2,7 @@
 .SH NAME
 holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
-.B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
+.B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--associate SHA256=ALIAS ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
 .B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
@@ -1023,6 +1023,12 @@ under the database lock and binds that ID into the reviewed plan. This flag
 does not infer provenance from archive metadata, verify a publisher signature
 or associate the candidate dependency archives. The association requires a
 registered active source and is checked again before apply.
+.B --associate SHA256=ALIAS
+binds a staged root or candidate artifact to an active registered source.
+The hash must match an artifact supplied to this add operation. Repeat the
+option for packages from different sources; duplicate hashes are rejected.
+This is an explicit provenance decision for each artifact, not signature
+verification. The reviewed plan records each binding and checks it on apply.
 .B --accept-arch SHA256
 confirms placement of one selected artifact whose architecture differs from
 the native target. It does not change the target metadata or prove execution.

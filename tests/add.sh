@@ -108,4 +108,23 @@ test ! -e "$associated/usr/share/app"
     --yes > "$tmp/out"
 grep -qx "source-id $source_id" "$associated/var/lib/holypkg/installed/$app/state"
 "$bin" db check --all --root "$associated" > "$tmp/out"
+both="$tmp/both-sources"
+mkdir -p "$both/usr/share"
+"$bin" db init --root "$both" > "$tmp/out"
+"$bin" source plan --config "$tmp/source.conf" --root "$both" > "$tmp/source.plan"
+source_plan=$(sha256sum "$tmp/source.plan" | cut -d ' ' -f 1)
+"$bin" source apply "$tmp/source.plan" --sha256 "$source_plan" --root "$both" > "$tmp/out"
+"$bin" source list --root "$both" > "$tmp/out"
+both_id=$(awk '$1 == "source" && $4 == "active" {print $2}' "$tmp/out")
+if "$bin" add "local:$tmp/app.holy" --candidate "local:$tmp/lib.holy" \
+    --associate "$app=renamed" --associate "$app=renamed" --root "$both" --yes \
+    > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+if "$bin" add "local:$tmp/app.holy" --candidate "local:$tmp/lib.holy" \
+    --associate "$(printf '%064d' 0)=renamed" --root "$both" --yes \
+    > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+"$bin" add "local:$tmp/app.holy" --candidate "local:$tmp/lib.holy" \
+    --associate-source renamed --associate "$lib=renamed" --root "$both" --yes > "$tmp/out"
+grep -qx "source-id $both_id" "$both/var/lib/holypkg/installed/$app/state"
+grep -qx "source-id $both_id" "$both/var/lib/holypkg/installed/$lib/state"
+"$bin" db check --all --root "$both" > "$tmp/out"
 printf 'local add fixtures passed\n'
