@@ -693,11 +693,33 @@ const char *holy_elf_runtime(const struct holy_elf_info *info)
 {
     const char *base;
     if (!info->interpreter) {
+        size_t i;
+        int glibc = 0, musl = 0;
         if (info->type == ET_DYN && info->soname &&
             ((!strcmp(info->soname, "libc.musl-x86_64.so.1") &&
               info->machine == EM_X86_64 && info->elf_class == ELFCLASS64) ||
              (!strcmp(info->soname, "libc.musl-i386.so.1") &&
               info->machine == EM_386 && info->elf_class == ELFCLASS32))) return "musl";
+        if (info->type == ET_DYN && info->soname &&
+            (!strcmp(info->soname, "libc.so.6") ||
+             (!strcmp(info->soname, "ld-linux-x86-64.so.2") &&
+              info->machine == EM_X86_64 && info->elf_class == ELFCLASS64) ||
+             (!strcmp(info->soname, "ld-linux.so.2") &&
+              info->machine == EM_386 && info->elf_class == ELFCLASS32))) return "glibc";
+        if (info->type == ET_DYN && info->has_dynamic) {
+            for (i = 0; i < info->needed_count; ++i) {
+                if (!strcmp(info->needed[i], "libc.so.6")) glibc = 1;
+                if ((!strcmp(info->needed[i], "libc.musl-x86_64.so.1") &&
+                     info->machine == EM_X86_64 && info->elf_class == ELFCLASS64) ||
+                    (!strcmp(info->needed[i], "libc.musl-i386.so.1") &&
+                     info->machine == EM_386 && info->elf_class == ELFCLASS32)) musl = 1;
+            }
+            for (i = 0; i < info->version_count; ++i)
+                if (info->versions[i].provider && info->versions[i].name &&
+                    !strcmp(info->versions[i].provider, "libc.so.6") &&
+                    !strncmp(info->versions[i].name, "GLIBC_", 6)) glibc = 1;
+            if (glibc != musl) return glibc ? "glibc" : "musl";
+        }
         if (info->type == ET_EXEC && !info->has_dynamic && !info->needed_count)
             return "nolibc";
         return "unknown";

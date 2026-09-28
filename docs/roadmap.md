@@ -460,6 +460,8 @@
   and HTTPS fetch/import path; APK has a separate index/fetch path.
   XBPS local binary import parses plist metadata, checks payload hashes and
   resolves simple versioned dependencies with a bounded Dewey comparator.
+  It resolves relative archive symlink targets against absolute files.plist
+  targets before comparing them, while retaining both original records.
   A pinned repodata catalog supports HTTPS sync, search, info and archive fetch.
   An explicit RSA public key can match index metadata and verify package .sig2.
   A registered XBPS source can now pin the RSA key, URL and source-id during
@@ -468,8 +470,9 @@
   reject changed catalog data or source definitions. Root-relative bindings
   survive moving a target root with its cache. A separate digest-checked
   shlib-provides index now gives exact SONAME candidate hints from Void metadata,
-  including source-bound queries. The selected payload still needs ELF/ABI
-  validation. Complex patterns remain review-required. Key enrollment,
+  including source-bound queries. Foreign binary import now derives SONAME
+  provides from classified ELF payloads, so a selected archive can supply
+  separate file-level evidence. Complex patterns remain review-required. Key enrollment,
   automatic provider selection and a file index remain open.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
   Gentoo and Pacstall recipe conversion with helper environments and split outputs.

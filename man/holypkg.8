@@ -405,6 +405,8 @@ make check-apk-version covers comparisons against Alpine apk-tools 2.14.12.
 .PP
 --format xbps reads a Void XBPS tar package, parses props.plist and files.plist
 with libplist, and checks payload file size and SHA-256 against the file list.
+It compares symlink targets by their resolved path inside the target root;
+a relative archive target and the equivalent absolute files.plist target match.
 It preserves the original property lists beneath HOLY/foreign/xbps and records
 unverified provenance. Package revision becomes the .holy release. Exact
 shlib-requires become arch/libc-scoped SONAME requirements. Simple
@@ -416,7 +418,8 @@ remain attributed foreign requirements. Provides are preserved in
 origin metadata without creating dependencies. INSTALL and REMOVE scripts
 remain review-required. Unknown file-list fields, unsupported architecture,
 and ELF/architecture contradictions stop conversion. make check-xbps-import
-covers a generated package, dependency selection and malformed file lists;
+covers a generated package, ELF-derived SONAME capabilities, dependency
+selection and malformed file lists;
 make check-xbps-version checks component and revision ordering. These do not
 test the full Void package range.
 .PP

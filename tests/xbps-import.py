@@ -11,18 +11,24 @@ from pathlib import Path
 
 
 def archive(path, *, digest=None, omit=False, extra=None, traversal=False, link=False,
-            package="fixture", version="1.2_3", depends=None):
+            package="fixture", version="1.2_3", depends=None, library=None,
+            arch="noarch", listed_link=None):
     body = b"XBPS fixture data\n"
     actual = hashlib.sha256(body).hexdigest()
     props = {
         "pkgname": package, "pkgver": f"{package}-{version}", "version": version,
-        "architecture": "noarch", "run_depends": depends if depends is not None else ["glibc>=2.40_1"],
+        "architecture": arch, "run_depends": depends if depends is not None else ["glibc>=2.40_1"],
         "shlib-requires": [], "provides": [f"{package}-{version}"],
     }
     files = {"files": [{"file": f"/usr/bin/{package}", "sha256": digest or actual,
                         "size": len(body)}]}
+    if library:
+        files["files"].append({"file": "/usr/lib/libfixture.so.1",
+                               "sha256": hashlib.sha256(library).hexdigest(),
+                               "size": len(library)})
     if link:
-        files["links"] = [{"file": f"/usr/bin/{package}-link", "target": package}]
+        files["links"] = [{"file": f"/usr/bin/{package}-link",
+                           "target": listed_link or package}]
     if extra:
         files.update(extra)
     with tarfile.open(path, "w:gz") as tar:
@@ -38,6 +44,10 @@ def archive(path, *, digest=None, omit=False, extra=None, traversal=False, link=
             info = tarfile.TarInfo(name)
             info.size, info.mode = len(data), mode
             tar.addfile(info, io.BytesIO(data))
+        if library:
+            info = tarfile.TarInfo("./usr/lib/libfixture.so.1")
+            info.size, info.mode = len(library), 0o755
+            tar.addfile(info, io.BytesIO(library))
         if link:
             info = tarfile.TarInfo(f"./usr/bin/{package}-link")
             info.type = tarfile.SYMTYPE
@@ -61,6 +71,21 @@ def main():
         assert result.returncode == 0, result.stderr
         assert (root / "good" / "conversion").is_file()
         assert len(list((root / "good").glob("*.holy"))) == 1
+        source = root / "fixture.c"
+        shared = root / "libfixture.so.1"
+        source.write_text('#include <stdio.h>\nint fixture(void) { return puts("fixture"); }\n')
+        subprocess.run([os.environ.get("CC", "cc"), "-shared", "-fPIC",
+                        "-Wl,-soname,libfixture.so.1", "-o", str(shared), str(source)],
+                       check=True, capture_output=True)
+        archive(archive_path, library=shared.read_bytes(), arch="x86_64")
+        result = run(binary, archive_path, root / "elf")
+        assert result.returncode == 0, result.stderr
+        outputs = list((root / "elf").glob("*.holy"))
+        claims = [subprocess.run([binary, "provides", "local:" + str(item)],
+                                 check=True, capture_output=True, text=True).stdout
+                  for item in outputs]
+        assert sum('"soname" "libfixture.so.1"' in item for item in claims) == 1, claims
+        archive(archive_path)
         artifact = next((root / "good").glob("*.holy"))
         requirements = subprocess.run([binary, "requirements", "local:" + str(artifact)],
                                       capture_output=True, text=True, check=True).stdout
@@ -68,6 +93,13 @@ def main():
         archive(archive_path, link=True)
         result = run(binary, archive_path, root / "linked")
         assert result.returncode == 0, result.stderr
+        archive(archive_path, link=True, listed_link="/usr/bin/fixture")
+        result = run(binary, archive_path, root / "absolute-link-list")
+        assert result.returncode == 0, result.stderr
+        archive(archive_path, link=True, listed_link="/usr/bin/other")
+        result = run(binary, archive_path, root / "wrong-link-list")
+        assert result.returncode != 0
+        assert "link target mismatch" in result.stderr
         for index, changes in enumerate((
             {"digest": "0" * 64},
             {"omit": True},

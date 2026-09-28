@@ -6,6 +6,7 @@
 #include "deps.h"
 #include "stage.h"
 #include "elf.h"
+#include "provides.h"
 #include "../backends/pacman.h"
 #include "../backends/deb-version.h"
 #include "../backends/apk-version.h"
@@ -24,6 +25,7 @@
 #undef __llvm__
 #endif
 #include <ctype.h>
+#include <elf.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -38,6 +40,7 @@
 struct foreign_entry {
     struct holy_stream_entry stream;
     char *original;
+    char *soname;
     unsigned char hash[32];
     int metadata, group, hardlink_group;
 };
@@ -296,6 +299,13 @@ static int collect_archive(const char *snapshot, struct foreign_input *input,
             if (!parsed && strcmp(holy_elf_machine(&info), "unknown") && strcmp(holy_elf_runtime(&info), "unknown"))
                 e->group = add_group(input, holy_elf_machine(&info), holy_elf_runtime(&info));
             else input->unknown = 1;
+            if (!parsed && e->group >= 0 && info.type == ET_DYN && info.has_dynamic &&
+                info.soname && !strchr(info.soname, '/')) {
+                e->soname = strdup(info.soname);
+                if (!e->soname) {
+                    holy_elf_free(&info); fclose(elf); result = 1; goto done;
+                }
+            }
             holy_elf_free(&info); fclose(elf);
             if (e->group < 0) input->unknown = 1;
         }
@@ -432,7 +442,8 @@ static void free_input(struct foreign_input *input)
     size_t i;
     for (i = 0; i < input->count; ++i) {
         struct foreign_entry *e = &input->entries[i];
-        free(e->original); free((char *)e->stream.path); free((char *)e->stream.link);
+        free(e->original); free(e->soname);
+        free((char *)e->stream.path); free((char *)e->stream.link);
         free((char *)e->stream.hardlink); free((char *)e->stream.owner); free((char *)e->stream.group);
     }
     free(input->entries); free(input->pkginfo);
@@ -769,6 +780,13 @@ bad:
     return 0;
 }
 
+static char *xbps_link_target(const char *path, const char *target)
+{
+    if (!target || !holy_safe_link(path, target)) return NULL;
+    if (target[0] == '/') return normalized(target + 1, 0);
+    return holy_relative_link_path(path, strlen(path), target, "");
+}
+
 static int xbps_files(struct foreign_input *input)
 {
     plist_t root = NULL;
@@ -838,9 +856,16 @@ static int xbps_files(struct foreign_input *input)
                 seen[i] = 1; ++covered;
                 if (kind == 2) {
                     char *target = xbps_string(item, "target");
-                    int matches = target && entry->stream.link && !strcmp(target, entry->stream.link);
-                    free(target);
-                    if (!matches) goto done;
+                    char *listed = target ? xbps_link_target(entry->original, target) : NULL;
+                    char *payload = entry->stream.link ?
+                        xbps_link_target(entry->original, entry->stream.link) : NULL;
+                    int matches = listed && payload && !strcmp(listed, payload);
+                    free(target); free(listed); free(payload);
+                    if (!matches) {
+                        fprintf(stderr, "holypkg: XBPS files.plist link target mismatch %s\n",
+                                entry->original);
+                        goto done;
+                    }
                 }
                 if (kind != 1) continue;
                 digest = xbps_string(item, "sha256");
@@ -1005,6 +1030,45 @@ static int belongs(const struct foreign_input *input, size_t index, int group)
         }
     }
     return !has_children && group == (int)input->group_count - 1;
+}
+
+static int soname_entry_order(const void *left, const void *right)
+{
+    const struct foreign_entry *a = *(const struct foreign_entry *const *)left;
+    const struct foreign_entry *b = *(const struct foreign_entry *const *)right;
+    int result = strcmp(a->soname, b->soname);
+    return result ? result : strcmp(a->original, b->original);
+}
+
+static int emit_elf_provides(FILE *out, const struct foreign_input *input,
+                             int group, const char *arch, const char *libc)
+{
+    const struct foreign_entry **items;
+    size_t count = 0, i;
+    int ok = 0;
+    items = calloc(input->count ? input->count : 1, sizeof *items);
+    if (!items) return 0;
+    for (i = 0; i < input->count; ++i) {
+        const struct foreign_entry *entry = &input->entries[i];
+        if (entry->soname && belongs(input, i, group) &&
+            holy_provides_claim_valid("soname", entry->soname, arch, libc,
+                                      "-", entry->original)) items[count++] = entry;
+    }
+    qsort(items, count, sizeof *items, soname_entry_order);
+    for (i = 0; i < count; ++i) {
+        if (i && !strcmp(items[i-1]->soname, items[i]->soname)) continue;
+        fputs("provide soname ", out); token(out, items[i]->soname);
+        fprintf(out, " %s %s - ", arch, libc);
+        token(out, items[i]->original); fputc('\n', out);
+        {
+            off_t position = ftello(out);
+            if (ferror(out) || position < 0 || position > 1024 * 1024) goto done;
+        }
+    }
+    ok = 1;
+done:
+    free(items);
+    return ok;
 }
 
 static void requirement(FILE *out, const char *id, const char *consumer, const char *kind,
@@ -1340,6 +1404,7 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
             }
         }
     }
+    if (!emit_elf_provides(files[3], input, group, arch, libc)) goto done;
     if (slack) {
         fputs("package-filename ", files[5]); token(files[5], name);
         fputc(' ', files[5]); token(files[5], version);

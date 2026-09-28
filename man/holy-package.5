@@ -39,7 +39,10 @@ The scanner accepts ET_EXEC without PT_INTERP and PT_DYNAMIC as nolibc,
 and ET_DYN requiring libc.so.6 as glibc evidence, including its basename in
 literal DT_NEEDED paths. Architecture-specific musl loader or libc names and
 the native libc.musl-x86_64.so.1 / libc.musl-i386.so.1 SONAMEs provide musl
-classification evidence. A generic libc.so name does not. It rejects ELF files
+classification evidence. The native libc.so.6 and matching glibc loader
+SONAMEs classify those glibc runtime files. A generic libc.so name does not.
+Foreign import writes a SONAME capability only after reading a classified
+ET_DYN payload file and records that file as evidence. It rejects ELF files
 whose runtime remains unknown. A plugin without such evidence needs
 classification and review before a package can pass scan.
 .PP
