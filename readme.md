@@ -9,6 +9,10 @@ independent linux distribution.
 
 </div>
 
+The C `holypkg` prototype here belongs to Holy. The separate
+[owenewans/holypkg](https://github.com/owenewans/holypkg) project converts
+foreign packages for Slackware.
+
 ## build
 
 Requires libarchive, libelf, libcurl, OpenSSL and libsolv development files:

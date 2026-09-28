@@ -20,5 +20,11 @@ int holy_repo_providers(const char *directory, const char *kind,
 int holy_repo_solve(const char *directory, const char *name,
                     const char *choice, int json);
 int holy_repo_fetch(const char *directory, const char *digest, const char *output);
+/* fetches one unambiguous package name from a sealed local catalog. */
+int holy_repo_fetch_name(const char *directory, const char *name,
+                         const char *output, int extract);
+/* verifies the sealed mirror's recorded source and exact registered URL. */
+int holy_repo_source_catalog(const char *directory, const char *source_id,
+                             const char *url);
 
 #endif

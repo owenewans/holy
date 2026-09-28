@@ -3,6 +3,7 @@
 #include "config.h"
 #include "fetch.h"
 #include "deps.h"
+#include "extract.h"
 #include "provides.h"
 #include "resolve.h"
 #include "package.h"
@@ -404,7 +405,8 @@ static int list(const char *directory, const char *query,
                  const char *fetch_digest, const char *output,
                  const char *provider_kind, const char *provider_name,
                  const char *solve_name, const char *solve_choice,
-                  int solve_json, int *solve_rc, struct mirror *mirror)
+                  int solve_json, int *solve_rc, struct mirror *mirror,
+                  int extract_name)
 {
     struct object *objects = NULL;
     char **candidate_snapshots = NULL;
@@ -571,6 +573,10 @@ static int list(const char *directory, const char *query,
             if (solve_json)
                 printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"%s\"}\n",
                        roots ? "decision-required" : "unavailable-artifact");
+        } else if (output) {
+            *solve_rc = (extract_name ?
+                         holy_extract_local(candidate_snapshots[root], output) :
+                         holy_fetch_local(candidate_snapshots[root], output)) ? 0 : 1;
         } else {
             paths = calloc(count, sizeof *paths);
             if (!paths) goto done;
@@ -628,7 +634,7 @@ done:
 
 int holy_repo_list(const char *directory)
 {
-    return list(directory, NULL, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL);
+    return list(directory, NULL, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0);
 }
 
 int holy_repo_search(const char *directory, const char *query)
@@ -637,7 +643,7 @@ int holy_repo_search(const char *directory, const char *query)
         fprintf(stderr, "holypkg: package name required\n");
         return 0;
     }
-    return list(directory, query, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL);
+    return list(directory, query, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0);
 }
 
 int holy_repo_providers(const char *directory, const char *kind,
@@ -649,7 +655,7 @@ int holy_repo_providers(const char *directory, const char *kind,
         return 0;
     }
     return list(directory, NULL, NULL, 1, json ? 2 : 1,
-                NULL, NULL, kind, name, NULL, NULL, 0, NULL, NULL);
+                NULL, NULL, kind, name, NULL, NULL, 0, NULL, NULL, 0);
 }
 
 int holy_repo_solve(const char *directory, const char *name,
@@ -662,7 +668,7 @@ int holy_repo_solve(const char *directory, const char *name,
         return 2;
     }
     if (!list(directory, NULL, NULL, 1, 0, NULL, NULL,
-              NULL, NULL, name, choice, json, &result, NULL)) {
+              NULL, NULL, name, choice, json, &result, NULL, 0)) {
         if (json) puts("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"invalid-catalog\"}");
         return 6;
     }
@@ -676,10 +682,69 @@ int holy_repo_fetch(const char *directory, const char *digest, const char *outpu
     for (i = 0; i < 64; ++i)
         if (!((digest[i] >= '0' && digest[i] <= '9') ||
               (digest[i] >= 'a' && digest[i] <= 'f'))) goto invalid;
-    return list(directory, NULL, NULL, 1, 0, digest, output, NULL, NULL, NULL, NULL, 0, NULL, NULL);
+    return list(directory, NULL, NULL, 1, 0, digest, output, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0);
 invalid:
     fprintf(stderr, "holypkg: expected a lowercase SHA-256 digest\n");
     return 0;
+}
+
+int holy_repo_fetch_name(const char *directory, const char *name,
+                         const char *output, int extract)
+{
+    int result = 6;
+    if (!name || !*name || !output || !*output) return 2;
+    if (!list(directory, NULL, NULL, 1, 0, NULL, output, NULL, NULL,
+              name, NULL, 0, &result, NULL, extract)) return 6;
+    return result;
+}
+
+int holy_repo_source_catalog(const char *directory, const char *source_id,
+                             const char *url)
+{
+    struct stat st;
+    char digest[65], *record = NULL, *expected = NULL;
+    size_t used = 0, expected_size = 0;
+    int dir = -1, fd = -1, ok = 0;
+    FILE *stream = NULL;
+    if (!source_id || strlen(source_id) != 64 ||
+        strspn(source_id, "0123456789abcdef") != 64 || !url) return 0;
+    dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir < 0 || flock(dir, LOCK_SH) || read_current(dir, digest) != 1) goto done;
+    fd = openat(dir, "mirror-origin", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        (st.st_mode & 0022) || (st.st_uid != geteuid() && st.st_uid != 0) ||
+        st.st_size <= 0 || st.st_size > 65536) goto done;
+    record = malloc((size_t)st.st_size + 1);
+    if (!record) goto done;
+    while (used < (size_t)st.st_size) {
+        ssize_t n = pread(fd, record + used, (size_t)st.st_size - used, (off_t)used);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) goto done;
+        used += (size_t)n;
+    }
+    record[used] = 0;
+    stream = open_memstream(&expected, &expected_size);
+    if (!stream) goto done;
+    {
+        int wrote = fputs("format holy-mirror-1\nurl ", stream) != EOF &&
+            quote(stream, url) &&
+            fprintf(stream, "\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n",
+                    digest, source_id) >= 0 && !ferror(stream);
+        if (fclose(stream)) wrote = 0;
+        stream = NULL;
+        if (!wrote) goto done;
+    }
+    ok = (used == expected_size && !memcmp(record, expected, used)) ||
+         (used == expected_size + sizeof "selection current-accepted-unsigned\n" - 1 &&
+          !memcmp(record, expected, expected_size) &&
+          !memcmp(record + expected_size, "selection current-accepted-unsigned\n",
+                  sizeof "selection current-accepted-unsigned\n" - 1));
+done:
+    if (stream) fclose(stream);
+    free(record); free(expected);
+    if (fd >= 0) close(fd);
+    if (dir >= 0) close(dir);
+    return ok;
 }
 
 static int seal(const char *directory, const char *expected)
@@ -724,7 +789,7 @@ static int seal(const char *directory, const char *expected)
     output = -1;
     close(input);
     input = -1;
-    if (!list(directory, NULL, temporary, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL)) goto done;
+    if (!list(directory, NULL, temporary, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0)) goto done;
     input = openat(dir, temporary, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (input < 0) goto done;
     snapshot = holy_stage_fd(input, "holy-seal");
@@ -813,7 +878,7 @@ int holy_repo_mirror_source(const char *base, const char *digest, const char *ou
     if (dir < 0 || flock(dir, LOCK_EX) || mkdirat(dir, ".downloads", 0700)) goto done;
     result = holy_fetch_https_data(url, digest, output, ca_file);
     if (result) goto done;
-    if (!list(output, NULL, digest, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, &mirror)) {
+    if (!list(output, NULL, digest, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, &mirror, 0)) {
         result = mirror.status ? mirror.status : 4;
         goto done;
     }

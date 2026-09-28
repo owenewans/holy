@@ -46,6 +46,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg fetch local:FILE --extract --output DIRECTORY
 .br
+.B holypkg fetch SOURCE:PACKAGE --catalog MIRROR --output DIRECTORY [--extract] [--root DIRECTORY]
+.br
 .B holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE]
 .br
 .B holypkg pack DIRECTORY --output FILE.holy
@@ -1487,6 +1489,16 @@ network or CA inputs and oversized responses return 6. The current transfer
 has a 4 KiB response cap,
 the same HTTPS-only redirect policy and a five-minute deadline. --sha256 and
 --accept-unsigned are mutually exclusive. There is no hidden TTY behavior.
+.PP
+fetch SOURCE:PACKAGE reads an explicitly selected synced holy-http mirror.
+--catalog is required until source snapshots have a persistent configured
+cache location. The active source alias must match the mirror's source-id and
+exact URL; the mirror's current index and all listed objects are verified before
+the named package is copied into an existing --output directory. --extract
+instead writes a new output directory. More than one package with the same name
+requires a choice (status 3); an absent package or inactive source returns 6.
+The mirror record is local provenance, not publisher signature evidence.
+Neither form installs files, hooks or dependencies into the target root.
 .PP
 The source registry is read before network transfer, so a later alias change
 does not change the snapshot's recorded ID. A source with another backend,

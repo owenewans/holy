@@ -93,6 +93,29 @@ expect 0 "$bin" sync fixture --root "$tmp/source-root" --sha256 "$index" \
     --output "$tmp/source-mirror" --ca-file "$tmp/cert.pem"
 grep -qx "source-id $source_id" "$tmp/source-mirror/mirror-origin"
 cmp "$tmp/serve/current" "$tmp/source-mirror/current"
+mkdir "$tmp/fetched"
+expect 0 "$bin" fetch fixture:https-fixture --catalog "$tmp/source-mirror" \
+    --output "$tmp/fetched" --root "$tmp/source-root"
+grep -Fxq "$tmp/fetched/$digest.holy" "$tmp/result"
+cmp "$tmp/serve/native.holy" "$tmp/fetched/$digest.holy"
+expect 0 "$bin" fetch fixture:https-fixture --catalog "$tmp/source-mirror" \
+    --extract --output "$tmp/extracted" --root "$tmp/source-root"
+grep -qx 'name https-fixture' "$tmp/extracted/HOLY/meta"
+expect 6 "$bin" fetch fixture:missing --catalog "$tmp/source-mirror" \
+    --output "$tmp/fetched" --root "$tmp/source-root"
+expect 6 "$bin" fetch absent:https-fixture --catalog "$tmp/source-mirror" \
+    --output "$tmp/fetched" --root "$tmp/source-root"
+cp "$tmp/source-mirror/mirror-origin" "$tmp/valid-origin"
+sed "s/$source_id/$(printf '%064d' 0)/" "$tmp/valid-origin" > "$tmp/source-mirror/mirror-origin"
+expect 6 "$bin" fetch fixture:https-fixture --catalog "$tmp/source-mirror" \
+    --output "$tmp/fetched" --root "$tmp/source-root"
+cp "$tmp/valid-origin" "$tmp/source-mirror/mirror-origin"
+mv "$tmp/source-mirror/mirror-origin" "$tmp/origin-regular"
+ln -s "$tmp/origin-regular" "$tmp/source-mirror/mirror-origin"
+expect 6 "$bin" fetch fixture:https-fixture --catalog "$tmp/source-mirror" \
+    --output "$tmp/fetched" --root "$tmp/source-root"
+rm "$tmp/source-mirror/mirror-origin"
+mv "$tmp/origin-regular" "$tmp/source-mirror/mirror-origin"
 before_current=$(grep -c '"GET /index\.' "$tmp/server.log" || true)
 expect 3 "$bin" sync fixture --root "$tmp/source-root" --ca-file "$tmp/cert.pem"
 grep -q "decision-required unsigned current source=$source_id index=$index" "$tmp/error"
@@ -120,6 +143,8 @@ expect 0 "$bin" sync fixture --root "$tmp/source-root" \
     --output "$tmp/source-current" --accept-unsigned "$index" --ca-file "$tmp/cert.pem"
 grep -qx 'selection current-accepted-unsigned' "$tmp/source-current/mirror-origin"
 cmp "$tmp/serve/current" "$tmp/source-current/current"
+expect 0 "$bin" fetch fixture:https-fixture --catalog "$tmp/source-current" \
+    --output "$tmp/fetched" --root "$tmp/source-root"
 cp "$tmp/serve/current" "$tmp/current.saved"
 printf 'sha256 %s\n' "$stale" > "$tmp/serve/current"
 expect 3 "$bin" sync fixture --root "$tmp/source-root" \
@@ -174,6 +199,10 @@ expect 0 "$bin" source apply "$tmp/source.plan" --sha256 "$source_plan" --root "
 expect 0 "$bin" sync renamed --root "$tmp/source-root" --sha256 "$index" \
     --output "$tmp/source-renamed" --ca-file "$tmp/cert.pem"
 grep -qx "source-id $source_id" "$tmp/source-renamed/mirror-origin"
+expect 0 "$bin" fetch renamed:https-fixture --catalog "$tmp/source-mirror" \
+    --output "$tmp/fetched" --root "$tmp/source-root"
+expect 6 "$bin" fetch fixture:https-fixture --catalog "$tmp/source-mirror" \
+    --output "$tmp/fetched" --root "$tmp/source-root"
 expect 6 "$bin" sync fixture --root "$tmp/source-root" --sha256 "$index" \
     --output "$tmp/source-inactive" --ca-file "$tmp/cert.pem"
 test ! -e "$tmp/source-inactive"
@@ -182,6 +211,8 @@ expect 0 "$bin" source plan --config "$tmp/source.conf" --root "$tmp/source-root
 cp "$tmp/result" "$tmp/source.plan"
 source_plan=$(sha256sum "$tmp/source.plan" | cut -d ' ' -f 1)
 expect 0 "$bin" source apply "$tmp/source.plan" --sha256 "$source_plan" --root "$tmp/source-root"
+expect 6 "$bin" fetch fixture:https-fixture --catalog "$tmp/source-mirror" \
+    --output "$tmp/fetched" --root "$tmp/source-root"
 expect 6 "$bin" sync fixture --root "$tmp/source-root" --sha256 "$index" \
     --output "$tmp/source-wrong-family" --ca-file "$tmp/cert.pem"
 test ! -e "$tmp/source-wrong-family"
