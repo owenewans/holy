@@ -242,14 +242,18 @@ package. It retains .PKGINFO, optional signatures and control scripts beneath
 HOLY/foreign/apk. When .PKGINFO contains datahash, the importer checks its
 SHA-256 against the compressed data member before creating outputs. Publisher
 signatures remain unverified. Unversioned package, so:SONAME and cmd:COMMAND
-dependencies become exact requirements. Versioned or otherwise unsupported
-tokens retain their original expressions as foreign requirements. APK virtual
+dependencies become exact requirements. Package constraints using the supported
+APK v2 number, letter, suffix and revision grammar use APK version ordering
+only against APK-family providers. Unknown version forms, namespaced versioned
+requirements and other unsupported tokens retain their original expressions
+as foreign requirements. APK virtual
 provides, install-if and replaces also require review because their selection
 and file-ownership semantics differ from Holy's simple capabilities. Scripts remain
 review-required and do not run during import. The importer accepts noarch,
 x86 and x86_64 claims and checks observed ELF machines. It rejects truncated
 gzip members, extra members and unsafe paths. make check-apk covers these
 cases and installs/checks/removes a converted data package in a temporary root.
+make check-apk-version covers comparisons against Alpine apk-tools 2.14.12.
 .PP
 The importer reads .PKGINFO identities, full epoch/version/release strings,
 package relations and original field values. It preserves .PKGINFO, .BUILDINFO,

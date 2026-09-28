@@ -112,8 +112,10 @@
   unsupported expressions as attributed foreign requirements.
   Offline fixtures cover two/three members, script review, data install,
   truncated/extra streams and unsafe paths. Manual imports of Alpine v3.22
-  alpine-baselayout-data 3.7.0-r0 and scdoc 1.11.3-r0 passed. APK indexes,
-  publisher signatures, APK version ordering and relation semantics remain open.
+  alpine-baselayout-data 3.7.0-r0 and scdoc 1.11.3-r0 passed. Supported APK v2
+  version constraints use a family-specific comparator, checked against 841
+  pairs from apk-tools 2.14.12; unrecognized forms remain foreign requirements.
+  APK indexes, publisher signatures and full relation semantics remain open.
 
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.
 - [x] Plan and atomically apply a source identity registry under the database

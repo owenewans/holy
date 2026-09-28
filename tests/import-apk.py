@@ -34,7 +34,8 @@ with tempfile.TemporaryDirectory() as scratch:
                 archive.addfile(entry, io.BytesIO(body) if kind == "file" else None)
         return gzip.compress(data.getvalue(), mtime=0)
 
-    def package(name, payload=None, fields=b"", signed=False, bad_hash=False, script=False):
+    def package(name, payload=None, fields=b"", signed=False, bad_hash=False, script=False,
+                pkgname=b"example", pkgver=b"1.2-r0"):
         if payload is None:
             payload = [("usr/", b"", "dir"),
                        ("usr/share/", b"", "dir"),
@@ -43,7 +44,7 @@ with tempfile.TemporaryDirectory() as scratch:
         digest = hashlib.sha256(data).hexdigest()
         if bad_hash:
             digest = "0" * 64
-        info = (b"pkgname = example\npkgver = 1.2-r0\narch = noarch\n"
+        info = (b"pkgname = " + pkgname + b"\npkgver = " + pkgver + b"\narch = noarch\n"
                 + b"datahash = " + digest.encode() + b"\n" + fields)
         control_members = [(".PKGINFO", info, "file")]
         if script:
@@ -98,9 +99,17 @@ with tempfile.TemporaryDirectory() as scratch:
     assert '"package" "helper"' in requirements
     assert '"soname" "libc.musl-x86_64.so.1"' in requirements
     assert '"command" "helper"' in requirements
-    assert '"foreign" "helper>=2"' in requirements
+    assert '"package" "helper" "any" "any" "ge" "2"' in requirements
     assert '"foreign" "virtual-helper"' in requirements
     run("solve", "local:" + str(signed), status=6)
+
+    old = convert(package("library-old.apk", pkgname=b"library", pkgver=b"1.2-r0"), "library-old")
+    new = convert(package("library-new.apk", pkgname=b"library", pkgver=b"1.2-r2"), "library-new")
+    app = convert(package("versioned.apk", pkgname=b"versioned",
+                          fields=b"depend = library>=1.2-r1\n"), "versioned")
+    solution = run("solve", "local:" + str(app), "local:" + str(old), "local:" + str(new))
+    assert hashlib.sha256(new.read_bytes()).hexdigest() in solution
+    assert hashlib.sha256(old.read_bytes()).hexdigest() not in solution
 
     convert(package("bad-hash.apk", bad_hash=True), "bad-hash", status=2)
     convert(package("traversal.apk", payload=[("../outside", b"bad", "file")]),

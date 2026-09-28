@@ -144,7 +144,7 @@ static:
 	$(MAKE) clean
 	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lssl -lcrypto -llz4 -lzstd -llzma -lbz2 -lz -leu -Wl,--end-group -lpthread -ldl" all
 
-HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/script.o src/elf.o src/scan.o src/stage.o src/repo.o src/sign.o src/git.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o src/up.o src/version.o src/run.o backends/pacman.o backends/pacman-version.o backends/deb-version.o
+HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/script.o src/elf.o src/scan.o src/stage.o src/repo.o src/sign.o src/git.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o src/up.o src/version.o src/run.o backends/pacman.o backends/pacman-version.o backends/deb-version.o backends/apk-version.o
 
 holypkg: $(HOLY_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(SOLV_LIBS)
@@ -162,7 +162,7 @@ src/%.o: src/%.c $(wildcard src/*.h) $(wildcard backends/*.h) .build-config
 check-init: holy-init
 	@./holy-init >/dev/null 2>&1; test $$? -eq 2
 
-check: check-pacman check-deb check-slackware check-apk check-native-version holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
+check: check-pacman check-deb check-slackware check-apk check-apk-version check-native-version holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg
@@ -209,6 +209,13 @@ check-slackware: holypkg
 .PHONY: check-apk
 check-apk: holypkg
 	python3 tests/import-apk.py ./holypkg
+
+.PHONY: check-apk-version
+check-apk-version: tests/apk-version-helper
+	python3 tests/apk-version.py ./tests/apk-version-helper
+
+tests/apk-version-helper: tests/apk-version.c backends/apk-version.c backends/apk-version.h .build-config
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o $@ tests/apk-version.c backends/apk-version.c
 
 .PHONY: check-native-version
 check-native-version: tests/native-version-helper
@@ -294,4 +301,4 @@ clean:
 	rm -f holyinstall src/disk.o
 	rm -f holygetiso src/getiso.o
 	rm -f .build-config .build-config.tmp
-	rm -f holypkg tests/resolution tests/solver tests/install-helper tests/pacman-helper tests/deb-version-helper tests/native-version-helper $(HOLY_OBJECTS)
+	rm -f holypkg tests/resolution tests/solver tests/install-helper tests/pacman-helper tests/deb-version-helper tests/apk-version-helper tests/native-version-helper $(HOLY_OBJECTS)

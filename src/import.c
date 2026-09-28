@@ -7,6 +7,7 @@
 #include "elf.h"
 #include "../backends/pacman.h"
 #include "../backends/deb-version.h"
+#include "../backends/apk-version.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -897,6 +898,8 @@ static int apk_depends(FILE *out, const char *consumer, const struct apk_field *
     if (!copy) return 0;
     for (part = strtok_r(copy, " \t", &save); part; part = strtok_r(NULL, " \t", &save)) {
         const char *kind = "foreign", *name = part;
+        const char *relation = "any", *version = "-";
+        char *base = NULL;
         char id[64];
         if (++index > 4096) { free(copy); return 0; }
         if (!strncmp(part, "so:", 3) && apk_simple_name(part + 3)) {
@@ -904,9 +907,26 @@ static int apk_depends(FILE *out, const char *consumer, const struct apk_field *
         } else if (!strncmp(part, "cmd:", 4) && apk_simple_name(part + 4)) {
             kind = "command"; name = part + 4;
         } else if (apk_simple_name(part)) kind = "package";
+        else {
+            const char *operator = strpbrk(part, "<=>");
+            if (operator && operator > part) {
+                const char *value = operator + 1;
+                int order;
+                base = strndup(part, (size_t)(operator - part));
+                if (!base) { free(copy); return 0; }
+                if ((*operator == '<' || *operator == '>') && *value == '=') ++value;
+                if (apk_simple_name(base) && *value &&
+                    holy_apk_version_compare(value, value, &order)) {
+                    kind = "package"; name = base; version = value;
+                    relation = *operator == '<' ? value == operator + 2 ? "le" : "lt" :
+                               *operator == '>' ? value == operator + 2 ? "ge" : "gt" : "eq";
+                }
+            }
+        }
         snprintf(id, sizeof id, "apk-%zu-%zu", field->line, index);
-        requirement(out, id, consumer, kind, name, "any", "any", "any", "-",
+        requirement(out, id, consumer, kind, name, "any", "any", relation, version,
                     part, "apk:depend");
+        free(base);
     }
     free(copy);
     return index != 0 && !ferror(out);
