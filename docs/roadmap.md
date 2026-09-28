@@ -158,8 +158,13 @@
   A signed Alpine scdoc 1.11.3-r0 fetch passed; local HTTPS fixtures reject
   missing keys, wrong keys and altered package signatures. Local APK import
   accepts an explicit RSA public key, verifies the package signature, and
-  records algorithm and key fingerprint in each output origin. Feeding foreign
-  candidates into the general resolver and full relation
+  records algorithm and key fingerprint in each output origin. `apk fetch
+  --import` now converts the verified download into `.holy`, rechecks the
+  package hash and signature, and records the selected index hash and URL in
+  output origin. An optional exact SONAME requirement checks converted ELF
+  claims before the fetch receipt becomes complete. The signed HTTPS fixture
+  installs, checks and removes an associated output in a disposable root.
+  Feeding foreign candidates into the general resolver and full relation
   semantics remain open.
 
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.
