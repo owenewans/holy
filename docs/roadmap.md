@@ -6,8 +6,16 @@
   verify SHA-256 before publication, and reject altered cached files. On
   x86_64, local builds produced musl 1.2.5, static BusyBox 1.37.0,
   static dinit 0.22.1 and static mdevd 0.1.8.2 packages. BusyBox, dinit
-  and mdevd passed their libc-free chroot fixtures. These artifacts are local
-  build outputs; the static holypkg/image chain is still a separate gate.
+  and mdevd passed their libc-free chroot fixtures. The complete static-deps
+  source set built musl-static holypkg, holyinstall, holygetiso and holy-init.
+  Static core, foreign archive import, and local recovery after removal of
+  both dynamic libc passed their chroot fixtures. A 7.2.7 x86_64 static-core
+  ISO booted under QEMU/TCG and passed its PID 1, shell, package and installer
+  probes. A second x86_64 ISO with glibc 2.42 and musl 1.2.5 passed QEMU
+  boot and in-guest libc-recovery probes after both runtimes were removed.
+  A persistent ext4 variant passed two QEMU boots, including removal of both
+  libc packages and recovery across reboot. These local artifacts remain
+  under out/; i686 boot and a published image remain separate gates.
 - [x] Boot the x86_64 live ISO, prepare a blank GPT guest disk in holyinstall,
   install the target root, then boot the installed disk through BIOS and UEFI
   under QEMU/TCG. The installed guest checks dinit, holypkg, package repair
