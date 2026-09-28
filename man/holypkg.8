@@ -34,7 +34,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg info SOURCE:PACKAGE [--catalog MIRROR] [--root DIRECTORY]
 .br
-.B holypkg search QUERY --source SOURCE [--catalog MIRROR] [--root DIRECTORY]
+.B holypkg search QUERY --source SOURCE [--file] [--catalog MIRROR] [--root DIRECTORY]
 .br
 .B holypkg verify local:FILE
 .br
@@ -145,6 +145,8 @@ holypkg \- Holy local package tooling prototype
 .B holypkg repo list DIRECTORY
 .br
 .B holypkg repo search DIRECTORY NAME
+.br
+.B holypkg repo search-file DIRECTORY ABSOLUTE_PATH
 .br
 .B holypkg repo solve DIRECTORY NAME [--json]
 .br
@@ -1075,7 +1077,13 @@ multiple matches return decision-required (3) because this interface has no
 arch/libc selector yet. Both commands read the catalog without installing or
 running package code. The mirror is unsigned local provenance, not publisher
 authentication. --catalog selects an explicit mirror; without it, the commands
-use the mirror bound by source catalog bind. Fuzzy search, file search and
+use the mirror bound by source catalog bind. With --file, QUERY must be an
+absolute path. A native version-3 index records every verified nondirectory
+payload path and declares complete file coverage. The result prints matching
+packages, the coverage state, index digest and index timestamp. A miss in a
+complete index returns zero matches; a legacy index reports unavailable
+coverage and exits 6 because absence cannot be established. File queries
+read and verify the sealed catalog without running package code. Fuzzy and
 multi-source results remain open.
 .PP
 The verify command checks regular DATA files against the supported HOLY/files
@@ -1446,12 +1454,15 @@ The repository index command validates regular .holy files in DIRECTORY and
 writes an unsigned, lexicographically ordered index through an atomic rename.
 It refuses symlinked packages, duplicate package identities and a nonregular
 existing index. It rejects unsupported HOLY/deps records. Records in format
-holy-index-prototype-2 contain the quoted
+holy-index-prototype-3 contain the quoted
 name, version, release, os, arch, libc, relative filename, SHA-256 and size.
 Following package records include typed claim lines bound to the package
 SHA-256, copied from validated HOLY/provides. Readers compare every indexed
-claim to the artifact before returning records. Old holy-index-prototype-1
-generations remain readable. This prototype omits indexed dependencies and
+claim to the artifact before returning records. A separate coverage line
+declares complete native payload file coverage. File records contain the
+package digest and quoted nondirectory path from the verified manifest;
+readers compare them to the artifact. Old holy-index-prototype-1 and -2
+generations remain readable without complete file coverage. This prototype omits indexed dependencies and
 signatures; source adapters
 must not treat it as the native repository format.
 .PP
@@ -1471,7 +1482,10 @@ signature carries no provenance guarantee. Neither command installs packages
 or activates this directory as a package source.
 .PP
 The repository search command verifies the same complete local index and
-returns exact name matches. No match prints a zero-count summary. This
+returns exact name matches. repo search-file takes an absolute path and returns
+matching package records plus coverage status, index hash and timestamp.
+Legacy generations return unavailable coverage and status 6. No match in a
+complete native index prints a zero-count summary. This
 prototype does not perform fuzzy search, dependency resolution or provider
 selection.
 .PP

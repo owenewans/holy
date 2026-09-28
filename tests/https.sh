@@ -22,6 +22,10 @@ EOF
 for field in files deps provides hooks origin transform; do
     : > "$tmp/serve/HOLY/$field"
 done
+mkdir -p "$tmp/serve/DATA/usr/share/holy"
+printf 'fixture\n' > "$tmp/serve/DATA/usr/share/holy/fixture.txt"
+"$bin" manifest generate "$tmp/serve" --output "$tmp/file-manifest" > "$tmp/result"
+cp "$tmp/file-manifest" "$tmp/serve/HOLY/files"
 tar -cf "$tmp/native.tar" -C "$tmp/serve" HOLY DATA
 lz4 -q "$tmp/native.tar" "$tmp/serve/native.holy"
 digest=$(sha256sum "$tmp/serve/native.holy")
@@ -67,6 +71,8 @@ base="https://localhost:$port/"
 # build a second output whose filename requires URL escaping.
 sed 's/name https-fixture/name https-second/' "$tmp/serve/HOLY/meta" > "$tmp/meta"
 mv "$tmp/meta" "$tmp/serve/HOLY/meta"
+rm -r "$tmp/serve/DATA/usr"
+: > "$tmp/serve/HOLY/files"
 printf 'require parent https-second package https-fixture any any any - https-fixture fixture\n' > "$tmp/serve/HOLY/deps"
 tar -cf "$tmp/second.tar" -C "$tmp/serve" HOLY DATA
 lz4 -q "$tmp/second.tar" "$tmp/serve/space?#.holy"
@@ -101,6 +107,11 @@ grep -qx "source-id $source_id" "$cached/mirror-origin"
 grep -qx "path \"$cached\"" "$tmp/source-root/var/lib/holypkg/catalogs/$source_id"
 expect 0 "$bin" search https-second --source fixture --root "$tmp/source-root"
 grep -qx 'listed 1 packages' "$tmp/result"
+expect 0 "$bin" search /usr/share/holy/fixture.txt --file --source fixture --root "$tmp/source-root"
+grep -qx 'listed 1 file candidates' "$tmp/result"
+grep -q '^coverage files complete index ' "$tmp/result"
+expect 0 "$bin" search /usr/share/holy/missing --file --source fixture --root "$tmp/source-root"
+grep -qx 'listed 0 file candidates' "$tmp/result"
 expect 0 "$bin" sync fixture --root "$tmp/source-root" --sha256 "$index"
 cp "$cached/native.holy" "$tmp/cached-native"
 printf corrupt >> "$cached/native.holy"

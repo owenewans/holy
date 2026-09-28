@@ -50,7 +50,45 @@ struct object {
     int provider_match;
     struct claim *claims;
     size_t claim_count;
+    char **files;
+    size_t file_count;
 };
+
+static void free_files(struct object *object)
+{
+    size_t i;
+    for (i = 0; i < object->file_count; ++i) free(object->files[i]);
+    free(object->files);
+}
+
+static int add_file(struct object *object, const char *path)
+{
+    char **next;
+    char *copy;
+    if (object->file_count == (size_t)-1 / sizeof *object->files) return 0;
+    copy = strdup(path);
+    if (!copy) return 0;
+    next = realloc(object->files, (object->file_count + 1) * sizeof *object->files);
+    if (!next) { free(copy); return 0; }
+    object->files = next;
+    object->files[object->file_count++] = copy;
+    return 1;
+}
+
+static int collect_file(void *opaque, const struct holy_manifest_entry *entry)
+{
+    return entry->directory || add_file(opaque, entry->path);
+}
+
+struct file_cursor { struct object *object; size_t index; };
+
+static int compare_file(void *opaque, const struct holy_manifest_entry *entry)
+{
+    struct file_cursor *cursor = opaque;
+    if (entry->directory) return 1;
+    return cursor->index < cursor->object->file_count &&
+           !strcmp(cursor->object->files[cursor->index++], entry->path);
+}
 
 static void free_claims(struct object *object)
 {
@@ -188,6 +226,12 @@ static int claim_record(FILE *fp, const struct object *object,
     return fputc('\n', fp) != EOF;
 }
 
+static int file_record(FILE *fp, const struct object *object, const char *path)
+{
+    return fprintf(fp, "file %s ", object->identity.digest) >= 0 &&
+           quote(fp, path) && fputc('\n', fp) != EOF;
+}
+
 static int digest_file(const char *path, char hex[65])
 {
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
@@ -279,7 +323,8 @@ int holy_repo_index(const char *directory)
             !holy_deps_local_with_output(snapshot, 0) ||
             !holy_provides_local(snapshot, 0) ||
             !holy_package_identity(snapshot, &objects[i].identity) ||
-            !holy_provides_visit(snapshot, collect_claim, &objects[i])) {
+            !holy_provides_visit(snapshot, collect_claim, &objects[i]) ||
+            !holy_verify_visit(snapshot, collect_file, &objects[i])) {
             unlink(snapshot);
             free(snapshot);
             goto done;
@@ -308,11 +353,13 @@ int holy_repo_index(const char *directory)
     stream = fdopen(temp, "w");
     if (!stream) goto done;
     temp = -1;
-    if (fputs("format holy-index-prototype-2\n", stream) == EOF) goto done;
+    if (fputs("format holy-index-prototype-3\ncoverage files complete\n", stream) == EOF) goto done;
     for (i = 0; i < count; ++i) {
         if (!record(stream, &objects[i])) goto done;
         for (j = 0; j < objects[i].claim_count; ++j)
             if (!claim_record(stream, &objects[i], &objects[i].claims[j])) goto done;
+        for (j = 0; j < objects[i].file_count; ++j)
+            if (!file_record(stream, &objects[i], objects[i].files[j])) goto done;
     }
     if (fflush(stream) || fchmod(fileno(stream), 0644) || fsync(fileno(stream)))
         goto done;
@@ -332,6 +379,7 @@ done:
         free(objects[i].filename);
         holy_package_identity_free(&objects[i].identity);
         free_claims(&objects[i]);
+        free_files(&objects[i]);
     }
     free(objects);
     if (dir >= 0) close(dir);
@@ -383,6 +431,31 @@ static int parse_claim(char **v, size_t n, struct object *object)
     return add_claim(object, v[2], v[3], v[4], v[5], v[6], v[7]);
 }
 
+static int safe_target_path(const char *path)
+{
+    size_t length = strlen(path);
+    char *archive_path;
+    int valid;
+    if (!length || length > (size_t)-1 - 6 || path[length - 1] == '/') return 0;
+    archive_path = malloc(length + 6);
+    if (!archive_path) return 0;
+    memcpy(archive_path, "DATA/", 5);
+    memcpy(archive_path + 5, path, length + 1);
+    valid = holy_safe_archive_path(archive_path);
+    free(archive_path);
+    return valid;
+}
+
+static int parse_file(char **v, size_t n, struct object *object)
+{
+    if (n != 3 || strcmp(v[0], "file") ||
+        strcmp(v[1], object->identity.digest) ||
+        !safe_target_path(v[2]) ||
+        (object->file_count && strcmp(object->files[object->file_count - 1], v[2]) >= 0))
+        return 0;
+    return add_file(object, v[2]);
+}
+
 struct mirror {
     const char *base, *ca_file, *downloads;
     int status;
@@ -421,7 +494,8 @@ static int list(const char *directory, const char *query,
                  const char *provider_kind, const char *provider_name,
                  const char *solve_name, const char *solve_choice,
                   int solve_json, int *solve_rc, struct mirror *mirror,
-                  int extract_name, const struct stage_request *stage)
+                  int extract_name, const struct stage_request *stage,
+                  const char *file_query)
 {
     struct object *objects = NULL;
     char **candidate_snapshots = NULL;
@@ -431,7 +505,7 @@ static int list(const char *directory, const char *query,
     char expected[65], actual_digest[65], index_name[71];
     size_t capacity = 0, count = 0, i, j, number = 0;
     ssize_t length;
-    int dir = -1, fd = -1, ok = 0, indexed = 0;
+    int dir = -1, fd = -1, ok = 0, indexed = 0, file_index = 0;
 
     dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dir < 0 || (lock && flock(dir, LOCK_SH) < 0)) goto done;
@@ -467,14 +541,32 @@ static int list(const char *directory, const char *query,
         if (number == 1) {
             int valid = n == 2 && !strcmp(v[0], "format") &&
                         (!strcmp(v[1], "holy-index-prototype-1") ||
-                         !strcmp(v[1], "holy-index-prototype-2"));
-            if (valid) indexed = !strcmp(v[1], "holy-index-prototype-2");
+                         !strcmp(v[1], "holy-index-prototype-2") ||
+                         !strcmp(v[1], "holy-index-prototype-3"));
+            if (valid) {
+                indexed = strcmp(v[1], "holy-index-prototype-1") != 0;
+                file_index = !strcmp(v[1], "holy-index-prototype-3");
+            }
+            holy_tokens_free(v, n);
+            if (!valid) goto done;
+            continue;
+        }
+        if (file_index && number == 2) {
+            int valid = n == 3 && !strcmp(v[0], "coverage") &&
+                        !strcmp(v[1], "files") && !strcmp(v[2], "complete");
             holy_tokens_free(v, n);
             if (!valid) goto done;
             continue;
         }
         if (indexed && n && !strcmp(v[0], "claim")) {
-            int valid = count && parse_claim(v, n, &objects[count - 1]);
+            int valid = count && !objects[count - 1].file_count &&
+                        parse_claim(v, n, &objects[count - 1]);
+            holy_tokens_free(v, n);
+            if (!valid) goto done;
+            continue;
+        }
+        if (file_index && n && !strcmp(v[0], "file")) {
+            int valid = count && parse_file(v, n, &objects[count - 1]);
             holy_tokens_free(v, n);
             if (!valid) goto done;
             continue;
@@ -498,7 +590,7 @@ static int list(const char *directory, const char *query,
                 same_identity(&objects[i].identity, &objects[count - 1].identity))
                 goto done;
     }
-    if (ferror(index) || !number) goto done;
+    if (ferror(index) || !number || (file_index && number < 2)) goto done;
     if (mirror) {
         for (i = 0; i < count; ++i)
             if (!mirror_object(mirror, dir, &objects[i])) goto done;
@@ -551,6 +643,15 @@ static int list(const char *directory, const char *query,
             struct claim_cursor cursor = {&objects[i], 0};
             if (!holy_provides_visit(snapshot, compare_claim, &cursor) ||
                 cursor.index != objects[i].claim_count) {
+                unlink(snapshot);
+                free(snapshot);
+                goto done;
+            }
+        }
+        if (file_index) {
+            struct file_cursor cursor = {&objects[i], 0};
+            if (!holy_verify_visit(snapshot, compare_file, &cursor) ||
+                cursor.index != objects[i].file_count) {
                 unlink(snapshot);
                 free(snapshot);
                 goto done;
@@ -637,9 +738,17 @@ static int list(const char *directory, const char *query,
         for (j = 0; j < count; ++j) {
             if (query && strcmp(objects[j].identity.name, query)) continue;
             if (provider_kind && !objects[j].provider_match) continue;
+            if (file_query) {
+                size_t k;
+                if (!file_index) continue;
+                for (k = 0; k < objects[j].file_count; ++k)
+                    if (!strcmp(objects[j].files[k], file_query)) break;
+                if (k == objects[j].file_count) continue;
+            }
             if (emit == 1 && !record(stdout, &objects[j])) goto done;
             if (emit == 2) candidate_json(&objects[j]);
             if (emit == 3) only = j;
+            if (emit == 4 && !record(stdout, &objects[j])) goto done;
             ++matches;
         }
         if (emit == 1) printf("listed %zu %s\n", matches,
@@ -651,6 +760,16 @@ static int list(const char *directory, const char *query,
             if (matches != 1)
                 fprintf(stderr, "holypkg: repository package %s\n",
                         matches ? "requires an architecture/ABI choice" : "not found");
+        }
+        if (emit == 4) {
+            printf("coverage files %s index %s time %lld\n",
+                   file_index ? "complete" : "unavailable", expected,
+                   (long long)st.st_mtime);
+            printf("listed %zu file candidates\n", matches);
+            if (!file_index) {
+                fputs("status unknown: source has no complete file index\n", stdout);
+                if (solve_rc) *solve_rc = 6;
+            } else if (solve_rc) *solve_rc = 0;
         }
     }
     if (stage && stage->index_only) memcpy(stage->set->index, expected, 65);
@@ -679,6 +798,7 @@ done:
         free(objects[i].filename);
         holy_package_identity_free(&objects[i].identity);
         free_claims(&objects[i]);
+        free_files(&objects[i]);
     }
     free(objects);
     if (dir >= 0) close(dir);
@@ -687,7 +807,7 @@ done:
 
 int holy_repo_list(const char *directory)
 {
-    return list(directory, NULL, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL);
+    return list(directory, NULL, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, NULL);
 }
 
 int holy_repo_search(const char *directory, const char *query)
@@ -696,7 +816,20 @@ int holy_repo_search(const char *directory, const char *query)
         fprintf(stderr, "holypkg: package name required\n");
         return 0;
     }
-    return list(directory, query, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL);
+    return list(directory, query, NULL, 1, 1, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, NULL);
+}
+
+int holy_repo_search_file(const char *directory, const char *query)
+{
+    int result = 6;
+    if (!query || query[0] != '/' || !query[1] ||
+        !safe_target_path(query + 1)) {
+        fprintf(stderr, "holypkg: absolute file path required\n");
+        return 2;
+    }
+    if (!list(directory, NULL, NULL, 1, 4, NULL, NULL, NULL, NULL,
+              NULL, NULL, 0, &result, NULL, 0, NULL, query + 1)) return 6;
+    return result;
 }
 
 int holy_repo_info_name(const char *directory, const char *name)
@@ -704,7 +837,7 @@ int holy_repo_info_name(const char *directory, const char *name)
     int result = 6;
     if (!name || !*name) return 2;
     if (!list(directory, name, NULL, 1, 3, NULL, NULL, NULL, NULL,
-              NULL, NULL, 0, &result, NULL, 0, NULL)) return 6;
+              NULL, NULL, 0, &result, NULL, 0, NULL, NULL)) return 6;
     return result;
 }
 
@@ -717,7 +850,7 @@ int holy_repo_providers(const char *directory, const char *kind,
         return 0;
     }
     return list(directory, NULL, NULL, 1, json ? 2 : 1,
-                NULL, NULL, kind, name, NULL, NULL, 0, NULL, NULL, 0, NULL);
+                NULL, NULL, kind, name, NULL, NULL, 0, NULL, NULL, 0, NULL, NULL);
 }
 
 int holy_repo_solve(const char *directory, const char *name,
@@ -730,7 +863,7 @@ int holy_repo_solve(const char *directory, const char *name,
         return 2;
     }
     if (!list(directory, NULL, NULL, 1, 0, NULL, NULL,
-              NULL, NULL, name, choice, json, &result, NULL, 0, NULL)) {
+              NULL, NULL, name, choice, json, &result, NULL, 0, NULL, NULL)) {
         if (json) puts("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"invalid-catalog\"}");
         return 6;
     }
@@ -744,7 +877,7 @@ int holy_repo_fetch(const char *directory, const char *digest, const char *outpu
     for (i = 0; i < 64; ++i)
         if (!((digest[i] >= '0' && digest[i] <= '9') ||
               (digest[i] >= 'a' && digest[i] <= 'f'))) goto invalid;
-    return list(directory, NULL, NULL, 1, 0, digest, output, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL);
+    return list(directory, NULL, NULL, 1, 0, digest, output, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, NULL);
 invalid:
     fprintf(stderr, "holypkg: expected a lowercase SHA-256 digest\n");
     return 0;
@@ -756,7 +889,7 @@ int holy_repo_fetch_name(const char *directory, const char *name,
     int result = 6;
     if (!name || !*name || !output || !*output) return 2;
     if (!list(directory, NULL, NULL, 1, 0, NULL, output, NULL, NULL,
-              name, NULL, 0, &result, NULL, extract, NULL)) return 6;
+              name, NULL, 0, &result, NULL, extract, NULL, NULL)) return 6;
     return result;
 }
 
@@ -776,7 +909,7 @@ int holy_repo_stage_set(const char *directory, const char *name,
     memset(set, 0, sizeof *set);
     if (!name || !*name || !root || !*root) return 2;
     if (!list(directory, NULL, NULL, 1, 0, NULL, NULL, NULL, NULL,
-              name, NULL, 0, &result, NULL, 0, &stage)) {
+              name, NULL, 0, &result, NULL, 0, &stage, NULL)) {
         holy_repo_set_free(set);
         return 6;
     }
@@ -794,7 +927,7 @@ int holy_repo_stage_slot(const char *directory, const char *root,
     if (!root || !*root || !slot || !slot->name || !slot->os ||
         !slot->arch || !slot->libc) return 2;
     if (!list(directory, NULL, NULL, 1, 0, NULL, NULL, NULL, NULL,
-              slot->name, NULL, 0, &result, NULL, 0, &stage)) {
+              slot->name, NULL, 0, &result, NULL, 0, &stage, NULL)) {
         holy_repo_set_free(set);
         return 6;
     }
@@ -858,7 +991,7 @@ int holy_repo_catalog_index(const char *directory, char digest[65])
     digest[0] = 0;
     if (dir >= 0 && !flock(dir, LOCK_SH) && read_current(dir, digest) == 1 &&
         list(directory, NULL, NULL, 1, 0, NULL, NULL, NULL, NULL, NULL,
-             NULL, 0, NULL, NULL, 0, NULL)) ok = 1;
+             NULL, 0, NULL, NULL, 0, NULL, NULL)) ok = 1;
     if (dir >= 0) close(dir);
     if (!ok) digest[0] = 0;
     return ok;
@@ -869,7 +1002,7 @@ int holy_repo_catalog_index_fast(const char *directory, char digest[65])
     struct holy_repo_set index = {0};
     struct stage_request stage = {NULL, &index, NULL, 1};
     int ok = list(directory, NULL, NULL, 1, 0, NULL, NULL, NULL, NULL,
-                  NULL, NULL, 0, NULL, NULL, 0, &stage);
+                  NULL, NULL, 0, NULL, NULL, 0, &stage, NULL);
     if (ok) memcpy(digest, index.index, 65);
     else digest[0] = 0;
     return ok;
@@ -917,7 +1050,7 @@ static int seal(const char *directory, const char *expected)
     output = -1;
     close(input);
     input = -1;
-    if (!list(directory, NULL, temporary, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL)) goto done;
+    if (!list(directory, NULL, temporary, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, NULL, 0, NULL, NULL)) goto done;
     input = openat(dir, temporary, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (input < 0) goto done;
     snapshot = holy_stage_fd(input, "holy-seal");
@@ -1006,7 +1139,7 @@ int holy_repo_mirror_source(const char *base, const char *digest, const char *ou
     if (dir < 0 || flock(dir, LOCK_EX) || mkdirat(dir, ".downloads", 0700)) goto done;
     result = holy_fetch_https_data(url, digest, output, ca_file);
     if (result) goto done;
-    if (!list(output, NULL, digest, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, &mirror, 0, NULL)) {
+    if (!list(output, NULL, digest, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 0, NULL, &mirror, 0, NULL, NULL)) {
         result = mirror.status ? mirror.status : 4;
         goto done;
     }

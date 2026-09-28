@@ -23,6 +23,8 @@ int holy_repo_mirror_source(const char *base, const char *digest, const char *ou
 int holy_repo_index(const char *directory);
 int holy_repo_list(const char *directory);
 int holy_repo_search(const char *directory, const char *query);
+/* exact absolute path; returns 6 when the catalog has no complete file index. */
+int holy_repo_search_file(const char *directory, const char *query);
 /* verifies the catalog and returns one exact package record or a choice status. */
 int holy_repo_info_name(const char *directory, const char *name);
 int holy_repo_seal(const char *directory);

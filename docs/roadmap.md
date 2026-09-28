@@ -238,24 +238,25 @@
   confirmation rereads it before mirroring. Store source-id and selection in
   mirror-origin before sealing. Local TLS fixtures cover alias changes,
   unrelated backends, wrong digest, missing CA, changed/malformed pointers and
-  credential-bearing redirects. Publisher signatures, automatic source cache
-  and multi-source search remain open.
+  credential-bearing redirects. Publisher signatures and multi-source search
+  remain open.
 - [x] Fetch one SOURCE:PACKAGE from an explicit sealed synced mirror without
   installing it. Check active source ID and URL against mirror provenance,
   verify the complete catalog, reject ambiguous names, and support extraction
-  into a new directory. Automatic source cache publication remains open.
+  into a new directory.
 - [x] Install SOURCE:PACKAGE from an explicit sealed holy-http mirror. Stage
   candidate artifacts, resolve dependencies in one set, bind newly selected
   packages to the registered source-id, and bind index digest to the reviewed
   plan and recovery journal. Reject changed catalogs before apply. A faulted
   generation update recovers from the version-5 journal without network access.
-  Automatic source cache publication, signed indexes, multi-source ranking and indexed
-  on-demand candidate retrieval remain open.
+  Signed indexes, multi-source ranking and indexed on-demand candidate retrieval
+  remain open.
 - [x] Query an active holy-http source through an explicit synced mirror with
   `search QUERY --source ALIAS` and `info ALIAS:PACKAGE`. Verify source identity,
   full catalog and artifacts before returning exact names; report missing and
-  ambiguous info queries without mutating the target. Fuzzy/file search and
-  automatic source cache publication remain open.
+  ambiguous info queries without mutating the target. Native repositories also
+  index verified nondirectory payload paths and support exact `search --file`
+  with complete/unavailable coverage. Fuzzy search remains open.
 - [x] Bind a verified synced mirror and index digest to a registered source-id
   under the target database lock. Resolve add, fetch, search and info without
   repeating --catalog; reject corrupt bindings and changed mirrors. Keep the

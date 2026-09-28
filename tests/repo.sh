@@ -6,7 +6,8 @@ trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 mkdir "$tmp/empty"
 "$bin" repo index "$tmp/empty" > "$tmp/out"
 grep -qx 'indexed 0 packages' "$tmp/out"
-grep -qx 'format holy-index-prototype-2' "$tmp/empty/index"
+grep -qx 'format holy-index-prototype-3' "$tmp/empty/index"
+grep -qx 'coverage files complete' "$tmp/empty/index"
 if "$bin" repo list "$tmp/empty" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 "$bin" repo seal "$tmp/empty" > "$tmp/out"
@@ -32,7 +33,8 @@ grep -qx 'indexed 1 packages' "$tmp/out"
 hash=$(sha256sum "$tmp/repo/fixture.holy")
 hash=${hash%% *}
 size=$(stat -c %s "$tmp/repo/fixture.holy")
-grep -qx 'format holy-index-prototype-2' "$tmp/repo/index"
+grep -qx 'format holy-index-prototype-3' "$tmp/repo/index"
+grep -qx 'coverage files complete' "$tmp/repo/index"
 grep -qx "package \"fixture\" \"1.0\" \"1\" \"linux\" \"noarch\" \"nolibc\" \"fixture.holy\" $hash $size" "$tmp/repo/index"
 if "$bin" repo list "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
@@ -57,7 +59,7 @@ grep -qx 'listed 0 candidates' "$tmp/out"
 grep -Fqx '{"schema":"holy-repo-candidates-1","type":"summary","count":0}' "$tmp/out"
 mkdir "$tmp/legacy"
 cp "$tmp/repo/fixture.holy" "$tmp/legacy/fixture.holy"
-sed 's/holy-index-prototype-2/holy-index-prototype-1/' "$tmp/repo/index" > "$tmp/legacy/index"
+sed '/^coverage files complete$/d;s/holy-index-prototype-3/holy-index-prototype-1/' "$tmp/repo/index" > "$tmp/legacy/index"
 legacy_hash=$(sha256sum "$tmp/legacy/index")
 legacy_hash=${legacy_hash%% *}
 cp "$tmp/legacy/index" "$tmp/legacy/index.$legacy_hash"
@@ -66,6 +68,9 @@ printf 'sha256 %s\n' "$legacy_hash" > "$tmp/legacy/current"
 grep -qx 'listed 1 packages' "$tmp/out"
 "$bin" repo providers "$tmp/legacy" package fixture > "$tmp/out"
 grep -qx 'listed 1 candidates' "$tmp/out"
+if "$bin" repo search-file "$tmp/legacy" /usr/bin/absent > "$tmp/out"; then exit 1; fi
+grep -q '^coverage files unavailable index ' "$tmp/out"
+grep -qx 'status unknown: source has no complete file index' "$tmp/out"
 if "$bin" repo providers "$tmp/repo" unknown fixture > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 test ! -s "$tmp/out"
 if "$bin" repo providers "$tmp/repo" unknown fixture --json > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
@@ -112,6 +117,10 @@ test ! -s "$tmp/out"
 grep -q 'invalid or stale repository index' "$tmp/err"
 "$bin" repo list "$tmp/repo" > "$tmp/out"
 grep -qx 'listed 1 packages' "$tmp/out"
+cp "$tmp/previous" "$tmp/repo/index"
+printf 'file %s "usr/bin/forged"\n' "$hash" >> "$tmp/repo/index"
+if "$bin" repo seal "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -q 'invalid or stale repository index' "$tmp/err"
 cp "$tmp/previous" "$tmp/repo/index"
 cat "$tmp/previous" >> "$tmp/repo/index"
 if "$bin" repo seal "$tmp/repo" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
