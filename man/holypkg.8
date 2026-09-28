@@ -241,9 +241,11 @@ outputs and install/check/remove of a converted data package.
 package. It retains .PKGINFO, optional signatures and control scripts beneath
 HOLY/foreign/apk. When .PKGINFO contains datahash, the importer checks its
 SHA-256 against the compressed data member before creating outputs. Publisher
-signatures remain unverified. Dependencies and versioned provides retain their
-original expressions as foreign requirements until APK relation comparison is
-implemented; packages that need them require a decision. Scripts remain
+signatures remain unverified. Unversioned package, so:SONAME and cmd:COMMAND
+dependencies become exact requirements. Versioned or otherwise unsupported
+tokens retain their original expressions as foreign requirements. APK virtual
+provides, install-if and replaces also require review because their selection
+and file-ownership semantics differ from Holy's simple capabilities. Scripts remain
 review-required and do not run during import. The importer accepts noarch,
 x86 and x86_64 claims and checks observed ELF machines. It rejects truncated
 gzip members, extra members and unsafe paths. make check-apk covers these

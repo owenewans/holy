@@ -517,7 +517,8 @@ static int parse_apk(const char *data, size_t size, struct apk_metadata *meta)
         if (!strcmp(field->key, "datahash")) { if (meta->datahash) return 0; meta->datahash = field->value; }
     }
     if (!meta->name || !meta->version || !meta->arch) return 0;
-    if (strspn(meta->name, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+_.-") != strlen(meta->name)) return 0;
+    if (!isalnum((unsigned char)meta->name[0]) ||
+        strspn(meta->name, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+_.-") != strlen(meta->name)) return 0;
     return 1;
 }
 
@@ -880,6 +881,37 @@ static void requirement(FILE *out, const char *id, const char *consumer, const c
     fputc('\n', out);
 }
 
+static int apk_simple_name(const char *name)
+{
+    const unsigned char *p = (const unsigned char *)name;
+    if (!isalnum(*p)) return 0;
+    for (; *p; ++p)
+        if (!isalnum(*p) && *p != '.' && *p != '_' && *p != '+' && *p != '-') return 0;
+    return 1;
+}
+
+static int apk_depends(FILE *out, const char *consumer, const struct apk_field *field)
+{
+    char *copy = strdup(field->value), *save = NULL, *part;
+    size_t index = 0;
+    if (!copy) return 0;
+    for (part = strtok_r(copy, " \t", &save); part; part = strtok_r(NULL, " \t", &save)) {
+        const char *kind = "foreign", *name = part;
+        char id[64];
+        if (++index > 4096) { free(copy); return 0; }
+        if (!strncmp(part, "so:", 3) && apk_simple_name(part + 3)) {
+            kind = "soname"; name = part + 3;
+        } else if (!strncmp(part, "cmd:", 4) && apk_simple_name(part + 4)) {
+            kind = "command"; name = part + 4;
+        } else if (apk_simple_name(part)) kind = "package";
+        snprintf(id, sizeof id, "apk-%zu-%zu", field->line, index);
+        requirement(out, id, consumer, kind, name, "any", "any", "any", "-",
+                    part, "apk:depend");
+    }
+    free(copy);
+    return index != 0 && !ferror(out);
+}
+
 static int deb_relations(FILE *out, const char *consumer, const struct deb_field *field,
                          int claims)
 {
@@ -1057,8 +1089,10 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
         fputs("pkginfo ", files[5]); token(files[5], field->key); fputc(' ', files[5]);
         token(files[5], field->value); fprintf(files[5], " %zu\n", field->line);
         if (!aggregate) continue;
-        if (!strcmp(field->key, "depend") || !strcmp(field->key, "install_if") ||
-            !strcmp(field->key, "replaces") || !strcmp(field->key, "provides")) {
+        if (!strcmp(field->key, "depend")) {
+            if (!apk_depends(files[2], name, field)) goto done;
+        } else if (!strcmp(field->key, "install_if") ||
+                   !strcmp(field->key, "replaces") || !strcmp(field->key, "provides")) {
             snprintf(id, sizeof id, "apk-%zu", field->line);
             requirement(files[2], id, name, "foreign", field->value, "any", "any", "any", "-",
                         field->value, field->key);

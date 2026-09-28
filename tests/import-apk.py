@@ -88,12 +88,18 @@ with tempfile.TemporaryDirectory() as scratch:
     run("db", "rm", digest, "--root", root)
 
     signed = convert(package("signed.apk", signed=True, script=True,
-                             fields=b"depend = so:libc.musl-x86_64.so.1\n"),
+                             fields=(b"depend = helper so:libc.musl-x86_64.so.1 "
+                                     b"cmd:helper helper>=2\nprovides = virtual-helper\n")),
                      "signed")
     run("fetch", "local:" + str(signed), "--extract", "--output", tmp / "signed-extract")
     assert (tmp / "signed-extract/HOLY/foreign/apk/.SIGN.RSA.fixture.rsa.pub").exists()
     assert "foreign-script apk" in (tmp / "signed-extract/HOLY/hooks").read_text()
-    assert "foreign" in run("requirements", "local:" + str(signed))
+    requirements = run("requirements", "local:" + str(signed))
+    assert '"package" "helper"' in requirements
+    assert '"soname" "libc.musl-x86_64.so.1"' in requirements
+    assert '"command" "helper"' in requirements
+    assert '"foreign" "helper>=2"' in requirements
+    assert '"foreign" "virtual-helper"' in requirements
     run("solve", "local:" + str(signed), status=6)
 
     convert(package("bad-hash.apk", bad_hash=True), "bad-hash", status=2)
