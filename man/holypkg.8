@@ -4,7 +4,7 @@ holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
 .B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
-.B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
+.B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
 .B holypkg up SOURCE:PACKAGE [--prepare] [--output NEW_FILE] [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
@@ -903,6 +903,16 @@ coverage for those requirements. Selected packages retain their source IDs, and 
 catalogs are checked again before apply. Source preference ranking, fuzzy
 suggestions and runtime plugin discovery remain open. Hooks and
 transforms remain outside the supported installation subset.
+.PP
+For add SOURCE:PACKAGE, --answers FILE supplies source decisions by stable
+consumer artifact hash and requirement-id. The file uses the holy.conf lexer:
+format holy-answers-1 on its first non-comment line, followed by records
+source CONSUMER_SHA256 REQUIREMENT_ID SOURCE_ALIAS. Quoted tokens are accepted.
+The manager copies the file before staging candidates, rejects duplicate
+consumer/id records, and checks that the named source actually offers the
+requirement. Other decisions still use their documented flags. An answer tied
+to an old consumer hash cannot silently select a provider after that artifact
+changes.
 .PP
 up SOURCE:PACKAGE finds one installed slot by its immutable source-id,
 name and optional arch/libc. It checks the old artifact in the target cache,

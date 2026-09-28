@@ -17,6 +17,7 @@
 #include "docs.h"
 #include "graph.h"
 #include "source.h"
+#include "stage.h"
 #include "import.h"
 #include "up.h"
 #include "run.h"
@@ -270,6 +271,96 @@ struct source_candidate {
     int provider;
 };
 
+struct source_answer {
+    char *consumer, *requirement, *alias;
+};
+
+static char *copy_text(const char *value);
+
+static void free_source_answers(struct source_answer *answers, size_t count)
+{
+    size_t i;
+    if (!answers) return;
+    for (i = 0; i < count; ++i) {
+        free(answers[i].consumer);
+        free(answers[i].requirement);
+        free(answers[i].alias);
+    }
+    free(answers);
+}
+
+static int load_source_answers(const char *path, struct source_answer **out,
+                               size_t *count)
+{
+    char *snapshot = holy_stage_local(path, "holy-answers");
+    struct source_answer *answers = NULL;
+    FILE *stream = NULL;
+    char line[4097];
+    size_t used = 0, number = 0;
+    int format = 0, result = 2;
+    *out = NULL;
+    *count = 0;
+    if (!snapshot) return 6;
+    stream = fopen(snapshot, "r");
+    if (!stream) { result = 6; goto done; }
+    while (fgets(line, sizeof line, stream)) {
+        char **fields = NULL, *error = NULL;
+        size_t length = strlen(line), fields_count = 0, i;
+        ++number;
+        if (number > 10000 || !length || length == sizeof line - 1 ||
+            (line[length - 1] != '\n' && !feof(stream)) ||
+            !holy_lex(line, length, &fields, &fields_count,
+                      "source answers", number, &error)) {
+            free(error); holy_tokens_free(fields, fields_count); goto done;
+        }
+        free(error);
+        if (!fields_count) { holy_tokens_free(fields, fields_count); continue; }
+        if (!format) {
+            format = fields_count == 2 && !strcmp(fields[0], "format") &&
+                     !strcmp(fields[1], "holy-answers-1");
+            holy_tokens_free(fields, fields_count);
+            if (!format) goto done;
+            continue;
+        }
+        if (fields_count != 4 || strcmp(fields[0], "source") ||
+            strlen(fields[1]) != 64 || strspn(fields[1], "0123456789abcdef") != 64 ||
+            !fields[2][0] || !fields[3][0] || !strcmp(fields[3], "local") ||
+            used == 10000) { holy_tokens_free(fields, fields_count); goto done; }
+        for (i = 0; i < used; ++i)
+            if (!strcmp(answers[i].consumer, fields[1]) &&
+                !strcmp(answers[i].requirement, fields[2])) break;
+        if (i != used) { holy_tokens_free(fields, fields_count); goto done; }
+        {
+            struct source_answer *next = realloc(answers, (used + 1) * sizeof *next);
+            if (!next) { holy_tokens_free(fields, fields_count); result = 1; goto done; }
+            answers = next;
+        }
+        answers[used].consumer = copy_text(fields[1]);
+        answers[used].requirement = copy_text(fields[2]);
+        answers[used].alias = copy_text(fields[3]);
+        if (!answers[used].consumer || !answers[used].requirement ||
+            !answers[used].alias) {
+            ++used;
+            holy_tokens_free(fields, fields_count); result = 1; goto done;
+        }
+        ++used;
+        holy_tokens_free(fields, fields_count);
+    }
+    if (ferror(stream)) { result = 1; goto done; }
+    if (!format) goto done;
+    *out = answers;
+    *count = used;
+    answers = NULL;
+    result = 0;
+done:
+    if (result == 2) fprintf(stderr, "holypkg: malformed source answers at line %zu\n", number);
+    if (stream) fclose(stream);
+    unlink(snapshot);
+    free(snapshot);
+    free_source_answers(answers, used);
+    return result;
+}
+
 static char *copy_text(const char *value)
 {
     char *copy = malloc(strlen(value) + 1);
@@ -304,14 +395,15 @@ done:
 static int add_source(int argc, char **argv)
 {
     const char *separator = strchr(argv[2], ':');
-    const char *root = "/", *catalog = NULL, *choice = NULL;
+    const char *root = "/", *catalog = NULL, *choice = NULL, *answers_path = NULL;
     const char **accepted_arch = NULL, **accepted_privileged = NULL;
     const char **digests = NULL, **bindings = NULL, **skipped = NULL;
     struct source_candidate *extras = NULL;
+    struct source_answer *answers = NULL;
     struct holy_repo_set staged = {0}, next = {0};
     char source_id[65], next_id[65], plan[65], answer[16], *alias = NULL;
     char *bound_catalog = NULL, *next_catalog = NULL;
-    size_t arch_count = 0, privileged_count = 0, extra_count = 0;
+    size_t arch_count = 0, privileged_count = 0, extra_count = 0, answer_count = 0;
     size_t digest_count = 0, binding_count = 0, skip_count = 0, i, j, k;
     int unavailable_seen = 0;
     int yes = 0, noninteractive = 0, root_seen = 0, result = 2;
@@ -338,6 +430,8 @@ static int add_source(int argc, char **argv)
             root = argv[++i]; root_seen = 1;
         } else if (!strcmp(argv[i], "--choose") && !choice && i + 1 < (size_t)argc &&
                    argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) choice = argv[++i];
+        else if (!strcmp(argv[i], "--answers") && !answers_path && i + 1 < (size_t)argc &&
+                 argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) answers_path = argv[++i];
         else if (!strcmp(argv[i], "--candidate") && i + 1 < (size_t)argc) {
             const char *ref = argv[++i], *colon = strchr(ref, ':');
             struct source_candidate *item = &extras[extra_count];
@@ -382,6 +476,10 @@ static int add_source(int argc, char **argv)
         else if (!strcmp(argv[i], "--yes") && !yes) yes = 1;
         else if (!strcmp(argv[i], "--noninteractive") && !noninteractive) noninteractive = 1;
         else goto done;
+    }
+    if (answers_path) {
+        result = load_source_answers(answers_path, &answers, &answer_count);
+        if (result) goto done;
     }
     if (!catalog) {
         result = holy_source_catalog_path_fast(root, alias, &bound_catalog);
@@ -429,7 +527,7 @@ static int add_source(int argc, char **argv)
         size_t alias_count = 0, a, offered = 0;
         const char *winner = NULL;
         int missing_status;
-        int progressed = 0, unavailable = 0;
+        int progressed = 0, unavailable = 0, answered = 0;
         result = holy_state_probe_source_bindings(digests, digest_count,
                    source_id, staged.index, bindings, binding_count, choice, root,
                    accepted_arch, arch_count, accepted_privileged, privileged_count);
@@ -473,7 +571,29 @@ static int add_source(int argc, char **argv)
             } else if (probe == 6) ++unavailable;
             else if (probe != 4) { result = probe; break; }
         }
-        if (!result && (offered > 1 || (offered && unavailable))) {
+        if (!result && answers) {
+            const char *requested = NULL;
+            for (a = 0; a < answer_count; ++a)
+                if (!strcmp(answers[a].consumer, missing.consumer) &&
+                    !strcmp(answers[a].requirement, missing.id)) {
+                    requested = answers[a].alias;
+                    break;
+                }
+            if (requested) {
+                answered = 1;
+                winner = NULL;
+                for (a = 0; a < alias_count; ++a)
+                    if (offer_flags[a] && !strcmp(aliases[a], requested))
+                        winner = aliases[a];
+                if (!winner) {
+                    fprintf(stderr, "holypkg: answer source %s does not offer %s:%s for %s:%s\n",
+                            requested, missing.kind, missing.name,
+                            missing.consumer, missing.id);
+                    result = 3;
+                }
+            }
+        }
+        if (!result && (offered > 1 || (offered && unavailable)) && !answered) {
             winner = NULL;
             if (!noninteractive && isatty(STDIN_FILENO)) {
                 char response[4097];
@@ -641,7 +761,7 @@ next_alias:
                                             accepted_privileged, privileged_count, NULL);
 done:
     if (result == 2)
-        fputs("usage: holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
+        fputs("usage: holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
     for (i = 0; i < binding_count; ++i) free((void *)bindings[i]);
     for (i = 0; i < skip_count; ++i) free((void *)skipped[i]);
     for (i = 0; extras && i <= extra_count && i < 10000; ++i) {
@@ -654,6 +774,7 @@ done:
     holy_repo_set_free(&staged); holy_repo_set_free(&next);
     free(alias); free(bound_catalog); free(next_catalog);
     free(accepted_arch); free(accepted_privileged);
+    free_source_answers(answers, answer_count);
     return result;
 }
 

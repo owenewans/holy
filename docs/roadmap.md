@@ -391,6 +391,8 @@
   in the terminal; noninteractive calls return decision-required. An explicit
   `--candidate-provider` selects the source. A three-source fixture checks both
   the noninteractive decision and terminal selection, then verifies installed files.
+  `--answers FILE` now selects a source by consumer hash and requirement-id for
+  noninteractive add; duplicate and stale answers fail before rootfs changes.
   It probes installed providers first, including inactive origins. Source preference
   ranking, complete coverage diagnostics and plugin discovery remain open. A
   two-catalog ELF fixture now verifies SONAME discovery after installed libc and
