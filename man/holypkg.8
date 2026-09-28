@@ -100,9 +100,9 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg info local:FILE
 .br
-.B holypkg info SOURCE:PACKAGE [--catalog MIRROR] [--root DIRECTORY]
+.B holypkg info SOURCE:PACKAGE [--repo REPO] [--catalog MIRROR] [--root DIRECTORY]
 .br
-.B holypkg search QUERY [--source SOURCE] [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]
+.B holypkg search QUERY [--source SOURCE] [--repo REPO] [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]
 .br
 .B holypkg verify local:FILE
 .br
@@ -1554,23 +1554,20 @@ It does not validate the payload manifest, hashes, signatures or installability.
 .PP
 search QUERY without --source visits every active source in alias order. It
 prints each source alias and immutable ID with its package or file results.
-An active source without a usable native catalog reports unavailable coverage;
-the combined search exits 6 when any source is unavailable. An empty active
-registry also exits 6. --catalog requires --source because one mirror cannot
-identify the catalogs of multiple sources. search QUERY --source SOURCE
-verifies the active source-id and
-URL against the sealed mirror record, then checks the pinned index and matching
-archives before printing exact package-name matches. A missing name prints a zero-count
-summary. info SOURCE:PACKAGE performs the same checks and prints one package
-record with its artifact hash and source-id. No match returns unavailable (6);
-multiple matches return decision-required (3) because this interface has no
-arch/libc selector yet. Both commands read the catalog without installing or
-running package code. Exact search and info leave unrelated archives unopened;
-source binding still audits the complete catalog. An unsigned mirror has no
-publisher authentication; a keyed source rechecks the signature. --catalog
-selects an explicit mirror; without it, the commands
-use the mirror bound by source catalog bind. With --file, QUERY must be an
-absolute path. A native version-3 index records every verified nondirectory
+Native sources use their sealed mirrors. APK sources search their bound
+repositories and label results with the repository name; --repo restricts an
+explicit APK source to one repository. Missing or unsupported source catalogs
+report unavailable coverage. An empty active registry exits 6. --catalog
+requires --source and applies only to native mirrors. search QUERY --source
+SOURCE checks the active source-id and the bound catalog before printing
+matches. info SOURCE:PACKAGE checks the same inputs; APK info can require
+--repo when multiple repositories match. Neither command installs or runs
+package code. APK package search uses the checked package index; its file
+coverage is unavailable, so --file on APK returns 6. Native exact search and
+info leave unrelated archives unopened; source binding still audits the
+complete native catalog. An unsigned mirror has no publisher authentication;
+a keyed source rechecks its signature. With --file, QUERY must be an absolute
+path. A native version-3 index records every verified nondirectory
 payload path and declares complete file coverage. The result prints matching
 packages, the coverage state, index digest and index timestamp. A miss in a
 complete index returns zero matches; a legacy index reports unavailable

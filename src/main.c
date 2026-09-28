@@ -227,9 +227,43 @@ static int search_catalog(const char *catalog, const char *name,
                           (holy_repo_search(catalog, name) ? 0 : 6);
 }
 
+static int query_apk_source(const char *root, const char *alias,
+                            const char *repo, const char *name,
+                            int search, int file_search)
+{
+    char **repos = NULL;
+    size_t count = 0, i, offered = 0, found = 0, unavailable = 0;
+    int result = holy_source_apk_repos(root, alias, &repos, &count);
+    if (result) return result;
+    if (file_search) {
+        fputs("holypkg: APK file index unavailable; select and inspect payload\n", stderr);
+        result = 6; goto done;
+    }
+    for (i = 0; i < count; ++i) {
+        char *path = NULL;
+        int rc;
+        if (repo && strcmp(repos[i], repo)) continue;
+        ++offered;
+        rc = holy_apk_catalog_path(root, alias, repos[i], &path);
+        if (rc) { ++unavailable; free(path); continue; }
+        printf("repo "); print_source_alias(repos[i]); fputc('\n', stdout);
+        rc = holy_apk_query(path, name, search ? 0 : 1);
+        free(path);
+        if (rc == 0 || rc == 3) ++found;
+        else if (rc != 4) ++unavailable;
+        if (rc == 3) { result = 3; goto done; }
+    }
+    result = !offered ? 4 : !search && found > 1 ? 3 :
+             found ? 0 : unavailable ? 6 : 4;
+done:
+    for (i = 0; i < count; ++i) free(repos[i]);
+    free(repos);
+    return result;
+}
+
 static int query_source(int argc, char **argv, int search)
 {
-    const char *root = "/", *catalog = NULL, *alias = NULL, *name = NULL;
+    const char *root = "/", *catalog = NULL, *alias = NULL, *name = NULL, *repo = NULL;
     const char *separator = search ? NULL : strchr(argv[2], ':');
     char source_id[65], *owned_alias = NULL, *bound_catalog = NULL;
     char **aliases = NULL;
@@ -255,13 +289,15 @@ static int query_source(int argc, char **argv, int search)
             argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) alias = argv[++i];
         else if (!strcmp(argv[i], "--catalog") && !catalog && i + 1 < argc &&
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) catalog = argv[++i];
+        else if (!strcmp(argv[i], "--repo") && !repo && i + 1 < argc &&
+                 argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) repo = argv[++i];
         else if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < argc &&
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) {
             root = argv[++i]; root_seen = 1;
         } else goto done;
     }
     if (!name || !*name || (alias && (!*alias || !strcmp(alias, "local"))) ||
-        (!alias && (!search || catalog))) goto done;
+        (!alias && (!search || catalog || repo))) goto done;
     if (!alias) {
         result = holy_source_active_aliases(root, &aliases, &alias_count);
         if (result) goto done;
@@ -271,24 +307,50 @@ static int query_source(int argc, char **argv, int search)
         }
         for (j = 0; j < alias_count; ++j) {
             char *path = NULL;
+            char *family = NULL;
             const char *current = aliases[j];
-            int rc = holy_source_catalog_path_fast(root, current, &path);
-            if (!rc) rc = holy_source_catalog(root, current, path, source_id);
+            int rc = holy_source_type(root, current, &family);
             printf("source "); print_source_alias(current);
-            if (rc) {
+            if (!rc && !strcmp(family, "apk")) {
+                rc = holy_source_active_id(root, current, source_id);
+                if (!rc) printf(" id %s\n", source_id);
+                if (!rc) rc = query_apk_source(root, current, NULL, name, 1,
+                                                file_search);
+            } else if (!rc && (!strcmp(family, "holy-http") ||
+                               !strcmp(family, "holy-git"))) {
+                rc = holy_source_catalog_path_fast(root, current, &path);
+                if (!rc) rc = holy_source_catalog(root, current, path, source_id);
+                if (!rc) printf(" id %s\n", source_id);
+                if (!rc) rc = search_catalog(path, name, file_search, fuzzy_search);
+            } else if (!rc) rc = 6;
+            if (rc && rc != 4) {
                 fputs(" coverage unavailable\n", stdout);
                 ++unavailable;
-            } else {
-                printf(" id %s\n", source_id);
-                rc = search_catalog(path, name, file_search, fuzzy_search);
-                if (rc) ++unavailable;
             }
-            free(path);
+            free(path); free(family);
             if (rc == 2) { result = 2; goto done; }
         }
         printf("searched %zu sources; unavailable %zu\n", alias_count, unavailable);
         result = unavailable ? 6 : ferror(stdout) ? 1 : 0;
         goto done;
+    }
+    {
+        char *family = NULL;
+        result = holy_source_type(root, alias, &family);
+        if (result) { free(family); goto done; }
+        if (!strcmp(family, "apk")) {
+            free(family);
+            if (catalog) goto done;
+            result = holy_source_active_id(root, alias, source_id);
+            if (!result) result = query_apk_source(root, alias, repo, name,
+                                                    search, file_search);
+            if (!result) printf("source-id %s\n", source_id);
+            goto done;
+        }
+        if (repo || (strcmp(family, "holy-http") && strcmp(family, "holy-git"))) {
+            free(family); goto done;
+        }
+        free(family);
     }
     if (!catalog) {
         result = holy_source_catalog_path_fast(root, alias, &bound_catalog);
@@ -303,8 +365,8 @@ static int query_source(int argc, char **argv, int search)
     }
 done:
     if (result == 2) fprintf(stderr,
-        search ? "usage: holypkg search QUERY [--source SOURCE] [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]\n" :
-                 "usage: holypkg info SOURCE:PACKAGE [--catalog MIRROR] [--root DIRECTORY]\n");
+        search ? "usage: holypkg search QUERY [--source SOURCE] [--repo REPO] [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]\n" :
+                 "usage: holypkg info SOURCE:PACKAGE [--repo REPO] [--catalog MIRROR] [--root DIRECTORY]\n");
     for (j = 0; j < alias_count; ++j) free(aliases[j]);
     free(aliases);
     free(owned_alias); free(bound_catalog);

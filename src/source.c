@@ -676,6 +676,60 @@ done:
     return result;
 }
 
+int holy_source_apk_repos(const char *root, const char *alias,
+                          char ***repos, size_t *count)
+{
+    struct registry registry = {0};
+    unsigned long long generation;
+    char *data = NULL, **items = NULL;
+    size_t i, used = 0;
+    int dir, result = 1, apk = 0;
+    if (!root || !alias || !*alias || !repos || !count) return 2;
+    *repos = NULL; *count = 0;
+    dir = holy_state_lock(root, 0, &generation, &result);
+    if (dir < 0) return result;
+    data = load_registry(dir, &registry);
+    if (!data) goto done;
+    result = 6;
+    for (i = 0; i < registry.count; ++i)
+        if (registry.items[i].active && !strcmp(registry.items[i].alias, alias)) break;
+    if (i == registry.count) goto done;
+    {
+        const char *line = registry.items[i].definition;
+        while (*line) {
+            const char *end = strchr(line, '\n');
+            char **v = NULL;
+            size_t n = 0;
+            char **grown;
+            if (!end || !tokens(line, (size_t)(end - line), &v, &n)) {
+                holy_tokens_free(v, n); result = 2; goto done;
+            }
+            if (n == 2 && !strcmp(v[0], "type")) apk = !strcmp(v[1], "apk");
+            if (n == 3 && !strcmp(v[0], "repo")) {
+                grown = realloc(items, (used + 1) * sizeof *items);
+                if (!grown) { holy_tokens_free(v, n); result = 1; goto done; }
+                items = grown;
+                items[used] = strdup(v[1]);
+                if (!items[used]) { holy_tokens_free(v, n); result = 1; goto done; }
+                ++used;
+            }
+            holy_tokens_free(v, n);
+            line = end + 1;
+        }
+    }
+    if (!apk || !used) goto done;
+    qsort(items, used, sizeof *items, alias_order);
+    *repos = items; *count = used;
+    items = NULL; result = 0;
+done:
+    if (items) {
+        for (i = 0; i < used; ++i) free(items[i]);
+        free(items);
+    }
+    free(data); clear_registry(&registry); close(dir);
+    return result;
+}
+
 int holy_source_known_id(const char *root, const char *alias, char output[65])
 {
     struct registry registry = {0};

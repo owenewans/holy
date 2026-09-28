@@ -176,6 +176,8 @@
   candidate discovery remains open.
   Native automatic provider search now skips active foreign source families
   instead of counting their absent native mirror as unavailable.
+  The common search/info CLI reads bound APK repositories by source alias and
+  optional repo name; APK file coverage still reports unavailable.
   Feeding foreign candidates into the general resolver and full relation
   semantics remain open.
 

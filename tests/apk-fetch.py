@@ -258,6 +258,7 @@ with tempfile.TemporaryDirectory() as scratch:
         run("db", "init", "--root", signed_root)
         signed_conf = tmp / "signed.conf"
         signed_conf.write_text(f'[source signed]\ntype apk\nrepo main "{base}signed/"\n'
+                               f'repo extra "{base}signed/"\n'
                                f'trust require\npublic-key "{signing_pub}"\n')
         signed_plan = run("source", "plan", "--config", signed_conf,
                           "--root", signed_root).stdout
@@ -282,8 +283,27 @@ with tempfile.TemporaryDirectory() as scratch:
             signed_root, status=6)
         run("apk", "bind", "signed", "main", tmp / "signed-catalog", "--root",
             signed_root, "--public-key", signing_pub)
+        run("apk", "sync", "signed", "extra", "--root", signed_root,
+            "--output", tmp / "signed-catalog-extra", "--ca-file", tmp / "cert.pem",
+            "--public-key", signing_pub)
+        run("apk", "bind", "signed", "extra", tmp / "signed-catalog-extra",
+            "--root", signed_root, "--public-key", signing_pub)
         assert run("apk", "search", "fixture", "--source", "signed", "--repo",
                    "main", "--root", signed_root).stdout == "fixture 1.2-r0 x86_64\n"
+        generic_search = run("search", "fixture", "--source", "signed",
+                             "--repo", "main", "--root", signed_root).stdout
+        assert 'repo "main"\nfixture 1.2-r0 x86_64\nsource-id ' in generic_search
+        assert 'fixture 1.2-r0 x86_64\n' in run(
+            "search", "fixture", "--root", signed_root).stdout
+        assert 'repo "extra"\nfixture 1.2-r0 x86_64\n' in run(
+            "search", "fixture", "--source", "signed", "--repo", "extra",
+            "--root", signed_root).stdout
+        generic_info = run("info", "signed:fixture", "--repo", "main",
+                           "--root", signed_root).stdout
+        assert "package fixture\nversion 1.2-r0\n" in generic_info
+        run("info", "signed:fixture", "--root", signed_root, status=3)
+        run("search", "/usr/share/fixture", "--source", "signed", "--file",
+            "--root", signed_root, status=6)
         assert run("apk", "providers", "soname:libfixture.so.1", "--source",
                    "signed", "--repo", "main", "--root", signed_root).stdout == (
                        "fixture 1.2-r0 x86_64 index-hint\n")
@@ -292,6 +312,8 @@ with tempfile.TemporaryDirectory() as scratch:
             saved_conversion.replace("verification rsa-sha256", "verification rsa-sha1"))
         run("apk", "search", "fixture", "--source", "signed", "--repo",
             "main", "--root", signed_root, status=6)
+        run("search", "fixture", "--source", "signed", "--repo", "main",
+            "--root", signed_root, status=6)
         (tmp / "signed-catalog/conversion").write_text(saved_conversion)
         run("apk", "fetch", "fixture", "1.2-r0", "x86_64", "--source",
             "signed", "--repo", "main", "--root", signed_root, "--output",

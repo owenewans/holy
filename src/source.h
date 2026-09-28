@@ -13,6 +13,9 @@ int holy_source_active_aliases(const char *root, char ***aliases, size_t *count)
 int holy_source_active_id(const char *root, const char *alias, char output[65]);
 /* returns the owned configured backend family for an active alias. */
 int holy_source_type(const char *root, const char *alias, char **type);
+/* returns owned repository names for one active APK source. */
+int holy_source_apk_repos(const char *root, const char *alias,
+                          char ***repos, size_t *count);
 /* resolves an alias retained in the registry, including inactive origins. */
 int holy_source_known_id(const char *root, const char *alias, char output[65]);
 /* reads an active APK repository; caller owns the returned URL. */
