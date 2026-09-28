@@ -957,7 +957,7 @@ int main(int argc, char **argv)
                                          argv[8], argv[10], argv[12],
                                          ca_file, inrelease, files);
         }
-        if ((argc == 11 || argc == 13) && !strcmp(argv[2], "sync") &&
+        if ((argc == 12 || argc == 14) && !strcmp(argv[2], "sync") &&
             !strcmp(argv[4], "--sha256") && !strcmp(argv[6], "--source") &&
             !strcmp(argv[8], "--base") && !strcmp(argv[10], "--output") &&
             (argc == 12 || !strcmp(argv[12], "--ca-file")))
