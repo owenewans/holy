@@ -121,7 +121,7 @@ static:
 	$(MAKE) clean
 	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lssl -lcrypto -llz4 -lzstd -llzma -lbz2 -lz -leu -Wl,--end-group -lpthread -ldl" all
 
-HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/script.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o src/up.o backends/pacman.o backends/pacman-version.o backends/deb-version.o
+HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/script.o src/elf.o src/scan.o src/stage.o src/repo.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o src/up.o src/version.o backends/pacman.o backends/pacman-version.o backends/deb-version.o
 
 holypkg: $(HOLY_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(SOLV_LIBS)
@@ -139,7 +139,7 @@ src/%.o: src/%.c $(wildcard src/*.h) $(wildcard backends/*.h) .build-config
 check-init: holy-init
 	@./holy-init >/dev/null 2>&1; test $$? -eq 2
 
-check: check-pacman check-deb holypkg tests/resolution check-init check-solver check-install-payload check-install check-https
+check: check-pacman check-deb check-native-version holypkg tests/resolution check-init check-solver check-install-payload check-install check-https
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg
@@ -178,6 +178,13 @@ check-deb: holypkg
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o tests/deb-version-helper tests/deb-version.c backends/deb-version.c
 	./tests/deb-version-helper
 	python3 tests/import-deb.py ./holypkg
+
+.PHONY: check-native-version
+check-native-version: tests/native-version-helper
+	./tests/native-version-helper
+
+tests/native-version-helper: tests/native-version.c src/version.c src/version.h .build-config
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o $@ tests/native-version.c src/version.c
 
 check-fixtures: check
 
@@ -226,7 +233,7 @@ check-https: holypkg
 	sh tests/https.sh ./holypkg
 
 check-install-payload: holypkg
-	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o tests/install-helper tests/install.c src/install.c src/script.o src/elf.o src/change.c src/verify.c src/package.c src/stage.c src/config.c $(LDFLAGS) -larchive -lcrypto -lelf
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o tests/install-helper tests/install.c src/install.c src/script.o src/elf.o src/change.c src/verify.c src/package.c src/stage.c src/config.c src/version.c $(LDFLAGS) -larchive -lcrypto -lelf
 	sh tests/install.sh ./tests/install-helper ./holypkg
 	sh tests/symlinks.sh ./holypkg
 	sh tests/change.sh ./tests/install-helper ./holypkg
@@ -255,4 +262,4 @@ clean:
 	rm -f holy-init
 	rm -f holyinstall src/disk.o
 	rm -f .build-config .build-config.tmp
-	rm -f holypkg tests/resolution tests/solver tests/install-helper tests/pacman-helper tests/deb-version-helper $(HOLY_OBJECTS)
+	rm -f holypkg tests/resolution tests/solver tests/install-helper tests/pacman-helper tests/deb-version-helper tests/native-version-helper $(HOLY_OBJECTS)

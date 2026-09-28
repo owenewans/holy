@@ -701,9 +701,10 @@ name and optional arch/libc. It checks the old artifact in the target cache,
 verifies the pinned catalog index, and stages only indexed versions in the
 same name/os/arch/libc slot. The selected archives are checked against their
 index records and actual payloads. Unrelated archives are not opened; a
-broken unrelated archive does not block this slot update. Known pacman and deb comparator families select
-the highest newer version; unknown or mixed comparator families require
---choose SHA256. The chosen digest can explicitly select a rebuild or older
+broken unrelated archive does not block this slot update. Known pacman, deb
+and holy comparator families select the highest newer version; unknown or
+mixed comparator families require --choose SHA256. The chosen digest can
+explicitly select a rebuild or older
 version. No newer candidate leaves the system unchanged and writes no plan.
 An absent old artifact, missing source slot or changed catalog is reported.
 .PP
@@ -716,8 +717,7 @@ and unchanged catalog generation, then rebuilds the database plan under the
 writer lock. A changed database, source or payload needs a new plan. Successful
 apply uses the existing journaled cached-update engine; its recovery command
 is db recover --update. This subset prepares one slot at a time. Grouped
-updates, automatic native version ordering, signed catalogs and root/VM trials
-remain open.
+updates, signed catalogs and root/VM trials remain open.
 .PP
 The db plan command reads the prepared reservation at the current database
 generation. It verifies a private snapshot of the cached artifact, checks
@@ -1119,16 +1119,22 @@ declared version; an unversioned alias cannot satisfy a version constraint.
 Explicit claim scopes must agree with the artifact's arch/libc; any inherits
 that artifact scope. Selection preserves the actual package identity and records
 the requested alias on the dependency edge. Version constraints eq/ge/gt/le/lt use
-the comparator declared by both consumer and provider: pacman or deb. The full
-foreign epoch:version-release string belongs in version;
-release remains the native artifact revision and is not appended a second time.
-A missing pkgrel on one side does not constrain pkgrel. Numeric epochs,
-prerelease letters and separator widths follow pacman's comparison rules.
+the comparator declared by both consumer and provider: pacman, deb or holy.
+For pacman and deb, the full foreign epoch:version-release string belongs in
+version; release remains the native artifact revision and is not appended a
+second time. A missing pkgrel on one side does not constrain pkgrel. Numeric
+epochs, prerelease letters and separator widths follow pacman's rules.
 The Debian comparator uses epoch, upstream version and final Debian revision,
 with tilde before the end of a part. Its validator requires Debian version
-characters and a leading digit in the upstream part. Both comparators limit
-input to 65536 bytes;
-unsupported encodings do not receive a guessed order.
+characters and a leading digit in the upstream part. Both foreign comparators
+limit input to 65536 bytes; unsupported encodings have no guessed order.
+The Holy native comparator uses decimal components separated by dots and an
+optional lowercase prerelease suffix after hyphen or tilde. It compares
+unbounded decimal runs by length and content, ignores missing trailing zero
+components, and places prereleases before finals. For updates, it compares
+release after an equal version. It limits input to 65536 bytes. A package must
+declare x-version-family holy; untagged native versions keep manual update
+selection.
 The adapter filters candidates before the common libsolv solver receives exact
 requirement capabilities. The mixed solver pool does not compare foreign EVRs.
 Unsupported consumer version families and metadata dependency forms return 6.
@@ -1136,7 +1142,7 @@ Providers from another or unknown family cannot satisfy a constrained edge;
 if no matching candidate remains, resolution returns dependency-conflict.
 A supplied --choose answer cannot bypass these checks. Unversioned requirements
 retain exact capability-name matching across families. Automatic newest-version
-selection and cross-family overrides remain pending. There are no source IDs, installed packages or
+selection in solve and cross-family overrides remain pending. There are no source IDs, installed packages or
 architecture overrides in this command.
 .PP
 ELF payloads add file-scoped interpreter, DT_NEEDED and strong undefined symbol

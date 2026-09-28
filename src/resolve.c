@@ -9,6 +9,7 @@
 #include "verify.h"
 #include "../backends/pacman.h"
 #include "../backends/deb-version.h"
+#include "version.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -41,7 +42,8 @@ struct version_adapter {
 
 static const struct version_adapter version_adapters[] = {
     {"pacman", holy_pacman_version_compare},
-    {"deb", holy_deb_version_compare}
+    {"deb", holy_deb_version_compare},
+    {"holy", holy_version_compare}
 };
 
 struct local_item {

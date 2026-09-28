@@ -42,7 +42,8 @@
   reject cross-family constraint satisfaction, and validate updates against
   installed consumer constraints. Run 92 upstream comparison cases and solver /
   transaction fixtures. The separate Debian comparator covers epoch, tilde and
-  revision; other comparators remain open.
+  revision. An explicit Holy native comparator covers numeric versions and
+  prereleases; remaining foreign comparators remain open.
 
 - [x] Resolve declared package aliases using their own versions and artifact ABI
   scopes. Preserve claims and their hash in holy-instance-4, discover installed
@@ -204,8 +205,8 @@
   the highest newer pacman/deb version or require an exact choice when version
   ordering is unknown, save the catalog digest and complete update plan, then
   apply only after whole-file hash approval and source/DB revalidation. A fixture
-  covers upgrade, explicit downgrade and stale/tampered plans. Grouped updates,
-  native version ordering and trial execution remain open.
+  covers upgrade, explicit downgrade and stale/tampered plans. Grouped updates
+  and trial execution remain open.
 - [x] Read the pinned catalog index for an installed source slot and stage only
   matching name/os/arch/libc versions during update preparation. Verify those
   archives against the index before planning; keep the full catalog validation

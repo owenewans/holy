@@ -7,9 +7,16 @@ HOLY/meta contains one key and one value per line. The required fields are
 format (holy-package-1), name, version, release, os, arch and libc. An unknown
 requires-feature field fails inspection. Optional x-version-family records the
 version comparator family and is a scalar: duplicates fail inspection.
-The current resolver supports constrained package requirements for pacman and
-Debian. It compares versions within the consumer's declared family;
+The current resolver supports constrained package requirements for pacman,
+Debian and explicitly tagged Holy native versions. It compares versions
+within the consumer's declared family;
 unknown families remain inspectable but cannot acquire guessed version semantics.
+Native packages opt in with x-version-family holy. Their version and release
+use decimal components separated by dots, with an optional lowercase
+prerelease suffix introduced by hyphen or tilde, such as 7.3-rc4. Invalid
+Holy native version or release fields fail inspection. Native comparison
+treats absent trailing numeric components as zero, compares numbers without
+fixed-width overflow and places prereleases before final versions.
 Pacman imports store the complete foreign epoch:version-release in version,
 and use release for the native artifact revision.
 .PP

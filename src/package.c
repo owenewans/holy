@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "package.h"
 #include "config.h"
+#include "version.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -141,6 +142,14 @@ static int read_meta(const char *path, const char *data, size_t length, int emit
     if (ok && !strcmp(values[5], "noarch") && strcmp(values[6], "nolibc")) {
         fprintf(stderr, "%s: noarch requires nolibc in HOLY/meta\n", path);
         ok = 0;
+    }
+    if (ok && values[7] && !strcmp(values[7], "holy")) {
+        int order;
+        if (!holy_version_compare(values[2], values[2], &order) ||
+            !holy_version_compare(values[3], values[3], &order)) {
+            fprintf(stderr, "%s: invalid Holy native version or release in HOLY/meta\n", path);
+            ok = 0;
+        }
     }
     if (ok && emit) for (i = 0; i < sizeof fields / sizeof *fields; ++i)
         if (values[i]) printf("%s %s\n", fields[i], values[i]);

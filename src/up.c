@@ -9,6 +9,7 @@
 #include "state.h"
 #include "../backends/pacman.h"
 #include "../backends/deb-version.h"
+#include "version.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -70,6 +71,10 @@ static int version_order(const struct holy_package_identity *a,
     if (!strcmp(a->version_family, "deb")) {
         if (!holy_deb_version_compare(a->version, b->version, order)) return 0;
         return *order || holy_deb_version_compare(a->release, b->release, order);
+    }
+    if (!strcmp(a->version_family, "holy")) {
+        if (!holy_version_compare(a->version, b->version, order)) return 0;
+        return *order || holy_version_compare(a->release, b->release, order);
     }
     if (strcmp(a->version_family, "pacman")) return 0;
     a_length = strlen(a->version) + strlen(a->release);

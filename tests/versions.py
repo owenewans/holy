@@ -181,4 +181,26 @@ with tempfile.TemporaryDirectory(prefix="holy-versions-") as scratch:
     run("solve", "local:" + str(deb_app), "local:" + str(deb_wrong), status=4)
     assert "selected " + deb_new_hash in run("solve", "local:" + str(deb_app),
         "local:" + str(deb_old), "local:" + str(deb_new), "local:" + str(deb_wrong))
+    native_old, _ = package("native-old", "nativelib", "1.9", family="holy")
+    native_pre, native_pre_hash = package("native-pre", "nativelib", "1.10-rc2", family="holy")
+    native_new, native_new_hash = package("native-new", "nativelib", "1.10", family="holy")
+    native_wrong, _ = package("native-wrong", "nativelib", "99", family="pacman")
+    native_app, _ = package("native-app", "app", "1", dependency("ge", "1.10").replace("library", "nativelib"), family="holy")
+    run("solve", "local:" + str(native_app), "local:" + str(native_old), "local:" + str(native_pre), status=4)
+    run("solve", "local:" + str(native_app), "local:" + str(native_wrong), status=4)
+    assert "selected " + native_new_hash in run("solve", "local:" + str(native_app),
+        "local:" + str(native_old), "local:" + str(native_pre), "local:" + str(native_new),
+        "local:" + str(native_wrong))
+    native_pre_app, _ = package("native-pre-app", "app", "1", dependency("lt", "1.10").replace("library", "nativelib"), family="holy")
+    assert "selected " + native_pre_hash in run("solve", "local:" + str(native_pre_app),
+        "local:" + str(native_pre))
+    invalid_native = tmp / "invalid-native"
+    (invalid_native / "HOLY").mkdir(parents=True)
+    (invalid_native / "DATA").mkdir()
+    (invalid_native / "HOLY/meta").write_text(
+        "format holy-package-1\nname invalid-native\nversion 1+build\nrelease 1\n"
+        "os linux\narch noarch\nlibc nolibc\nx-version-family holy\n")
+    for field in ("files", "deps", "provides", "hooks", "origin", "transform"):
+        (invalid_native / "HOLY" / field).write_text("")
+    run("pack", invalid_native, "--output", tmp / "invalid-native.holy", status=1)
     print("version constraints, virtual capabilities and transaction fixtures passed")

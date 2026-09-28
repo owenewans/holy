@@ -416,7 +416,7 @@ SEE ALSO
      holy-image(7), holypkg(8)
 
 Holy				 September 2026			    HOLY-INIT(8)
-holy-package.5 source=holy version=development sha256=f8eef1ce2c413fa42ba9361bb980fd262c950cd3331211ec5ae711cfa30d1b9d
+holy-package.5 source=holy version=development sha256=ca8635050bbf845683e0006c613e785fd43b070306b6df566806fc336bed50c6
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -429,135 +429,141 @@ DESCRIPTION
      libc. An unknown requires-feature field fails inspection.	Optional  x-ver-
      sion-family  records  the version comparator family and is a scalar: dupli-
      cates fail inspection.  The current resolver supports  constrained	 package
-     requirements  for	pacman	and Debian. It compares versions within the con-
-     sumer's declared family; unknown families remain inspectable but cannot ac-
-     quire guessed version semantics.  Pacman imports store the complete foreign
-     epoch:version-release in version, and use release for the	native	artifact
-     revision.
+     requirements for pacman, Debian and explicitly tagged Holy native versions.
+     It	 compares  versions within the consumer's declared family; unknown fami-
+     lies remain inspectable but cannot acquire guessed version semantics.   Na-
+     tive  packages opt in with x-version-family holy. Their version and release
+     use decimal components separated by dots, with an optional lowercase prere-
+     lease suffix introduced by hyphen or tilde, such as 7.3-rc4.  Invalid  Holy
+     native  version or release fields fail inspection. Native comparison treats
+     absent trailing numeric components as zero, compares numbers without fixed-
+     width overflow and places prereleases before final	 versions.   Pacman  im-
+     ports  store the complete foreign epoch:version-release in version, and use
+     release for the native artifact revision.
 
-     The  inspector accepts os=linux or windows, arch=x86, x86_64 or noarch, and
-     libc=glibc, musl or nolibc. noarch requires nolibc. These	checks	validate
-     declared  metadata values; they do not scan ELF files to prove ABI or prove
+     The inspector accepts os=linux or windows, arch=x86, x86_64 or noarch,  and
+     libc=glibc,  musl	or nolibc. noarch requires nolibc. These checks validate
+     declared metadata values; they do not scan ELF files to prove ABI or  prove
      that a purported noarch payload has no machine code.
 
-     The separate holypkg scan command examines regular ELF  payload  files  and
-     each  hardlink  path, and rejects known arch/libc tag mismatches. The basic
+     The  separate  holypkg  scan command examines regular ELF payload files and
+     each hardlink path, and rejects known arch/libc tag mismatches.  The  basic
      info and verify commands do not perform this ABI check.
 
      The scanner accepts ET_EXEC without PT_INTERP and PT_DYNAMIC as nolibc, and
-     ET_DYN requiring libc.so.6 as glibc evidence,  including  its  basename  in
-     literal  DT_NEEDED	 paths.	 Architecture-specific musl loader or libc names
-     and the native libc.musl-x86_64.so.1 / libc.musl-i386.so.1 SONAMEs	 provide
-     musl  classification  evidence. A generic libc.so name does not. It rejects
-     ELF files whose runtime remains unknown. A	 plugin	 without  such	evidence
+     ET_DYN  requiring	libc.so.6  as  glibc evidence, including its basename in
+     literal DT_NEEDED paths. Architecture-specific musl loader	 or  libc  names
+     and  the native libc.musl-x86_64.so.1 / libc.musl-i386.so.1 SONAMEs provide
+     musl classification evidence. A generic libc.so name does not.  It	 rejects
+     ELF  files	 whose	runtime	 remains unknown. A plugin without such evidence
      needs classification and review before a package can pass scan.
 
-     The  archive  contains  one  regular file at each of HOLY/meta, HOLY/files,
-     HOLY/deps, HOLY/provides, HOLY/hooks, HOLY/origin and  HOLY/transform.  The
-     inspector	checks	their presence and type. Empty metadata placeholders can
-     pass this structural check; it does not  validate	dependency,  capability,
-     hook  or  origin  content.	 The separate requirements and provides commands
+     The archive contains one regular file at  each  of	 HOLY/meta,  HOLY/files,
+     HOLY/deps,	 HOLY/provides,	 HOLY/hooks, HOLY/origin and HOLY/transform. The
+     inspector checks their presence and type. Empty metadata  placeholders  can
+     pass  this	 structural  check; it does not validate dependency, capability,
+     hook or origin content. The separate  requirements	 and  provides	commands
      parse supported subsets of HOLY/deps and HOLY/provides.
 
-     The prototype verifier reads HOLY/files. For each regular payload file  un-
+     The  prototype verifier reads HOLY/files. For each regular payload file un-
      der DATA/, one manifest line contains twelve whitespace-separated tokens:
      file PATH MODE OWNER GROUP UID GID SIZE SHA256 FLAGS XATTRS HARDLINK-GROUP
-     MODE  is  octal;  UID,  GID and SIZE are decimal. PATH is relative to DATA.
-     SHA256 has 64 hexadecimal digits. The current verifier  accepts  FLAGS=none
-     and  XATTRS=-.  Independent  files use HARDLINK-GROUP=-. A symlink uses one
-     additional TARGET token,  SIZE=0  and  SHA256=-.  A  hardlinked  file  uses
-     TYPE=hardlink,  a	group  identifier in HARDLINK-GROUP and one extra TARGET
-     token naming a regular file in DATA.  The	target	file  carries  the  same
+     MODE is octal; UID, GID and SIZE are decimal. PATH	 is  relative  to  DATA.
+     SHA256  has  64 hexadecimal digits. The current verifier accepts FLAGS=none
+     and XATTRS=-. Independent files use HARDLINK-GROUP=-. A  symlink  uses  one
+     additional	 TARGET	 token,	 SIZE=0	 and  SHA256=-.	 A  hardlinked file uses
+     TYPE=hardlink, a group identifier in HARDLINK-GROUP and  one  extra  TARGET
+     token  naming  a  regular	file  in DATA.	The target file carries the same
      group identifier. SIZE and SHA256 describe the target content. The verifier
-     rejects  chained hardlinks and checks mode, UID and GID against the target.
-     A directory uses the same twelve tokens as a file,	 with  TYPE=dir,  SIZE=0
-     and  SHA256=-. The verifier rejects symlink targets that escape the root by
-     lexical traversal. The text lexer follows holy.conf(5), so quotes	and  es-
-     capes  can	 preserve  spaces in paths. Every archived directory except DATA
-     itself needs a manifest record.  The  verifier  does  not	support	 special
-     files,  ACLs or extended attributes. The verifier rejects DATA entries that
+     rejects chained hardlinks and checks mode, UID and GID against the	 target.
+     A	directory  uses	 the same twelve tokens as a file, with TYPE=dir, SIZE=0
+     and SHA256=-. The verifier rejects symlink targets that escape the root  by
+     lexical  traversal.  The text lexer follows holy.conf(5), so quotes and es-
+     capes can preserve spaces in paths. Every archived	 directory  except  DATA
+     itself  needs  a  manifest	 record.  The  verifier does not support special
+     files, ACLs or extended attributes. The verifier rejects DATA entries  that
      carry archive xattrs or ACLs, even if HOLY/files says XATTRS=-. The planned
      full format includes those attributes.
 
      The narrow database apply command installs approved data, native static ELF
-     files and relative symlinks into existing or explicitly declared  safe  di-
-     rectories.	 Symlinks  require mode 0777 and the caller's numeric ownership.
+     files  and	 relative symlinks into existing or explicitly declared safe di-
+     rectories. Symlinks require mode 0777 and the caller's  numeric  ownership.
      The transaction records their targets, checks them without following links,
-     and removes only intact owned entries. Direct hardlinks share the	verified
+     and  removes only intact owned entries. Direct hardlinks share the verified
      regular target's inode; one regular anchor belongs to each named group. In-
-     stallation	 defers	 hardlinks  until  regular payload files exist, indepen-
+     stallation defers hardlinks until regular	payload	 files	exist,	indepen-
      dently of archive order. Absolute symlink installation remains unsupported.
-     Cached updates preserve hardlink groups across content  and  mode	changes,
-     member  additions/removals,  anchor moves and group splits/merges. The file
-     plan names a reserved staging link for each new group;  recovery  validates
+     Cached  updates  preserve	hardlink groups across content and mode changes,
+     member additions/removals, anchor moves and group splits/merges.  The  file
+     plan  names  a reserved staging link for each new group; recovery validates
      both content and inode relationships.  The pack command writes and verifies
-     this  archive  format  from  a prepared tree of regular files, directories,
-     symlinks and hardlinks. It selects a deterministic regular anchor for  each
-     inode  group; manifest generate uses the same selection.  The verifier does
-     not verify dependencies, signatures, symbolic owner names or the  installed
+     this archive format from a prepared tree  of  regular  files,  directories,
+     symlinks  and hardlinks. It selects a deterministic regular anchor for each
+     inode group; manifest generate uses the same selection.  The verifier  does
+     not  verify dependencies, signatures, symbolic owner names or the installed
      filesystem. A full format implementation must verify file ownership, links,
-     xattrs,  hooks,  origin and transaction semantics before accepting an arti-
+     xattrs, hooks, origin and transaction semantics before accepting  an  arti-
      fact for installation.
 
 FOREIGN IMPORT RECORDS
-     The pacman and Debian importers preserve original package metadata	 beneath
-     HOLY/foreign/pacman  and  HOLY/foreign/deb. HOLY/origin binds these records
-     to the exact original archive hash and retains original  field  values  and
-     line  numbers. The source-name field is provenance, not authority to assign
+     The  pacman and Debian importers preserve original package metadata beneath
+     HOLY/foreign/pacman and HOLY/foreign/deb. HOLY/origin binds  these	 records
+     to	 the  exact  original archive hash and retains original field values and
+     line numbers. The source-name field is provenance, not authority to  assign
      a trusted installed source-id.
 
-     A requirement of kind foreign preserves an unsupported  source  expression.
-     The  current  solver reports unsupported semantics instead of dropping that
-     requirement.  Foreign hooks and split transforms require their own	 instal-
-     lation  support; archive verification does not authorize execution or claim
+     A	requirement  of kind foreign preserves an unsupported source expression.
+     The current solver reports unsupported semantics instead of  dropping  that
+     requirement.   Foreign hooks and split transforms require their own instal-
+     lation support; archive verification does not authorize execution or  claim
      that support exists.
 
 INSTALLED GRAPH
-     New local installations use holy-instance-4 state, or holy-instance-5  when
-     an	 explicit  non-native architecture placement decision was accepted. Ver-
-     sion 5 adds an architecture record with the  reviewed  host  and  unchanged
-     target.  The  decision is scoped to that artifact hash and does not certify
-     execution. The state includes a graph SHA-256; the graph  file  uses  holy-
-     resolution-1  with	 scope	artifact-candidates, a root artifact, sorted se-
-     lected artifact hashes and selected requirement edges.  Each  edge	 records
-     consumer  hash,  requirement ID, provider hash, path, kind and target using
+     New  local installations use holy-instance-4 state, or holy-instance-5 when
+     an explicit non-native architecture placement decision was	 accepted.  Ver-
+     sion  5  adds  an	architecture record with the reviewed host and unchanged
+     target. The decision is scoped to that artifact hash and does  not	 certify
+     execution.	 The  state  includes a graph SHA-256; the graph file uses holy-
+     resolution-1 with scope artifact-candidates, a root  artifact,  sorted  se-
+     lected  artifact  hashes and selected requirement edges.  Each edge records
+     consumer hash, requirement ID, provider hash, path, kind and  target  using
      the holy.conf lexer. The plan hash includes these canonical bytes.
 
-     Database operations reject a missing, modified, writable or symlink  graph.
-     Legacy  holy-instance-1  entries remain readable without a graph. Their ab-
-     sence of recorded provider choices does not establish  dependency	correct-
+     Database  operations reject a missing, modified, writable or symlink graph.
+     Legacy holy-instance-1 entries remain readable without a graph.  Their  ab-
+     sence  of	recorded provider choices does not establish dependency correct-
      ness.
 
-     Source-associated	installations also preserve the source fields introduced
+     Source-associated installations also preserve the source fields  introduced
      in holy-instance-3. State records the registered source-id and SHA-256 of a
-     separate source record containing that ID and the	alias  at  installation.
-     The  graph	 and  reason fields retain their version-2 semantics. The source
-     record is manager-owned state, not copied from the	 package.  The	database
-     rejects  absent,  changed, writable or symlink source records and disagree-
-     ment between the record and state. Renaming or deactivating the  registered
-     source  does  not	rewrite installed origin records. Check, removal, orphan
-     analysis and missing-only repair preserve this identity  without  requiring
+     separate  source  record  containing that ID and the alias at installation.
+     The graph and reason fields retain their version-2	 semantics.  The  source
+     record  is	 manager-owned	state, not copied from the package. The database
+     rejects absent, changed, writable or symlink source records  and  disagree-
+     ment  between the record and state. Renaming or deactivating the registered
+     source does not rewrite installed origin records.	Check,	removal,  orphan
+     analysis  and  missing-only repair preserve this identity without requiring
      the source to remain active.
 
-     New  records include a provides file copied from HOLY/provides and bind its
-     SHA-256 in state. Empty provides is valid. Missing, modified,  writable  or
+     New records include a provides file copied from HOLY/provides and bind  its
+     SHA-256  in  state. Empty provides is valid. Missing, modified, writable or
      symlink provides records invalidate the database. Installed package aliases
      can be located from these records; read-only database checks do not require
-     the  archive  cache. Constructing an installation plan still requires veri-
+     the archive cache. Constructing an installation plan still	 requires  veri-
      fied cached artifacts.  Legacy holy-instance-1/2/3 records remain readable.
-     Alias discovery for a legacy record reads	its  verified  cached  artifact;
-     missing  cache returns unavailable instead of silently treating unknown ca-
+     Alias  discovery  for  a  legacy record reads its verified cached artifact;
+     missing cache returns unavailable instead of silently treating unknown  ca-
      pabilities as absent.
 
      The set installation interface supports package names and declared aliases,
-     scoped pacman version constraints and native dynamic packages with	 literal
+     scoped  pacman version constraints and native dynamic packages with literal
      absolute interpreter and DT_NEEDED provider paths.	 It records explicit/de-
-     pendency  reasons.	 General  loader search, automatic ELF rewriting remains
-     unimplemented. Slot conflicts compare source-id, name, os, arch  and  libc;
+     pendency reasons. General loader search, automatic	 ELF  rewriting	 remains
+     unimplemented.  Slot  conflicts compare source-id, name, os, arch and libc;
      distinct artifacts in different slots may coexist with compatible file own-
-     ership.  Reviewed	cached	update	plans can replace one source-bound slot;
-     registering the same artifact in multiple slots remains unsupported.  Miss-
-     ing-only  cache repair preserves the installed graph and refuses changed or
+     ership. Reviewed cached update plans can  replace	one  source-bound  slot;
+     registering  the same artifact in multiple slots remains unsupported. Miss-
+     ing-only cache repair preserves the installed graph and refuses changed  or
      partial files.
 
 SEE ALSO
@@ -811,7 +817,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=2952a59408f8aca75a53aaaa48bab7653d25657be66acf9551fbf9adf3986b9f
+holypkg.8 source=holy version=development sha256=e95c5ca897dc5430715e78b2ad6ec0ff74be715d4501b621bcd82755af8f77be
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1495,23 +1501,23 @@ DESCRIPTION
      versions in the same name/os/arch/libc  slot.  The	 selected  archives  are
      checked against their index records and actual payloads. Unrelated archives
      are not opened; a broken unrelated archive does not block this slot update.
-     Known  pacman and deb comparator families select the highest newer version;
-     unknown or mixed comparator families require --choose  SHA256.  The  chosen
-     digest can explicitly select a rebuild or older version. No newer candidate
-     leaves  the  system  unchanged and writes no plan.	 An absent old artifact,
-     missing source slot or changed catalog is reported.
+     Known  pacman,  deb  and  holy comparator families select the highest newer
+     version; unknown or mixed comparator families require --choose SHA256.  The
+     chosen  digest  can  explicitly select a rebuild or older version. No newer
+     candidate leaves the system unchanged and writes no plan.	 An  absent  old
+     artifact, missing source slot or changed catalog is reported.
 
-     Preparation writes a new mode-0600 plan file with	the  source-id,	 catalog
+     Preparation  writes  a  new mode-0600 plan file with the source-id, catalog
      path and index digest, old/new artifact hashes, exact version decisions and
-     the  complete  update  plan.  It  changes only the target cache. Review the
+     the complete update plan. It changes only	the  target  cache.  Review  the
      file, then run apply PLAN --sha256 PLAN_SHA256 with its whole-file SHA-256.
-     Apply snapshots and verifies the file, checks its embedded update-plan  di-
-     gest,  active  source  and	 unchanged catalog generation, then rebuilds the
-     database plan under the writer lock. A changed database, source or	 payload
-     needs  a  new plan. Successful apply uses the existing journaled cached-up-
-     date engine; its recovery command is db recover --update. This subset  pre-
-     pares  one slot at a time. Grouped updates, automatic native version order-
-     ing, signed catalogs and root/VM trials remain open.
+     Apply  snapshots and verifies the file, checks its embedded update-plan di-
+     gest, active source and unchanged catalog	generation,  then  rebuilds  the
+     database  plan under the writer lock. A changed database, source or payload
+     needs a new plan. Successful apply uses the existing  journaled  cached-up-
+     date  engine; its recovery command is db recover --update. This subset pre-
+     pares one slot at a time. Grouped updates, signed catalogs and root/VM tri-
+     als remain open.
 
      The db plan command reads the prepared reservation at the current	database
      generation.  It  verifies a private snapshot of the cached artifact, checks
@@ -1927,25 +1933,31 @@ DESCRIPTION
      agree with the artifact's arch/libc; any inherits that artifact scope.  Se-
      lection  preserves	 the  actual  package identity and records the requested
      alias on the dependency edge. Version constraints	eq/ge/gt/le/lt	use  the
-     comparator	 declared by both consumer and provider: pacman or deb. The full
-     foreign epoch:version-release string belongs in  version;	release	 remains
-     the  native artifact revision and is not appended a second time.  A missing
-     pkgrel on one side does not constrain pkgrel.  Numeric  epochs,  prerelease
-     letters  and separator widths follow pacman's comparison rules.  The Debian
-     comparator uses epoch, upstream version and  final	 Debian	 revision,  with
-     tilde before the end of a part. Its validator requires Debian version char-
-     acters and a leading digit in the upstream part. Both comparators limit in-
-     put  to  65536 bytes; unsupported encodings do not receive a guessed order.
-     The adapter filters candidates before the common  libsolv	solver	receives
-     exact requirement capabilities. The mixed solver pool does not compare for-
-     eign  EVRs.   Unsupported consumer version families and metadata dependency
-     forms return 6.  Providers from another or unknown family cannot satisfy  a
-     constrained  edge; if no matching candidate remains, resolution returns de-
-     pendency-conflict.	 A supplied --choose answer cannot bypass these	 checks.
-     Unversioned requirements retain exact capability-name matching across fami-
-     lies.  Automatic newest-version selection and cross-family overrides remain
-     pending. There are no source IDs, installed packages or architecture  over-
-     rides in this command.
+     comparator	 declared  by  both  consumer and provider: pacman, deb or holy.
+     For pacman and deb, the full foreign epoch:version-release	 string	 belongs
+     in	 version;  release  remains  the native artifact revision and is not ap-
+     pended a second time. A missing pkgrel  on	 one  side  does  not  constrain
+     pkgrel. Numeric epochs, prerelease letters and separator widths follow pac-
+     man's  rules.  The Debian comparator uses epoch, upstream version and final
+     Debian revision, with tilde before the end of a  part.  Its  validator  re-
+     quires  Debian version characters and a leading digit in the upstream part.
+     Both foreign comparators limit input to 65536 bytes; unsupported  encodings
+     have  no guessed order.  The Holy native comparator uses decimal components
+     separated by dots and an optional lowercase prerelease suffix after  hyphen
+     or tilde. It compares unbounded decimal runs by length and content, ignores
+     missing trailing zero components, and places prereleases before finals. For
+     updates,  it  compares  release  after an equal version. It limits input to
+     65536 bytes. A package must declare x-version-family holy; untagged  native
+     versions  keep manual update selection.  The adapter filters candidates be-
+     fore the common libsolv solver receives exact requirement capabilities. The
+     mixed solver pool does not compare foreign EVRs.  Unsupported consumer ver-
+     sion families and metadata dependency forms return 6.  Providers  from  an-
+     other  or	unknown family cannot satisfy a constrained edge; if no matching
+     candidate remains,	 resolution  returns  dependency-conflict.   A	supplied
+     --choose answer cannot bypass these checks. Unversioned requirements retain
+     exact  capability-name  matching  across families. Automatic newest-version
+     selection in solve and cross-family overrides remain pending. There are  no
+     source IDs, installed packages or architecture overrides in this command.
 
      ELF  payloads  add	 file-scoped interpreter, DT_NEEDED and strong undefined
      symbol requirements, even when HOLY/deps omits  them.  A  SONAME  candidate

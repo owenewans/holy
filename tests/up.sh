@@ -133,4 +133,35 @@ grep -qx 'version 1' "$root/usr/share/update-fixture"
 expect 0 "$bin" apply "$tmp/chosen.plan" --sha256 "$chosen" --root "$root"
 grep -qx 'version 3' "$root/usr/share/update-fixture"
 expect 0 "$bin" db check --all --root "$root"
+rm "$repo/update-1.holy" "$repo/update-2.holy" "$repo/update-3.holy"
+package 4 holy
+fourth=$(sha256sum "$repo/update-4.holy" | cut -d ' ' -f 1)
+seal
+expect 0 "$bin" source catalog bind fixture "$repo" --root "$root"
+expect 0 "$bin" up fixture:update-fixture --prepare --choose "$fourth" \
+    --output "$tmp/native-switch.plan" --root "$root"
+switch=$(sha256sum "$tmp/native-switch.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" apply "$tmp/native-switch.plan" --sha256 "$switch" --root "$root"
+package 5 holy
+fifth=$(sha256sum "$repo/update-5.holy" | cut -d ' ' -f 1)
+seal
+expect 0 "$bin" source catalog bind fixture "$repo" --root "$root"
+expect 0 "$bin" up fixture:update-fixture --prepare --output "$tmp/native.plan" --root "$root"
+grep -qx "new $fifth" "$tmp/native.plan"
+native=$(sha256sum "$tmp/native.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" apply "$tmp/native.plan" --sha256 "$native" --root "$root"
+grep -qx 'version 5' "$root/usr/share/update-fixture"
+expect 0 "$bin" db check --all --root "$root"
+cp -a "$tmp/tree-5" "$tmp/tree-5-r2"
+sed -i 's/^release 1$/release 2/' "$tmp/tree-5-r2/HOLY/meta"
+expect 0 "$bin" pack "$tmp/tree-5-r2" --output "$repo/update-5-r2.holy"
+revision=$(sha256sum "$repo/update-5-r2.holy" | cut -d ' ' -f 1)
+seal
+expect 0 "$bin" source catalog bind fixture "$repo" --root "$root"
+expect 0 "$bin" up fixture:update-fixture --prepare --output "$tmp/native-revision.plan" --root "$root"
+grep -qx "new $revision" "$tmp/native-revision.plan"
+revised=$(sha256sum "$tmp/native-revision.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" apply "$tmp/native-revision.plan" --sha256 "$revised" --root "$root"
+grep -qx 'version 5' "$root/usr/share/update-fixture"
+expect 0 "$bin" db check --all --root "$root"
 printf 'source update preparation and apply fixtures passed\n'
