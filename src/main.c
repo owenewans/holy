@@ -24,6 +24,7 @@
 #include "run.h"
 #include "../backends/apk.h"
 #include "../backends/apt.h"
+#include "../backends/apt-release.h"
 
 #include <stdio.h>
 #include <locale.h>
@@ -872,6 +873,13 @@ int main(int argc, char **argv)
     if (argc > 1 && !strcmp(argv[1], "up")) return holy_up_command(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "run")) return holy_run(argc, argv);
     if (argc > 2 && !strcmp(argv[1], "apt")) {
+        if ((argc == 13 || argc == 15) && !strcmp(argv[2], "sync-signed") &&
+            !strcmp(argv[7], "--source") && !strcmp(argv[9], "--keyring") &&
+            !strcmp(argv[11], "--output") &&
+            (argc == 13 || !strcmp(argv[13], "--ca-file")))
+            return holy_apt_release_sync(argv[3], argv[4], argv[5], argv[6],
+                                         argv[8], argv[10], argv[12],
+                                         argc == 15 ? argv[14] : NULL);
         if ((argc == 12 || argc == 14) && !strcmp(argv[2], "sync") &&
             !strcmp(argv[4], "--sha256") && !strcmp(argv[6], "--source") &&
             !strcmp(argv[8], "--base") && !strcmp(argv[10], "--output") &&
@@ -898,7 +906,7 @@ int main(int argc, char **argv)
             if (i == argc && catalog && output)
                 return holy_apt_fetch(catalog, argv[3], argv[4], argv[5], output, ca_file, imported);
         }
-        fputs("usage: holypkg apt index FILE --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY | apt sync URL --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--ca-file FILE] | apt search|info NAME --catalog DIRECTORY | apt fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--import]\n", stderr);
+        fputs("usage: holypkg apt index FILE --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY | apt sync URL --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--ca-file FILE] | apt sync-signed HTTPS_BASE/ SUITE COMPONENT ARCH --source NAME --keyring FILE --output NEW_DIRECTORY [--ca-file FILE] | apt search|info NAME --catalog DIRECTORY | apt fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--import]\n", stderr);
         return 2;
     }
     if (argc > 1 && !strcmp(argv[1], "apply")) return holy_apply_command(argc, argv);

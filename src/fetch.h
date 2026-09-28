@@ -15,6 +15,9 @@ int holy_fetch_https_data(const char *url, const char *expected,
 /* HTTPS foreign object into an existing private directory, named by actual SHA-256. */
 int holy_fetch_https_foreign(const char *url, const char *output,
                              const char *ca_file, char digest[65]);
+int holy_fetch_https_foreign_limited(const char *url, const char *output,
+                                     const char *ca_file, char digest[65],
+                                     unsigned long long max_bytes);
 /* owned HTTPS child URL; base is a credential/query-free directory URL. */
 char *holy_fetch_child_url(const char *base, const char *filename);
 /* reads the exact 72-byte unsigned HTTPS current pointer; zero succeeds. */

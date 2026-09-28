@@ -295,10 +295,10 @@ int holy_fetch_https_signature(const char *base, const char *digest,
 
 static int https_object(const char *url, const char *expected,
                         const char *output, const char *ca_file, int native,
-                        int emit, char actual[65])
+                        int emit, char actual[65], curl_off_t limit)
 {
     struct download transfer = { .fd = -1, .hash = NULL, .bytes = 0,
-                                .limit = native || actual ? 1024 * 1024 * 1024 : 16 * 1024 * 1024 };
+                                .limit = limit };
     CURL *curl = NULL;
     struct stat st;
     struct timespec started, now;
@@ -415,13 +415,15 @@ done:
 int holy_fetch_https(const char *url, const char *expected,
                      const char *output, const char *ca_file, int emit)
 {
-    return https_object(url, expected, output, ca_file, 1, emit, NULL);
+    return https_object(url, expected, output, ca_file, 1, emit, NULL,
+                        1024 * 1024 * 1024);
 }
 
 int holy_fetch_https_data(const char *url, const char *expected,
                           const char *output, const char *ca_file)
 {
-    return https_object(url, expected, output, ca_file, 0, 0, NULL);
+    return https_object(url, expected, output, ca_file, 0, 0, NULL,
+                        16 * 1024 * 1024);
 }
 
 int holy_fetch_https_foreign(const char *url, const char *output,
@@ -429,5 +431,16 @@ int holy_fetch_https_foreign(const char *url, const char *output,
 {
     if (!digest) return 2;
     digest[0] = 0;
-    return https_object(url, NULL, output, ca_file, 0, 0, digest);
+    return https_object(url, NULL, output, ca_file, 0, 0, digest,
+                        1024 * 1024 * 1024);
+}
+
+int holy_fetch_https_foreign_limited(const char *url, const char *output,
+                                     const char *ca_file, char digest[65],
+                                     unsigned long long max_bytes)
+{
+    if (!digest || !max_bytes || max_bytes > 1024ULL * 1024 * 1024) return 2;
+    digest[0] = 0;
+    return https_object(url, NULL, output, ca_file, 0, 0, digest,
+                        (curl_off_t)max_bytes);
 }

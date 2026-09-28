@@ -62,6 +62,24 @@ with tempfile.TemporaryDirectory() as scratch:
     packages.write_bytes(gzip.compress(row, mtime=0))
     (serve / "dists/stable/main/binary-all").mkdir(parents=True)
     (serve / "dists/stable/main/binary-all/Packages.gz").write_bytes(packages.read_bytes())
+    release = serve / "dists/stable/Release"
+    release.write_text("Suite: stable\nDate: Mon, 28 Sep 2026 00:00:00 UTC\n"
+                       "Valid-Until: Thu, 31 Dec 2099 00:00:00 UTC\n"
+                       "SHA256:\n"
+                       f" {'0' * 64} 100000000 other/Contents-amd64.gz\n"
+                       f" {hashlib.sha256(packages.read_bytes()).hexdigest()} "
+                       f"{packages.stat().st_size} main/binary-all/Packages.gz\n")
+    gnupg = tmp / "gnupg"
+    gnupg.mkdir(mode=0o700)
+    subprocess.run(["gpg", "--homedir", str(gnupg), "--batch", "--passphrase", "",
+                    "--quick-gen-key", "APT Fixture <apt@example.invalid>", "ed25519", "sign", "1d"],
+                   capture_output=True, check=True)
+    keyring = tmp / "trusted.gpg"
+    keyring.write_bytes(subprocess.check_output(["gpg", "--homedir", str(gnupg),
+                                                  "--export", "APT Fixture"], stderr=subprocess.DEVNULL))
+    subprocess.run(["gpg", "--homedir", str(gnupg), "--batch", "--yes",
+                    "--detach-sign", "--output", str(release.parent / "Release.gpg"),
+                    str(release)], capture_output=True, check=True)
     bad_rows = [
         row + row,
         row.replace(b"pool/main/f/fixture/fixture_2.0_all.deb", b"../outside.deb"),
@@ -121,6 +139,61 @@ with tempfile.TemporaryDirectory() as scratch:
         run("apt", "sync", packages_url, "--sha256",
             hashlib.sha256(packages.read_bytes()).hexdigest(), "--source", "debian",
             "--base", base, "--output", tmp / "remote-no-ca", status=6)
+        signed = tmp / "signed"
+        run("apt", "sync-signed", base, "stable", "main", "all", "--source", "debian",
+            "--keyring", keyring, "--output", signed, "--ca-file", tmp / "cert.pem")
+        assert "verification release-gpgv-user-key\n" in run(
+            "apt", "info", "fixture", "--catalog", signed)
+        missing_verifier = subprocess.run(
+            [binary, "apt", "search", "fixture", "--catalog", str(signed)],
+            capture_output=True, text=True, env={**os.environ, "PATH": "/nonexistent"})
+        assert missing_verifier.returncode == 6, missing_verifier.stderr
+        signed_package = tmp / "signed-package"
+        run("apt", "fetch", "fixture", "1:2.0-3", "all", "--catalog", signed,
+            "--output", signed_package, "--ca-file", tmp / "cert.pem", "--import")
+        assert "verification release-gpgv-user-key\n" in (signed_package / "selection").read_text()
+        signature = (signed / "release.gpg").read_bytes()
+        (signed / "release.gpg").write_bytes(signature + b"damage")
+        run("apt", "search", "fixture", "--catalog", signed, status=2)
+        (signed / "release.gpg").write_bytes(signature)
+        (signed / "keyring").write_bytes(b"wrong key")
+        run("apt", "search", "fixture", "--catalog", signed, status=2)
+        (signed / "keyring").write_bytes(keyring.read_bytes())
+        proof = (signed / "release-proof").read_bytes()
+        (signed / "release-proof").unlink()
+        run("apt", "search", "fixture", "--catalog", signed, status=2)
+        (signed / "release-proof").write_bytes(proof)
+
+        signed_dir = release.parent
+        signed_release = release.read_bytes()
+        release.write_bytes(signed_release + b"tamper\n")
+        run("apt", "sync-signed", base, "stable", "main", "all", "--source", "debian",
+            "--keyring", keyring, "--output", tmp / "bad-signature",
+            "--ca-file", tmp / "cert.pem", status=4)
+        assert not (tmp / "bad-signature").exists()
+        release.write_bytes(signed_release)
+
+        release.write_text("Suite: stable\nValid-Until: Mon, 01 Jan 2024 00:00:00 UTC\n"
+                           "SHA256:\n"
+                           f" {hashlib.sha256(packages.read_bytes()).hexdigest()} "
+                           f"{packages.stat().st_size} main/binary-all/Packages.gz\n")
+        subprocess.run(["gpg", "--homedir", str(gnupg), "--batch", "--yes",
+                        "--detach-sign", "--output", str(signed_dir / "Release.gpg"),
+                        str(release)], capture_output=True, check=True)
+        run("apt", "sync-signed", base, "stable", "main", "all", "--source", "debian",
+            "--keyring", keyring, "--output", tmp / "expired",
+            "--ca-file", tmp / "cert.pem", status=4)
+        assert not (tmp / "expired").exists()
+        release.write_text("Suite: testing\nSHA256:\n"
+                           f" {hashlib.sha256(packages.read_bytes()).hexdigest()} "
+                           f"{packages.stat().st_size} main/binary-all/Packages.gz\n")
+        subprocess.run(["gpg", "--homedir", str(gnupg), "--batch", "--yes",
+                        "--detach-sign", "--output", str(signed_dir / "Release.gpg"),
+                        str(release)], capture_output=True, check=True)
+        run("apt", "sync-signed", base, "stable", "main", "all", "--source", "debian",
+            "--keyring", keyring, "--output", tmp / "wrong-suite",
+            "--ca-file", tmp / "cert.pem", status=4)
+        assert not (tmp / "wrong-suite").exists()
         assert (catalog / "original").read_bytes() == packages.read_bytes()
         assert run("apt", "search", "fixture", "--catalog", catalog) == "fixture 1:2.0-3 all\n"
         info = run("apt", "info", "fixture", "--catalog", catalog)

@@ -16,6 +16,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apt sync HTTPS_URL --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--ca-file FILE]
 .br
+.B holypkg apt sync-signed HTTPS_BASE/ SUITE COMPONENT ARCH --source NAME --keyring FILE --output NEW_DIRECTORY [--ca-file FILE]
+.br
 .B holypkg apt search QUERY --catalog DIRECTORY
 .br
 .B holypkg apt info PACKAGE --catalog DIRECTORY
@@ -264,6 +266,18 @@ registered source-id. The output directory must not exist.
 downloads Packages over HTTPS into private staging, checks its explicit SHA-256
 pin and creates the same local catalog. It does not authenticate the Debian
 Release/InRelease signature.
+.B apt sync-signed
+downloads dists/SUITE/Release, Release.gpg and
+COMPONENT/binary-ARCH/Packages.gz over HTTPS. It runs gpgv with the selected
+keyring, checks the Suite or Codename, any Valid-Until deadline, and the
+signed SHA256 and size of Packages.gz. It stages the catalog beside the output
+and publishes it only after all checks pass. The catalog keeps Release,
+Release.gpg, the selected keyring and a proof record. Search, info and fetch
+recheck that proof; deleting it makes the signed catalog invalid. gpgv is an
+external requirement for this mode and the selected keyring is trusted for
+this operation. The command does not register that keyring as a source-id or
+implement the full APT repository policy. Signed catalog fetch receipts use
+verification=release-gpgv-user-key. Missing Valid-Until is accepted.
 .B apt search
 and
 .B apt info
@@ -275,8 +289,9 @@ selects an exact name, version and Debian architecture, downloads the listed
 Filename over HTTPS, and checks its SHA-256 and Size. The output retains the
 original .deb and a selection receipt. With --import, it invokes the local
 Debian converter and checks the native output identity. Index and selection
-receipts say pinned-unverified: an external pin is required, and this path
-does not check Release/InRelease signatures or bind a registered source-id.
+receipts say pinned-unverified when only an external pin is available. The
+signed path uses the separately selected keyring and Release.gpg; source-id
+binding remains open.
 It does not install packages. make check-apt covers local and HTTPS indexes,
 tampering, TLS fetch, hash mismatch and import identity.
 .PP

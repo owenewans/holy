@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "apt.h"
+#include "apt-release.h"
 #include "deb-version.h"
 #include "../src/config.h"
 #include "../src/stage.h"
@@ -36,6 +37,7 @@ struct apt_index {
     size_t count, capacity;
     char *source, *base;
     char hash[65];
+    int release_verified;
 };
 
 static void quote(FILE *out, const char *value)
@@ -313,8 +315,8 @@ done:
     return ok;
 }
 
-int holy_apt_index(const char *input, const char *expected, const char *source,
-                   const char *base, const char *output)
+static int write_index(const char *input, const char *expected, const char *source,
+                       const char *base, const char *output, int emit)
 {
     struct apt_index index = {0};
     struct stat st;
@@ -360,7 +362,7 @@ int holy_apt_index(const char *input, const char *expected, const char *source,
         record = NULL;
         if (failed || fsync(dir)) goto done;
     }
-    printf("apt index %s packages %zu sha256 %s\n", output, index.count, expected);
+    if (emit) printf("apt index %s packages %zu sha256 %s\n", output, index.count, expected);
     result = 0;
 done:
     if (result) fprintf(stderr, "holypkg: APT index incomplete (status %d)\n", result);
@@ -371,6 +373,18 @@ done:
     if (snapshot) { unlink(snapshot); free(snapshot); }
     free(data); free_index(&index);
     return result;
+}
+
+int holy_apt_index(const char *input, const char *expected, const char *source,
+                   const char *base, const char *output)
+{
+    return write_index(input, expected, source, base, output, 1);
+}
+
+int holy_apt_index_quiet(const char *input, const char *expected, const char *source,
+                         const char *base, const char *output)
+{
+    return write_index(input, expected, source, base, output, 0);
 }
 
 int holy_apt_sync(const char *url, const char *expected, const char *source,
@@ -412,7 +426,7 @@ static int read_catalog(const char *catalog, struct apt_index *index)
     size_t capacity = 0, size = 0;
     FILE *record = NULL;
     int dir = open(catalog, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    int fd = -1, status = 2, seen = 0;
+    int fd = -1, status = 2, seen = 0, release_required = 0;
     struct stat st;
     if (dir < 0) return 6;
     fd = openat(dir, "conversion", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
@@ -431,6 +445,7 @@ static int read_catalog(const char *catalog, struct apt_index *index)
         else if (!strcmp(v[0], "base-url") && !index->base) index->base = strdup(v[1]);
         else if (!strcmp(v[0], "index-sha256") && !index->hash[0] && digest(v[1])) strcpy(index->hash, v[1]);
         else if (!strcmp(v[0], "state") && !strcmp(v[1], "complete")) seen |= 2;
+        else if (!strcmp(v[0], "release-required") && !strcmp(v[1], "yes")) release_required = 1;
         holy_tokens_free(v, n);
     }
     if (ferror(record) || seen != 3 || !token(index->source) ||
@@ -449,6 +464,9 @@ static int read_catalog(const char *catalog, struct apt_index *index)
         if (!file_hash(fd, actual) || strcmp(actual, index->hash) ||
             !decompress(descriptor, &data, &size) || !parse_index(data, size, index)) goto done;
     }
+    index->release_verified = holy_apt_verify_release(catalog, index->hash);
+    if (index->release_verified == -2) { status = 6; goto done; }
+    if (index->release_verified < 0 || (release_required && !index->release_verified)) goto done;
     status = 0;
 done:
     if (record) fclose(record);
@@ -473,6 +491,7 @@ int holy_apt_query(const char *catalog, const char *query, int info)
         if (info) {
             printf("package %s\nversion %s\narch %s\nfilename %s\nsize %llu\nsha256 %s\n",
                    e->name, e->version, e->arch, e->filename, e->size, e->sha256);
+            printf("verification %s\n", index.release_verified ? "release-gpgv-user-key" : "pinned-unverified");
             fputs("depends ", stdout); quote(stdout, e->depends ? e->depends : "-"); fputc('\n', stdout);
             fputs("pre-depends ", stdout); quote(stdout, e->pre_depends ? e->pre_depends : "-"); fputc('\n', stdout);
             fputs("provides ", stdout); quote(stdout, e->provides ? e->provides : "-"); fputc('\n', stdout);
@@ -605,8 +624,10 @@ int holy_apt_fetch(const char *catalog, const char *name, const char *version,
     fputs("\nname ", receipt); quote(receipt, name);
     fputs("\nversion ", receipt); quote(receipt, version);
     fputs("\narch ", receipt); quote(receipt, arch);
-    fprintf(receipt, "\nindex-sha256 %s\nartifact-sha256 %s\nsize %llu\nverification pinned-unverified\nimported %s\nstate complete\n",
-            index.hash, selected->sha256, selected->size, import ? "yes" : "no");
+    fprintf(receipt, "\nindex-sha256 %s\nartifact-sha256 %s\nsize %llu\nverification %s\nimported %s\nstate complete\n",
+            index.hash, selected->sha256, selected->size,
+            index.release_verified ? "release-gpgv-user-key" : "pinned-unverified",
+            import ? "yes" : "no");
     {
         int failed = ferror(receipt);
         if (fflush(receipt) || fsync(fileno(receipt))) failed = 1;
