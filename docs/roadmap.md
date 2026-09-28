@@ -163,7 +163,9 @@
 - [x] Resolve direct absolute shebangs in native package sets against exact
   executable ELF paths. Save the selected provider edge, reject unresolved
   env/malformed scripts, block removal of a needed interpreter, and report
-  installed interpreter drift. Symlink aliases and interpreter chains remain open.
+  installed interpreter drift. Resolve relative symlink chains in the supplied
+  candidate set and protect each selected alias provider. Automatic discovery
+  of installed alias owners for a later script installation remains open.
 - [ ] Handle hooks, service consent, modified configs, overrides, rollback and
   recovery of each interrupted mutation phase.
 - [x] Prepare regular-file and relative-symlink replacements beside their target,

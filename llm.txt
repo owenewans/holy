@@ -811,7 +811,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=06b1202b24d3ab1fbe0868858cc7d71e52eab37c560ee417f42c88b0f4d90bfd
+holypkg.8 source=holy version=development sha256=cf89f08cc426d92ad319115ad98822e097ab8fcddcace22b7a9dd5769def1b02
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1623,13 +1623,17 @@ DESCRIPTION
      gram as a separate action. Executable payloads with an unknown  format  are
      refused;  an  executable  script  with  a direct absolute shebang creates a
      file-specific dependency edge to an executable ELF at that	 exact	path  in
-     the selected set.	The edge is saved in installed state and blocks provider
-     removal unless the caller accepts broken dependents. The planner requires a
-     decision  for  env, malformed shebangs and paths it cannot resolve. Symlink
-     aliases and interpreter chains are not yet resolved as  providers	by  this
-     subset.  Foreign architecture, including x86 on x86_64, returns requirement
-     error  6 until architecture override decisions are implemented. No metadata
-     is relabeled.
+     the selected set.	For relative symlinks in the supplied candidate set, the
+     planner  follows  each  alias  and records a separate provider edge for its
+     owning package and the final executable ELF. It rejects  ambiguous	 aliases
+     and chains longer than 16 hops with a decision-required result. These edges
+     are  saved	 in installed state and block provider removal unless the caller
+     accepts broken dependents. The planner requires a decision	 for  env,  mal-
+     formed shebangs and paths it cannot resolve. Automatic discovery of already
+     installed symlink owners for a newly added script remains incomplete.  For-
+     eign architecture, including x86 on x86_64, returns requirement error 6 un-
+     til  architecture	override decisions are implemented. No metadata is rela-
+     beled.
 
      Database check reads one installed manifest and compares its regular  files
      against  the  target  root by path, type, size, mode, numeric ownership and

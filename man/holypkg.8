@@ -825,10 +825,14 @@ it does not execute package programs. The caller may run an installed program
 as a separate action. Executable payloads with an unknown format are refused;
 an executable script with a direct absolute shebang creates a file-specific
 dependency edge to an executable ELF at that exact path in the selected set.
-The edge is saved in installed state and blocks provider removal unless the
+For relative symlinks in the supplied candidate set, the planner follows
+each alias and records a separate provider edge for its owning package and
+the final executable ELF. It rejects ambiguous aliases and chains longer
+than 16 hops with a decision-required result. These edges are saved in
+installed state and block provider removal unless the
 caller accepts broken dependents. The planner requires a decision for env,
-malformed shebangs and paths it cannot resolve. Symlink aliases and interpreter
-chains are not yet resolved as providers by this subset.
+malformed shebangs and paths it cannot resolve. Automatic discovery of
+already installed symlink owners for a newly added script remains incomplete.
 Foreign architecture, including x86 on x86_64, returns requirement error 6
 until architecture override decisions are implemented. No metadata is relabeled.
 .PP

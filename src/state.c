@@ -1688,7 +1688,7 @@ static int check_graph(int installed, int root, const char *digest,
         provider = child_dir(installed, v[3], 0);
         if (provider < 0) intact = errno == ENOENT ? 0 : -1;
         else if (!strcmp(v[5], "interpreter") || !strcmp(v[5], "needed-path") ||
-                 !strcmp(v[5], "shebang")) {
+                 !strcmp(v[5], "shebang") || !strcmp(v[5], "path-alias")) {
             int files = openat(provider, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
             intact = files < 0 || v[6][0] != '/' ? -1 : holy_install_check_path(files, root, v[6] + 1);
             if (files >= 0) close(files);

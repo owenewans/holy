@@ -45,7 +45,7 @@ package() {
     "$bin" manifest generate "$tree" --output "$tmp/files" > "$tmp/out"
     mv "$tmp/files" "$tree/HOLY/files"
     "$bin" pack "$tree" --output "$tmp/$name.holy" > "$tmp/out"
-    "$bin" cache stage "local:$tmp/$name.holy" --root "$root" > "$tmp/out"
+    "$bin" cache stage "local:$tmp/$name.holy" --root "${package_root:-$root}" > "$tmp/out"
     rm -r "$tree"
 }
 
@@ -101,5 +101,48 @@ if "$bin" db rm "$provider" --root "$root" > "$tmp/out" 2> "$tmp/err"; then exit
 if "$bin" db check "$direct" --root "$root" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 grep -q '"code":"missing-interpreter".*"path":"usr/bin/direct".*"target":"/usr/bin/sh-fixture"' "$tmp/out"
 grep -q '"code":"broken-provider"' "$tmp/out"
+
+root2="$tmp/root2"
+mkdir -p "$root2/usr/bin"
+"$bin" db init --root "$root2" > "$tmp/out"
+package_root=$root2
+package shell-script '#!/bin/sh'
+package busybox ELF
+unset package_root
+alias_package() {
+    name=$1
+    path=$2
+    target=$3
+    mkdir -p "$tree/HOLY" "$tree/DATA/$(dirname "$path")"
+    printf 'format holy-package-1\nname %s\nversion 1\nrelease 1\nos linux\narch noarch\nlibc nolibc\n' "$name" > "$tree/HOLY/meta"
+    for part in deps provides hooks origin transform; do : > "$tree/HOLY/$part"; done
+    ln -s "$target" "$tree/DATA/$path"
+    "$bin" manifest generate "$tree" --output "$tmp/files" > "$tmp/out"
+    mv "$tmp/files" "$tree/HOLY/files"
+    "$bin" pack "$tree" --output "$tmp/$name.holy" > "$tmp/out"
+    "$bin" cache stage "local:$tmp/$name.holy" --root "$root2" > "$tmp/out"
+    rm -r "$tree"
+}
+alias_package merged-bin bin usr/bin
+alias_package shell-link usr/bin/sh busybox
+alias_package shell-cycle usr/bin/sh ../../bin/sh
+script=$(sha256sum "$tmp/shell-script.holy" | cut -d ' ' -f 1)
+busybox=$(sha256sum "$tmp/busybox.holy" | cut -d ' ' -f 1)
+merged=$(sha256sum "$tmp/merged-bin.holy" | cut -d ' ' -f 1)
+shell_link=$(sha256sum "$tmp/shell-link.holy" | cut -d ' ' -f 1)
+cycle=$(sha256sum "$tmp/shell-cycle.holy" | cut -d ' ' -f 1)
+if "$bin" db plan-set "$script" "$busybox" "$shell_link" --root "$root2" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+if "$bin" db plan-set "$script" "$busybox" "$cycle" "$merged" --root "$root2" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+"$bin" db plan-set "$script" "$busybox" "$shell_link" "$merged" --root "$root2" > "$tmp/out"
+grep -q 'path-alias /bin' "$tmp/out"
+grep -q 'path-alias /usr/bin/sh' "$tmp/out"
+grep -q 'shebang /usr/bin/busybox' "$tmp/out"
+plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+"$bin" db apply-set "$plan" "$script" "$busybox" "$shell_link" "$merged" --root "$root2" > "$tmp/out"
+"$bin" db check "$script" --root "$root2" --json > "$tmp/out"
+grep -q '"state":"pass"' "$tmp/out"
+if "$bin" db rm "$merged" --root "$root2" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+if "$bin" db rm "$shell_link" --root "$root2" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+if "$bin" db rm "$busybox" --root "$root2" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 
 printf 'installed script checks passed\n'

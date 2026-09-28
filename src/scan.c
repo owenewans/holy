@@ -37,12 +37,28 @@ static const char *named_runtime(const struct holy_elf_info *info, const char *p
 }
 
 struct scan_link { char *path, *target; unsigned int mode; };
-struct scan_links { struct scan_link *items; size_t count; };
+struct scan_links { struct scan_link *items; size_t count; struct holy_scan_result *collected; };
 
 static int collect_link(void *opaque, const struct holy_manifest_entry *entry)
 {
     struct scan_links *links = opaque;
     struct scan_link *next;
+    if (entry->link && links->collected) {
+        struct holy_scanned_symlink *alias;
+        if (links->collected->symlink_count >= 65536) return 0;
+        alias = realloc(links->collected->symlinks,
+            (links->collected->symlink_count + 1) * sizeof *alias);
+        if (!alias) return 0;
+        links->collected->symlinks = alias;
+        alias = &alias[links->collected->symlink_count];
+        alias->path = strdup(entry->path);
+        alias->target = strdup(entry->link);
+        if (!alias->path || !alias->target) {
+            free(alias->path); free(alias->target);
+            return 0;
+        }
+        ++links->collected->symlink_count;
+    }
     if (!entry->hardlink) return 1;
     if (links->count >= 65536) return 0;
     next = realloc(links->items, (links->count + 1) * sizeof *next);
@@ -238,6 +254,7 @@ static int scan(const char *path, int emit, size_t *needed,
         fprintf(stderr, "holypkg: could not stage regular local input\n");
         return 0;
     }
+    links.collected = collected;
     if (!holy_verify_visit(snapshot, collect_link, &links) ||
         !holy_package_tags(snapshot, &arch, &libc)) goto done;
     if (links.count) qsort(links.items, links.count, sizeof *links.items, link_order);
@@ -368,6 +385,11 @@ void holy_scan_free(struct holy_scan_result *result)
         free(result->scripts[i].interpreter);
     }
     free(result->scripts);
+    for (i = 0; i < result->symlink_count; ++i) {
+        free(result->symlinks[i].path);
+        free(result->symlinks[i].target);
+    }
+    free(result->symlinks);
     free(result->files);
     memset(result, 0, sizeof *result);
 }

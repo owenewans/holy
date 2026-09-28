@@ -15,11 +15,17 @@ struct holy_scanned_script {
     char *interpreter;
     int kind;
 };
+struct holy_scanned_symlink {
+    char *path;
+    char *target;
+};
 struct holy_scan_result {
     struct holy_scanned_file *files;
     size_t count;
     struct holy_scanned_script *scripts;
     size_t script_count;
+    struct holy_scanned_symlink *symlinks;
+    size_t symlink_count;
 };
 
 /* collects owned facts from a verified snapshot; free after any result. */

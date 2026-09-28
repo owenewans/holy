@@ -22,6 +22,7 @@
 struct elf_edge {
     size_t requirement;
     const char *path, *kind, *target;
+    char *owned_target;
     const struct holy_scanned_file *file;
     const struct holy_elf_symbol *symbol;
 };
@@ -355,6 +356,7 @@ static int elf_requirement(struct local_item *local, struct holy_solver_item *it
     edges[consumer->edge_count].path = file->path;
     edges[consumer->edge_count].kind = kind;
     edges[consumer->edge_count].target = target;
+    edges[consumer->edge_count].owned_target = NULL;
     edges[consumer->edge_count].file = file;
     edges[consumer->edge_count].symbol = symbol;
     if (!add_requirement(consumer, id, capability)) goto done;
@@ -379,21 +381,61 @@ done:
     return ok;
 }
 
-static int script_requirement(struct local_item *local, struct holy_solver_item *items,
-                              size_t count, size_t consumer_index,
-                              const struct holy_scanned_script *script)
+static char *relative_target(const char *path, size_t alias_length,
+                             const char *target, const char *suffix)
+{
+    char *joined, *copy, *part, *save, *out;
+    size_t prefix = 0, depth = 0, length = 0, capacity;
+    char **parts;
+    size_t i;
+    if (target[0] == '/' || strlen(path) + strlen(target) + strlen(suffix) > 65536) return NULL;
+    for (i = 0; i < alias_length; ++i) if (path[i] == '/') prefix = i + 1;
+    capacity = prefix + strlen(target) + strlen(suffix) + 2;
+    joined = malloc(capacity);
+    if (!joined) return NULL;
+    snprintf(joined, capacity, "%.*s%s%s", (int)prefix, path, target, suffix);
+    copy = joined;
+    parts = calloc(capacity, sizeof *parts);
+    if (!parts) { free(joined); return NULL; }
+    for (part = strtok_r(copy, "/", &save); part; part = strtok_r(NULL, "/", &save)) {
+        if (!strcmp(part, ".")) continue;
+        if (!strcmp(part, "..")) {
+            if (!depth) { free(parts); free(joined); return NULL; }
+            --depth;
+        } else parts[depth++] = part;
+    }
+    if (!depth) { free(parts); free(joined); return NULL; }
+    out = malloc(capacity);
+    if (out) {
+        size_t i;
+        for (i = 0; i < depth; ++i) {
+            size_t n = strlen(parts[i]);
+            if (i) out[length++] = '/';
+            memcpy(out + length, parts[i], n);
+            length += n;
+        }
+        out[length] = 0;
+    }
+    free(parts); free(joined);
+    return out;
+}
+
+static int script_path_edge(struct local_item *local, struct holy_solver_item *items,
+                            size_t count, size_t consumer_index,
+                            const struct holy_scanned_script *script,
+                            const char *kind, const char *path,
+                            const char *link_target)
 {
     struct local_item *consumer = &local[consumer_index];
     const char *parts[] = {consumer->identity.name, consumer->identity.arch,
-                          consumer->identity.libc, script->path, script->interpreter};
+                          consumer->identity.libc, script->path, kind, path};
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
     struct elf_edge *edges;
     unsigned char hash[32];
     unsigned int length;
-    char id[72] = "script-", capability[140];
+    char id[72] = "script-", capability[160];
     size_t i, j;
     int ok = 0;
-    if (script->kind != 1 || !literal_path(script->interpreter)) goto done;
     if (!ctx || EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1) goto done;
     for (i = 0; i < sizeof parts / sizeof *parts; ++i)
         if (EVP_DigestUpdate(ctx, parts[i], strlen(parts[i]) + 1) != 1) goto done;
@@ -405,20 +447,33 @@ static int script_requirement(struct local_item *local, struct holy_solver_item 
     consumer->edges = edges;
     edges[consumer->edge_count].requirement = consumer->requirement_count;
     edges[consumer->edge_count].path = script->path;
-    edges[consumer->edge_count].kind = "shebang";
-    edges[consumer->edge_count].target = script->interpreter;
+    edges[consumer->edge_count].kind = kind;
+    edges[consumer->edge_count].owned_target = malloc(strlen(path) + 2);
+    if (!edges[consumer->edge_count].owned_target) goto done;
+    sprintf(edges[consumer->edge_count].owned_target, "/%s", path);
+    edges[consumer->edge_count].target = edges[consumer->edge_count].owned_target;
     edges[consumer->edge_count].file = NULL;
     edges[consumer->edge_count].symbol = NULL;
-    if (!add_requirement(consumer, id, capability)) goto done;
+    if (!add_requirement(consumer, id, capability)) {
+        free(edges[consumer->edge_count].owned_target);
+        goto done;
+    }
     ++consumer->edge_count;
-    for (i = 0; i < count; ++i) for (j = 0; j < local[i].scan.count; ++j) {
-        const struct holy_scanned_file *candidate = &local[i].scan.files[j];
-        if (!strcmp(candidate->path, script->interpreter + 1) &&
-            (candidate->mode & 0111) &&
-            (candidate->elf.type == ET_EXEC ||
-             (candidate->elf.type == ET_DYN &&
-              ((candidate->elf.flags1 & DF_1_PIE) || candidate->elf.interpreter))) &&
-            !add_provide(&items[i], capability)) goto done;
+    for (i = 0; i < count; ++i) {
+        if (link_target) {
+            for (j = 0; j < local[i].scan.symlink_count; ++j) {
+                const struct holy_scanned_symlink *candidate = &local[i].scan.symlinks[j];
+                if (!strcmp(candidate->path, path) && !strcmp(candidate->target, link_target) &&
+                    !add_provide(&items[i], capability)) goto done;
+            }
+        } else for (j = 0; j < local[i].scan.count; ++j) {
+            const struct holy_scanned_file *candidate = &local[i].scan.files[j];
+            if (!strcmp(candidate->path, path) && (candidate->mode & 0111) &&
+                (candidate->elf.type == ET_EXEC ||
+                 (candidate->elf.type == ET_DYN &&
+                  ((candidate->elf.flags1 & DF_1_PIE) || candidate->elf.interpreter))) &&
+                !add_provide(&items[i], capability)) goto done;
+        }
     }
     ok = 1;
 done:
@@ -426,12 +481,69 @@ done:
     return ok;
 }
 
+static int script_requirement(struct local_item *local, struct holy_solver_item *items,
+                              size_t count, size_t consumer_index,
+                              const struct holy_scanned_script *script)
+{
+    char *path = strdup(script->interpreter + 1);
+    char *visited[16] = {0};
+    size_t hop, i, j;
+    int result = 0;
+    if (!path) return 0;
+    for (hop = 0; hop < 16; ++hop) {
+        const char *target = NULL;
+        size_t prefix = 0;
+        char *next;
+        for (i = 0; i < hop; ++i) if (!strcmp(path, visited[i])) {
+            result = 3; goto done;
+        }
+        visited[hop] = strdup(path);
+        if (!visited[hop]) goto done;
+        for (i = 0; i < count; ++i) for (j = 0; j < local[i].scan.symlink_count; ++j) {
+            const struct holy_scanned_symlink *candidate = &local[i].scan.symlinks[j];
+            size_t n = strlen(candidate->path);
+            if (n <= prefix || strncmp(path, candidate->path, n) ||
+                (path[n] && path[n] != '/')) continue;
+            prefix = n;
+            target = candidate->target;
+        }
+        if (!target) {
+            result = script_path_edge(local, items, count, consumer_index, script,
+                                      "shebang", path, NULL);
+            break;
+        }
+        for (i = 0; i < count; ++i) for (j = 0; j < local[i].scan.symlink_count; ++j) {
+            const struct holy_scanned_symlink *candidate = &local[i].scan.symlinks[j];
+            if (strlen(candidate->path) == prefix && !strncmp(path, candidate->path, prefix) &&
+                strcmp(candidate->target, target)) {
+                fprintf(stderr, "holypkg: ambiguous script alias %.*s\n", (int)prefix, path);
+                result = 3; goto done;
+            }
+        }
+        next = relative_target(path, prefix, target, path + prefix);
+        if (!next) { result = 3; goto done; }
+        path[prefix] = 0;
+        if (!script_path_edge(local, items, count, consumer_index, script,
+                              "path-alias", path, target)) { free(next); goto done; }
+        free(path);
+        path = next;
+    }
+    if (hop == 16) result = 3;
+done:
+    for (i = 0; i < 16; ++i) free(visited[i]);
+    free(path);
+    return result;
+}
+
 static int elf_requirements(struct local_item *local, struct holy_solver_item *items, size_t count)
 {
     size_t i, j, k;
     for (i = 0; i < count; ++i)
         for (j = 0; j < local[i].scan.script_count; ++j)
-            if (!script_requirement(local, items, count, i, &local[i].scan.scripts[j])) return 0;
+            {
+                int status = script_requirement(local, items, count, i, &local[i].scan.scripts[j]);
+                if (status != 1) return status;
+            }
     for (i = 0; i < count; ++i) for (j = 0; j < local[i].scan.count; ++j) {
         const struct holy_scanned_file *f = &local[i].scan.files[j];
         if (f->elf.interpreter && !elf_requirement(local, items, count, i, f, "interpreter", f->elf.interpreter, NULL)) return 0;
@@ -735,7 +847,10 @@ static int resolve(const char *const *paths, size_t count, int json,
             goto done;
         }
     }
-    if (!elf_requirements(local, items, count)) goto done;
+    {
+        int status = elf_requirements(local, items, count);
+        if (status != 1) { if (status == 3) result = 3; goto done; }
+    }
     for (i = 0; i < count; ++i) {
         items[i].requires = local[i].requirements;
         items[i].requires_count = local[i].requirement_count;
@@ -848,6 +963,8 @@ done:
         free(local[i].requirement_ids);
         free(local[i].original_requirements);
         free(local[i].capability);
+        for (j = 0; j < local[i].edge_count; ++j)
+            free(local[i].edges[j].owned_target);
         free(local[i].edges);
         for (j = 0; j < local[i].package_edge_count; ++j) {
             free(local[i].package_edges[j].arch); free(local[i].package_edges[j].libc);
