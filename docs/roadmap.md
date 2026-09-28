@@ -18,10 +18,10 @@
 
 - [x] Add a direct `holypkg run SOURCE:PACKAGE -- COMMAND` launcher for an
   installed executable, with source-slot selection, manifest verification,
-  argv/exit preservation, and private-bin PATH priority when such paths exist.
+  argv/exit preservation, and manifest-derived private-bin PATH priority.
   The fixture installs a static executable in a disposable root. An explicit
-  `--view PUBLIC=PRIVATE` now bind mounts a package-owned private regular file
-  over an existing public file inside a private user/mount namespace, then
+  `--view PUBLIC=PRIVATE` bind mounts a package-owned private file or directory
+  over an existing public path of the same type in a private user/mount namespace, then
   enters the target root. The fixture checks absolute helper lookup, argv,
   exit status and host path isolation. Automatic private conflict placement,
   missing public mountpoints and privileged fallback remain open.
@@ -439,8 +439,10 @@
   uses actual ET_DYN payload facts, then verifies selected archives; a forged
   HOLY/provides SONAME claim cannot become a candidate. Generation 6 adds
   per-library defined version names and checks strong ELF version needs before
-  staging SONAME candidates. Selected archives are still rescanned for symbol
-  exports. Indexing individual symbol exports and cross-source lookup remain open.
+  staging SONAME candidates. A targeted payload scan now rejects a matching
+  SONAME/version candidate missing a strong imported symbol before staging.
+  The resolver rechecks selected archives. Indexing individual symbol exports
+  and cross-source lookup remain open.
 - [x] Bind a verified synced mirror and index digest to a registered source-id
   under the target database lock. Resolve add, fetch, search and info without
   repeating --catalog; reject corrupt bindings and changed mirrors. Keep the

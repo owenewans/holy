@@ -725,3 +725,24 @@ const char *holy_elf_isa(const struct holy_elf_info *info)
     if (mask & GNU_PROPERTY_X86_ISA_1_BASELINE) return "x86-64-baseline";
     return "unknown";
 }
+
+int holy_elf_exports_symbol(const struct holy_elf_info *provider,
+                            const struct holy_elf_symbol *wanted)
+{
+    size_t i;
+    for (i = 0; i < provider->symbol_count; ++i) {
+        const struct holy_elf_symbol *s = &provider->symbols[i];
+        if (!s->section ||
+            (s->binding != STB_GLOBAL && s->binding != STB_WEAK && s->binding != 10) ||
+            (s->visibility != STV_DEFAULT && s->visibility != STV_PROTECTED) ||
+            strcmp(s->name, wanted->name)) continue;
+        if ((wanted->type == STT_TLS) != (s->type == STT_TLS)) continue;
+        if (wanted->type == STT_FUNC && s->type != STT_FUNC && s->type != 10) continue;
+        if (wanted->type == STT_OBJECT && s->type != STT_OBJECT) continue;
+        if (wanted->version) {
+            if (!s->version || strcmp(s->version, wanted->version)) continue;
+        } else if (s->version_hidden) continue;
+        return 1;
+    }
+    return 0;
+}

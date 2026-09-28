@@ -88,11 +88,17 @@ if test -n "$arch"; then
     cat > "$tmp/foo.c" <<'C'
 int foo(void) { return 2; }
 C
+    cat > "$tmp/wrong.c" <<'C'
+int bar(void) { return 2; }
+C
     cat > "$tmp/good.map" <<'MAP'
 GOOD_1 { global: foo; };
 MAP
     cat > "$tmp/bad.map" <<'MAP'
 BAD_1 { global: foo; };
+MAP
+    cat > "$tmp/wrong.map" <<'MAP'
+GOOD_1 { global: bar; };
 MAP
     printf 'extern int foo(void); int consumer(void) { return foo(); }\n' > "$tmp/consumer.c"
     "${CC:-cc}" -shared -fPIC -o "$tmp/libgood.so" "$tmp/foo.c" \
@@ -101,9 +107,12 @@ MAP
     "${CC:-cc}" -shared -fPIC -o "$tmp/libbad.so" "$tmp/foo.c" \
         -Wl,-soname,libchoice.so.1 -Wl,--version-script="$tmp/bad.map" \
         -Wl,--no-as-needed -lc
+    "${CC:-cc}" -shared -fPIC -o "$tmp/libwrong.so" "$tmp/wrong.c" \
+        -Wl,-soname,libchoice.so.1 -Wl,--version-script="$tmp/wrong.map" \
+        -Wl,--no-as-needed -lc
     "${CC:-cc}" -shared -fPIC -o "$tmp/libconsumer.so" "$tmp/consumer.c" \
         -L"$tmp" -lgood -Wl,--no-as-needed -lc
-    for name in good bad consumer; do
+    for name in good bad wrong consumer; do
         rm -rf "$tmp/tree/DATA"
         mkdir -p "$tmp/tree/DATA/usr/lib/holy/${arch}-linux-gnu"
         printf 'format holy-package-1\nname %s\nversion 1\nrelease 1\nos linux\narch %s\nlibc glibc\n' \
@@ -277,12 +286,16 @@ if test -n "$arch"; then
     grep -q '"BAD_1"' "$tmp/repo/index"
     bad=$(sha256sum "$tmp/repo/bad.holy" | cut -d ' ' -f 1)
     good=$(sha256sum "$tmp/repo/good.holy" | cut -d ' ' -f 1)
+    wrong=$(sha256sum "$tmp/repo/wrong.holy" | cut -d ' ' -f 1)
+    grep -F "elf-version $wrong " "$tmp/repo/index" | grep -q '"GOOD_1"'
+    grep -F "soname $wrong " "$tmp/repo/index" | grep -q '"libchoice.so.1"'
     cp "$tmp/repo/bad.holy" "$tmp/bad.saved"
     printf 'corrupt\n' > "$tmp/repo/bad.holy"
     if "$bin" add fixture:consumer --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
     if grep -q 'invalid or stale repository index' "$tmp/err"; then cat "$tmp/err"; exit 1; fi
     test -f "$tmp/root/var/cache/holypkg/objects/sha256/$good.holy"
     test ! -e "$tmp/root/var/cache/holypkg/objects/sha256/$bad.holy"
+    test ! -e "$tmp/root/var/cache/holypkg/objects/sha256/$wrong.holy"
     cp "$tmp/bad.saved" "$tmp/repo/bad.holy"
 fi
 cp "$tmp/repo/dep.holy" "$tmp/dep.saved"

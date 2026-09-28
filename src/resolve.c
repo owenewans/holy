@@ -445,25 +445,6 @@ static int compatible(const struct holy_scanned_file *a, const struct holy_scann
            !strcmp(a->runtime, b->runtime);
 }
 
-static int exports_symbol(const struct holy_elf_info *elf, const struct holy_elf_symbol *wanted)
-{
-    size_t i;
-    for (i = 0; i < elf->symbol_count; ++i) {
-        const struct holy_elf_symbol *s = &elf->symbols[i];
-        if (!s->section || (s->binding != STB_GLOBAL && s->binding != STB_WEAK && s->binding != 10) ||
-            (s->visibility != STV_DEFAULT && s->visibility != STV_PROTECTED) ||
-            strcmp(s->name, wanted->name)) continue;
-        if ((wanted->type == STT_TLS) != (s->type == STT_TLS)) continue;
-        if (wanted->type == STT_FUNC && s->type != STT_FUNC && s->type != 10) continue;
-        if (wanted->type == STT_OBJECT && s->type != STT_OBJECT) continue;
-        if (wanted->version) {
-            if (!s->version || strcmp(s->version, wanted->version)) continue;
-        } else if (s->version_hidden) continue;
-        return 1;
-    }
-    return 0;
-}
-
 static int literal_path(const char *path)
 {
     const char *part, *end;
@@ -497,7 +478,7 @@ static int needed_matches(const struct holy_scanned_file *consumer,
     for (i = 0; i < consumer->elf.symbol_count; ++i) {
         const struct holy_elf_symbol *s = &consumer->elf.symbols[i];
         if (s->section || s->binding == STB_WEAK || !s->provider || strcmp(s->provider, needed)) continue;
-        if (!exports_symbol(&provider->elf, s)) return 0;
+        if (!holy_elf_exports_symbol(&provider->elf, s)) return 0;
     }
     return 1;
 }
@@ -560,7 +541,7 @@ static int elf_requirement(struct local_item *local, struct holy_solver_item *it
                 matches = target[0] == '/' && !strcmp(target + 1, candidate->path) &&
                           (candidate->mode & 0111) && compatible(file, candidate);
             else matches = compatible(file, candidate) && direct_provider(file, candidate) &&
-                           exports_symbol(&candidate->elf, symbol);
+                           holy_elf_exports_symbol(&candidate->elf, symbol);
             if (matches && !add_provide(&items[i], capability)) goto done;
         }
     }
@@ -738,7 +719,7 @@ static int symbol_context(const struct local_item *consumer, const struct elf_ed
     size_t i, j;
     for (i = 0; i < provider->scan.count; ++i) {
         const struct holy_scanned_file *f = &provider->scan.files[i];
-        if (!compatible(edge->file, f) || !exports_symbol(&f->elf, edge->symbol)) continue;
+        if (!compatible(edge->file, f) || !holy_elf_exports_symbol(&f->elf, edge->symbol)) continue;
         if (f == edge->file) return 1;
         for (j = 0; j < consumer->edge_count; ++j) {
             const struct elf_edge *dependency = &consumer->edges[j];

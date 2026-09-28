@@ -1870,7 +1870,10 @@ or forged SONAME claims. A further coverage line and elf-version records bind
 defined version names to each library path. When an ELF consumer has strong
 version needs for a DT_NEEDED name, indexed closure staging selects only
 same-ABI SONAME candidates carrying every required version. Selected archives
-are rescanned and checked for actual symbol exports by the resolver. Readers
+with strong symbol imports also trigger a targeted scan of each matching
+candidate before staging; a library with the right version name but without
+the requested export is excluded. The resolver checks selected archives again
+against actual symbol exports. Readers
 compare selected index facts with the artifact. Old holy-index-prototype-1
 through -5 generations remain readable,
 with the coverage each generation declares;

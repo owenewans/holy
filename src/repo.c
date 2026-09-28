@@ -978,7 +978,51 @@ static int closure_provider(struct closure *closure, const char *kind,
     return 1;
 }
 
-static int closure_soname(const struct object *objects, struct closure *closure,
+static int candidate_symbols(int dir, const struct object *object,
+                             const struct soname_fact *fact,
+                             const struct holy_scanned_file *consumer,
+                             const char *needed)
+{
+    struct holy_scan_result scan = {0};
+    char *snapshot = NULL, actual[65];
+    size_t i, j;
+    int fd, result = 0, required = 0;
+    for (i = 0; i < consumer->elf.symbol_count; ++i) {
+        const struct holy_elf_symbol *symbol = &consumer->elf.symbols[i];
+        if (!symbol->section && symbol->binding != STB_WEAK && symbol->provider &&
+            !strcmp(symbol->provider, needed)) { required = 1; break; }
+    }
+    if (!required) return 1;
+    fd = openat(dir, object->filename, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (fd < 0) return -1;
+    snapshot = holy_stage_fd(fd, "holy-soname-probe");
+    close(fd);
+    if (!snapshot || !digest_file(snapshot, actual) ||
+        strcmp(actual, object->identity.digest) ||
+        !holy_scan_collect(snapshot, &scan)) { result = -1; goto done; }
+    for (i = 0; i < scan.count; ++i) {
+        const struct holy_scanned_file *file = &scan.files[i];
+        if (strcmp(file->path, fact->path) || file->elf.type != ET_DYN ||
+            (file->elf.flags1 & DF_1_PIE) || !file->elf.soname ||
+            strcmp(file->elf.soname, needed) ||
+            strcmp(holy_elf_machine(&file->elf), fact->arch) ||
+            strcmp(file->runtime, fact->libc)) continue;
+        result = 1;
+        for (j = 0; j < consumer->elf.symbol_count; ++j) {
+            const struct holy_elf_symbol *symbol = &consumer->elf.symbols[j];
+            if (symbol->section || symbol->binding == STB_WEAK ||
+                !symbol->provider || strcmp(symbol->provider, needed)) continue;
+            if (!holy_elf_exports_symbol(&file->elf, symbol)) { result = 0; break; }
+        }
+        break;
+    }
+done:
+    holy_scan_free(&scan);
+    if (snapshot) { unlink(snapshot); free(snapshot); }
+    return result;
+}
+
+static int closure_soname(int dir, const struct object *objects, struct closure *closure,
                           const struct holy_scanned_file *consumer,
                           const char *needed)
 {
@@ -1010,7 +1054,11 @@ static int closure_soname(const struct object *objects, struct closure *closure,
                         !strcmp(object->versions[n].name, want->name)) break;
                 if (n == object->version_count) { compatible = 0; break; }
             }
-            if (compatible) { if (!closure_add(closure, key->index)) return 0; break; }
+            if (compatible) {
+                int symbols = candidate_symbols(dir, object, fact, consumer, needed);
+                if (symbols < 0) return 0;
+                if (symbols) { if (!closure_add(closure, key->index)) return 0; break; }
+            }
         }
     }
     return 1;
@@ -1023,7 +1071,7 @@ static int closure_or_provider(void *opaque, const char *name,
     return closure_provider(opaque, "package", name);
 }
 
-static int closure_expand(const struct object *objects,
+static int closure_expand(int dir, const struct object *objects,
                           struct closure *closure, size_t index,
                           const char *snapshot, int version_index)
 {
@@ -1045,7 +1093,7 @@ static int closure_expand(const struct object *objects,
             ok = closure_provider(closure, "file", elf->interpreter);
         for (j = 0; j < elf->needed_count && ok; ++j)
             ok = version_index && elf->needed[j][0] != '/' ?
-                 closure_soname(objects, closure, &scan.files[i], elf->needed[j]) :
+                 closure_soname(dir, objects, closure, &scan.files[i], elf->needed[j]) :
                  closure_provider(closure,
                                   elf->needed[j][0] == '/' ? "file" : "soname",
                                   elf->needed[j]);
@@ -1399,7 +1447,7 @@ static int list(const char *directory, const char *query,
             }
         }
         if (closure.selected &&
-            !closure_expand(objects, &closure, i, snapshot, version_index)) {
+            !closure_expand(dir, objects, &closure, i, snapshot, version_index)) {
             unlink(snapshot);
             free(snapshot);
             goto done;
