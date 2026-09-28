@@ -114,11 +114,11 @@ with tempfile.TemporaryDirectory() as scratch:
 
     _, artifacts, _ = convert(package("unknown-field", payload, "future_semantic = preserve\nconflict = other<2\n"), "unknown-field-output")
     assert "foreign" in run("requirements", "local:" + str(artifacts[0]))
-    run("solve", "local:" + str(artifacts[0]), status=6)
+    run("solve", "local:" + str(artifacts[0]), status=3)
     _, artifacts, _ = convert(package("unknown-xdata", payload,
         "xdata = pkgtype=pkg\nxdata = future=semantic\n"), "unknown-xdata-output")
     assert "foreign" in run("requirements", "local:" + str(artifacts[0]))
-    run("solve", "local:" + str(artifacts[0]), status=6)
+    run("solve", "local:" + str(artifacts[0]), status=3)
     _, artifacts, _ = convert(package("links", payload + [
         ("usr/share/hard", b"", "hardlink", "usr/share/value", 0o644),
         ("usr/share/link", b"", "symlink", "value", 0o777),

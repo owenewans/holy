@@ -10,7 +10,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
-.B holypkg import INPUT --source NAME --format pacman|deb --output NEW_DIRECTORY
+.B holypkg import INPUT --source NAME --format pacman|deb|slackware --output NEW_DIRECTORY
 .br
 .B holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIRECTORY [--public-key PUBLIC_KEY.pem] [--ca-file FILE]
 .br
@@ -188,8 +188,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 .SH DESCRIPTION
-.SS Local pacman and Debian binary import
-import snapshots a local pacman tar archive or Debian .deb, retains its exact bytes as
+.SS Local pacman, Debian and Slackware binary import
+import snapshots a local pacman tar archive, Debian .deb or Slackware package, retains its exact bytes as
 NEW_DIRECTORY/original and creates verified LZ4-frame .holy outputs. The output
 directory must not exist. --format selects the adapter explicitly; --source
 records provenance only and grants no registered source identity or trust.
@@ -223,6 +223,20 @@ version-file lines, ignores additional ar members after data.tar, and checks
 that the control/data compression matches its member suffix. The version file
 is limited to 4096 bytes.
 .PP
+--format slackware reads a .txz, .tgz, .tbz or .tlz tar package and checks its
+compression against the filename suffix. It parses the
+name-version-arch-build filename from the right, preserves the build tag as the
+native release, and retains install/ files under HOLY/foreign/slackware.
+install/doinst.sh is recorded as a review-required shell hook and is not run
+during conversion. Unknown install/ control files become attributed foreign
+requirements. Official Slackware packages need not declare dependencies; the
+importer does not invent them. It accepts noarch, x86_64 and i386/i486/i586/i686
+source architecture labels, then separates observed ELF arch/libc outputs.
+An unknown or contradictory claim returns status 3. The Slackware version
+family has no automatic comparator yet, so update choice requires review.
+make check-slackware covers codecs, links, scripts, path rejection, mixed ELF
+outputs and install/check/remove of a converted data package.
+.PP
 The importer reads .PKGINFO identities, full epoch/version/release strings,
 package relations and original field values. It preserves .PKGINFO, .BUILDINFO,
 \&.MTREE, .INSTALL and .CHANGELOG beneath HOLY/foreign/pacman. Numeric and symbolic
@@ -251,7 +265,7 @@ The conversion receipt binds the original SHA-256 to every output filename,
 SHA-256 and arch/libc pair. The importer publishes it only after completing all
 outputs. A failed conversion retains the original and any completed outputs;
 without a complete receipt the output set is incomplete. Existing output files
-are not overwritten. Origin metadata uses converter identity holy-pacman-1;
+are not overwritten. Origin metadata records the format-specific converter identity;
 executable build attestation and publisher verification remain unimplemented.
 .PP
 Libarchive supplies tar and built-in gzip, bzip2, XZ, Zstandard and LZ4 codecs

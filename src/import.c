@@ -45,7 +45,8 @@ struct foreign_input {
     int unknown;
 };
 
-enum foreign_archive_kind { FOREIGN_PACMAN, FOREIGN_DEB_CONTROL, FOREIGN_DEB_DATA };
+enum foreign_archive_kind { FOREIGN_PACMAN, FOREIGN_DEB_CONTROL, FOREIGN_DEB_DATA,
+                            FOREIGN_SLACKWARE };
 
 struct deb_field { char *key, *value; size_t line; };
 struct deb_metadata {
@@ -53,6 +54,8 @@ struct deb_metadata {
     struct deb_field *fields;
     size_t count;
 };
+
+struct slack_metadata { char *name, *version, *arch, *build; int lzma; };
 
 static void token(FILE *out, const char *value)
 {
@@ -187,14 +190,20 @@ static int collect_archive(const char *snapshot, struct foreign_input *input,
         if (!e->original) goto done;
         if (kind == FOREIGN_DEB_CONTROL && strchr(e->original, '/')) goto done;
         e->metadata = kind == FOREIGN_DEB_CONTROL ||
-                      (kind == FOREIGN_PACMAN && metadata_path(e->original));
-        if (e->metadata && (type != AE_IFREG || hardlink)) goto done;
+                      (kind == FOREIGN_PACMAN && metadata_path(e->original)) ||
+                      (kind == FOREIGN_SLACKWARE &&
+                       (!strcmp(e->original, "install") || !strncmp(e->original, "install/", 8)));
+        if (e->metadata && (type != AE_IFREG || hardlink) &&
+            !(kind == FOREIGN_SLACKWARE && !strcmp(e->original, "install") && type == AE_IFDIR)) goto done;
         if (kind == FOREIGN_DEB_CONTROL) {
             char *original = e->original;
             e->stream.path = joined("HOLY/foreign/deb", original);
             e->original = joined("@control", original);
             free(original);
-        } else e->stream.path = e->metadata ?
+        } else if (kind == FOREIGN_SLACKWARE && e->metadata)
+            e->stream.path = joined("HOLY/foreign/slackware",
+                                    !strcmp(e->original, "install") ? "" : e->original + 8);
+        else e->stream.path = e->metadata ?
             joined("HOLY/foreign/pacman", e->original + 1) : joined("DATA", e->original);
         e->stream.mode = archive_entry_perm(entry);
         e->stream.uid = archive_entry_uid(entry); e->stream.gid = archive_entry_gid(entry);
@@ -262,7 +271,8 @@ static int collect_archive(const char *snapshot, struct foreign_input *input,
             input->pkginfo[size] = 0; input->pkginfo_size = (size_t)size;
         }
     }
-    if (status != ARCHIVE_EOF || (kind != FOREIGN_DEB_DATA && !input->pkginfo) ||
+    if (status != ARCHIVE_EOF ||
+        ((kind == FOREIGN_PACMAN || kind == FOREIGN_DEB_CONTROL) && !input->pkginfo) ||
         fflush(input->spool) || fsync(fileno(input->spool))) goto done;
     result = 0;
 done:
@@ -466,6 +476,72 @@ static int parse_deb(const char *control, size_t length, struct deb_metadata *me
     return 1;
 }
 
+static void free_slack(struct slack_metadata *meta)
+{
+    free(meta->name); free(meta->version); free(meta->arch); free(meta->build);
+}
+
+static int parse_slack_name(const char *path, struct slack_metadata *meta)
+{
+    const char *base = strrchr(path, '/');
+    char *copy, *part;
+    size_t i, length;
+    base = base ? base + 1 : path;
+    length = strlen(base);
+    if (length < 12 ||
+        (strcmp(base + length - 4, ".txz") && strcmp(base + length - 4, ".tgz") &&
+         strcmp(base + length - 4, ".tbz") && strcmp(base + length - 4, ".tlz"))) return 0;
+    meta->lzma = !strcmp(base + length - 4, ".tlz");
+    copy = strndup(base, length - 4);
+    if (!copy) return 0;
+    part = strrchr(copy, '-');
+    if (!part || !part[1]) goto bad;
+    meta->build = strdup(part + 1); *part = 0;
+    part = strrchr(copy, '-');
+    if (!part || !part[1]) goto bad;
+    meta->arch = strdup(part + 1); *part = 0;
+    part = strrchr(copy, '-');
+    if (!part || !part[1] || part == copy) goto bad;
+    meta->version = strdup(part + 1); *part = 0;
+    meta->name = strdup(copy);
+    if (!meta->name || !meta->version || !meta->arch || !meta->build) goto bad;
+    for (i = 0; meta->name[i]; ++i)
+        if (!isalnum((unsigned char)meta->name[i]) &&
+            (i == 0 || (meta->name[i] != '-' && meta->name[i] != '_' &&
+                        meta->name[i] != '+' && meta->name[i] != '.'))) goto bad;
+    for (i = 0; meta->version[i]; ++i)
+        if (!isalnum((unsigned char)meta->version[i]) &&
+            meta->version[i] != '.' && meta->version[i] != '_' &&
+            meta->version[i] != '+' && meta->version[i] != '~') goto bad;
+    for (i = 0; meta->arch[i]; ++i)
+        if (!isalnum((unsigned char)meta->arch[i]) && meta->arch[i] != '_') goto bad;
+    for (i = 0; meta->build[i]; ++i)
+        if (!isalnum((unsigned char)meta->build[i]) &&
+            meta->build[i] != '_' && meta->build[i] != '.') goto bad;
+    free(copy);
+    return 1;
+bad:
+    free(copy);
+    return 0;
+}
+
+static int slack_codec_matches(const char *snapshot, const char *path)
+{
+    unsigned char header[6];
+    size_t length = strlen(path);
+    int fd = open(snapshot, O_RDONLY | O_CLOEXEC);
+    ssize_t got = fd >= 0 ? pread(fd, header, sizeof header, 0) : -1;
+    if (fd >= 0) close(fd);
+    if (got < 0 || length < 4) return 0;
+    if (!strcmp(path + length - 4, ".txz"))
+        return got >= 6 && !memcmp(header, "\xfd""7zXZ\0", 6);
+    if (!strcmp(path + length - 4, ".tgz"))
+        return got >= 2 && header[0] == 0x1f && header[1] == 0x8b;
+    if (!strcmp(path + length - 4, ".tbz"))
+        return got >= 3 && !memcmp(header, "BZh", 3);
+    return got > 0;
+}
+
 static int input_hash(const char *path, char hex[65])
 {
     FILE *file = fopen(path, "rb");
@@ -637,7 +713,8 @@ static void hex_hash(FILE *file, const unsigned char hash[32])
     for (i = 0; i < 32; ++i) fprintf(file, "%02x", hash[i]);
 }
 
-static int write_manifest(FILE *manifest, const struct foreign_input *input, size_t index)
+static int write_manifest(FILE *manifest, const struct foreign_input *input,
+                          size_t index, const char *family)
 {
     const struct foreign_entry *e = &input->entries[index];
     const struct holy_stream_entry *s = &e->stream;
@@ -649,7 +726,7 @@ static int write_manifest(FILE *manifest, const struct foreign_input *input, siz
     fprintf(manifest, " %lld %lld %lld ", s->uid, s->gid, size);
     if (s->directory || s->link) fputc('-', manifest); else hex_hash(manifest, e->hash);
     fputs(" none - ", manifest);
-    if (e->hardlink_group >= 0) fprintf(manifest, "pacman-hardlink-%d", e->hardlink_group);
+    if (e->hardlink_group >= 0) fprintf(manifest, "%s-hardlink-%d", family, e->hardlink_group);
     else fputc('-', manifest);
     if (s->link || s->hardlink) { fputc(' ', manifest); token(manifest, s->link ? s->link : s->hardlink + 5); }
     fputc('\n', manifest);
@@ -776,7 +853,7 @@ done:
 }
 
 static int write_output(struct foreign_input *input, const struct holy_pacman_metadata *meta,
-                         const struct deb_metadata *deb,
+                         const struct deb_metadata *deb, const struct slack_metadata *slack,
                          const char *source, const char *hash, const char *output, int output_fd, FILE *receipt, int group)
 {
     static const char *const names[] = {
@@ -788,15 +865,20 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
     struct holy_stream_entry *entries = NULL;
     int ok = 0, aggregate = input->group_count == 1 || group == (int)input->group_count - 1;
     const char *arch = input->groups[group].arch, *libc = input->groups[group].libc;
-    const char *family = deb ? "deb" : "pacman";
-    const char *name = deb ? deb->name : meta->name;
-    const char *version = deb ? deb->version : meta->version;
-    const char *source_arch = deb ? deb->arch : meta->arch;
+    const char *family = slack ? "slackware" : deb ? "deb" : "pacman";
+    const char *name = slack ? slack->name : deb ? deb->name : meta->name;
+    const char *version = slack ? slack->version : deb ? deb->version : meta->version;
+    const char *source_arch = slack ? slack->arch : deb ? deb->arch : meta->arch;
     for (i = 0; i < 7; ++i) if (!(files[i] = open_memstream(&text[i], &sizes[i]))) goto done;
     fputs("format holy-package-1\nname ", files[0]); token(files[0], name);
     fputs("\nversion ", files[0]); token(files[0], version);
-    fprintf(files[0], "\nrelease 1\nos linux\narch %s\nlibc %s\nx-version-family %s\nx-source-arch ", arch, libc, family);
+    fputs("\nrelease ", files[0]); token(files[0], slack ? slack->build : "1");
+    fprintf(files[0], "\nos linux\narch %s\nlibc %s\nx-version-family %s\nx-source-arch ", arch, libc, family);
     token(files[0], source_arch); fputc('\n', files[0]);
+    if (slack) {
+        fputs("x-source-build ", files[0]); token(files[0], slack->build);
+        fputc('\n', files[0]);
+    }
     fprintf(files[5], "format holy-import-origin-1\nfamily %s\nsource-name ", family);
     token(files[5], source);
     fprintf(files[5], "\noriginal-sha256 %s\nverification unverified\nconverter holy-%s-1\noriginal-version ", hash, family);
@@ -811,7 +893,7 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
                         input->groups[i].libc, "any", "-", name, "import-output");
         }
     }
-    for (i = 0; !deb && i < meta->count; ++i) {
+    for (i = 0; !deb && !slack && i < meta->count; ++i) {
         const struct holy_pacman_field *field = &meta->fields[i];
         char id[64];
         fputs("pkginfo ", files[5]); token(files[5], field->key); fputc(' ', files[5]);
@@ -852,16 +934,36 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
         requirement(files[2], id, name, "foreign", field->value, "any", "any", "any", "-",
                     field->value, field->key);
     }
+    if (slack) {
+        fputs("package-filename ", files[5]); token(files[5], name);
+        fputc(' ', files[5]); token(files[5], version);
+        fputc(' ', files[5]); token(files[5], source_arch);
+        fputc(' ', files[5]); token(files[5], slack->build);
+        fputc('\n', files[5]);
+    }
     entries = calloc(input->count + 11, sizeof *entries);
     if (!entries) goto done;
     for (i = 0; i < input->count; ++i) {
         const struct foreign_entry *e = &input->entries[i];
         if (!belongs(input, i, group)) continue;
-        if (!e->metadata && !write_manifest(files[1], input, i)) goto done;
+        if (!e->metadata && !write_manifest(files[1], input, i, family)) goto done;
         if (aggregate && !strcmp(e->original, ".INSTALL")) {
             fputs("foreign-script pacman /bin/sh HOLY/foreign/pacman/INSTALL sha256 ", files[4]);
             hex_hash(files[4], e->hash);
             fputs(" review-required\n", files[4]);
+        }
+        if (slack && aggregate && !strcmp(e->original, "install/doinst.sh")) {
+            fputs("foreign-script slackware /bin/sh HOLY/foreign/slackware/doinst.sh sha256 ", files[4]);
+            hex_hash(files[4], e->hash);
+            fputs(" review-required\n", files[4]);
+        } else if (slack && aggregate && e->metadata &&
+                   strcmp(e->original, "install") &&
+                   strcmp(e->original, "install/slack-desc") &&
+                   strcmp(e->original, "install/doinst.sh")) {
+            char id[64];
+            snprintf(id, sizeof id, "slackware-control-%zu", i);
+            requirement(files[2], id, name, "foreign", e->original, "any", "any", "any", "-",
+                        e->original, "slackware-control-file");
         }
         if (deb && aggregate && (!strcmp(e->original, "@control/preinst") ||
             !strcmp(e->original, "@control/postinst") || !strcmp(e->original, "@control/prerm") ||
@@ -885,9 +987,13 @@ static int write_output(struct foreign_input *input, const struct holy_pacman_me
         if (failed || !append_text(input, &entries[count++], names[i], text[i], sizes[i])) goto done;
     }
     entries[count++] = (struct holy_stream_entry){"HOLY/foreign", NULL, NULL, "root", "root", 0, 0, 0, 0, 0755, 1};
-    entries[count++] = (struct holy_stream_entry){deb ? "HOLY/foreign/deb" : "HOLY/foreign/pacman", NULL, NULL, "root", "root", 0, 0, 0, 0, 0755, 1};
+    entries[count++] = (struct holy_stream_entry){slack ? "HOLY/foreign/slackware" :
+                                                   deb ? "HOLY/foreign/deb" : "HOLY/foreign/pacman",
+                                                   NULL, NULL, "root", "root", 0, 0, 0, 0, 0755, 1};
     for (i = 0; i < input->count; ++i)
-        if (input->entries[i].metadata) entries[count++] = input->entries[i].stream;
+        if (input->entries[i].metadata &&
+            (!slack || strcmp(input->entries[i].original, "install")))
+            entries[count++] = input->entries[i].stream;
     entries[count++] = (struct holy_stream_entry){"DATA", NULL, NULL, "root", "root", 0, 0, 0, 0, 0755, 1};
     for (i = 0; i < input->count; ++i)
         if (!input->entries[i].metadata && belongs(input, i, group)) entries[count++] = input->entries[i].stream;
@@ -994,7 +1100,7 @@ int holy_import_pacman(const char *input_path, const char *source, const char *o
     fprintf(receipt, "format holy-import-record-1\nfamily pacman\nconverter holy-pacman-1\noriginal-sha256 %s\nsource-name ", hash);
     token(receipt, source); fputs("\nverification unverified\n", receipt);
     for (i = 0; i < input.group_count; ++i)
-        if (!write_output(&input, &metadata, NULL, source, hash, output, output_fd, receipt, (int)i)) goto done;
+        if (!write_output(&input, &metadata, NULL, NULL, source, hash, output, output_fd, receipt, (int)i)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
     if (fclose(receipt)) { receipt = NULL; goto done; }
@@ -1069,7 +1175,7 @@ int holy_import_deb(const char *input_path, const char *source, const char *outp
     fprintf(receipt, "format holy-import-record-1\nfamily deb\nconverter holy-deb-1\noriginal-sha256 %s\nsource-name ", hash);
     token(receipt, source); fputs("\nverification unverified\n", receipt);
     for (i = 0; i < input.group_count; ++i)
-        if (!write_output(&input, NULL, &metadata, source, hash, output, output_fd, receipt, (int)i)) goto done;
+        if (!write_output(&input, NULL, &metadata, NULL, source, hash, output, output_fd, receipt, (int)i)) goto done;
     fputs("state complete\n", receipt);
     if (fflush(receipt) || fsync(fileno(receipt))) goto done;
     if (fclose(receipt)) { receipt = NULL; goto done; }
@@ -1083,5 +1189,90 @@ done:
     if (input_fd >= 0) close(input_fd);
     if (snapshot) { unlink(snapshot); free(snapshot); }
     free_deb(&metadata); free_input(&input);
+    return result;
+}
+
+int holy_import_slackware(const char *input_path, const char *source, const char *output)
+{
+    struct foreign_input input = {0};
+    struct slack_metadata metadata = {0};
+    struct stat st;
+    char *snapshot = NULL, hash[65], temporary[43] = {0};
+    FILE *receipt = NULL;
+    int input_fd = -1, output_fd = -1, result = 1, common;
+    size_t i;
+    if (!*source || !strcmp(source, "local")) return 2;
+    for (i = 0; source[i]; ++i)
+        if ((unsigned char)source[i] <= 32 || source[i] == ':' ||
+            source[i] == '/' || source[i] == '@') return 2;
+    if (!parse_slack_name(input_path, &metadata)) { result = 2; goto done; }
+    input_fd = open(input_path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (input_fd < 0 || fstat(input_fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size < 0 || st.st_size > 1024LL * 1024 * 1024) {
+        result = 6; goto done;
+    }
+    snapshot = holy_stage_fd(input_fd, "holy-import");
+    if (!snapshot || !input_hash(snapshot, hash) || mkdir(output, 0700)) goto done;
+    output_fd = open(output, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (output_fd < 0 || fstat(output_fd, &st) || st.st_uid != geteuid() ||
+        (st.st_mode & 0777) != 0700 || !preserve_original(snapshot, output_fd)) goto done;
+    if (!slack_codec_matches(snapshot, input_path)) { result = 2; goto done; }
+    result = collect_archive(snapshot, &input, FOREIGN_SLACKWARE, metadata.lzma);
+    if (result) goto done;
+    if (!validate_paths(&input)) { result = 2; goto done; }
+    result = 3;
+    if (input.unknown) {
+        fputs("holypkg: unknown payload ABI or executable format requires classification\n", stderr);
+        goto done;
+    }
+    if (strcmp(metadata.arch, "noarch") && strcmp(metadata.arch, "x86_64") &&
+        strcmp(metadata.arch, "i386") && strcmp(metadata.arch, "i486") &&
+        strcmp(metadata.arch, "i586") && strcmp(metadata.arch, "i686")) {
+        fputs("holypkg: unsupported Slackware architecture requires classification\n", stderr);
+        goto done;
+    }
+    for (i = 0; i < input.group_count; ++i) {
+        const char *arch = input.groups[i].arch;
+        if ((!strcmp(metadata.arch, "noarch") && strcmp(arch, "noarch")) ||
+            (!strcmp(metadata.arch, "x86_64") && strcmp(arch, "x86_64") &&
+             strcmp(arch, "x86")) ||
+            (strcmp(metadata.arch, "noarch") && strcmp(metadata.arch, "x86_64") &&
+             strcmp(arch, "x86"))) {
+            fputs("holypkg: Slackware architecture differs from payload ELF\n", stderr);
+            goto done;
+        }
+    }
+    if (!input.group_count) common = add_group(&input, "noarch", "nolibc");
+    else if (input.group_count == 1) common = 0;
+    else common = add_group(&input, "noarch", "nolibc");
+    if (common < 0) { result = 6; goto done; }
+    for (i = 0; i < input.count; ++i)
+        if (input.entries[i].group < 0) input.entries[i].group = common;
+    result = 1;
+    {
+        int fd = holy_temporary_at(output_fd, temporary);
+        if (fd < 0) goto done;
+        receipt = fdopen(fd, "w");
+        if (!receipt) { close(fd); goto done; }
+    }
+    fprintf(receipt, "format holy-import-record-1\nfamily slackware\nconverter holy-slackware-1\noriginal-sha256 %s\nsource-name ", hash);
+    token(receipt, source); fputs("\nverification unverified\n", receipt);
+    for (i = 0; i < input.group_count; ++i)
+        if (!write_output(&input, NULL, NULL, &metadata, source, hash,
+                          output, output_fd, receipt, (int)i)) goto done;
+    fputs("state complete\n", receipt);
+    if (fflush(receipt) || fsync(fileno(receipt))) goto done;
+    if (fclose(receipt)) { receipt = NULL; goto done; }
+    receipt = NULL;
+    if (linkat(output_fd, temporary, output_fd, "conversion", 0) || fsync(output_fd)) goto done;
+    result = 0;
+done:
+    if (result)
+        fprintf(stderr, "holypkg: Slackware import incomplete (status %d); no installed state changed\n", result);
+    if (receipt) fclose(receipt);
+    if (output_fd >= 0) { if (*temporary) unlinkat(output_fd, temporary, 0); close(output_fd); }
+    if (input_fd >= 0) close(input_fd);
+    if (snapshot) { unlink(snapshot); free(snapshot); }
+    free_slack(&metadata); free_input(&input);
     return result;
 }

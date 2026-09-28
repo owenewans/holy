@@ -701,8 +701,9 @@ int main(int argc, char **argv)
             !strcmp(argv[7], "--output")) {
             if (!strcmp(argv[6], "pacman")) return holy_import_pacman(argv[2], argv[4], argv[8]);
             if (!strcmp(argv[6], "deb")) return holy_import_deb(argv[2], argv[4], argv[8]);
+            if (!strcmp(argv[6], "slackware")) return holy_import_slackware(argv[2], argv[4], argv[8]);
         }
-        fputs("usage: holypkg import INPUT --source NAME --format pacman|deb --output DIRECTORY\n", stderr);
+        fputs("usage: holypkg import INPUT --source NAME --format pacman|deb|slackware --output DIRECTORY\n", stderr);
         return 2;
     }
 

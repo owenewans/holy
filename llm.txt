@@ -983,7 +983,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=e0b27248ce3442737dd5ead19f88ed993b4cae139691bbd07c557a7b347a40f4
+holypkg.8 source=holy version=development sha256=a25aeef2bd67b7d36587371f846f4dc059903c1d6fe272ed794f3f8d0f3e2deb
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1001,8 +1001,8 @@ SYNOPSIS
      ROR]  [--choose  SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256]
      [--accept-privileged SHA256] [--root DIRECTORY] [--yes] [--noninteractive]
      holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
-     holypkg import INPUT --source NAME --format pacman|deb --output  NEW_DIREC-
-     TORY
+     holypkg import INPUT --source NAME --format  pacman|deb|slackware	--output
+     NEW_DIRECTORY
      holypkg  repo  mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIREC-
      TORY [--public-key PUBLIC_KEY.pem] [--ca-file FILE]
      holypkg repo seal DIRECTORY [--key PRIVATE_KEY.pem]
@@ -1111,14 +1111,14 @@ SYNOPSIS
      holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY
 
 DESCRIPTION
-   Local pacman and Debian binary import
-     import snapshots a local pacman tar archive or Debian .deb, retains its ex-
-     act bytes as NEW_DIRECTORY/original and creates  verified	LZ4-frame  .holy
-     outputs.  The output directory must not exist. --format selects the adapter
-     explicitly; --source records  provenance  only  and  grants  no  registered
-     source  identity  or  trust.   The	 command does not install files, execute
-     package code or verify a publisher signature. Each output records verifica-
-     tion=unverified.
+   Local pacman, Debian and Slackware binary import
+     import snapshots a local pacman tar archive, Debian .deb or Slackware pack-
+     age, retains its exact bytes as NEW_DIRECTORY/original and creates verified
+     LZ4-frame .holy outputs. The output directory must not exist. --format  se-
+     lects  the	 adapter explicitly; --source records provenance only and grants
+     no registered source identity or  trust.	The  command  does  not	 install
+     files,  execute  package  code or verify a publisher signature. Each output
+     records verification=unverified.
 
      --format deb reads the Debian ar  members	debian-binary,	control.tar  and
      data.tar in order, including supported compressed variants. It retains con-
@@ -1145,6 +1145,21 @@ DESCRIPTION
      version-file  lines,  ignores  additional	ar  members  after data.tar, and
      checks that the control/data compression matches  its  member  suffix.  The
      version file is limited to 4096 bytes.
+
+     --format  slackware reads a .txz, .tgz, .tbz or .tlz tar package and checks
+     its compression against the filename suffix. It  parses  the  name-version-
+     arch-build	 filename  from the right, preserves the build tag as the native
+     release, and retains  install/  files  under  HOLY/foreign/slackware.   in-
+     stall/doinst.sh  is recorded as a review-required shell hook and is not run
+     during conversion. Unknown install/ control files become attributed foreign
+     requirements. Official Slackware packages need  not  declare  dependencies;
+     the   importer  does  not	invent	them.  It  accepts  noarch,  x86_64  and
+     i386/i486/i586/i686 source architecture labels, then separates observed ELF
+     arch/libc outputs.	 An unknown or contradictory claim returns status 3. The
+     Slackware version family has no automatic comparator yet, so update  choice
+     requires  review.	make check-slackware covers codecs, links, scripts, path
+     rejection, mixed ELF outputs and install/check/remove of a	 converted  data
+     package.
 
      The importer reads .PKGINFO identities, full epoch/version/release strings,
      package relations and original field values. It preserves .PKGINFO, .BUILD-
@@ -1176,9 +1191,9 @@ DESCRIPTION
      SHA-256 and arch/libc pair. The importer publishes it only after completing
      all outputs. A failed conversion retains the  original  and  any  completed
      outputs;  without a complete receipt the output set is incomplete. Existing
-     output files are not overwritten. Origin metadata uses  converter	identity
-     holy-pacman-1;  executable build attestation and publisher verification re-
-     main unimplemented.
+     output files are not overwritten. Origin metadata records	the  format-spe-
+     cific  converter identity; executable build attestation and publisher veri-
+     fication remain unimplemented.
 
      Libarchive supplies tar and built-in gzip, bzip2,	XZ,  Zstandard	and  LZ4
      codecs when available in the selected build. A missing codec returns status

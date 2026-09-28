@@ -96,6 +96,15 @@
   conversion; the original MD5 list is not source authentication. APT indexes,
   signatures and full hook integration remain open.
 
+- [x] Import local Slackware .txz/.tgz/.tbz/.tlz packages into native outputs.
+  Preserve original bytes, filename identity/build tag, install/ metadata and
+  review-required doinst.sh. Classify mixed x86/x86_64 ELF payloads, reject
+  unsafe archive paths and unknown architecture, and install/check/remove a
+  converted data package. Offline fixtures cover codecs and links; manual
+  imports of Slackware 15.0 aaa_base and which archives passed. Repository
+  discovery, publisher signatures and dependency metadata beyond the archive
+  remain open.
+
 - [x] Parse `holy.conf` syntax and reject malformed includes and records.
 - [x] Plan and atomically apply a source identity registry under the database
   writer lock. Preserve IDs across alias changes and retain inactive origin
@@ -377,7 +386,7 @@
   Ed25519 key now rejects unsigned or changed bound catalogs. A rootless
   system-cache workflow remains open.
 - [ ] Implement remaining foreign binary adapters and file indexes with real
-  fixtures: APT indexes, RPM, APK, XBPS, Slackware, eopkg, homebrew and guix.
+  fixtures: APT indexes, RPM, APK, XBPS, eopkg, homebrew and guix.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
   Gentoo and Pacstall recipe conversion with helper environments and split outputs.
 - [ ] Implement Nix closure, Flatpak, Snap, AppImage, Scoop and WinGet imports

@@ -162,7 +162,7 @@ with tempfile.TemporaryDirectory() as scratch:
     convert(foreign("depends", control=b"Package: debfixture\nVersion: 1\nArchitecture: all\nDepends: other (>= 2) | else\n"), "depends-output")
     dependency = next((tmp / "depends-output").glob("*.holy"))
     assert "foreign" in run("requirements", "local:" + str(dependency))
-    run("solve", "local:" + str(dependency), status=6)
+    run("solve", "local:" + str(dependency), status=3)
     old_library = convert(foreign("old-library", control=b"Package: library\nVersion: 1.0~rc1-1\nArchitecture: all\n"),
                           "old-library-output")[0]
     new_library = convert(foreign("new-library", control=b"Package: library\nVersion: 1.0-1\nArchitecture: all\n"),
@@ -207,11 +207,11 @@ with tempfile.TemporaryDirectory() as scratch:
     bad_claim = convert(foreign("bad-claim", control=b"Package: bad-impl\nVersion: 1\nArchitecture: all\nProvides: library (>= 1.0)\n"),
                         "bad-claim-output")[0]
     assert "foreign" in run("requirements", "local:" + str(bad_claim))
-    run("solve", "local:" + str(bad_claim), status=6)
+    run("solve", "local:" + str(bad_claim), status=3)
     duplicate_claim = convert(foreign("duplicate-claim", control=b"Package: duplicate-impl\nVersion: 1\nArchitecture: all\nProvides: library, library\n"),
                               "duplicate-claim-output")[0]
     assert "foreign" in run("requirements", "local:" + str(duplicate_claim))
-    run("solve", "local:" + str(duplicate_claim), status=6)
+    run("solve", "local:" + str(duplicate_claim), status=3)
     compact = convert(foreign("compact", control=b"Package: compact\nVersion: 1\nArchitecture: all\nDepends: library(>=1.0)\n"),
                       "compact-output")[0]
     assert '"package" "library"' in run("requirements", "local:" + str(compact))
