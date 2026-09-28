@@ -759,7 +759,9 @@ done:
 }
 
 static const char *missing_requirement(const struct local_item *local,
-                                        const struct holy_solver_item *items, size_t count)
+                                        const struct holy_solver_item *items, size_t count,
+                                        const char *const *skip_ids, size_t skip_count,
+                                        size_t *consumer_index, size_t *requirement_index)
 {
     unsigned char *seen = calloc(count, 1);
     size_t *queue = malloc(count * sizeof *queue);
@@ -769,7 +771,8 @@ static const char *missing_requirement(const struct local_item *local,
     seen[0] = 1;
     queue[0] = 0;
     while (head < tail) {
-        const struct local_item *consumer = &local[queue[head++]];
+        size_t current = queue[head++];
+        const struct local_item *consumer = &local[current];
         for (j = 0; j < consumer->requirement_count; ++j) {
             size_t i, matches = 0, provider = 0;
             for (i = 0; i < count; ++i)
@@ -778,7 +781,15 @@ static const char *missing_requirement(const struct local_item *local,
                     provider = i;
                 }
             if (!matches) {
+                size_t skip;
+                for (skip = 0; skip < skip_count; ++skip)
+                    if (!strncmp(skip_ids[skip], consumer->identity.digest, 64) &&
+                        skip_ids[skip][64] == ':' &&
+                        !strcmp(skip_ids[skip] + 65, consumer->requirement_ids[j])) break;
+                if (skip < skip_count) continue;
                 missing = consumer->requirement_ids[j];
+                *consumer_index = current;
+                *requirement_index = j;
                 goto done;
             }
             if (matches == 1 && !seen[provider]) {
@@ -793,38 +804,35 @@ done:
     return missing;
 }
 
-static int capture_missing(const struct local_item *local, size_t count,
-                           const char *id, struct holy_missing_requirement *missing)
+static int capture_missing(const struct local_item *consumer, size_t requirement,
+                           struct holy_missing_requirement *missing)
 {
-    size_t i, j, k;
-    for (i = 0; i < count; ++i) for (j = 0; j < local[i].requirement_count; ++j) {
-        const char *kind = NULL, *name = NULL, *original;
-        if (strcmp(local[i].requirement_ids[j], id)) continue;
-        for (k = 0; k < local[i].edge_count; ++k) {
-            const struct elf_edge *edge = &local[i].edges[k];
-            if (edge->requirement != j) continue;
-            kind = !strcmp(edge->kind, "soname") ? "soname" :
-                   !strcmp(edge->kind, "symbol") ? NULL : "file";
-            name = edge->target;
-            break;
-        }
-        if (!name) {
-            original = local[i].original_requirements[j];
-            if (!strncmp(original, "package:", 8)) { kind = "package"; name = original + 8; }
-            else if (!strncmp(original, "file:", 5)) { kind = "file"; name = original + 5; }
-            else if (!strncmp(original, "command:", 8)) { kind = "command"; name = original + 8; }
-            else if (!strncmp(original, "soname:", 7)) { kind = "soname"; name = original + 7; }
-        }
-        if (!kind || !name || !*name) return 0;
-        missing->consumer = strdup(local[i].identity.digest);
-        missing->id = strdup(id);
-        missing->kind = strdup(kind);
-        missing->name = strdup(name);
-        if (missing->consumer && missing->id && missing->kind && missing->name)
-            return 1;
-        holy_missing_requirement_free(missing);
-        return 0;
+    size_t k;
+    const char *id = consumer->requirement_ids[requirement];
+    const char *kind = NULL, *name = NULL, *original;
+    for (k = 0; k < consumer->edge_count; ++k) {
+        const struct elf_edge *edge = &consumer->edges[k];
+        if (edge->requirement != requirement) continue;
+        kind = !strcmp(edge->kind, "soname") ? "soname" :
+               !strcmp(edge->kind, "symbol") ? NULL : "file";
+        name = edge->target;
+        break;
     }
+    if (!name) {
+        original = consumer->original_requirements[requirement];
+        if (!strncmp(original, "package:", 8)) { kind = "package"; name = original + 8; }
+        else if (!strncmp(original, "file:", 5)) { kind = "file"; name = original + 5; }
+        else if (!strncmp(original, "command:", 8)) { kind = "command"; name = original + 8; }
+        else if (!strncmp(original, "soname:", 7)) { kind = "soname"; name = original + 7; }
+    }
+    if (!kind || !name || !*name) return 0;
+    missing->consumer = strdup(consumer->identity.digest);
+    missing->id = strdup(id);
+    missing->kind = strdup(kind);
+    missing->name = strdup(name);
+    if (missing->consumer && missing->id && missing->kind && missing->name)
+        return 1;
+    holy_missing_requirement_free(missing);
     return 0;
 }
 
@@ -921,7 +929,8 @@ static int collect_result(const struct local_item *local, const struct holy_solv
 static int resolve(const char *const *paths, size_t count, int json,
                     const char *generation, const char *choice,
                     struct holy_resolution *output, int all,
-                    struct holy_missing_requirement *missing_output)
+                    struct holy_missing_requirement *missing_output,
+                    const char *const *skip_ids, size_t skip_count)
 {
     struct local_item *local = NULL;
     struct holy_solver_item *items = NULL;
@@ -929,6 +938,7 @@ static int resolve(const char *const *paths, size_t count, int json,
     size_t i, j, prepared = 0;
     int solved;
     const char *unresolved = NULL;
+    size_t missing_consumer = 0, missing_index = 0;
     const char *unknown_context = NULL;
     const char *chosen_digest = NULL;
     char *chosen_id = NULL, *choice_capability = NULL;
@@ -1071,17 +1081,18 @@ static int resolve(const char *const *paths, size_t count, int json,
     } else if (solved == 3) result = 3;
     else if (solved == 2) {
         result = 4;
-        unresolved = missing_requirement(local, items, count);
+        unresolved = missing_requirement(local, items, count, skip_ids, skip_count,
+                                         &missing_consumer, &missing_index);
         if (missing_output && unresolved &&
-            !capture_missing(local, count, unresolved, missing_output)) result = 3;
-        if (unresolved) for (i = 0; i < count; ++i)
-            for (j = 0; j < local[i].edge_count; ++j) {
-                const struct elf_edge *edge = &local[i].edges[j];
-                if (strcmp(unresolved, local[i].requirement_ids[edge->requirement])) continue;
+            !capture_missing(&local[missing_consumer], missing_index,
+                             missing_output)) result = 3;
+        if (unresolved) for (j = 0; j < local[missing_consumer].edge_count; ++j) {
+                const struct elf_edge *edge = &local[missing_consumer].edges[j];
+                if (edge->requirement != missing_index) continue;
                 if (edge->symbol) unknown_context = "unknown-symbol-scope";
                 else if (!strcmp(edge->kind, "interpreter")) unknown_context = "unknown-interpreter-context";
                 if (unknown_context) result = 3;
-            }
+        }
     }
 done:
     if (result && output) holy_resolution_free(output);
@@ -1149,21 +1160,21 @@ done:
 int holy_resolve_local(const char *const *paths, size_t count, int json,
                        const char *generation, const char *choice)
 {
-    return resolve(paths, count, json, generation, choice, NULL, 0, NULL);
+    return resolve(paths, count, json, generation, choice, NULL, 0, NULL, NULL, 0);
 }
 
 int holy_resolve_collect(const char *const *paths, size_t count,
                           const char *choice, struct holy_resolution *result)
 {
     memset(result, 0, sizeof *result);
-    return resolve(paths, count, -1, NULL, choice, result, 0, NULL);
+    return resolve(paths, count, -1, NULL, choice, result, 0, NULL, NULL, 0);
 }
 
 int holy_resolve_collect_set(const char *const *paths, size_t count,
                               struct holy_resolution *result)
 {
     memset(result, 0, sizeof *result);
-    return resolve(paths, count, -1, NULL, NULL, result, 1, NULL);
+    return resolve(paths, count, -1, NULL, NULL, result, 1, NULL, NULL, 0);
 }
 
 void holy_missing_requirement_free(struct holy_missing_requirement *missing)
@@ -1176,10 +1187,12 @@ void holy_missing_requirement_free(struct holy_missing_requirement *missing)
 }
 
 int holy_resolve_missing(const char *const *paths, size_t count,
+                         const char *const *skip_ids, size_t skip_count,
                          struct holy_missing_requirement *missing)
 {
     memset(missing, 0, sizeof *missing);
-    return resolve(paths, count, -1, NULL, NULL, NULL, 0, missing);
+    return resolve(paths, count, -1, NULL, NULL, NULL, 0, missing,
+                   skip_ids, skip_count);
 }
 
 void holy_resolution_free(struct holy_resolution *result)

@@ -783,6 +783,9 @@ add searches active bound native catalogs for that edge. It stages matching
 providers and their in-source closures, then resolves again. The loop stops
 when the set is complete or no new artifact is found. It checks installed
 providers first; an inactive origin can still satisfy a new consumer. An
+edge without a catalog match does not hide another missing edge in the same
+consumer; a required SONAME can still be found after an interpreter or libc
+path already satisfied by an installed package. An
 unavailable catalog leaves coverage incomplete and returns 6 when no provider
 can be found. Selected packages retain their source IDs, and candidate
 catalogs are checked again before apply. Source preference ranking, fuzzy

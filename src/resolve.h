@@ -19,8 +19,10 @@ struct holy_missing_requirement {
     char *consumer, *id, *kind, *name;
 };
 
-/* returns 4 with one exact missing edge, 0 when solved, or another CLI status. */
+/* returns 4 with one exact missing edge, 0 when solved, or another CLI status.
+   skip_ids contain consumer artifact digest, colon, then requirement id. */
 int holy_resolve_missing(const char *const *paths, size_t count,
+                         const char *const *skip_ids, size_t skip_count,
                          struct holy_missing_requirement *missing);
 void holy_missing_requirement_free(struct holy_missing_requirement *missing);
 

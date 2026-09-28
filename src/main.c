@@ -277,7 +277,8 @@ static char *copy_text(const char *value)
 }
 
 static int missing_from_cache(const char *const *digests, size_t count,
-                              const char *root,
+                              const char *root, const char *const *skip_ids,
+                              size_t skip_count,
                               struct holy_missing_requirement *missing)
 {
     char **paths = calloc(count, sizeof *paths);
@@ -288,7 +289,8 @@ static int missing_from_cache(const char *const *digests, size_t count,
         paths[i] = holy_cache_snapshot(digests[i], root);
         if (!paths[i]) goto done;
     }
-    result = holy_resolve_missing((const char *const *)paths, count, missing);
+    result = holy_resolve_missing((const char *const *)paths, count,
+                                  skip_ids, skip_count, missing);
 done:
     for (i = 0; i < count; ++i) if (paths[i]) {
         unlink(paths[i]);
@@ -303,13 +305,14 @@ static int add_source(int argc, char **argv)
     const char *separator = strchr(argv[2], ':');
     const char *root = "/", *catalog = NULL, *choice = NULL;
     const char **accepted_arch = NULL, **accepted_privileged = NULL;
-    const char **digests = NULL, **bindings = NULL;
+    const char **digests = NULL, **bindings = NULL, **skipped = NULL;
     struct source_candidate *extras = NULL;
     struct holy_repo_set staged = {0}, next = {0};
     char source_id[65], next_id[65], plan[65], answer[16], *alias = NULL;
     char *bound_catalog = NULL, *next_catalog = NULL;
     size_t arch_count = 0, privileged_count = 0, extra_count = 0;
-    size_t digest_count = 0, binding_count = 0, i, j, k;
+    size_t digest_count = 0, binding_count = 0, skip_count = 0, i, j, k;
+    int unavailable_seen = 0;
     int yes = 0, noninteractive = 0, root_seen = 0, result = 2;
     if (!separator || separator == argv[2] || !separator[1] ||
         strchr(separator + 1, ':')) goto done;
@@ -320,8 +323,9 @@ static int add_source(int argc, char **argv)
     extras = calloc(10000, sizeof *extras);
     digests = calloc(10000, sizeof *digests);
     bindings = calloc(10000, sizeof *bindings);
+    skipped = calloc(10000, sizeof *skipped);
     if (!alias || !accepted_arch || !accepted_privileged || !extras ||
-        !digests || !bindings) { result = 1; goto done; }
+        !digests || !bindings || !skipped) { result = 1; goto done; }
     memcpy(alias, argv[2], (size_t)(separator - argv[2]));
     alias[separator - argv[2]] = 0;
     if (!strcmp(alias, "local")) goto done;
@@ -428,9 +432,11 @@ static int add_source(int argc, char **argv)
                    accepted_arch, arch_count, accepted_privileged, privileged_count);
         if (!result) break;
         if (result != 3 && result != 4) goto done;
-        missing_status = missing_from_cache(digests, digest_count, root, &missing);
+        missing_status = missing_from_cache(digests, digest_count, root,
+                                            skipped, skip_count, &missing);
         if (missing_status == 0 || !missing.kind) {
             holy_missing_requirement_free(&missing);
+            if (unavailable_seen) { result = 6; goto done; }
             break;
         }
         if (missing_status != 4 && missing_status != 3) {
@@ -494,12 +500,32 @@ next_alias:
         }
         for (a = 0; a < alias_count; ++a) free(aliases[a]);
         free(aliases);
-        holy_missing_requirement_free(&missing);
-        if (result) goto done;
-        if (!progressed) {
-            if (unavailable) { result = 6; goto done; }
-            break;
+        if (result) { holy_missing_requirement_free(&missing); goto done; }
+        if (progressed) {
+            for (i = 0; i < skip_count; ++i) free((void *)skipped[i]);
+            skip_count = 0;
+            unavailable_seen = 0;
+        } else {
+            char *key;
+            size_t id_length = strlen(missing.id);
+            unavailable_seen |= unavailable;
+            if (skip_count == 10000) {
+                holy_missing_requirement_free(&missing);
+                result = 4; goto done;
+            }
+            if (id_length > (size_t)-1 - 66) {
+                holy_missing_requirement_free(&missing);
+                result = 2; goto done;
+            }
+            key = malloc(id_length + 66);
+            if (!key) {
+                holy_missing_requirement_free(&missing);
+                result = 1; goto done;
+            }
+            snprintf(key, id_length + 66, "%s:%s", missing.consumer, missing.id);
+            skipped[skip_count++] = key;
         }
+        holy_missing_requirement_free(&missing);
     }
     result = holy_state_set_source_bindings(digests, digest_count,
                                             source_id, staged.index, bindings,
@@ -558,13 +584,14 @@ done:
     if (result == 2)
         fputs("usage: holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
     for (i = 0; i < binding_count; ++i) free((void *)bindings[i]);
+    for (i = 0; i < skip_count; ++i) free((void *)skipped[i]);
     for (i = 0; extras && i <= extra_count && i < 10000; ++i) {
         free(extras[i].alias); free(extras[i].kind); free(extras[i].name);
         free(extras[i].catalog); free(extras[i].next_catalog);
         holy_repo_set_free(&extras[i].staged);
         holy_repo_set_free(&extras[i].next);
     }
-    free(extras); free(digests); free(bindings);
+    free(extras); free(digests); free(bindings); free(skipped);
     holy_repo_set_free(&staged); holy_repo_set_free(&next);
     free(alias); free(bound_catalog); free(next_catalog);
     free(accepted_arch); free(accepted_privileged);

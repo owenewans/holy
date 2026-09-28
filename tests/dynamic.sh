@@ -144,9 +144,30 @@ patchelf --set-interpreter "$loader" --set-rpath "$runtime" \
     --replace-needed libc.so.6 "$libc" "$tree/DATA/usr/bin/alias-probe"
 pack alias-probe
 alias_probe=$(hash alias-probe)
-expect 0 "$bin" db plan-set "$alias_probe" "$alias_provider" --root "$root"
-alias_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
-expect 0 "$bin" db apply-set "$alias_plan" "$alias_probe" "$alias_provider" --root "$root"
+mkdir "$tmp/consumer-repo" "$tmp/provider-repo"
+cp "$tmp/alias-probe.holy" "$tmp/consumer-repo/alias-probe.holy"
+cp "$tmp/alias-provider.holy" "$tmp/provider-repo/alias-provider.holy"
+expect 0 "$bin" repo index "$tmp/consumer-repo"
+expect 0 "$bin" repo seal "$tmp/consumer-repo"
+expect 0 "$bin" repo index "$tmp/provider-repo"
+expect 0 "$bin" repo seal "$tmp/provider-repo"
+printf '[source consumer]\ntype holy-http\nurl https://consumer.example/holy/\n[source provider]\ntype holy-http\nurl https://provider.example/holy/\n' > "$tmp/sources.conf"
+"$bin" source plan --config "$tmp/sources.conf" --root "$root" > "$tmp/source-plan"
+source_plan=$(sha256sum "$tmp/source-plan" | cut -d ' ' -f 1)
+expect 0 "$bin" source apply "$tmp/source-plan" --sha256 "$source_plan" --root "$root"
+"$bin" source list --root "$root" > "$tmp/source-list"
+consumer_id=$(sed -n 's/^source \([0-9a-f]*\) "consumer" active$/\1/p' "$tmp/source-list")
+provider_id=$(sed -n 's/^source \([0-9a-f]*\) "provider" active$/\1/p' "$tmp/source-list")
+consumer_index=$(sed -n 's/^sha256 //p' "$tmp/consumer-repo/current")
+provider_index=$(sed -n 's/^sha256 //p' "$tmp/provider-repo/current")
+printf 'format holy-mirror-1\nurl "https://consumer.example/holy/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$consumer_index" "$consumer_id" > "$tmp/consumer-repo/mirror-origin"
+printf 'format holy-mirror-1\nurl "https://provider.example/holy/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$provider_index" "$provider_id" > "$tmp/provider-repo/mirror-origin"
+expect 0 "$bin" source catalog bind consumer "$tmp/consumer-repo" --root "$root"
+expect 0 "$bin" source catalog bind provider "$tmp/provider-repo" --root "$root"
+expect 0 "$bin" add consumer:alias-probe --root "$root" --yes
+grep -q "$provider_id" "$root/var/lib/holypkg/installed/$alias_provider/source"
 expect 0 "$bin" db check "$alias_probe" --root "$root"
 rm "$root$runtime/libaliasfixture.so.1"
 ln -s missing.so "$root$runtime/libaliasfixture.so.1"

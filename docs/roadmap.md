@@ -336,7 +336,9 @@
   exact missing package, file, command and SONAME edges across active bound native
   catalogs, stages indexed providers and their local closure, and repeats resolution.
   It probes installed providers first, including inactive origins. Source preference
-  ranking, complete coverage diagnostics and plugin discovery remain open.
+  ranking, complete coverage diagnostics and plugin discovery remain open. A
+  two-catalog ELF fixture now verifies SONAME discovery after installed libc and
+  interpreter paths, selected source identity, and installed check.
 - [x] Query an active holy-http source through an explicit synced mirror with
   `search QUERY --source ALIAS` and `info ALIAS:PACKAGE`. Verify source identity,
   pinned index and matching artifacts before returning exact names; report missing and

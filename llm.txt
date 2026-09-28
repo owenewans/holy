@@ -983,7 +983,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=1783a712591d75b124667797a1669790d9a2aa2539c5869c82691029c1969950
+holypkg.8 source=holy version=development sha256=c21341c41f3b5ee34e58b6c6ae6f708f6c6134f23351c33bbfdca461f6ff6796
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1739,12 +1739,15 @@ DESCRIPTION
      bound native catalogs for that edge. It stages matching providers and their
      in-source closures, then resolves again. The loop stops  when  the	 set  is
      complete  or no new artifact is found. It checks installed providers first;
-     an inactive origin can still satisfy a new consumer. An unavailable catalog
-     leaves coverage incomplete and returns 6 when no provider can be found. Se-
-     lected packages retain their source IDs, and candidate catalogs are checked
-     again before apply. Source preference ranking, fuzzy suggestions  and  run-
-     time  plugin discovery remain open. Hooks and transforms remain outside the
-     supported installation subset.
+     an inactive origin can still satisfy a new consumer. An edge without a cat-
+     alog match does not hide another missing edge in the same consumer;  a  re-
+     quired  SONAME can still be found after an interpreter or libc path already
+     satisfied by an installed package. An unavailable catalog	leaves	coverage
+     incomplete	 and  returns 6 when no provider can be found. Selected packages
+     retain their source IDs, and candidate catalogs are  checked  again  before
+     apply. Source preference ranking, fuzzy suggestions and runtime plugin dis-
+     covery  remain  open. Hooks and transforms remain outside the supported in-
+     stallation subset.
 
      up SOURCE:PACKAGE --prepare finds	one  installed	slot  by  its  immutable
      source-id,	 name  and optional arch/libc. It checks the old artifact in the
