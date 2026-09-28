@@ -33,11 +33,12 @@ def tar_bytes(entries, mode="w"):
 
 
 def repodata(package, *, package_hash=None, package_name="fixture", broken=False,
-             public_key=None):
+             public_key=None, claims=None):
     digest = package_hash or hashlib.sha256(package).hexdigest()
     row = {"architecture": "x86_64", "pkgver": "fixture-1.0_1",
            "filename-sha256": digest, "filename-size": len(package),
-           "run_depends": [], "shlib-requires": []}
+           "run_depends": [], "shlib-requires": [],
+           "shlib-provides": ["libfixture.so.1"] if claims is None else claims}
     index = b"<broken" if broken else plistlib.dumps({package_name: row})
     meta = {"signature-type": "rsa"}
     if public_key:
@@ -96,6 +97,10 @@ def main():
                 "--source", "fixture", "--base", base, "--output", catalog)
             assert "fixture 1.0_1 x86_64" in run("xbps", "search", "fi", "--catalog", catalog)
             assert package_hash in run("xbps", "info", "fixture", "--catalog", catalog)
+            assert package_hash in run("xbps", "providers", "libfixture.so.1",
+                                       "--catalog", catalog)
+            assert "coverage partial" in run("xbps", "providers", "libabsent.so.1",
+                                              "--catalog", catalog)
             run("xbps", "index", serve / "x86_64-repodata", "--sha256", "0" * 64,
                 "--source", "fixture", "--base", base, "--output", root / "wrong-pin", status=1)
             synced = root / "synced"
@@ -154,6 +159,9 @@ def main():
                                        "--source", "fixture", "--root", target)
             assert package_hash in run("xbps", "info", "fixture", "--source", "fixture",
                                        "--index-arch", "x86_64", "--root", target)
+            assert package_hash in run("xbps", "providers", "libfixture.so.1",
+                                       "--source", "fixture", "--index-arch", "x86_64",
+                                       "--root", target)
             run("xbps", "fetch", "fixture", "1.0_1", "x86_64",
                 "--source", "fixture", "--index-arch", "x86_64", "--root", target,
                 "--output", root / "bound-fetch", "--ca-file", root / "cert.pem",
@@ -184,6 +192,9 @@ def main():
                 hashlib.sha256(renamed_plan.read_bytes()).hexdigest(), "--root", target)
             assert package_hash in run("xbps", "info", "fixture", "--source", "void",
                                        "--index-arch", "x86_64", "--root", target)
+            assert package_hash in run("xbps", "providers", "libfixture.so.1",
+                                       "--source", "void", "--index-arch", "x86_64",
+                                       "--root", target)
             moved_target = root / "moved-target"
             target.rename(moved_target)
             target = moved_target
@@ -223,12 +234,21 @@ def main():
             run("xbps", "fetch", "fixture", "1.0_1", "x86_64", "--catalog", signed_catalog,
                 "--output", root / "bad-signature-fetch", "--ca-file", root / "cert.pem",
                 "--public-key", public_key, status=4)
+            (catalog / "capabilities").write_bytes(b"tampered")
+            run("xbps", "providers", "libfixture.so.1", "--catalog", catalog, status=6)
+            run("xbps", "info", "fixture", "--catalog", catalog, status=6)
             (catalog / "catalog").write_bytes(b"tampered")
             run("xbps", "info", "fixture", "--catalog", catalog, status=6)
             malformed = root / "malformed-repodata"
             malformed.write_bytes(repodata(package, broken=True))
             run("xbps", "index", malformed, "--sha256", hashlib.sha256(malformed.read_bytes()).hexdigest(),
                 "--source", "fixture", "--base", base, "--output", root / "bad-index", status=2)
+            malformed_claim = root / "malformed-claim-repodata"
+            malformed_claim.write_bytes(repodata(package, claims=["bad claim"]))
+            run("xbps", "index", malformed_claim, "--sha256",
+                hashlib.sha256(malformed_claim.read_bytes()).hexdigest(),
+                "--source", "fixture", "--base", base,
+                "--output", root / "bad-claim-index", status=2)
             wrong = root / "wrong-repodata"
             wrong.write_bytes(repodata(package, package_hash="0" * 64))
             wrong_catalog = root / "wrong-catalog"

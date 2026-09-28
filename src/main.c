@@ -1064,6 +1064,8 @@ int main(int argc, char **argv)
         if (argc == 6 && (!strcmp(argv[2], "search") || !strcmp(argv[2], "info")) &&
             !strcmp(argv[4], "--catalog"))
             return holy_xbps_query(argv[5], argv[3], !strcmp(argv[2], "info"));
+        if (argc == 6 && !strcmp(argv[2], "providers") && !strcmp(argv[4], "--catalog"))
+            return holy_xbps_providers(argv[5], argv[3]);
         if (argc == 10 && (!strcmp(argv[2], "search") || !strcmp(argv[2], "info")) &&
             !strcmp(argv[4], "--catalog") && !strcmp(argv[6], "--source") &&
             !strcmp(argv[8], "--root")) {
@@ -1076,6 +1078,15 @@ int main(int argc, char **argv)
             char *catalog = NULL;
             int result = holy_xbps_catalog_path(argv[9], argv[5], argv[7], &catalog);
             if (!result) result = holy_xbps_query(catalog, argv[3], !strcmp(argv[2], "info"));
+            free(catalog);
+            return result;
+        }
+        if (argc == 10 && !strcmp(argv[2], "providers") &&
+            !strcmp(argv[4], "--source") && !strcmp(argv[6], "--index-arch") &&
+            !strcmp(argv[8], "--root")) {
+            char *catalog = NULL;
+            int result = holy_xbps_catalog_path(argv[9], argv[5], argv[7], &catalog);
+            if (!result) result = holy_xbps_providers(catalog, argv[3]);
             free(catalog);
             return result;
         }
@@ -1116,7 +1127,7 @@ int main(int argc, char **argv)
                                                    ca_file, public_key);
             }
         }
-        fputs("usage: holypkg xbps index FILE --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--public-key FILE] | xbps sync HTTPS_BASE/ ARCH --sha256 HASH --source NAME --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE] | xbps sync-source ALIAS ARCH --root ROOT --sha256 HASH --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE] | xbps search|info QUERY --catalog DIRECTORY [--source ALIAS --root ROOT] | xbps search|info QUERY --source ALIAS --index-arch ARCH --root ROOT | xbps fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE] [--source ALIAS --root ROOT] | xbps fetch NAME VERSION ARCH --source ALIAS --index-arch ARCH --root ROOT --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE]\n", stderr);
+        fputs("usage: holypkg xbps index FILE --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--public-key FILE] | xbps sync HTTPS_BASE/ ARCH --sha256 HASH --source NAME --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE] | xbps sync-source ALIAS ARCH --root ROOT --sha256 HASH --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE] | xbps search|info QUERY --catalog DIRECTORY [--source ALIAS --root ROOT] | xbps search|info QUERY --source ALIAS --index-arch ARCH --root ROOT | xbps providers SONAME --catalog DIRECTORY | xbps providers SONAME --source ALIAS --index-arch ARCH --root ROOT | xbps fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE] [--source ALIAS --root ROOT] | xbps fetch NAME VERSION ARCH --source ALIAS --index-arch ARCH --root ROOT --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE]\n", stderr);
         return 2;
     }
     if (argc > 2 && !strcmp(argv[1], "apk")) {

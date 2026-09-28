@@ -466,9 +466,11 @@
   sync-source, then bind the catalog conversion digest in the target database.
   Source-aware search/info/fetch resolve that binding by index architecture and
   reject changed catalog data or source definitions. Root-relative bindings
-  survive moving a target root with its cache. Complex patterns remain
-  review-required. Key enrollment, automatic provider discovery and a file
-  index remain open.
+  survive moving a target root with its cache. A separate digest-checked
+  shlib-provides index now gives exact SONAME candidate hints from Void metadata,
+  including source-bound queries. The selected payload still needs ELF/ABI
+  validation. Complex patterns remain review-required. Key enrollment,
+  automatic provider selection and a file index remain open.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
   Gentoo and Pacstall recipe conversion with helper environments and split outputs.
 - [ ] Implement Nix closure, Flatpak, Snap, AppImage, Scoop and WinGet imports

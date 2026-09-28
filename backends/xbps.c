@@ -29,8 +29,17 @@
 
 struct xbps_row {
     char *name, *version, *arch, *hash;
+    char **sonames;
+    size_t soname_count;
     unsigned long long size;
 };
+
+struct xbps_capability {
+    const char *soname;
+    const struct xbps_row *row;
+};
+
+static int row_order(const void *left, const void *right);
 
 static int label(const char *value)
 {
@@ -203,12 +212,30 @@ done:
 
 static void free_rows(struct xbps_row *rows, size_t count)
 {
-    size_t i;
+    size_t i, j;
     for (i = 0; i < count; ++i) {
         free(rows[i].name); free(rows[i].version);
         free(rows[i].arch); free(rows[i].hash);
+        for (j = 0; j < rows[i].soname_count; ++j) free(rows[i].sonames[j]);
+        free(rows[i].sonames);
     }
     free(rows);
+}
+
+static int soname_label(const char *value)
+{
+    const unsigned char *p = (const unsigned char *)value;
+    size_t length;
+    if (!p || !(length = strlen(value)) || length > 255) return 0;
+    for (; *p; ++p) if (*p < 33 || *p > 126) return 0;
+    return 1;
+}
+
+static int capability_order(const void *left, const void *right)
+{
+    const struct xbps_capability *a = left, *b = right;
+    int result = strcmp(a->soname, b->soname);
+    return result ? result : row_order(a->row, b->row);
 }
 
 static int row_order(const void *left, const void *right)
@@ -226,7 +253,7 @@ static int parse_rows(const char *xml, size_t size, struct xbps_row **out, size_
     plist_dict_iter iter = NULL;
     struct xbps_row *rows = NULL;
     char *key = NULL;
-    size_t used = 0, capacity = 0, i;
+    size_t used = 0, capacity = 0, i, total_sonames = 0;
     int ok = 0;
     if (size > UINT32_MAX || plist_from_xml(xml, (uint32_t)size, &root) != PLIST_ERR_SUCCESS ||
         !root || plist_get_node_type(root) != PLIST_DICT) goto done;
@@ -261,6 +288,30 @@ static int parse_rows(const char *xml, size_t size, struct xbps_row **out, size_
             !bytes || plist_get_node_type(bytes) != PLIST_INT || !length ||
             length > 1024ULL * 1024 * 1024 * 1024) { free(pkgver); goto done; }
         row->size = length;
+        {
+            plist_t claims = plist_dict_get_item(entry, "shlib-provides");
+            if (claims) {
+                uint32_t j, amount;
+                if (plist_get_node_type(claims) != PLIST_ARRAY ||
+                    (amount = plist_array_get_size(claims)) > 1024 ||
+                    total_sonames > 1000000 - amount) { free(pkgver); goto done; }
+                row->sonames = calloc(amount ? amount : 1, sizeof *row->sonames);
+                if (!row->sonames) { free(pkgver); goto done; }
+                for (j = 0; j < amount; ++j) {
+                    plist_t claim = plist_array_get_item(claims, j);
+                    if (!claim || plist_get_node_type(claim) != PLIST_STRING) {
+                        free(pkgver); goto done;
+                    }
+                    plist_get_string_val(claim, &row->sonames[j]);
+                    if (!soname_label(row->sonames[j])) {
+                        free(row->sonames[j]); row->sonames[j] = NULL;
+                        free(pkgver); goto done;
+                    }
+                    ++row->soname_count;
+                }
+                total_sonames += amount;
+            }
+        }
         free(pkgver);
     }
     if (!used) goto done;
@@ -378,6 +429,50 @@ done:
     return ok;
 }
 
+static int write_capabilities(int dir, const struct xbps_row *rows, size_t count,
+                              char output[65])
+{
+    struct xbps_capability *caps = NULL;
+    FILE *stream = NULL;
+    size_t total = 0, used = 0, i, j;
+    int fd = -1, ok = 0;
+    for (i = 0; i < count; ++i) {
+        if (rows[i].soname_count > (size_t)-1 - total) return 0;
+        total += rows[i].soname_count;
+    }
+    caps = calloc(total ? total : 1, sizeof *caps);
+    if (!caps) return 0;
+    for (i = 0; i < count; ++i)
+        for (j = 0; j < rows[i].soname_count; ++j) {
+            caps[used].soname = rows[i].sonames[j];
+            caps[used++].row = &rows[i];
+        }
+    qsort(caps, used, sizeof *caps, capability_order);
+    fd = openat(dir, "capabilities", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0 || !(stream = fdopen(fd, "w"))) goto done;
+    fd = -1;
+    fputs("format holy-xbps-capabilities-1\n", stream);
+    for (i = 0; i < used; ++i) {
+        const struct xbps_row *row = caps[i].row;
+        if (i && !capability_order(&caps[i-1], &caps[i])) continue;
+        fprintf(stream, "soname %s %s %s %s %s\n", caps[i].soname,
+                row->name, row->version, row->arch, row->hash);
+    }
+    {
+        int failed = ferror(stream) || fflush(stream) || fsync(fileno(stream));
+        if (fclose(stream)) failed = 1;
+        stream = NULL;
+        if (failed) goto done;
+    }
+    fd = openat(dir, "capabilities", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd >= 0) ok = hash_fd(fd, output);
+done:
+    if (stream) fclose(stream);
+    if (fd >= 0) close(fd);
+    free(caps);
+    return ok;
+}
+
 int holy_xbps_index(const char *input, const char *source, const char *base,
                     const char *output, const char *expected, const char *public_key,
                     const char *source_id)
@@ -385,7 +480,8 @@ int holy_xbps_index(const char *input, const char *source, const char *base,
     struct xbps_row *rows = NULL;
     struct stat st;
     char *xml = NULL, *meta = NULL, *url = NULL;
-    char filename[70], original[65], catalog_hash[65], key_hash[65] = {0};
+    char filename[70], original[65], catalog_hash[65], capabilities_hash[65];
+    char key_hash[65] = {0};
     size_t size = 0, meta_size = 0, count = 0, i;
     FILE *catalog = NULL, *record = NULL;
     int dir = -1, fd = -1, result = 1;
@@ -433,14 +529,16 @@ int holy_xbps_index(const char *input, const char *source, const char *base,
         close(catalog_fd);
         if (!result) goto done;
     }
+    if (!write_capabilities(dir, rows, count, capabilities_hash)) goto done;
     {
         int record_fd = openat(dir, "conversion", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
         if (record_fd < 0) goto done;
         record = fdopen(record_fd, "w");
         if (!record) { close(record_fd); goto done; }
     }
-    fprintf(record, "format holy-xbps-index-record-1\nsource %s\nbase %s\noriginal-sha256 %s\ncatalog-sha256 %s\nverification %s\n",
-            source, base, original, catalog_hash, public_key ? "key-matched" : "hash-pinned");
+    fprintf(record, "format holy-xbps-index-record-1\nsource %s\nbase %s\noriginal-sha256 %s\ncatalog-sha256 %s\ncapabilities-sha256 %s\nverification %s\n",
+            source, base, original, catalog_hash, capabilities_hash,
+            public_key ? "key-matched" : "hash-pinned");
     if (source_id) fprintf(record, "source-id %s\n", source_id);
     if (key_hash[0]) fprintf(record, "public-key-sha256 %s\n", key_hash);
     fprintf(record, "package-coverage complete\nfile-coverage unavailable\npackages %zu\nstate complete\n", count);
@@ -462,7 +560,8 @@ done:
 
 struct catalog_state {
     FILE *catalog;
-    char source[256], base[2048], original[65], catalog_hash[65], key_hash[65], source_id[65];
+    char source[256], base[2048], original[65], catalog_hash[65];
+    char capabilities_hash[65], key_hash[65], source_id[65];
 };
 
 static int open_catalog(const char *directory, struct catalog_state *state)
@@ -502,6 +601,10 @@ static int open_catalog(const char *directory, struct catalog_state *state)
         } else if (!strncmp(line, "catalog-sha256 ", 15)) {
             if (state->catalog_hash[0] || strlen(line + 15) >= sizeof state->catalog_hash) goto done;
             strcpy(state->catalog_hash, line + 15);
+        } else if (!strncmp(line, "capabilities-sha256 ", 20)) {
+            if (state->capabilities_hash[0] ||
+                strlen(line + 20) >= sizeof state->capabilities_hash) goto done;
+            strcpy(state->capabilities_hash, line + 20);
         } else if (!strncmp(line, "public-key-sha256 ", 18)) {
             if (state->key_hash[0] || strlen(line + 18) >= sizeof state->key_hash) goto done;
             strcpy(state->key_hash, line + 18);
@@ -509,6 +612,7 @@ static int open_catalog(const char *directory, struct catalog_state *state)
     }
     if (ferror(record) || !complete || !label(state->source) ||
         !digest_label(state->original) || !digest_label(state->catalog_hash) ||
+        (state->capabilities_hash[0] && !digest_label(state->capabilities_hash)) ||
         (state->key_hash[0] && !digest_label(state->key_hash)) ||
         (state->source_id[0] && !digest_label(state->source_id))) goto done;
     {
@@ -531,6 +635,17 @@ static int open_catalog(const char *directory, struct catalog_state *state)
     if (!state->catalog) { close(fd); goto done; }
     if (!fgets(line, sizeof line, state->catalog) ||
         strcmp(line, "format holy-xbps-catalog-1\n")) goto done;
+    if (state->capabilities_hash[0]) {
+        fd = openat(dir, "capabilities", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+        if (fd < 0) goto done;
+        if (fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+            st.st_uid != geteuid() || (st.st_mode & 0022) ||
+            st.st_size <= 0 || st.st_size > 128LL * 1024 * 1024 ||
+            !hash_fd(fd, actual) || strcmp(actual, state->capabilities_hash)) {
+            close(fd); goto done;
+        }
+        close(fd);
+    }
     ok = 1;
 done:
     if (!ok && state->catalog) { fclose(state->catalog); state->catalog = NULL; }
@@ -724,6 +839,62 @@ static int next_row(FILE *catalog, struct xbps_row *row)
     row->name = strdup(name); row->version = strdup(version);
     row->arch = strdup(arch); row->hash = strdup(hash); row->size = size;
     return row->name && row->version && row->arch && row->hash ? 1 : -1;
+}
+
+int holy_xbps_providers(const char *directory, const char *soname)
+{
+    struct catalog_state state;
+    struct stat st;
+    char line[1200], actual[65], *matches = NULL;
+    size_t matches_size = 0, count = 0;
+    FILE *input = NULL, *out = NULL;
+    int dir = -1, fd = -1, result = 6;
+    if (!soname_label(soname) || !open_catalog(directory, &state)) return 6;
+    fclose(state.catalog);
+    if (!state.capabilities_hash[0]) goto done;
+    dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    fd = dir < 0 ? -1 : openat(dir, "capabilities", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_uid != geteuid() || (st.st_mode & 0022) ||
+        st.st_size <= 0 || st.st_size > 128LL * 1024 * 1024 ||
+        !hash_fd(fd, actual) || strcmp(actual, state.capabilities_hash) ||
+        lseek(fd, 0, SEEK_SET) < 0 || !(input = fdopen(fd, "r"))) goto done;
+    fd = -1;
+    if (!fgets(line, sizeof line, input) ||
+        strcmp(line, "format holy-xbps-capabilities-1\n")) goto done;
+    out = open_memstream(&matches, &matches_size);
+    if (!out) { result = 1; goto done; }
+    while (fgets(line, sizeof line, input)) {
+        char found[256], name[256], version[256], arch[256], hash[65];
+        int end = 0;
+        if (sscanf(line, "soname %255s %255s %255s %255s %64s%n",
+                   found, name, version, arch, hash, &end) != 5 ||
+            !end || line[end] != '\n' || line[end + 1] ||
+            !soname_label(found) || !label(name) || !label(version) ||
+            !label(arch) || !digest_label(hash)) { result = 2; goto done; }
+        if (strcmp(found, soname)) continue;
+        if (++count > 10000) { result = 6; goto done; }
+        fprintf(out, "candidate %s %s %s %s index-hint\n",
+                name, version, arch, hash);
+    }
+    {
+        int failed = ferror(input) || ferror(out);
+        if (fclose(out)) failed = 1;
+        out = NULL;
+        if (failed) { result = 1; goto done; }
+    }
+    if (matches_size && fwrite(matches, 1, matches_size, stdout) != matches_size) {
+        result = 1; goto done;
+    }
+    printf("listed %zu candidates coverage partial\n", count);
+    result = 0;
+done:
+    if (out) fclose(out);
+    if (input) fclose(input);
+    if (fd >= 0) close(fd);
+    if (dir >= 0) close(dir);
+    free(matches);
+    return result;
 }
 
 int holy_xbps_query(const char *directory, const char *query, int info)

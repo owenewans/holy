@@ -62,6 +62,10 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg xbps search|info QUERY --source ALIAS --index-arch ARCH --root DIRECTORY
 .br
+.B holypkg xbps providers SONAME --catalog DIRECTORY
+.br
+.B holypkg xbps providers SONAME --source ALIAS --index-arch ARCH --root DIRECTORY
+.br
 .B holypkg xbps fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE] [--source ALIAS --root DIRECTORY]
 .br
 .B holypkg xbps fetch NAME VERSION ARCH --source ALIAS --index-arch ARCH --root DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE]
@@ -421,7 +425,12 @@ SHA-256. xbps sync retrieves the named architecture's repodata over HTTPS
 with the same required hash. The catalog stores package name, version,
 architecture, archive SHA-256 and size. Search and info read the catalog after
 checking its digest and the retained repodata. File-index coverage is marked
-unavailable. The standalone index/sync source name records provenance but does
+unavailable. The converter also builds a digest-checked capabilities index from
+XBPS shlib-provides. xbps providers SONAME returns exact, source-attributed
+candidate hints without downloading every archive. The claim remains unverified
+until the selected payload is imported and its ELF files are checked. An absent
+match means no declared hint in this index, not proof that the source lacks
+the library. The standalone index/sync source name records provenance but does
 not register a source-id. sync-source reads an active type xbps source from the
 target-root registry, checks its URL and selected key, and records its source-id.
 Source-aware search/info/fetch check that source-id and the URL against the

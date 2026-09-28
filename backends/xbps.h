@@ -15,6 +15,7 @@ int holy_xbps_bind(const char *root, const char *source, const char *arch,
 int holy_xbps_catalog_path(const char *root, const char *source,
                            const char *arch, char **catalog);
 int holy_xbps_query(const char *directory, const char *query, int info);
+int holy_xbps_providers(const char *directory, const char *soname);
 int holy_xbps_fetch(const char *directory, const char *name, const char *version,
                     const char *arch, const char *output, const char *ca_file,
                     const char *public_key);
