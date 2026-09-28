@@ -4,6 +4,9 @@
 #include "../src/stage.h"
 #include "../src/source.h"
 #include "../src/state.h"
+#include "../src/import.h"
+#include "../src/package.h"
+#include "../src/provides.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -18,6 +21,7 @@
 #undef __llvm__
 #endif
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -920,22 +924,71 @@ int holy_xbps_query(const char *directory, const char *query, int info)
     return result;
 }
 
+static int imported_arch_matches(const char *source, const char *output)
+{
+    if (!strcmp(output, "noarch")) return 1;
+    if (!strncmp(source, "x86_64", 6))
+        return !strcmp(output, "x86_64") || !strcmp(output, "x86");
+    return !strncmp(source, "i686", 4) && !strcmp(output, "x86");
+}
+
+static int imported_claim(const char *directory, const char *name, const char *version,
+                          const char *arch, const char *soname)
+{
+    DIR *dir = opendir(directory);
+    struct dirent *entry;
+    const char *release = strrchr(version, '_');
+    size_t count = 0;
+    int found = 0, ok = 0;
+    if (!dir || !release || release == version || !release[1]) goto done;
+    errno = 0;
+    while ((entry = readdir(dir))) {
+        struct holy_package_identity identity = {0};
+        size_t length = strlen(entry->d_name);
+        char *path;
+        int matched = 0;
+        if (length < 6 || strcmp(entry->d_name + length - 5, ".holy")) continue;
+        path = malloc(strlen(directory) + length + 2);
+        if (!path) goto done;
+        sprintf(path, "%s/%s", directory, entry->d_name);
+        if (!holy_package_identity(path, &identity) ||
+            strcmp(identity.name, name) ||
+            strlen(identity.version) != (size_t)(release - version) ||
+            strncmp(identity.version, version, (size_t)(release - version)) ||
+            strcmp(identity.release, release + 1) ||
+            !imported_arch_matches(arch, identity.arch) ||
+            (soname && !holy_provides_match(path, "soname", soname, &matched))) {
+            holy_package_identity_free(&identity); free(path); goto done;
+        }
+        if (matched) found = 1;
+        holy_package_identity_free(&identity); free(path);
+        ++count;
+        errno = 0;
+    }
+    ok = count && !errno && (!soname || found);
+done:
+    if (dir) closedir(dir);
+    return ok;
+}
+
 int holy_xbps_fetch(const char *directory, const char *name, const char *version,
                     const char *arch, const char *output, const char *ca_file,
-                    const char *public_key)
+                    const char *public_key, int source_checked, int import,
+                    const char *required_soname)
 {
     struct catalog_state state;
     struct xbps_row row = {0}, selected = {0};
     EVP_PKEY *key = NULL;
     char digest[65] = {0}, signature_digest[65] = {0}, key_hash[65] = {0};
-    char *filename = NULL, *url = NULL, *download = NULL;
+    char *filename = NULL, *url = NULL, *download = NULL, *converted = NULL;
     char *signature_name = NULL, *signature_url = NULL, *signature_path = NULL;
     FILE *record = NULL;
     struct stat st;
     size_t matches = 0, length;
     int status, result = 1, dir = -1;
     if (!directory || !label(name) || !label(version) || !label(arch) || !output ||
-        !open_catalog(directory, &state)) return 6;
+        (required_soname && (!import || !soname_label(required_soname)))) return 2;
+    if (!open_catalog(directory, &state)) return 6;
     while ((status = next_row(state.catalog, &row)) > 0) {
         if (!strcmp(row.name, name) && !strcmp(row.version, version) && !strcmp(row.arch, arch)) {
             if (!matches) { selected = row; memset(&row, 0, sizeof row); }
@@ -993,6 +1046,18 @@ int holy_xbps_fetch(const char *directory, const char *name, const char *version
             result = 4; goto done;
         }
     }
+    if (import) {
+        converted = malloc(strlen(output) + sizeof "/converted");
+        if (!converted) { result = 1; goto done; }
+        sprintf(converted, "%s/converted", output);
+        result = holy_import_xbps(download, state.source, converted);
+        if (result) goto done;
+        if (!imported_claim(converted, name, version, arch, required_soname)) {
+            if (required_soname)
+                fprintf(stderr, "holypkg: XBPS payload does not provide SONAME %s\n", required_soname);
+            result = 4; goto done;
+        }
+    }
     {
         int fd = openat(dir, "conversion", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
         if (fd < 0) { result = 1; goto done; }
@@ -1004,12 +1069,16 @@ int holy_xbps_fetch(const char *directory, const char *name, const char *version
             key ? "rsa-sha256" : "hash-pinned");
     if (key) fprintf(record, "public-key-sha256 %s\nsignature-sha256 %s\n",
                      key_hash, signature_digest);
+    if (source_checked && state.source_id[0])
+        fprintf(record, "source-id %s\nsource-binding checked\n", state.source_id);
+    if (required_soname) fprintf(record, "required-soname %s\nsoname-provider verified-payload\n", required_soname);
+    fprintf(record, "imported %s\n", import ? "yes" : "no");
     fputs("state complete\n", record);
     if (ferror(record) || fflush(record) || fsync(fileno(record))) { result = 1; goto done; }
     if (fclose(record)) { record = NULL; result = 1; goto done; }
     record = NULL;
     if (fsync(dir)) { result = 1; goto done; }
-    printf("fetched %s sha256 %s\n", filename, digest);
+    printf("fetched %s sha256 %s%s\n", filename, digest, import ? " imported" : "");
     result = 0;
 done:
     if (result) fprintf(stderr, "holypkg: XBPS fetch incomplete (status %d)\n", result);
@@ -1017,7 +1086,7 @@ done:
     if (dir >= 0) close(dir);
     free(selected.name); free(selected.version); free(selected.arch); free(selected.hash);
     EVP_PKEY_free(key);
-    free(filename); free(url); free(download);
+    free(filename); free(url); free(download); free(converted);
     free(signature_name); free(signature_url); free(signature_path);
     return result;
 }

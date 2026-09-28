@@ -33,9 +33,9 @@ def tar_bytes(entries, mode="w"):
 
 
 def repodata(package, *, package_hash=None, package_name="fixture", broken=False,
-             public_key=None, claims=None):
+             public_key=None, claims=None, version="1.0_1"):
     digest = package_hash or hashlib.sha256(package).hexdigest()
-    row = {"architecture": "x86_64", "pkgver": "fixture-1.0_1",
+    row = {"architecture": "x86_64", "pkgver": f"fixture-{version}",
            "filename-sha256": digest, "filename-size": len(package),
            "run_depends": [], "shlib-requires": [],
            "shlib-provides": ["libfixture.so.1"] if claims is None else claims}
@@ -111,6 +111,45 @@ def main():
             run("xbps", "fetch", "fixture", "1.0_1", "x86_64", "--catalog", synced,
                 "--output", fetched, "--ca-file", root / "cert.pem")
             assert (fetched / package_hash).read_bytes() == package
+            run("xbps", "fetch", "fixture", "1.0_1", "x86_64", "--catalog", synced,
+                "--output", root / "invalid-soname-flags", "--require-soname",
+                "libfixture.so.1", status=2)
+            rejected = root / "rejected-soname"
+            run("xbps", "fetch", "fixture", "1.0_1", "x86_64", "--catalog", synced,
+                "--output", rejected, "--ca-file", root / "cert.pem", "--import",
+                "--require-soname", "libfixture.so.1", status=4)
+            assert not (rejected / "conversion").exists()
+            assert list((rejected / "converted").glob("*.holy"))
+            imported = root / "fetched-imported"
+            run("xbps", "fetch", "fixture", "1.0_1", "x86_64", "--catalog", synced,
+                "--output", imported, "--ca-file", root / "cert.pem", "--import")
+            assert "imported yes" in (imported / "conversion").read_text()
+            assert len(list((imported / "converted").glob("*.holy"))) == 1
+            library = root / "libfixture.so.1"
+            subprocess.run(["cc", "-shared", "-fPIC", "-x", "c", "-",
+                            "-Wl,-soname,libfixture.so.1", "-o", str(library)],
+                           input=b"#include <stdio.h>\nint fixture(void) { return puts(\"fixture\"); }\n",
+                           capture_output=True, check=True)
+            library_data = library.read_bytes()
+            library_props = plistlib.dumps({"pkgname": "fixture", "pkgver": "fixture-1.0_2",
+                                            "version": "1.0_2", "architecture": "x86_64"})
+            library_files = plistlib.dumps({"files": [{"file": "/usr/lib/libfixture.so.1",
+                "sha256": hashlib.sha256(library_data).hexdigest(), "size": len(library_data)}]})
+            library_package = tar_bytes((("./props.plist", library_props),
+                ("./files.plist", library_files),
+                ("./usr/lib/libfixture.so.1", library_data)), "w:gz")
+            (serve / "fixture-1.0_2.x86_64.xbps").write_bytes(library_package)
+            library_index = root / "library-repodata"
+            library_index.write_bytes(repodata(library_package, version="1.0_2"))
+            library_catalog = root / "library-catalog"
+            run("xbps", "index", library_index, "--sha256",
+                hashlib.sha256(library_index.read_bytes()).hexdigest(), "--source", "fixture",
+                "--base", base, "--output", library_catalog)
+            verified = root / "verified-soname"
+            run("xbps", "fetch", "fixture", "1.0_2", "x86_64", "--catalog",
+                library_catalog, "--output", verified, "--ca-file", root / "cert.pem",
+                "--import", "--require-soname", "libfixture.so.1")
+            assert "soname-provider verified-payload" in (verified / "conversion").read_text()
             converted = root / "converted"
             run("import", fetched / package_hash, "--source", "fixture", "--format", "xbps",
                 "--output", converted)
@@ -165,8 +204,14 @@ def main():
             run("xbps", "fetch", "fixture", "1.0_1", "x86_64",
                 "--source", "fixture", "--index-arch", "x86_64", "--root", target,
                 "--output", root / "bound-fetch", "--ca-file", root / "cert.pem",
-                "--public-key", public_key)
+                "--public-key", public_key, "--import")
             assert (root / "bound-fetch" / package_hash).read_bytes() == package
+            assert "source-id " in (root / "bound-fetch" / "conversion").read_text()
+            assert "imported yes" in (root / "bound-fetch" / "conversion").read_text()
+            run("xbps", "fetch", "fixture", "1.0_1", "x86_64",
+                "--catalog", registered, "--output", root / "unbound-fetch",
+                "--ca-file", root / "cert.pem", "--public-key", public_key)
+            assert "source-id " not in (root / "unbound-fetch" / "conversion").read_text()
             run("xbps", "fetch", "fixture", "1.0_1", "x86_64",
                 "--catalog", registered, "--output", root / "registered-fetch",
                 "--source", "fixture", "--root", target,
