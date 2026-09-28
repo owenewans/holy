@@ -651,10 +651,11 @@ require --choose; automatic installed/source preference ranking remains open.
 Dynamic sets require literal absolute PT_INTERP paths. Absolute DT_NEEDED paths
 must name exact provider payload paths. For a bare SONAME, the consumer must
 have one literal absolute RUNPATH or RPATH directory, and the selected provider
-must own a matching ELF file at DIRECTORY/SONAME. The planner checks architecture,
-runtime, symbols and version needs and rejects tokenized or ambiguous search
-paths. General loader search, symlink aliases and update replacement of bare
-SONAME consumers still require a separate decision.
+must own a matching ELF file at DIRECTORY/SONAME or own a symlink chain from that
+path to the ELF file. The planner checks architecture, runtime, symbols and
+version needs and rejects tokenized or ambiguous search paths. It rechecks
+these conditions for cached replacements. General loader search and aliases
+crossing package ownership remain unresolved.
 Parent directories must exist or be declared in that package manifest;
 installation does not traverse symlinked parents. This interface
 does not automatically rewrite ELF files or resolve loader aliases.

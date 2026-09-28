@@ -104,7 +104,59 @@ expect 4 "$bin" db check "$soname_probe" --root "$root" --json
 grep -q '"code":"broken-provider"' "$tmp/out"
 cp -p "$tmp/soname-library.saved" "$root$library"
 expect 0 "$bin" db check "$soname_probe" --root "$root"
-expect 0 "$bin" db rm "$soname_probe" --root "$root"
+new soname-probe
+sed -i 's/^version 1$/version 2/' "$tree/HOLY/meta"
+mkdir -p "$tree/DATA/usr/bin"
+cp "$tmp/probe" "$tree/DATA/usr/bin/soname-probe"
+patchelf --set-interpreter "$loader" --set-rpath /usr/lib/nowhere \
+    --replace-needed libc.so.6 "$libc" "$tree/DATA/usr/bin/soname-probe"
+pack soname-probe-wrong
+expect 3 "$bin" db plan-update "$soname_probe" "$(hash soname-probe-wrong)" --root "$root"
+new soname-probe
+sed -i 's/^version 1$/version 2/' "$tree/HOLY/meta"
+mkdir -p "$tree/DATA/usr/bin"
+cp "$tmp/probe" "$tree/DATA/usr/bin/soname-probe"
+patchelf --set-interpreter "$loader" --set-rpath "$runtime" \
+    --replace-needed libc.so.6 "$libc" "$tree/DATA/usr/bin/soname-probe"
+pack soname-probe-next
+soname_next=$(hash soname-probe-next)
+expect 0 "$bin" db plan-update "$soname_probe" "$soname_next" --root "$root"
+soname_update=$(sed -n 's/^plan-update sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+expect 0 "$bin" db apply-update "$soname_update" "$soname_probe" "$soname_next" --root "$root"
+expect 0 "$bin" db check "$soname_next" --root "$root"
+expect 0 "$bin" db rm "$soname_next" --root "$root"
+printf 'int alias_fixture(void) { return 0; }\n' > "$tmp/alias-library.c"
+printf 'extern int alias_fixture(void); int main(void) { return alias_fixture(); }\n' > "$tmp/alias-main.c"
+gcc -shared -fPIC -Wl,-soname,libaliasfixture.so.1 -o "$tmp/libalias.so" "$tmp/alias-library.c" \
+    -Wl,--no-as-needed -lc
+gcc -o "$tmp/alias-probe" "$tmp/alias-main.c" "$tmp/libalias.so"
+new alias-provider
+mkdir -p "$tree/DATA$runtime"
+cp "$tmp/libalias.so" "$tree/DATA$runtime/libaliasfixture.so.1.2"
+patchelf --replace-needed libc.so.6 "$libc" "$tree/DATA$runtime/libaliasfixture.so.1.2"
+ln -s libaliasfixture.so.1.2 "$tree/DATA$runtime/libaliasfixture.so.1"
+pack alias-provider
+alias_provider=$(hash alias-provider)
+new alias-probe
+mkdir -p "$tree/DATA/usr/bin"
+cp "$tmp/alias-probe" "$tree/DATA/usr/bin/alias-probe"
+patchelf --set-interpreter "$loader" --set-rpath "$runtime" \
+    --replace-needed libc.so.6 "$libc" "$tree/DATA/usr/bin/alias-probe"
+pack alias-probe
+alias_probe=$(hash alias-probe)
+expect 0 "$bin" db plan-set "$alias_probe" "$alias_provider" --root "$root"
+alias_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+expect 0 "$bin" db apply-set "$alias_plan" "$alias_probe" "$alias_provider" --root "$root"
+expect 0 "$bin" db check "$alias_probe" --root "$root"
+rm "$root$runtime/libaliasfixture.so.1"
+ln -s missing.so "$root$runtime/libaliasfixture.so.1"
+expect 4 "$bin" db check "$alias_probe" --root "$root" --json
+grep -q '"code":"broken-provider"' "$tmp/out"
+rm "$root$runtime/libaliasfixture.so.1"
+ln -s libaliasfixture.so.1.2 "$root$runtime/libaliasfixture.so.1"
+expect 0 "$bin" db check "$alias_probe" --root "$root"
+expect 0 "$bin" db rm "$alias_probe" --root "$root"
+expect 0 "$bin" db rm "$alias_provider" --root "$root"
 test "$(readlink "$root/usr/lib64/ld-linux-x86-64.so.2")" = ../lib/holy/x86_64-linux-gnu/ld-linux-x86-64.so.2
 cp -a "$root" "$tmp/broken-libc"
 expect 3 "$bin" db rm "$runtime_hash" --root "$tmp/broken-libc"

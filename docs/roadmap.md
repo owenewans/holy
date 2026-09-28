@@ -220,9 +220,11 @@
   Indexed installed SONAME lookup remains open.
 - [x] Install a bare DT_NEEDED SONAME when the consumer has one literal absolute
   RUNPATH/RPATH directory and the chosen provider owns DIRECTORY/SONAME with
-  matching ABI and required symbol versions. Installed check reads verified
-  target-root ELF files and reports provider drift. General loader search,
-  aliases, plugins and SONAME-bearing cached updates remain open.
+  matching ABI and required symbol versions. A provider-owned symlink chain to
+  a versioned library is accepted. Cached replacements revalidate every selected
+  SONAME edge. Installed check reads verified target-root ELF files and reports
+  provider or alias drift. General loader search, cross-package aliases and
+  plugins remain open.
 - [x] Resolve direct absolute shebangs in native package sets against exact
   executable ELF paths. Save the selected provider edge, reject unresolved
   env/malformed scripts, block removal of a needed interpreter, and report
