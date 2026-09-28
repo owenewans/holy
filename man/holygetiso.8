@@ -1,6 +1,6 @@
 .TH HOLYGETISO 8 "September 2026" "Holy" "System Administration"
 .SH NAME
-holygetiso \- build and boot-test a Holy image from explicit local inputs
+holygetiso \- build and boot-test a Holy image from explicit inputs
 .SH SYNOPSIS
 .B holygetiso
 .RB [ --check ]
@@ -45,9 +45,14 @@ resolve at startup. The output path names a new directory; the ISO is written
 as holy-ARCH.iso inside it. Supported sections and keys follow.
 .TP
 .B [image]
-Required: arch (i686 or x86_64), output, kernel-image, kernel-version,
+Required: arch (i686 or x86_64), output, kernel-version,
 limine-dir, static-holypkg, static-holyinstall, static-cc, profile
 (static-core or dual-libc), root-storage (ram, ext4 or gpt-ext4).
+Choose one kernel-image local path or kernel-package ALIAS:PACKAGE from an
+active pinned source. The source package must be named linux, match
+kernel-version and target architecture, use libc nolibc, and contain
+boot/vmlinuz. The builder preserves that .holy and source ID in the install
+plan, and checks the extracted x86 kernel header before building the image.
 Optional: glibc-cc, musl-cc, libc-boot-state, network-recovery,
 install-test and install-firmware. Their supported combinations are documented
 in holy-image(7). boot-test accepts required (default) or build-only. The
@@ -56,7 +61,8 @@ dual-libc profile requires musl-cc.
 .B [packages]
 Required: busybox, dinit and mdevd. The dual-libc profile also requires
 glibc and musl. An installer test requires doas and storage-tools. Each
-value is a path to a local .holy artifact. The builder records original and
+value is a local .holy path or a pinned source reference where supported.
+The builder records original and
 normalized artifact hashes separately. Repeated "add PATH" entries install
 additional local .holy packages in the same frozen set plan. Their original
 archives remain in output/inputs and the build record identifies each hash.

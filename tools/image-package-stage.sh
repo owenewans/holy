@@ -82,7 +82,7 @@ while test "$#" -gt 0; do
             if test "$kind" = --core; then
                 test "$#" -ge 4 || exit 2
                 role=$2
-                case "$role" in busybox|dinit|mdevd|glibc|musl) ;; *) exit 2 ;; esac
+                case "$role" in busybox|dinit|mdevd|glibc|musl|kernel) ;; *) exit 2 ;; esac
                 shift
             fi
             test "$#" -ge 3 && test -f "$work/source-list" || exit 2
@@ -198,7 +198,8 @@ while read -r digest selected_source; do
         root_source=$(awk -v hash="$digest" '$2 == hash {print $3}' "$work/core-roots")
         test "$root_source" = "$selected_source" || exit 4
         cp "$input" "$work/core-$role.holy"
-        printf '%s %s\n' "$role" "$selected_source" >> "$work/add-sources"
+        if test "$role" = kernel; then label=linux; else label=$role; fi
+        printf '%s %s\n' "$label" "$selected_source" >> "$work/add-sources"
         printf 'core-input %s %s %s\n' "$role" "$digest" "$selected_source" >> "$record"
     else
         add_image_package "$input" "$selected_source"

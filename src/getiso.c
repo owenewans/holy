@@ -39,7 +39,8 @@ static size_t source_count;
 static struct option options[] = {
     {"image", "arch", NULL, 1, 0},
     {"image", "output", NULL, 1, 1},
-    {"image", "kernel-image", NULL, 1, 1},
+    {"image", "kernel-image", NULL, 0, 1},
+    {"image", "kernel-package", NULL, 0, 0},
     {"image", "kernel-version", NULL, 1, 0},
     {"image", "limine-dir", NULL, 1, 1},
     {"image", "static-holypkg", NULL, 1, 1},
@@ -343,6 +344,14 @@ static int parse(const char *path)
     if (!docs_count || !get("docs", "output") ||
         strcmp(get("docs", "output"), "/usr/share/holy/llm.txt"))
         return die(path, 0, "[docs] requires installed-man-pages and /usr/share/holy/llm.txt");
+    if (!!get("image", "kernel-image") == !!get("image", "kernel-package"))
+        return die(path, 0, "choose exactly one kernel-image or kernel-package");
+    if (get("image", "kernel-package")) {
+        char *alias = reference_alias(get("image", "kernel-package"));
+        int known = alias && source_for(alias);
+        free(alias);
+        if (!known) return die(path, 0, "kernel-package requires an active source reference");
+    }
     if (!!get("resolver", "answers") != !!get("resolver", "answers-sha256") ||
         (get("resolver", "answers-sha256") &&
          (!digest_valid(get("resolver", "answers-sha256")) ||
@@ -680,6 +689,8 @@ int main(int argc, char **argv)
                get("image", "output"));
         for (i = 0; i < additional_count; ++i)
             printf("add %s\n", additional[i]);
+        if (get("image", "kernel-package"))
+            printf("kernel-package %s\n", get("image", "kernel-package"));
         for (i = 0; i < sizeof options / sizeof options[0]; ++i)
             if (!strcmp(options[i].section, "packages") && options[i].value &&
                 strchr(options[i].value, ':'))
@@ -716,10 +727,10 @@ int main(int argc, char **argv)
         perror("setenv"); remove_source_inputs(source_dir); free(source_dir);
         free(effective); free(config); return 1;
     }
-    if (additional_count > (((size_t)-1 / sizeof(*command)) - 33) / 3) {
+    if (additional_count > (((size_t)-1 / sizeof(*command)) - 37) / 3) {
         remove_source_inputs(source_dir); free(effective); free(source_dir); free(config); return 2;
     }
-    command = calloc(33 + additional_count * 3, sizeof(*command));
+    command = calloc(37 + additional_count * 3, sizeof(*command));
     if (!command) {
         remove_source_inputs(source_dir); free(effective); free(source_dir); free(config); return 1;
     }
@@ -731,11 +742,19 @@ int main(int argc, char **argv)
     command[5] = (char *)get("packages", "busybox");
     command[6] = (char *)get("packages", "dinit");
     command[7] = (char *)get("packages", "mdevd");
-    command[8] = (char *)get("image", "kernel-image");
+    command[8] = (char *)(get("image", "kernel-package") ?
+                          get("image", "kernel-package") : get("image", "kernel-image"));
     command[9] = (char *)get("image", "kernel-version");
     command[10] = (char *)get("image", "limine-dir");
     command[11] = (char *)get("image", "output");
     used = 12;
+    if (get("image", "kernel-package")) {
+        char *alias = reference_alias(get("image", "kernel-package"));
+        command[used++] = "--core";
+        command[used++] = "kernel";
+        command[used++] = alias;
+        command[used++] = strchr(get("image", "kernel-package"), ':') + 1;
+    }
     for (i = 0; i < sizeof options / sizeof options[0]; ++i) {
         char *alias;
         if (strcmp(options[i].section, "packages") || !options[i].value) continue;

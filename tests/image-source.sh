@@ -73,11 +73,20 @@ EOF
 ./holygetiso --check "$tmp/image.conf" > "$tmp/result"
 grep -qx "source fixture index $index" "$tmp/result"
 grep -qx 'add fixture:fixture' "$tmp/result"
+config_hash=$(sed -n 's/^config-sha256 //p' "$tmp/result")
 sed "s@busybox \"$tmp/busybox\"@busybox fixture:busybox@" "$tmp/image.conf" > "$tmp/core-image.conf"
 ./holygetiso --check "$tmp/core-image.conf" > "$tmp/result"
 grep -qx 'core busybox fixture:busybox' "$tmp/result"
 grep -Fxq "output $tmp/config-parts/../output" "$tmp/result"
-config_hash=$(sed -n 's/^config-sha256 //p' "$tmp/result")
+sed 's@kernel-image "../kernel"@kernel-package fixture:busybox@' \
+    "$tmp/config-parts/image.conf" > "$tmp/config-parts/kernel-image.conf"
+sed 's@config-parts/image.conf@config-parts/kernel-image.conf@' \
+    "$tmp/image.conf" > "$tmp/kernel-image.conf"
+./holygetiso --check "$tmp/kernel-image.conf" > "$tmp/result"
+grep -qx 'kernel-package fixture:busybox' "$tmp/result"
+printf 'kernel-image "../kernel"\n' >> "$tmp/config-parts/kernel-image.conf"
+if ./holygetiso --check "$tmp/kernel-image.conf" > "$tmp/result" 2> "$tmp/error"; then exit 1; fi
+grep -q 'choose exactly one kernel-image or kernel-package' "$tmp/error"
 sed 's/boot-test build-only/boot-test required/' "$tmp/config-parts/image.conf" \
     > "$tmp/config-parts/changed.conf"
 mv "$tmp/config-parts/changed.conf" "$tmp/config-parts/image.conf"

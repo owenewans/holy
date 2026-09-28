@@ -647,6 +647,13 @@
   x86_64 and i686 packages for read-only install plans. The image source
   stage records each i686 placement decision and fetched all five i686 core
   artifacts. Publication, signatures and i686 boot testing remain open.
+- [x] Accept a pinned native linux package as the image kernel input. Check
+  its version, target architecture and extracted x86 boot header, install the
+  original .holy with its source ID, and use its boot/vmlinuz for the ISO. An
+  x86_64 ext4 image with five core packages from one source and linux from a
+  second source passed the two-boot libc-removal/recovery QEMU contract.
+  The fixture kernel package contains the image, not a separate module set;
+  module-rich kernel packages still need a dedicated build test.
 - [x] Extend that RAM profile with both dynamic libc packages and separate
   C probes. Boot present, glibc-missing, musl-missing and both-missing images
   under BIOS/TCG and UEFI/TCG. Restore absent payloads and loader links from

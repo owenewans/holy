@@ -18,12 +18,16 @@ static=$(realpath "$2")
 installer=$(realpath "${STATIC_HOLYINSTALL:?STATIC_HOLYINSTALL required}")
 cc=$(realpath "$3")
 core_input() {
-    case "$1" in *:*) printf '%s\n' "$1" ;; *) realpath "$1" ;; esac
+    case "$1" in
+        /*|./*|../*) realpath "$1" ;;
+        *:*) printf '%s\n' "$1" ;;
+        *) realpath "$1" ;;
+    esac
 }
 busybox=$(core_input "$4")
 dinit=$(core_input "$5")
 mdevd=$(core_input "$6")
-kernel=$(realpath "$7")
+kernel=$(core_input "$7")
 version=$8
 limine_dir=$(realpath "$9")
 shift 9
@@ -46,6 +50,7 @@ fi
 for tool in dracut ldconfig limine sha256sum cpio gzip python3; do
     command -v "$tool" >/dev/null || { echo "$tool required" >&2; exit 6; }
 done
+validate_kernel() {
 python3 - "$kernel" "$arch" <<'PY'
 import struct
 import sys
@@ -62,6 +67,7 @@ if kernel_arch != sys.argv[2]:
           file=sys.stderr)
     sys.exit(6)
 PY
+}
 project=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 profile=${IMAGE_PROFILE:-dual-libc}
 boot_state=${LIBC_BOOT_STATE:-present}
@@ -221,6 +227,23 @@ pack() {
     rm -rf "$tree"
 }
 sh "$project/tools/image-package-stage.sh" "$bin" "$out" "$arch" "$@"
+if test -f "$work/core-kernel.holy"; then
+    cp "$work/core-kernel.holy" "$out/inputs/kernel.holy"
+    "$bin" info "local:$out/inputs/kernel.holy" > "$work/kernel-info"
+    grep -qx 'name linux' "$work/kernel-info" &&
+        grep -qx "version $version" "$work/kernel-info" &&
+        grep -qx "arch $package_arch" "$work/kernel-info" &&
+        grep -qx 'libc nolibc' "$work/kernel-info" || {
+            echo 'source kernel package does not match image target/version' >&2
+            exit 4
+        }
+    "$bin" fetch "local:$out/inputs/kernel.holy" --extract \
+        --output "$work/kernel-package" > "$work/kernel-extract.record"
+    kernel=$(realpath "$work/kernel-package/DATA/boot/vmlinuz")
+    case "$kernel" in "$work/kernel-package/DATA/"*) ;; *) exit 4 ;; esac
+fi
+test -f "$kernel" || exit 6
+validate_kernel
 for role in busybox dinit mdevd glibc musl; do
     if test -f "$work/core-$role.holy"; then
         case "$role" in
@@ -330,13 +353,17 @@ if test "$install_test" = 1; then
     printf 'guest-package doas %s\n' "$doas_digest" >> "$record"
     install_doas=doas
 fi
-metadata linux "$version" "$package_arch"
-mkdir -p "$tree/DATA/boot"
 cp "$kernel" "$out/inputs/kernel"
-cp "$out/inputs/kernel" "$tree/DATA/boot/vmlinuz"
-chmod 0644 "$tree/DATA/boot/vmlinuz"
-sha256sum "$out/inputs/kernel" > "$tree/HOLY/origin"
-pack linux
+if test -f "$work/core-kernel.holy"; then
+    cp "$work/core-kernel.holy" "$out/packages/linux.holy"
+else
+    metadata linux "$version" "$package_arch"
+    mkdir -p "$tree/DATA/boot"
+    cp "$out/inputs/kernel" "$tree/DATA/boot/vmlinuz"
+    chmod 0644 "$tree/DATA/boot/vmlinuz"
+    sha256sum "$out/inputs/kernel" > "$tree/HOLY/origin"
+    pack linux
+fi
 metadata limine bootstrap "$package_arch"
 mkdir -p "$tree/DATA/usr/share/limine"
 set -- limine-bios.sys limine-bios-cd.bin limine-uefi-cd.bin
