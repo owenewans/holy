@@ -3425,6 +3425,9 @@ static int build_set(const char *root_path, int root, int dir,
     for (i = 0; i < binding_count; ++i) {
         if (!binding_valid(bindings[i])) return 2;
         for (j = 0; j < i; ++j) if (!strncmp(bindings[i], bindings[j], 64)) return 2;
+        for (j = 0; j < count; ++j)
+            if (!strncmp(bindings[i], digests[j], 64)) break;
+        if (j == count) return 2;
     }
     if (!completed) {
         result = discover_installed(root_path, dir, digests, &count, &candidates);
@@ -3451,11 +3454,6 @@ static int build_set(const char *root_path, int root, int dir,
     for (i = 0; i < privileged_count; ++i) {
         for (j = 0; j < set->resolution.artifact_count; ++j)
             if (!strcmp(accepted_privileged[i], set->resolution.artifacts[j])) break;
-        if (j == set->resolution.artifact_count) { result = 3; goto done; }
-    }
-    for (i = 0; i < binding_count; ++i) {
-        for (j = 0; j < set->resolution.artifact_count; ++j)
-            if (!strncmp(bindings[i], set->resolution.artifacts[j], 64)) break;
         if (j == set->resolution.artifact_count) { result = 3; goto done; }
     }
     result = 1;
@@ -3982,6 +3980,22 @@ int holy_state_set_source(const char *const *digests, size_t count,
     if (!source_id || !catalog_index) return 2;
     return state_set(digests, count, choice, approved, root_path, NULL, 0,
                      source_id, catalog_index, accepted_arch, accepted_count,
+                     accepted_privileged, privileged_count, plan_hash);
+}
+
+int holy_state_set_source_bindings(const char *const *digests, size_t count,
+                                  const char *source_id, const char *catalog_index,
+                                  const char *const *bindings, size_t binding_count,
+                                  const char *choice, const char *approved,
+                                  const char *root_path,
+                                  const char *const *accepted_arch, size_t accepted_count,
+                                  const char *const *accepted_privileged, size_t privileged_count,
+                                  char plan_hash[65])
+{
+    if (!source_id || !catalog_index) return 2;
+    return state_set(digests, count, choice, approved, root_path,
+                     bindings, binding_count, source_id, catalog_index,
+                     accepted_arch, accepted_count,
                      accepted_privileged, privileged_count, plan_hash);
 }
 

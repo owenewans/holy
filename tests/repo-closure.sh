@@ -26,6 +26,12 @@ build leaf ''
 build file-root /usr/share/file-provider file
 build file-provider ''
 build unrelated ''
+build foreign-root foreign-dep
+build foreign-dep ''
+build foreign-unused ''
+mkdir -p "$tmp/other-repo"
+mv "$tmp/repo/foreign-dep.holy" "$tmp/other-repo/foreign-dep.holy"
+mv "$tmp/repo/foreign-unused.holy" "$tmp/other-repo/foreign-unused.holy"
 case "$(uname -m)" in
     x86_64)
         arch=x86_64
@@ -88,17 +94,37 @@ MAP
 fi
 "$bin" repo index "$tmp/repo" > "$tmp/out"
 "$bin" repo seal "$tmp/repo" > "$tmp/out"
+"$bin" repo index "$tmp/other-repo" > "$tmp/out"
+"$bin" repo seal "$tmp/other-repo" > "$tmp/out"
 index=$(sed -n 's/^sha256 //p' "$tmp/repo/current")
+other_index=$(sed -n 's/^sha256 //p' "$tmp/other-repo/current")
 "$bin" db init --root "$tmp/root" > "$tmp/out"
-printf '[source fixture]\ntype holy-http\nurl https://fixture.example/holy/\n' > "$tmp/config"
+printf '[source fixture]\ntype holy-http\nurl https://fixture.example/holy/\n[source other]\ntype holy-http\nurl https://other.example/holy/\n' > "$tmp/config"
 "$bin" source plan --config "$tmp/config" --root "$tmp/root" > "$tmp/plan"
 plan=$(sha256sum "$tmp/plan" | cut -d ' ' -f 1)
 "$bin" source apply "$tmp/plan" --sha256 "$plan" --root "$tmp/root" > "$tmp/out"
 "$bin" source list --root "$tmp/root" > "$tmp/out"
 source_id=$(sed -n 's/^source \([0-9a-f]*\) "fixture" active$/\1/p' "$tmp/out")
+other_id=$(sed -n 's/^source \([0-9a-f]*\) "other" active$/\1/p' "$tmp/out")
 printf 'format holy-mirror-1\nurl "https://fixture.example/holy/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
     "$index" "$source_id" > "$tmp/repo/mirror-origin"
+printf 'format holy-mirror-1\nurl "https://other.example/holy/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$other_index" "$other_id" > "$tmp/other-repo/mirror-origin"
 "$bin" source catalog bind fixture "$tmp/repo" --root "$tmp/root" > "$tmp/out"
+"$bin" source catalog bind other "$tmp/other-repo" --root "$tmp/root" > "$tmp/out"
+if "$bin" add fixture:foreign-root --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+if "$bin" add fixture:foreign-root --candidate other:foreign-dep \
+    --candidate other:foreign-unused --root "$tmp/root" \
+    > "$tmp/out" 2> "$tmp/err" < /dev/null; then exit 1; else test "$?" -eq 3; fi
+test ! -e "$tmp/root/usr/share/foreign-root"
+"$bin" add fixture:foreign-root --candidate other:foreign-dep \
+    --candidate other:foreign-unused --root "$tmp/root" --yes > "$tmp/out" 2> "$tmp/err"
+foreign_hash=$(sha256sum "$tmp/other-repo/foreign-dep.holy" | cut -d ' ' -f 1)
+test -f "$tmp/root/usr/share/foreign-root"
+test -f "$tmp/root/usr/share/foreign-dep"
+test ! -e "$tmp/root/usr/share/foreign-unused"
+grep -q "$other_id" "$tmp/root/var/lib/holypkg/installed/$foreign_hash/source"
+"$bin" db check --all --root "$tmp/root" > "$tmp/out"
 if test -n "$arch"; then
     grep -q '"GOOD_1"' "$tmp/repo/index"
     grep -q '"BAD_1"' "$tmp/repo/index"

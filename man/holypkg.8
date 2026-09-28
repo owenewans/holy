@@ -4,7 +4,7 @@ holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
 .B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
-.B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
+.B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
 .B holypkg up SOURCE:PACKAGE --prepare --output NEW_FILE [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--root DIRECTORY]
 .br
@@ -762,8 +762,16 @@ An unsigned mirror record proves only local provenance. A source with a
 registered public key requires a signed mirror and rechecks its signature.
 An unrelated corrupt archive in a current indexed mirror does not block add;
 source catalog bind and sync still verify entire mirrors. The current add path
-does not combine candidates from multiple sources. Hooks and transforms remain
-outside the supported installation subset.
+can combine explicitly named candidate packages from other active sources with
+.B --candidate SOURCE:PACKAGE.
+Each candidate source must have a bound sealed mirror. The manager stages its
+indexed dependency closure, records the source-id of each selected artifact,
+and rejects an artifact hash offered by two candidate sources. It checks each
+candidate mirror's source-id, index digest and staged hashes again before
+apply. The root catalog index is saved in the transaction journal; the exact
+selected artifact hashes and source bindings are saved for every source.
+Automatic discovery and ranking across sources remain open. Hooks and
+transforms remain outside the supported installation subset.
 .PP
 up SOURCE:PACKAGE --prepare finds one installed slot by its immutable source-id,
 name and optional arch/libc. It checks the old artifact in the target cache,

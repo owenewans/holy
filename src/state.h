@@ -54,6 +54,14 @@ int holy_state_set_source(const char *const *digests, size_t count,
                           const char *const *accepted_arch, size_t accepted_count,
                           const char *const *accepted_privileged, size_t privileged_count,
                           char plan_hash[65]);
+int holy_state_set_source_bindings(const char *const *digests, size_t count,
+                                  const char *source_id, const char *catalog_index,
+                                  const char *const *bindings, size_t binding_count,
+                                  const char *choice, const char *approved,
+                                  const char *root_path,
+                                  const char *const *accepted_arch, size_t accepted_count,
+                                  const char *const *accepted_privileged, size_t privileged_count,
+                                  char plan_hash[65]);
 int holy_state_finish_set(const char *root_path);
 int holy_state_continue_set(const char *root_path);
 

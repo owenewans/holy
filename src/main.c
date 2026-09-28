@@ -262,22 +262,35 @@ done:
     return result;
 }
 
+struct source_candidate {
+    char *alias, *name, *catalog, *next_catalog;
+    char source_id[65], next_id[65];
+    struct holy_repo_set staged, next;
+};
+
 static int add_source(int argc, char **argv)
 {
     const char *separator = strchr(argv[2], ':');
     const char *root = "/", *catalog = NULL, *choice = NULL;
     const char **accepted_arch = NULL, **accepted_privileged = NULL;
+    const char **digests = NULL, **bindings = NULL;
+    struct source_candidate *extras = NULL;
     struct holy_repo_set staged = {0}, next = {0};
     char source_id[65], next_id[65], plan[65], answer[16], *alias = NULL;
     char *bound_catalog = NULL, *next_catalog = NULL;
-    size_t arch_count = 0, privileged_count = 0, i;
+    size_t arch_count = 0, privileged_count = 0, extra_count = 0;
+    size_t digest_count = 0, binding_count = 0, i, j, k;
     int yes = 0, noninteractive = 0, root_seen = 0, result = 2;
     if (!separator || separator == argv[2] || !separator[1] ||
         strchr(separator + 1, ':')) goto done;
     alias = malloc((size_t)(separator - argv[2]) + 1);
     accepted_arch = calloc((size_t)argc, sizeof *accepted_arch);
     accepted_privileged = calloc((size_t)argc, sizeof *accepted_privileged);
-    if (!alias || !accepted_arch || !accepted_privileged) { result = 1; goto done; }
+    extras = calloc((size_t)argc, sizeof *extras);
+    digests = calloc(10000, sizeof *digests);
+    bindings = calloc(10000, sizeof *bindings);
+    if (!alias || !accepted_arch || !accepted_privileged || !extras ||
+        !digests || !bindings) { result = 1; goto done; }
     memcpy(alias, argv[2], (size_t)(separator - argv[2]));
     alias[separator - argv[2]] = 0;
     if (!strcmp(alias, "local")) goto done;
@@ -289,6 +302,21 @@ static int add_source(int argc, char **argv)
             root = argv[++i]; root_seen = 1;
         } else if (!strcmp(argv[i], "--choose") && !choice && i + 1 < (size_t)argc &&
                    argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) choice = argv[++i];
+        else if (!strcmp(argv[i], "--candidate") && i + 1 < (size_t)argc) {
+            const char *ref = argv[++i], *colon = strchr(ref, ':');
+            struct source_candidate *item = &extras[extra_count];
+            if (!colon || colon == ref || !colon[1] || strchr(colon + 1, ':')) goto done;
+            item->alias = malloc((size_t)(colon - ref) + 1);
+            if (item->alias) {
+                memcpy(item->alias, ref, (size_t)(colon - ref));
+                item->alias[colon - ref] = 0;
+            }
+            item->name = malloc(strlen(colon + 1) + 1);
+            if (item->name) strcpy(item->name, colon + 1);
+            if (!item->alias || !item->name) { result = 1; goto done; }
+            if (!strcmp(item->alias, "local") || !strcmp(item->alias, alias)) goto done;
+            ++extra_count;
+        }
         else if (!strcmp(argv[i], "--accept-arch") && i + 1 < (size_t)argc &&
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2))
             accepted_arch[arch_count++] = argv[++i];
@@ -308,10 +336,38 @@ static int add_source(int argc, char **argv)
     if (result) goto done;
     result = holy_repo_stage_set(catalog, separator + 1, root, &staged);
     if (result) goto done;
-    result = holy_state_set_source((const char *const *)staged.digests, staged.count,
-                                   source_id, staged.index, choice, NULL, root,
-                                   accepted_arch, arch_count,
-                                   accepted_privileged, privileged_count, plan);
+    if (staged.count > 10000) { result = 2; goto done; }
+    for (i = 0; i < staged.count; ++i) digests[digest_count++] = staged.digests[i];
+    for (i = 0; i < extra_count; ++i) {
+        struct source_candidate *item = &extras[i];
+        result = holy_source_catalog_path_fast(root, item->alias, &item->catalog);
+        if (result) goto done;
+        result = holy_source_catalog(root, item->alias, item->catalog, item->source_id);
+        if (result) goto done;
+        result = holy_repo_stage_set(item->catalog, item->name, root, &item->staged);
+        if (result) goto done;
+        for (j = 0; j < item->staged.count; ++j) {
+            char *binding;
+            if (digest_count == 10000) { result = 2; goto done; }
+            for (k = 0; k < digest_count; ++k)
+                if (!strcmp(digests[k], item->staged.digests[j])) break;
+            if (k != digest_count) {
+                fprintf(stderr, "holypkg: artifact belongs to multiple candidate sources: %s\n",
+                        item->staged.digests[j]);
+                result = 3; goto done;
+            }
+            binding = malloc(130);
+            if (!binding) { result = 1; goto done; }
+            snprintf(binding, 130, "%s=%s", item->staged.digests[j], item->source_id);
+            bindings[binding_count++] = binding;
+            digests[digest_count++] = item->staged.digests[j];
+        }
+    }
+    result = holy_state_set_source_bindings(digests, digest_count,
+                                            source_id, staged.index, bindings,
+                                            binding_count, choice, NULL, root,
+                                            accepted_arch, arch_count,
+                                            accepted_privileged, privileged_count, plan);
     if (result) goto done;
     if (!yes) {
         if (noninteractive || !isatty(STDIN_FILENO)) {
@@ -338,13 +394,36 @@ static int add_source(int argc, char **argv)
         staged.count != next.count) { result = 3; goto done; }
     for (i = 0; i < staged.count; ++i)
         if (strcmp(staged.digests[i], next.digests[i])) { result = 3; goto done; }
-    result = holy_state_set_source((const char *const *)staged.digests, staged.count,
-                                   source_id, staged.index, choice, plan, root,
-                                   accepted_arch, arch_count,
-                                   accepted_privileged, privileged_count, NULL);
+    for (i = 0; i < extra_count; ++i) {
+        struct source_candidate *item = &extras[i];
+        result = holy_source_catalog_path_fast(root, item->alias, &item->next_catalog);
+        if (result || strcmp(item->catalog, item->next_catalog)) { result = 3; goto done; }
+        result = holy_source_catalog(root, item->alias, item->catalog, item->next_id);
+        if (result || strcmp(item->source_id, item->next_id)) { result = 3; goto done; }
+        result = holy_repo_stage_set(item->catalog, item->name, root, &item->next);
+        if (result || strcmp(item->staged.index, item->next.index) ||
+            item->staged.count != item->next.count) { result = 3; goto done; }
+        for (j = 0; j < item->staged.count; ++j)
+            if (strcmp(item->staged.digests[j], item->next.digests[j])) {
+                result = 3; goto done;
+            }
+    }
+    result = holy_state_set_source_bindings(digests, digest_count,
+                                            source_id, staged.index, bindings,
+                                            binding_count, choice, plan, root,
+                                            accepted_arch, arch_count,
+                                            accepted_privileged, privileged_count, NULL);
 done:
     if (result == 2)
-        fputs("usage: holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
+        fputs("usage: holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--choose ID=SHA256] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
+    for (i = 0; i < binding_count; ++i) free((void *)bindings[i]);
+    for (i = 0; extras && i < (size_t)argc; ++i) {
+        free(extras[i].alias); free(extras[i].name);
+        free(extras[i].catalog); free(extras[i].next_catalog);
+        holy_repo_set_free(&extras[i].staged);
+        holy_repo_set_free(&extras[i].next);
+    }
+    free(extras); free(digests); free(bindings);
     holy_repo_set_free(&staged); holy_repo_set_free(&next);
     free(alias); free(bound_catalog); free(next_catalog);
     free(accepted_arch); free(accepted_privileged);
