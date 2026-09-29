@@ -612,9 +612,25 @@
   recipe through the normal engine and installs its split outputs.
   The converter also reads lists the way a shell does, so a comma inside an
   element belongs to its name, and a brace inside a parameter expansion does
-  not end a function body. Aports, xbps-src, SlackBuilds, RPM spec, Debian
-  source, Gentoo, Pacstall, the makepkg build environment and the vm build
-  environment remain open.
+  not end a function body.
+  The Void template family converts as well: `holypkg convert template` and
+  `holypkg import --format void` read the xbps-src template, carry its identity,
+  dependency lists with their comparators, distfiles with their checksums and
+  conf_files/mutable_files, and keep every pre/do/post phase body in Bash behind
+  a prologue that maps $wrksrc, $masterdir, $DESTDIR and $PKGDESTDIR onto the
+  exported HOLY_* paths. The v* helpers a body calls are carried into that
+  prologue, and vman, vsv, vsed, vcompletion and vsrccopy are reported as
+  unresolved. A NAME_package function becomes an output whose split step
+  carries its pkg_install body. A patches or files directory is archived
+  beside the recipe, an INSTALL or REMOVE file becomes one hook, build_options
+  are fixed to build_options_default so no vopt_ call survives, and a phase the
+  template leaves out is reported as supplied by the build style the converter
+  does not run. A fixture converts a template with three outputs, builds it
+  through the normal engine and checks the resulting ABI groups; 700 upstream
+  templates from void-packages convert and every produced recipe passes the
+  manager's own validation. Aports, SlackBuilds, RPM spec, Debian source,
+  Gentoo, Pacstall, the makepkg build environment and the vm build environment
+  remain open.
   The build runner no longer loses its private build root, keeps a root the
   caller named, and reaches both the default and the named-root path in the
   fixture. The same run also restores three interrupted-mutation fixtures whose

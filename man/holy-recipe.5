@@ -117,14 +117,17 @@ capability. Git sources, converter evaluation and cross build roots are not
 implemented and are rejected.
 .SH CONVERSION
 holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY
+holypkg convert TEMPLATE --source NAME --output NEW_DIRECTORY
 holypkg import PKGBUILD --source NAME --format pkgbuild --output NEW_DIRECTORY
+holypkg import TEMPLATE --source NAME --format void --output NEW_DIRECTORY
 .PP
-The converter reads a PKGBUILD as text and writes a conversion directory holding
-the original file, a copy of every local source it names, a holy-recipe-1
-manifest and a conversion report. NAME is a source alias without a colon and is
-recorded as provenance; it grants no installed source id. The original file is
-never executed.
-.PP
+A file named template reaches the Void converter and every other name reaches
+the pacman converter. Each reads its input as text and writes a conversion
+directory holding the original file, a copy of every local source and directory
+it names, a holy-recipe-1 manifest and a conversion report. NAME is a source
+alias without a colon and is recorded as provenance; it grants no installed
+source id. The original file is never executed.
+.SS PKGBUILD
 pkgbase, pkgver, pkgrel, pkgdesc, url, license, arch, epoch, depends,
 makedepends, checkdepends, optdepends and backup are carried. A list is read the
 way a shell reads one: whitespace separates elements, so a comma belongs to the
@@ -149,12 +152,57 @@ postinstall hook, so pre_install and post_install arrive as one hook.
 .PP
 provides, conflicts and replaces, epoch, groups, noextract, validpgpkeys,
 options, non-SHA-256 checksums and architecture-specific source lists are
-preserved as x- records or reported as unknown. The report lists every carried,
-preserved, helper, unknown and changed item with its PKGBUILD line range, and
-its status is native or review-required. A review-required conversion returns 3
-with the recipe written, since review is a statement about execution, not about
-whether the text could be carried. A missing pkgbase, a computed pkgver or
-pkgrel, or malformed text returns 2; an unreadable input returns 6.
+preserved as x- records or reported as unknown.
+.SS Void template
+pkgname, version, revision, short_desc, homepage, license, maintainer and
+changelog are carried. distfiles is read as a list and $pkgname, $pkgbase,
+$version, $revision, $sourcepkg and $pkgver are expanded; a checksum entry
+becomes source-sha256, a leading @ contents digest is reported as unknown, and a
+local distfile is copied next to the recipe. hostmakedepends, makedepends and
+checkdepends become build-depend, and depends becomes depend with the same
+comparator names as the PKGBUILD converter; a virtual? requirement and a build
+dependency that carries a version are reported as unknown. conf_files becomes
+config and mutable_files becomes config mutable, and a path with a wildcard
+needs review.
+.PP
+pre_fetch, do_fetch, post_fetch, the extract, patch, configure, build, check
+and install families keep their Bash and become the matching Holy phase, each
+behind a prologue that rebuilds the xbps-src variables from the exported paths:
+$wrksrc and $build_wrksrc become $HOLY_SRC, $masterdir becomes $HOLY_WORK,
+$XBPS_BUILDDIR becomes $HOLY_BUILD, $XBPS_MAKEJOBS becomes $HOLY_JOBS, and
+$DESTDIR becomes $HOLY_DEST with $PKGDESTDIR the same, or $HOLY_SPLIT_DEST in a
+split step. The step changes into $wrksrc first because xbps-src runs a phase
+there. A distfile is extracted into HOLY_SRC, which therefore takes the place of
+the xbps-src $wrksrc directory. The v* helpers a body calls are carried into
+the prologue; vman, vsv, vsed, vcompletion and vsrccopy are reported as
+unresolved, as is any use of a cross, verbose or chroot variable.
+.PP
+A NAME_package function becomes output NAME plus a split step carrying its
+pkg_install body, so DESTDIR stays the main tree and PKGDESTDIR becomes the
+staging tree. depends, replaces, conflicts and short_desc set inside that
+function are reported with their lines rather than moved into the main output,
+because a Holy recipe has one depend list. A patches directory is archived next
+to the recipe and applied in the prepare step with a .args file per patch, and a
+files directory is archived next to it and named by FILESDIR. An INSTALL or
+REMOVE file becomes one hook and is reported, because a Holy hook runs with
+ACTION unset and its pre and post branches are not reproduced.
+.PP
+build_options are fixed to build_options_default before they reach the recipe,
+so vopt_if, vopt_with, vopt_enable, vopt_bool and vopt_feature produce their
+value and a top level vopt_conflict is checked against that same set. The
+remaining build variables, such as bootstrap, repository, archs, shlib_provides,
+nostrip and skip_extraction, are preserved as x- records. A phase the template
+leaves out is reported as supplied by common/build-style/NAME.sh, which the
+converter does not run, so its result is review-required. A conditional block, a
+case block or a vopt_conflict is reported with its line, since the converter
+evaluates none of them.
+.SH CONVERSION REPORT
+The report lists every carried, preserved, helper, unknown and changed item with
+its source file and line range, and its status is native or review-required. A
+review-required conversion returns 3 with the recipe written, since review is a
+statement about execution, not about whether the text could be carried. A
+missing identity, a computed identity or malformed text returns 2; an unreadable
+input returns 6.
 .SH RESULTS
 Each output artifact is written to the output directory. Its manifest is
 regenerated from the copied payload. HOLY/meta records format, name, version,
@@ -212,5 +260,7 @@ artifact or system capability is unavailable.
 .SH SOURCES
 PKGBUILD: https://pacman.archlinux.page/PKGBUILD.5.html
 Void Manual: https://raw.githubusercontent.com/void-linux/void-packages/master/Manual.md
+v* helpers: https://raw.githubusercontent.com/void-linux/void-packages/master/common/environment/setup/install.sh
+build style: https://raw.githubusercontent.com/void-linux/void-packages/master/common/build-style/gnu-makefile.sh
 RPM spec: https://rpm.org/docs/latest/manual/spec.html
 SlackBuild template: https://slackbuilds.org/templates/autotools-template.SlackBuild

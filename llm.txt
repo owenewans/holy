@@ -1124,7 +1124,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=80e5056aecacc9d1c50d334cbbc98216e57ebd5d609a6f1953ff423225a5c25d
+holypkg.8 source=holy version=development sha256=2242bbeb4ac8eb2430184e2aabc40ec58c52a292398370c2bae7ba64a02235a6
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1145,11 +1145,11 @@ SYNOPSIS
      [--accept-privileged SHA256] [--root DIRECTORY] [--yes] [--noninteractive]
      holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
      holypkg  import  INPUT   --source	 NAME	--format   pacman|rpm|deb|slack-
-     ware|apk|xbps|appimage|pkgbuild  --output	NEW_DIRECTORY [--public-key FILE
-     (apk only)]
+     ware|apk|xbps|appimage|pkgbuild|void  --output  NEW_DIRECTORY [--public-key
+     FILE (apk only)]
      holypkg build RECIPE --output NEW_DIRECTORY  [--environment  host|clean|vm]
      [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
-     holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY
+     holypkg convert PKGBUILD|TEMPLATE --source NAME --output NEW_DIRECTORY
      holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base
      HTTPS_BASE/ --output NEW_DIRECTORY
      holypkg  apt  sync HTTPS_URL --sha256 HASH --source NAME --base HTTPS_BASE/
@@ -3666,57 +3666,78 @@ RUN INSTALLED COMMAND
      issued  until  dependency	and  path  decisions are complete. NAME does not
      grant a registered source identity.
 
-   PKGBUILD conversion
+   Recipe conversion
      holypkg convert PKGBUILD --source NAME  --output  NEW_DIRECTORY  reads  one
      PKGBUILD  as text and writes a conversion directory containing the original
      file, a copy of each local source it names, a holy-recipe(5) manifest and a
-     conversion report. import INPUT --source NAME  --format  pkgbuild	--output
-     NEW_DIRECTORY  performs  the  same	 conversion.  Neither command installs a
-     package, builds one, or grants NAME a registered source identity;	the  re-
-     port records it as provenance.
+     conversion report. A file named template reaches the Void converter through
+     the same command and any other name reaches the pacman converter, while im-
+     port INPUT --source  NAME	--format  pkgbuild|void	 --output  NEW_DIRECTORY
+     names  the	 family	 explicitly.  None of these commands installs a package,
+     builds one, or grants NAME a registered source identity; the report records
+     it as provenance.
 
-     The converter carries pkgbase, pkgver, pkgrel, pkgdesc, url, license, arch,
-     epoch,  depends,  makedepends, checkdepends, optdepends and backup, expands
-     $pkgbase, $pkgname, $pkgver and $pkgrel inside source entries, and turns  a
-     sha256sums	 entry	into source-sha256. A list is read the way a shell reads
-     it: whitespace separates elements and a comma inside an element belongs  to
-     its name. The build, check and package bodies keep their original Bash with
-     a	prologue  that maps the makepkg working variables onto the exported Holy
-     paths,  so	 $srcdir  is   $HOLY_SRC   and	 $pkgdir   is	$HOLY_DEST,   or
-     $HOLY_SPLIT_DEST  inside  a package_NAME split output. An install= fragment
-     is copied into the payload and recorded as one postinstall hook.  provides,
-     conflicts,	 replaces,  noextract, validpgpkeys, options, non-SHA-256 check-
-     sums and architecture-specific source lists are preserved as x- records  or
-     reported as unknown. The report names every carried, preserved, helper, un-
-     known  and changed item with its PKGBUILD line range, and its status is na-
-     tive or review-required. A review-required conversion returns  3  with  the
-     recipe written; a computed version, a missing pkgbase or malformed text re-
-     turns  2,	and  an	 unreadable  input  returns  6. The build environment of
-     makepkg  itself  is  not  reproduced,  so	a   converted	recipe	 reports
-     makepkg.conf and the phase environments as unresolved helpers.
+     The PKGBUILD converter carries pkgbase, pkgver, pkgrel, pkgdesc,  url,  li-
+     cense,  arch,  epoch,  depends,  makedepends,  checkdepends, optdepends and
+     backup, expands $pkgbase, $pkgname, $pkgver and $pkgrel inside  source  en-
+     tries,  and turns a sha256sums entry into source-sha256. A list is read the
+     way a shell reads it: whitespace separates elements and a comma  inside  an
+     element belongs to its name. The build, check and package bodies keep their
+     original  Bash with a prologue that maps the makepkg working variables onto
+     the exported Holy paths, so $srcdir is $HOLY_SRC and $pkgdir is $HOLY_DEST,
+     or $HOLY_SPLIT_DEST inside a package_NAME split output. An	 install=  frag-
+     ment  is copied into the payload and recorded as one postinstall hook. pro-
+     vides, conflicts, replaces, noextract, validpgpkeys,  options,  non-SHA-256
+     checksums	and  architecture-specific  source  lists  are	preserved  as x-
+     records or reported as unknown. The build environment of makepkg itself  is
+     not  reproduced,  so  a converted recipe reports makepkg.conf and the phase
+     environments as unresolved helpers.
+
+     The Void converter carries pkgname, version,  revision,  short_desc,  home-
+     page,  license,  maintainer  and changelog, reads distfiles and checksum as
+     lists, and expands $pkgname, $pkgbase, $version, $revision, $sourcepkg  and
+     $pkgver  inside them. The xbps-src phase functions keep their original Bash
+     behind a  prologue	 that  maps  $wrksrc  onto  $HOLY_SRC,	$masterdir  onto
+     $HOLY_WORK and $DESTDIR onto $HOLY_DEST, so HOLY_SRC takes the place of the
+     $wrksrc  directory	 that  xbps-src	 builds. The v* helpers a body calls are
+     carried into that prologue, and vman, vsv, vsed, vcompletion  and	vsrccopy
+     are reported as unresolved. A NAME_package function becomes an output whose
+     split  step  carries its pkg_install body, with DESTDIR still the main tree
+     and PKGDESTDIR the staging tree. A patches or files directory  is	archived
+     beside  the  recipe  and named by PATCHESDIR or FILESDIR, and an INSTALL or
+     REMOVE file becomes one hook.  build_options are fixed to build_options_de-
+     fault, so a $(vopt_with) call becomes its	recorded  value	 rather	 than  a
+     shell  helper.  A	phase the template leaves out is reported as supplied by
+     common/build-style/NAME.sh, which the converter does not run.
+
+     Both reports name every carried, preserved,  helper,  unknown  and	 changed
+     item with its source file and line range, and their status is native or re-
+     view-required. A review-required conversion returns 3 with the recipe writ-
+     ten;  a  computed identity, a missing identity or malformed text returns 2,
+     and an unreadable input returns 6.
 
    Prepared source set
-     add  SOURCE:PACKAGE  --prepare prints the selected set, source bindings and
-     plan hash, then returns success  without  installing  files  or  writing  a
+     add SOURCE:PACKAGE --prepare prints the selected set, source  bindings  and
+     plan  hash,  then	returns	 success  without  installing files or writing a
      transaction. It can stage verified artifacts in the target cache. It cannot
-     be	 combined  with --yes. The caller must preserve the catalog and artifact
+     be combined with --yes. The caller must preserve the catalog  and	artifact
      hashes when carrying this selection into another target root.
 
 EXIT STATUS
-     0 indicates success under the implemented checks; 1 indicates a failed  lo-
-     cal  fetch,  extraction or check; 2 indicates invalid arguments, configura-
-     tion or package inspection. Diagnostics go to standard error except  --json
+     0	indicates success under the implemented checks; 1 indicates a failed lo-
+     cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
+     tion  or package inspection. Diagnostics go to standard error except --json
      check events, which go to standard output.
 
-     Preview  returns  3  when valid requirements need provider decisions, 4 for
-     path conflicts and 6 when hooks or privileged modes  need	unsupported  re-
+     Preview returns 3 when valid requirements need provider  decisions,  4  for
+     path  conflicts  and  6 when hooks or privileged modes need unsupported re-
      view. It returns 1 on target-root I/O failure.
 
 SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-recipe.5 source=holy version=development sha256=d49f7246418230b88fce54efd84cbb712cf370b13b991b2da63c7a59dff5ae10
+holy-recipe.5 source=holy version=development sha256=c0783db86b38bccece06b35f6aa23194701aa02921a8824ed2a939871981818e
 HOLY-RECIPE(5)		       Holy package format		  HOLY-RECIPE(5)
 
 NAME
@@ -3844,48 +3865,101 @@ BUILD
      are not implemented and are rejected.
 
 CONVERSION
-     holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY  holypkg  im-
-     port PKGBUILD --source NAME --format pkgbuild --output NEW_DIRECTORY
+     holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY holypkg  con-
+     vert  TEMPLATE --source NAME --output NEW_DIRECTORY holypkg import PKGBUILD
+     --source NAME --format pkgbuild --output NEW_DIRECTORY holypkg import  TEM-
+     PLATE --source NAME --format void --output NEW_DIRECTORY
 
-     The  converter  reads  a PKGBUILD as text and writes a conversion directory
-     holding the original file, a copy of every local source it names,	a  holy-
-     recipe-1 manifest and a conversion report. NAME is a source alias without a
-     colon  and is recorded as provenance; it grants no installed source id. The
-     original file is never executed.
+     A	file  named  template  reaches	the  Void converter and every other name
+     reaches the pacman converter. Each reads its input as  text  and  writes  a
+     conversion	 directory  holding  the  original  file,  a copy of every local
+     source and directory it names, a holy-recipe-1 manifest  and  a  conversion
+     report.  NAME  is	a source alias without a colon and is recorded as prove-
+     nance; it grants no installed source id. The original file	 is  never  exe-
+     cuted.
 
-     pkgbase, pkgver, pkgrel,  pkgdesc,	 url,  license,	 arch,	epoch,	depends,
-     makedepends,  checkdepends,  optdepends  and  backup are carried. A list is
-     read the way a shell reads one: whitespace separates elements, so	a  comma
-     belongs  to  the  element	that holds it. A comparison operator becomes the
+   PKGBUILD
+     pkgbase,  pkgver,	pkgrel,	 pkgdesc,  url,	 license,  arch, epoch, depends,
+     makedepends, checkdepends, optdepends and backup are  carried.  A	list  is
+     read  the	way a shell reads one: whitespace separates elements, so a comma
+     belongs to the element that holds it. A  comparison  operator  becomes  the
      matching relation: >= ge, <= le, > gt, < lt, = eq. arch maps x86_64, x86 to
-     i686, and noarch or any unchanged; any other list needs  review.  A  source
-     entry   has  $pkgbase,  $pkgname,	$pkgver	 and  $pkgrel  expanded,  and  a
-     sha256sums entry becomes source-sha256. A local source is	copied	next  to
+     i686,  and	 noarch	 or any unchanged; any other list needs review. A source
+     entry  has	 $pkgbase,  $pkgname,  $pkgver	and  $pkgrel  expanded,	 and   a
+     sha256sums	 entry	becomes	 source-sha256. A local source is copied next to
      the recipe and its original PKGBUILD line is recorded. A function body ends
-     at	 the first closing brace that is not quoted and not part of a command or
+     at the first closing brace that is not quoted and not part of a command  or
      parameter substitution.
 
-     prepare, build, check and package keep their bodies in Bash, preceded by  a
-     prologue  that rebuilds the makepkg variables from the exported Holy paths:
+     prepare,  build, check and package keep their bodies in Bash, preceded by a
+     prologue that rebuilds the makepkg variables from the exported Holy  paths:
      $pkgdir  becomes  $HOLY_DEST,  $srcdir  becomes  $HOLY_SRC,  $startdir  and
-     $builddir	become	$HOLY_BUILD,  and  a $pkgdir inside a split step becomes
-     $HOLY_SPLIT_DEST.	$srcdest, $pkgdest, CFLAGS, CXXFLAGS, CPPFLAGS,	 LDFLAGS
-     and  MAKEFLAGS are redefined only when the environment leaves them empty. A
-     single source is lifted out of its own name directory so that  HOLY_SRC  is
-     the  makepkg  $srcdir.  A	package_NAME function becomes split-step for the
-     output NAME, and install= fragments  are  copied  into  the  payload  under
-     /usr/share/holy  and  recorded  as	 a  postinstall hook, so pre_install and
+     $builddir become $HOLY_BUILD, and a $pkgdir inside	 a  split  step	 becomes
+     $HOLY_SPLIT_DEST.	 $srcdest, $pkgdest, CFLAGS, CXXFLAGS, CPPFLAGS, LDFLAGS
+     and MAKEFLAGS are redefined only when the environment leaves them empty.  A
+     single  source  is lifted out of its own name directory so that HOLY_SRC is
+     the makepkg $srcdir. A package_NAME function  becomes  split-step	for  the
+     output  NAME,  and	 install=  fragments  are  copied into the payload under
+     /usr/share/holy and recorded as a	postinstall  hook,  so	pre_install  and
      post_install arrive as one hook.
 
-     provides, conflicts and replaces, epoch, groups,  noextract,  validpgpkeys,
-     options,  non-SHA-256  checksums and architecture-specific source lists are
-     preserved as x- records or reported as unknown. The report lists every car-
-     ried, preserved, helper, unknown and changed item with  its  PKGBUILD  line
-     range,  and its status is native or review-required. A review-required con-
-     version returns 3 with the recipe written,	 since	review	is  a  statement
-     about  execution,	not  about  whether the text could be carried. A missing
-     pkgbase, a computed pkgver or pkgrel, or malformed text returns 2;	 an  un-
-     readable input returns 6.
+     provides,	conflicts  and replaces, epoch, groups, noextract, validpgpkeys,
+     options, non-SHA-256 checksums and architecture-specific source  lists  are
+     preserved as x- records or reported as unknown.
+
+   Void template
+     pkgname,  version,	 revision, short_desc, homepage, license, maintainer and
+     changelog are carried. distfiles is read as a list and $pkgname,  $pkgbase,
+     $version,	$revision, $sourcepkg and $pkgver are expanded; a checksum entry
+     becomes source-sha256, a leading @ contents digest is reported as	unknown,
+     and a local distfile is copied next to the recipe. hostmakedepends, makede-
+     pends and checkdepends become build-depend, and depends becomes depend with
+     the same comparator names as the PKGBUILD converter; a virtual? requirement
+     and  a  build  dependency	that  carries a version are reported as unknown.
+     conf_files becomes config and mutable_files becomes config mutable,  and  a
+     path with a wildcard needs review.
+
+     pre_fetch,	 do_fetch,  post_fetch,	 the  extract,	patch, configure, build,
+     check and install families keep their Bash and  become  the  matching  Holy
+     phase, each behind a prologue that rebuilds the xbps-src variables from the
+     exported  paths: $wrksrc and $build_wrksrc become $HOLY_SRC, $masterdir be-
+     comes $HOLY_WORK, $XBPS_BUILDDIR becomes  $HOLY_BUILD,  $XBPS_MAKEJOBS  be-
+     comes  $HOLY_JOBS,	 and  $DESTDIR	becomes	 $HOLY_DEST with $PKGDESTDIR the
+     same, or $HOLY_SPLIT_DEST in a split step. The step  changes  into	 $wrksrc
+     first  because  xbps-src  runs  a phase there. A distfile is extracted into
+     HOLY_SRC, which therefore takes the place of the  xbps-src	 $wrksrc  direc-
+     tory. The v* helpers a body calls are carried into the prologue; vman, vsv,
+     vsed, vcompletion and vsrccopy are reported as unresolved, as is any use of
+     a cross, verbose or chroot variable.
+
+     A	NAME_package function becomes output NAME plus a split step carrying its
+     pkg_install body, so DESTDIR stays the main tree and PKGDESTDIR becomes the
+     staging tree. depends, replaces, conflicts and short_desc set  inside  that
+     function are reported with their lines rather than moved into the main out-
+     put,  because  a  Holy  recipe  has one depend list. A patches directory is
+     archived next to the recipe and applied in the prepare step  with	a  .args
+     file  per	patch, and a files directory is archived next to it and named by
+     FILESDIR. An INSTALL or REMOVE file becomes one hook and is  reported,  be-
+     cause  a Holy hook runs with ACTION unset and its pre and post branches are
+     not reproduced.
+
+     build_options are fixed to	 build_options_default	before	they  reach  the
+     recipe, so vopt_if, vopt_with, vopt_enable, vopt_bool and vopt_feature pro-
+     duce their value and a top level vopt_conflict is checked against that same
+     set.  The	remaining build variables, such as bootstrap, repository, archs,
+     shlib_provides, nostrip and skip_extraction, are preserved as x- records. A
+     phase the template leaves out is  reported	 as  supplied  by  common/build-
+     style/NAME.sh,  which  the converter does not run, so its result is review-
+     required. A conditional block, a case block or a vopt_conflict is	reported
+     with its line, since the converter evaluates none of them.
+
+CONVERSION REPORT
+     The report lists every carried, preserved, helper, unknown and changed item
+     with its source file and line range, and its status is native or review-re-
+     quired.  A	 review-required  conversion  returns 3 with the recipe written,
+     since review is a statement about execution, not  about  whether  the  text
+     could be carried. A missing identity, a computed identity or malformed text
+     returns 2; an unreadable input returns 6.
 
 RESULTS
      Each  output  artifact  is written to the output directory. Its manifest is
@@ -3944,7 +4018,11 @@ EXIT STATUS
 SOURCES
      PKGBUILD:	  https://pacman.archlinux.page/PKGBUILD.5.html	  Void	 Manual:
      https://raw.githubusercontent.com/void-linux/void-packages/master/Manual.md
-     RPM spec: https://rpm.org/docs/latest/manual/spec.html SlackBuild template:
-     https://slackbuilds.org/templates/autotools-template.SlackBuild
+     v* helpers: https://raw.githubusercontent.com/void-linux/void-packages/mas-
+     ter/common/environment/setup/install.sh		build		  style:
+     https://raw.githubusercontent.com/void-linux/void-packages/master/com-
+     mon/build-style/gnu-makefile.sh  RPM spec: https://rpm.org/docs/latest/man-
+     ual/spec.html SlackBuild template:	 https://slackbuilds.org/templates/auto-
+     tools-template.SlackBuild
 
 holy				      2026			  HOLY-RECIPE(5)

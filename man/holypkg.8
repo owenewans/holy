@@ -10,11 +10,11 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
-.B holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild --output NEW_DIRECTORY [--public-key FILE (apk only)]
+.B holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild|void --output NEW_DIRECTORY [--public-key FILE (apk only)]
 .br
 .B holypkg build RECIPE --output NEW_DIRECTORY [--environment host|clean|vm] [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
 .br
-.B holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY
+.B holypkg convert PKGBUILD|TEMPLATE --source NAME --output NEW_DIRECTORY
 .br
 .B holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY
 .br
@@ -2532,33 +2532,55 @@ the same extraction and records NAME as unverified provenance. It returns
 status 3 after writing the reviewable output because no native .holy can be
 issued until dependency and path decisions are complete. NAME does not grant
 a registered source identity.
-.SS PKGBUILD conversion
+.SS Recipe conversion
 holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY reads one
 PKGBUILD as text and writes a conversion directory containing the original
 file, a copy of each local source it names, a holy-recipe(5) manifest and a
-conversion report. import INPUT --source NAME --format pkgbuild --output
-NEW_DIRECTORY performs the same conversion. Neither command installs a package,
-builds one, or grants NAME a registered source identity; the report records it
-as provenance.
+conversion report. A file named template reaches the Void converter through
+the same command and any other name reaches the pacman converter, while
+import INPUT --source NAME --format pkgbuild|void --output NEW_DIRECTORY names
+the family explicitly. None of these commands installs a package, builds one,
+or grants NAME a registered source identity; the report records it as
+provenance.
 .PP
-The converter carries pkgbase, pkgver, pkgrel, pkgdesc, url, license, arch,
-epoch, depends, makedepends, checkdepends, optdepends and backup, expands
-$pkgbase, $pkgname, $pkgver and $pkgrel inside source entries, and turns a
-sha256sums entry into source-sha256. A list is read the way a shell reads it:
-whitespace separates elements and a comma inside an element belongs to its
-name. The build, check and package bodies keep their original Bash with a
-prologue that maps the makepkg working variables onto the exported Holy paths,
-so $srcdir is $HOLY_SRC and $pkgdir is $HOLY_DEST, or $HOLY_SPLIT_DEST inside a
-package_NAME split output. An install= fragment is copied into the payload and
-recorded as one postinstall hook. provides, conflicts, replaces, noextract,
-validpgpkeys, options, non-SHA-256 checksums and architecture-specific source
-lists are preserved as x- records or reported as unknown. The report names
-every carried, preserved, helper, unknown and changed item with its PKGBUILD
-line range, and its status is native or review-required. A review-required
-conversion returns 3 with the recipe written; a computed version, a missing
-pkgbase or malformed text returns 2, and an unreadable input returns 6. The
-build environment of makepkg itself is not reproduced, so a converted recipe
-reports makepkg.conf and the phase environments as unresolved helpers.
+The PKGBUILD converter carries pkgbase, pkgver, pkgrel, pkgdesc, url, license,
+arch, epoch, depends, makedepends, checkdepends, optdepends and backup,
+expands $pkgbase, $pkgname, $pkgver and $pkgrel inside source entries, and
+turns a sha256sums entry into source-sha256. A list is read the way a shell
+reads it: whitespace separates elements and a comma inside an element belongs
+to its name. The build, check and package bodies keep their original Bash with
+a prologue that maps the makepkg working variables onto the exported Holy
+paths, so $srcdir is $HOLY_SRC and $pkgdir is $HOLY_DEST, or $HOLY_SPLIT_DEST
+inside a package_NAME split output. An install= fragment is copied into the
+payload and recorded as one postinstall hook. provides, conflicts, replaces,
+noextract, validpgpkeys, options, non-SHA-256 checksums and
+architecture-specific source lists are preserved as x- records or reported as
+unknown. The build environment of makepkg itself is not reproduced, so a
+converted recipe reports makepkg.conf and the phase environments as
+unresolved helpers.
+.PP
+The Void converter carries pkgname, version, revision, short_desc, homepage,
+license, maintainer and changelog, reads distfiles and checksum as lists, and
+expands $pkgname, $pkgbase, $version, $revision, $sourcepkg and $pkgver inside
+them. The xbps-src phase functions keep their original Bash behind a prologue
+that maps $wrksrc onto $HOLY_SRC, $masterdir onto $HOLY_WORK and $DESTDIR onto
+$HOLY_DEST, so HOLY_SRC takes the place of the $wrksrc directory that xbps-src
+builds. The v* helpers a body calls are carried into that prologue, and
+vman, vsv, vsed, vcompletion and vsrccopy are reported as unresolved. A
+NAME_package function becomes an output whose split step carries its
+pkg_install body, with DESTDIR still the main tree and PKGDESTDIR the staging
+tree. A patches or files directory is archived beside the recipe and named by
+PATCHESDIR or FILESDIR, and an INSTALL or REMOVE file becomes one hook.
+build_options are fixed to build_options_default, so a $(vopt_with) call
+becomes its recorded value rather than a shell helper. A phase the template
+leaves out is reported as supplied by common/build-style/NAME.sh, which the
+converter does not run.
+.PP
+Both reports name every carried, preserved, helper, unknown and changed item
+with its source file and line range, and their status is native or
+review-required. A review-required conversion returns 3 with the recipe
+written; a computed identity, a missing identity or malformed text returns 2,
+and an unreadable input returns 6.
 .SS Prepared source set
 add SOURCE:PACKAGE --prepare prints the selected set, source bindings and
 plan hash, then returns success without installing files or writing a
