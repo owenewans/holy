@@ -211,6 +211,43 @@ package() {
         assert "unknown source" in report
         assert (root / "git" / "pkgbuild-git.recipe").is_file()
 
+        # a list element keeps its commas, and a brace inside a parameter
+        # expansion does not end a function body
+        write(root / "PKGBUILD-list", """pkgname=pkgbuild-list
+pkgver=1
+pkgrel=1
+arch=('x86_64')
+license=('MIT')
+depends=(
+  'alpha>=1.0'
+  'beta: needed for beta'
+  'gamma: has a ) paren'
+  'delta,' 'epsilon'
+)
+optdepends=('zeta: needs ) and spaces')
+
+prepare() {
+  msg="a } b"
+  printf '%s\\n' "${msg#\\}}" > marker
+}
+
+package() {
+  install -Dm644 marker "$pkgdir/usr/share/pkgbuild-list/marker"
+}
+""")
+        run("convert", root / "PKGBUILD-list", "--source", "aur",
+            "--output", root / "list")
+        recipe = (root / "list" / "pkgbuild-list.recipe").read_text()
+        assert 'depend "alpha" "ge" "1.0"' in recipe
+        assert 'depend "beta" "any" "-"' in recipe
+        assert 'depend "gamma" "any" "-"' in recipe
+        # a comma inside quotes is part of the name, not a separator
+        assert 'depend "delta," "any" "-"' in recipe
+        assert 'depend "epsilon" "any" "-"' in recipe
+        assert 'x-optdepend "zeta" "needs ) and spaces"' in recipe
+        assert "preserved prepare PKGBUILD:" in \
+            (root / "list" / "conversion").read_text()
+
         # a metapackage PKGBUILD without a package function
         write(root / "PKGBUILD-meta", """pkgname=pkgbuild-meta
 pkgver=1

@@ -610,8 +610,11 @@
   lists every carried, preserved, helper, unknown and changed item with its
   PKGBUILD line range. A fixture converts a real PKGBUILD, builds the produced
   recipe through the normal engine and installs its split outputs. Aports,
-  xbps-src, SlackBuilds, RPM spec, Debian source, Gentoo, Pacstall, the makepkg
-  build environment and the vm build environment remain open.
+  The converter also reads lists the way a shell does, so a comma inside an
+  element belongs to its name, and a brace inside a parameter expansion does
+  not end a function body. Aports, xbps-src, SlackBuilds, RPM spec, Debian
+  source, Gentoo, Pacstall, the makepkg build environment and the vm build
+  environment remain open.
 - [ ] Implement Nix closure, Flatpak, Snap, AppImage, Scoop and WinGet imports
   without silently discarding runtime requirements.
   AppImage type 2 inspect/extract now snapshots the original, checks ELF and
