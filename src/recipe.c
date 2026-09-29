@@ -1613,7 +1613,7 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
     struct payload payload = {0};
     struct requirement *requirements = NULL;
     size_t requirement_count = 0, requirement_capacity = 0, i, k;
-    char *recipe_dir = NULL, *slash = NULL;
+    char *recipe_dir = NULL, *slash = NULL, *own_work = NULL;
     int result = 1, approve_rest = 0;
     time_t started = time(NULL);
     if (!path || !environment || !output || !*output ||
@@ -1652,7 +1652,10 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
             fprintf(stderr, "holypkg: build root unavailable\n");
             result = 6; goto done;
         }
-        work = temporary;
+        /* the caller owns a copy; the array above is gone after this block */
+        own_work = strdup(temporary);
+        if (!own_work) { result = 1; goto done; }
+        work = own_work;
     }
     if (populate(work)) { result = 1; goto done; }
     paths.work = strdup(work);
@@ -1891,6 +1894,7 @@ done:
     payload_free(&payload);
     run_paths_free(&paths);
     free(recipe_dir);
+    free(own_work);
     recipe_free(&recipe);
     return result;
 }
