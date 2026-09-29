@@ -10,7 +10,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
-.B holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild|void --output NEW_DIRECTORY [--public-key FILE (apk only)]
+.B holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild|void|aports --output NEW_DIRECTORY [--public-key FILE (apk only)]
 .br
 .B holypkg build RECIPE --output NEW_DIRECTORY [--environment host|clean|vm] [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
 .br
@@ -2536,11 +2536,12 @@ a registered source identity.
 holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY reads one
 PKGBUILD as text and writes a conversion directory containing the original
 file, a copy of each local source it names, a holy-recipe(5) manifest and a
-conversion report. A file named template reaches the Void converter through
-the same command and any other name reaches the pacman converter, while
-import INPUT --source NAME --format pkgbuild|void --output NEW_DIRECTORY names
-the family explicitly. None of these commands installs a package, builds one,
-or grants NAME a registered source identity; the report records it as
+conversion report. A file named template reaches the Void converter and a file
+named APKBUILD reaches the Aports converter through the same command, while any
+other name reaches the pacman converter, and
+import INPUT --source NAME --format pkgbuild|void|aports --output NEW_DIRECTORY
+names the family explicitly. None of these commands installs a package, builds
+one, or grants NAME a registered source identity; the report records it as
 provenance.
 .PP
 The PKGBUILD converter carries pkgbase, pkgver, pkgrel, pkgdesc, url, license,
@@ -2575,6 +2576,25 @@ build_options are fixed to build_options_default, so a $(vopt_with) call
 becomes its recorded value rather than a shell helper. A phase the template
 leaves out is reported as supplied by common/build-style/NAME.sh, which the
 converter does not run.
+.PP
+The Aports converter carries pkgname, pkgver, pkgrel, pkgdesc, url, license and
+maintainer, maps arch onto the Holy machine names, and reads depends as depend
+and makedepends, makedepends_build, makedepends_host and checkdepends as
+build-depend, so a !NAME conflict becomes x-conflicts and a so: or cmd:
+requirement is reported. The abuild phase bodies keep their original shell
+behind a prologue that maps $srcdir onto $HOLY_SRC, $startdir onto
+$HOLY_WORK, $pkgdir onto the main tree and $subpkgdir onto the staging tree, and
+the step changes into $builddir because abuild runs a phase there. Each
+subpackages entry becomes an output whose split step carries its split function,
+with the function taken from the entry or from the last dash-separated suffix of
+the name, and an entry with no written function is reported as needing the abuild
+default_dev, default_doc or default_static helper. A post-install or
+pre-deinstall script becomes one hook. Since aports pins sha512sums, which a
+Holy source cannot use, a remote source with no sha256sums entry is reported
+rather than fetched, while a local source beside the APKBUILD is copied and
+hashed as SHA-256. The default_* helpers, the abuild phases the template leaves
+out, the cross and chroot variables and any top level statement abuild would
+source as a shell script are reported rather than run.
 .PP
 Both reports name every carried, preserved, helper, unknown and changed item
 with its source file and line range, and their status is native or

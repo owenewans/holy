@@ -6,6 +6,7 @@
 /tests/solver
 /tests/install-helper
 /tests/__pycache__/
+/tools/__pycache__/
 /.build-config
 /.build-config.tmp
 /out/

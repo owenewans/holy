@@ -196,6 +196,56 @@ leaves out is reported as supplied by common/build-style/NAME.sh, which the
 converter does not run, so its result is review-required. A conditional block, a
 case block or a vopt_conflict is reported with its line, since the converter
 evaluates none of them.
+.SS Aports APKBUILD
+pkgname, pkgver, pkgrel, pkgdesc, url, license and maintainer are carried. arch
+maps all and noarch to noarch, x86_64 to x86_64 and x86 to i686; any other machine
+name and a negated architecture are reported. depends becomes depend and
+makedepends, makedepends_build, makedepends_host and checkdepends become
+build-depend with the same comparator names as the PKGBUILD converter; a !NAME
+conflict becomes x-conflicts, a so: or cmd: prefix is reported, and the
+per subpackage depends_NAME lists are preserved with their lines because a Holy
+recipe has one depend list.
+.PP
+source is read as a list and $pkgname, $pkgver and $pkgrel are expanded, with
+$pkgver giving the bare upstream version there and version-rrelease in a
+dependency; a filename::url target name is preserved. A local source is copied
+next to the recipe and hashed as SHA-256, and a mismatch against a declared
+sha256sums entry is reported. A remote source is carried with its declared
+sha256, or reported when there is none, because aports pins sha512sums, which a
+Holy source cannot use, and the report names every such source.
+.PP
+prepare, build, check and package keep their shell and become the matching Holy
+phase, each behind a prologue that rebuilds the abuild variables from the
+exported paths: $srcdir becomes $HOLY_SRC, $startdir becomes $HOLY_WORK,
+DESTDIR becomes $HOLY_DEST with PKGDESTDIR the same, or $HOLY_SPLIT_DEST in a
+split step, $pkgdir stays the main tree and $subpkgdir becomes the staging tree.
+$JOBS, $MAKEFLAGS, $SAMUFLAGS, $CMAKE_BUILD_PARALLEL_LEVEL and the other
+abuild.conf parallel settings are rebuilt from $HOLY_JOBS. The step changes into
+$builddir first because abuild runs a phase there; a declared builddir is
+rebased on the source tree and an absent one is the abuild default of
+$srcdir/$pkgname-$pkgver, which is reported. The extracted tree therefore takes
+the place of the abuild $srcdir directory, and that lift replaces default_unpack.
+.PP
+Each subpackages entry is NAME, NAME:function or NAME:function:arch, and the
+split function is the named one or the last dash-separated suffix of NAME, with
+-bash-completion, -zsh-completion and -fish-completion mapping to bashcomp,
+zshcomp and fishcomp. A split function with a body becomes output NAME plus a
+split step carrying it; one without a body is reported as needing the abuild
+default_dev, default_doc, default_static, default_openrc or default_libs helper,
+which moves files by pattern, so no output is declared for it and a declared
+architecture is reported. An install entry is post-install, pre-install,
+pre-upgrade, post-upgrade, pre-deinstall or post-deinstall; the first and the
+fourth map onto hook-install and hook-remove, are copied into the payload under
+usr/share/holy/NAME and are reported as a semantic change, since a Holy hook runs
+with ACTION unset, and the rest are reported as having no Holy hook stage.
+.PP
+options, provider_priority, replaces_priority, triggers, install_if, pkggroups,
+pkgusers, giturl, pcprefix, sonameprefix, langdir, soname, provides and replaces
+are preserved as x- records. A conditional block is reported with its line, and
+so is any other top level statement, since abuild sources the file as a shell
+script and the converter executes none of it. The default_* helpers, the abuild
+phases the template leaves out, the cross and chroot variables, $CBUILD, $CHOST,
+$CTARGET and $CARCH are reported as unresolved or unreproduced.
 .SH CONVERSION REPORT
 The report lists every carried, preserved, helper, unknown and changed item with
 its source file and line range, and its status is native or review-required. A
@@ -259,6 +309,9 @@ invalid recipe, argument or conversion. 3 a decision is required. 6 a required
 artifact or system capability is unavailable.
 .SH SOURCES
 PKGBUILD: https://pacman.archlinux.page/PKGBUILD.5.html
+APKBUILD: https://wiki.alpinelinux.org/wiki/APKBUILD_Reference
+abuild phases: https://gitlab.alpinelinux.org/alpine/abuild/-/raw/master/functions.sh.in
+abuild default.conf: https://gitlab.alpinelinux.org/alpine/abuild/-/raw/master/default.conf
 Void Manual: https://raw.githubusercontent.com/void-linux/void-packages/master/Manual.md
 v* helpers: https://raw.githubusercontent.com/void-linux/void-packages/master/common/environment/setup/install.sh
 build style: https://raw.githubusercontent.com/void-linux/void-packages/master/common/build-style/gnu-makefile.sh

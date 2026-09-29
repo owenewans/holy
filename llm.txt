@@ -1124,7 +1124,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=2242bbeb4ac8eb2430184e2aabc40ec58c52a292398370c2bae7ba64a02235a6
+holypkg.8 source=holy version=development sha256=34e71f41ae015452424e50a4f48f598eeab177acac999738c600afa4425f90f8
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1145,8 +1145,8 @@ SYNOPSIS
      [--accept-privileged SHA256] [--root DIRECTORY] [--yes] [--noninteractive]
      holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
      holypkg  import  INPUT   --source	 NAME	--format   pacman|rpm|deb|slack-
-     ware|apk|xbps|appimage|pkgbuild|void  --output  NEW_DIRECTORY [--public-key
-     FILE (apk only)]
+     ware|apk|xbps|appimage|pkgbuild|void|aports  --output NEW_DIRECTORY [--pub-
+     lic-key FILE (apk only)]
      holypkg build RECIPE --output NEW_DIRECTORY  [--environment  host|clean|vm]
      [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
      holypkg convert PKGBUILD|TEMPLATE --source NAME --output NEW_DIRECTORY
@@ -3670,12 +3670,13 @@ RUN INSTALLED COMMAND
      holypkg convert PKGBUILD --source NAME  --output  NEW_DIRECTORY  reads  one
      PKGBUILD  as text and writes a conversion directory containing the original
      file, a copy of each local source it names, a holy-recipe(5) manifest and a
-     conversion report. A file named template reaches the Void converter through
-     the same command and any other name reaches the pacman converter, while im-
-     port INPUT --source  NAME	--format  pkgbuild|void	 --output  NEW_DIRECTORY
-     names  the	 family	 explicitly.  None of these commands installs a package,
-     builds one, or grants NAME a registered source identity; the report records
-     it as provenance.
+     conversion report. A file named template reaches the Void converter  and  a
+     file  named APKBUILD reaches the Aports converter through the same command,
+     while any other  name  reaches  the  pacman  converter,  and  import  INPUT
+     --source  NAME  --format  pkgbuild|void|aports --output NEW_DIRECTORY names
+     the family explicitly. None of these commands installs  a	package,  builds
+     one,  or grants NAME a registered source identity; the report records it as
+     provenance.
 
      The PKGBUILD converter carries pkgbase, pkgver, pkgrel, pkgdesc,  url,  li-
      cense,  arch,  epoch,  depends,  makedepends,  checkdepends, optdepends and
@@ -3710,6 +3711,26 @@ RUN INSTALLED COMMAND
      shell  helper.  A	phase the template leaves out is reported as supplied by
      common/build-style/NAME.sh, which the converter does not run.
 
+     The Aports converter carries pkgname, pkgver, pkgrel, pkgdesc, url, license
+     and maintainer, maps arch onto the Holy machine names, and reads depends as
+     depend and makedepends, makedepends_build,	 makedepends_host  and	checkde-
+     pends as build-depend, so a !NAME conflict becomes x-conflicts and a so: or
+     cmd:  requirement	is reported. The abuild phase bodies keep their original
+     shell behind a prologue that maps $srcdir onto  $HOLY_SRC,	 $startdir  onto
+     $HOLY_WORK,  $pkgdir  onto	 the  main  tree and $subpkgdir onto the staging
+     tree, and the step changes into  $builddir	 because  abuild  runs	a  phase
+     there.  Each  subpackages	entry becomes an output whose split step carries
+     its split function, with the function taken from the entry or from the last
+     dash-separated suffix of the name, and an entry with no written function is
+     reported as needing the abuild default_dev, default_doc  or  default_static
+     helper.  A	 post-install  or  pre-deinstall  script becomes one hook. Since
+     aports pins sha512sums, which a Holy source cannot	 use,  a  remote  source
+     with  no  sha256sums  entry  is reported rather than fetched, while a local
+     source beside the APKBUILD is copied and hashed as SHA-256.  The  default_*
+     helpers,  the  abuild  phases the template leaves out, the cross and chroot
+     variables and any top level statement abuild would source as a shell script
+     are reported rather than run.
+
      Both reports name every carried, preserved,  helper,  unknown  and	 changed
      item with its source file and line range, and their status is native or re-
      view-required. A review-required conversion returns 3 with the recipe writ-
@@ -3737,7 +3758,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-recipe.5 source=holy version=development sha256=c0783db86b38bccece06b35f6aa23194701aa02921a8824ed2a939871981818e
+holy-recipe.5 source=holy version=development sha256=78b4e019ee274f44493c0f62570cd8030560f30dff39746d56e853f7fcea1b1a
 HOLY-RECIPE(5)		       Holy package format		  HOLY-RECIPE(5)
 
 NAME
@@ -3953,28 +3974,83 @@ CONVERSION
      required. A conditional block, a case block or a vopt_conflict is	reported
      with its line, since the converter evaluates none of them.
 
+   Aports APKBUILD
+     pkgname,  pkgver, pkgrel, pkgdesc, url, license and maintainer are carried.
+     arch maps all and noarch to noarch, x86_64 to x86_64 and x86 to  i686;  any
+     other machine name and a negated architecture are reported. depends becomes
+     depend  and  makedepends,	makedepends_build, makedepends_host and checkde-
+     pends become build-depend with the same comparator names  as  the	PKGBUILD
+     converter;	 a  !NAME  conflict becomes x-conflicts, a so: or cmd: prefix is
+     reported, and the per subpackage  depends_NAME  lists  are	 preserved  with
+     their lines because a Holy recipe has one depend list.
+
+     source  is	 read  as a list and $pkgname, $pkgver and $pkgrel are expanded,
+     with $pkgver giving the bare upstream version there and version-rrelease in
+     a dependency; a filename::url target name is preserved. A local  source  is
+     copied  next  to the recipe and hashed as SHA-256, and a mismatch against a
+     declared sha256sums entry is reported. A remote source is carried with  its
+     declared  sha256,	or  reported  when  there  is  none, because aports pins
+     sha512sums, which a Holy source cannot use, and the report names every such
+     source.
+
+     prepare, build, check and package keep their shell and become the	matching
+     Holy  phase, each behind a prologue that rebuilds the abuild variables from
+     the  exported  paths:  $srcdir   becomes	$HOLY_SRC,   $startdir	 becomes
+     $HOLY_WORK,  DESTDIR  becomes  $HOLY_DEST	with  PKGDESTDIR  the  same,  or
+     $HOLY_SPLIT_DEST in a split step, $pkgdir stays the main  tree  and  $subp-
+     kgdir   becomes   the   staging   tree.	$JOBS,	$MAKEFLAGS,  $SAMUFLAGS,
+     $CMAKE_BUILD_PARALLEL_LEVEL and the other abuild.conf parallel settings are
+     rebuilt from $HOLY_JOBS. The step	changes	 into  $builddir  first	 because
+     abuild  runs  a  phase  there; a declared builddir is rebased on the source
+     tree and an absent one is the abuild default  of  $srcdir/$pkgname-$pkgver,
+     which  is	reported.  The	extracted  tree therefore takes the place of the
+     abuild $srcdir directory, and that lift replaces default_unpack.
+
+     Each subpackages entry is NAME, NAME:function  or	NAME:function:arch,  and
+     the  split	 function  is the named one or the last dash-separated suffix of
+     NAME, with -bash-completion, -zsh-completion and  -fish-completion	 mapping
+     to	 bashcomp,  zshcomp  and  fishcomp. A split function with a body becomes
+     output NAME plus a split step carrying it; one without a body  is	reported
+     as	  needing  the	abuild	default_dev,  default_doc,  default_static,  de-
+     fault_openrc or default_libs helper, which moves files by	pattern,  so  no
+     output  is	 declared for it and a declared architecture is reported. An in-
+     stall entry is post-install, pre-install, pre-upgrade,  post-upgrade,  pre-
+     deinstall or post-deinstall; the first and the fourth map onto hook-install
+     and  hook-remove, are copied into the payload under usr/share/holy/NAME and
+     are reported as a semantic change, since a Holy hook runs with  ACTION  un-
+     set, and the rest are reported as having no Holy hook stage.
+
+     options,  provider_priority,  replaces_priority, triggers, install_if, pkg-
+     groups, pkgusers, giturl, pcprefix, sonameprefix, langdir, soname, provides
+     and replaces are preserved as x- records. A conditional block  is	reported
+     with  its	line,  and  so	is  any	 other top level statement, since abuild
+     sources the file as a shell script and the converter executes none	 of  it.
+     The default_* helpers, the abuild phases the template leaves out, the cross
+     and  chroot variables, $CBUILD, $CHOST, $CTARGET and $CARCH are reported as
+     unresolved or unreproduced.
+
 CONVERSION REPORT
      The report lists every carried, preserved, helper, unknown and changed item
      with its source file and line range, and its status is native or review-re-
-     quired.  A	 review-required  conversion  returns 3 with the recipe written,
-     since review is a statement about execution, not  about  whether  the  text
+     quired. A review-required conversion returns 3  with  the	recipe	written,
+     since  review  is	a  statement about execution, not about whether the text
      could be carried. A missing identity, a computed identity or malformed text
      returns 2; an unreadable input returns 6.
 
 RESULTS
-     Each  output  artifact  is written to the output directory. Its manifest is
-     regenerated from the copied payload. HOLY/meta records format,  name,  ver-
-     sion,  release,  os,  arch, libc, x-version-family holy, x-build-target and
-     installed-size, plus any  x-  record.  HOLY/deps  carries	declared  depend
+     Each output artifact is written to the output directory.  Its  manifest  is
+     regenerated  from	the copied payload. HOLY/meta records format, name, ver-
+     sion, release, os, arch, libc, x-version-family  holy,  x-build-target  and
+     installed-size,  plus  any	 x-  record.  HOLY/deps	 carries declared depend
      records plus one soname requirement per DT_NEEDED entry, each attributed to
-     the  file	that needs it and written only into the output that carries that
-     file.  HOLY/provides records the package  name  and  the  SONAME  of  every
-     shared  object  in	 the payload. HOLY/hooks records a declared hook only in
+     the file that needs it and written only into the output that  carries  that
+     file.   HOLY/provides  records  the  package  name	 and the SONAME of every
+     shared object in the payload. HOLY/hooks records a declared  hook	only  in
      the output whose payload holds its script, and the build fails if an output
-     declares a hook it does not carry. HOLY/origin records  the  recipe  inputs
-     with  their  pinned  digests and verification built-locally. HOLY/transform
+     declares  a  hook	it does not carry. HOLY/origin records the recipe inputs
+     with their pinned digests and  verification  built-locally.  HOLY/transform
      records the build environment and the declared build dependencies. The fin-
-     ished .holy is installed by a normal transaction; the  build  itself  never
+     ished  .holy  is  installed by a normal transaction; the build itself never
      writes to the target root.
 
 EXAMPLES
@@ -4011,12 +4087,16 @@ EXAMPLES
      DOCS
 
 EXIT STATUS
-     0	the build produced every declared output. 1 an operational failure. 2 an
-     invalid recipe, argument or conversion. 3 a decision is required. 6  a  re-
+     0 the build produced every declared output. 1 an operational failure. 2  an
+     invalid  recipe,  argument or conversion. 3 a decision is required. 6 a re-
      quired artifact or system capability is unavailable.
 
 SOURCES
-     PKGBUILD:	  https://pacman.archlinux.page/PKGBUILD.5.html	  Void	 Manual:
+     PKGBUILD:	    https://pacman.archlinux.page/PKGBUILD.5.html      APKBUILD:
+     https://wiki.alpinelinux.org/wiki/APKBUILD_Reference     abuild	 phases:
+     https://gitlab.alpinelinux.org/alpine/abuild/-/raw/master/functions.sh.in
+     abuild			 default.conf:			    https://git-
+     lab.alpinelinux.org/alpine/abuild/-/raw/master/default.conf   Void	 Manual:
      https://raw.githubusercontent.com/void-linux/void-packages/master/Manual.md
      v* helpers: https://raw.githubusercontent.com/void-linux/void-packages/mas-
      ter/common/environment/setup/install.sh		build		  style:

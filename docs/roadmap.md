@@ -628,9 +628,35 @@
   does not run. A fixture converts a template with three outputs, builds it
   through the normal engine and checks the resulting ABI groups; 700 upstream
   templates from void-packages convert and every produced recipe passes the
-  manager's own validation. Aports, SlackBuilds, RPM spec, Debian source,
-  Gentoo, Pacstall, the makepkg build environment and the vm build environment
-  remain open.
+  manager's own validation.
+  The Aports family converts as well: `holypkg convert APKBUILD` and
+  `holypkg import --format aports` read the APKBUILD, carry its identity, map
+  arch onto the Holy machine names, and read depends as depend and
+  makedepends/makedepends_build/makedepends_host/checkdepends as build-depend,
+  so a !NAME conflict becomes x-conflicts and a so: or cmd: requirement is
+  reported. The abuild phase bodies keep their original shell behind a prologue
+  that maps $srcdir, $startdir, $pkgdir, $subpkgdir, $JOBS and the other
+  abuild.conf parallel settings onto the exported HOLY_* paths, and the step
+  changes into $builddir because abuild runs a phase there, with a declared
+  builddir rebased on the source tree and an absent one reported as the abuild
+  default of $srcdir/$pkgname-$pkgver. Each subpackages entry becomes an output
+  whose split step carries its split function, taken from the entry or from the
+  last dash-separated suffix of the name, and an entry with no written function
+  is reported as needing the default_dev, default_doc, default_static,
+  default_openrc or default_libs helper, so no output is claimed for it. A
+  post-install or pre-deinstall script becomes one hook, and the other four
+  install actions are reported as having no Holy hook stage. Since aports pins
+  sha512sums, which a Holy source cannot use, a remote source with no sha256sums
+  entry is reported rather than fetched, while a local source beside the
+  APKBUILD is copied next to the recipe and hashed as SHA-256. The shell text
+  the Void and Aports converters share now also lives in one parser, so a
+  conditional block, a case block, an appended value and an unreadable top level
+  statement are handled the same way in both. A fixture converts an APKBUILD
+  with four declared subpackages, builds the produced recipe through the normal
+  engine and checks the resulting split payloads and hook; all 1668 upstream
+  APKBUILDs from aports convert and every produced recipe passes the manager's
+  own validation. SlackBuilds, RPM spec, Debian source, Gentoo, Pacstall, the
+  makepkg build environment and the vm build environment remain open.
   The build runner no longer loses its private build root, keeps a root the
   caller named, and reaches both the default and the named-root path in the
   fixture. The same run also restores three interrupted-mutation fixtures whose

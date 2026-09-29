@@ -5,13 +5,13 @@
 #define _XOPEN_SOURCE 700
 #define _DEFAULT_SOURCE 1
 #include "voidsrc.h"
+#include "shrecipe.h"
 
 #include <archive.h>
 #include <archive_entry.h>
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
-#include <openssl/evp.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -21,548 +21,18 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-struct vs_value {
-    char *name;
-    char *text;
-    size_t line;
-    int append;
-    int conditional;
-};
-
-struct vs_function {
-    char *name;
-    char *body;
-    size_t length;
-    size_t first;
-    size_t last;
-    int conditional;
-};
-
-struct vs_condition {
-    char *text;
-    size_t line;
-};
-
-struct voidsrc {
-    char *text;
-    size_t length;
-    char *directory;
-    struct vs_value *values;
-    size_t value_count;
-    struct vs_function *functions;
-    size_t function_count;
-    struct vs_condition *conditions;
-    size_t condition_count;
-};
-
-static void voidsrc_free(struct voidsrc *pkg)
-{
-    size_t i;
-    for (i = 0; i < pkg->value_count; ++i) {
-        free(pkg->values[i].name);
-        free(pkg->values[i].text);
-    }
-    for (i = 0; i < pkg->function_count; ++i) {
-        free(pkg->functions[i].name);
-        free(pkg->functions[i].body);
-    }
-    for (i = 0; i < pkg->condition_count; ++i) free(pkg->conditions[i].text);
-    free(pkg->values);
-    free(pkg->functions);
-    free(pkg->conditions);
-    free(pkg->directory);
-    free(pkg->text);
-    memset(pkg, 0, sizeof *pkg);
-}
-
-static char *copy_range(const char *start, size_t length)
-{
-    char *value = malloc(length + 1);
-    if (!value) return NULL;
-    memcpy(value, start, length);
-    value[length] = 0;
-    return value;
-}
-
 /* drops one layer of shell quoting; an unquoted value is used as written. */
-static char *unquote(const char *start, size_t length)
-{
-    char *value = copy_range(start, length), *out;
-    size_t used = 0, i;
-    if (!value) return NULL;
-    if (length < 2 || (start[0] != '\'' && start[0] != '"') ||
-        start[length - 1] != start[0]) return value;
-    out = malloc(length + 1);
-    if (!out) { free(value); return NULL; }
-    for (i = 1; i + 1 < length; ++i) {
-        char c = start[i];
-        if (c == '\\' && i + 2 < length &&
-            (start[i + 1] == '\'' || start[i + 1] == '"' || start[i + 1] == '\\')) {
-            out[used++] = start[++i];
-            continue;
-        }
-        out[used++] = c;
-    }
-    out[used] = 0;
-    free(value);
-    return out;
-}
-
-static int name_char(char c, int first)
-{
-    if (isalpha((unsigned char)c) || c == '_') return 1;
-    return !first && isdigit((unsigned char)c);
-}
 
 /* the last assignment of a name wins and an appended value follows the earlier one. */
-static char *value_join(const struct voidsrc *pkg, const char *name)
-{
-    char *out = NULL;
-    size_t i;
-    for (i = 0; i < pkg->value_count; ++i) {
-        if (strcmp(pkg->values[i].name, name)) continue;
-        if (out && pkg->values[i].append) {
-            char *grown = realloc(out, strlen(out) + strlen(pkg->values[i].text) + 1);
-            if (!grown) { free(out); return NULL; }
-            strcat(grown, pkg->values[i].text);
-            out = grown;
-            continue;
-        }
-        free(out);
-        out = strdup(pkg->values[i].text);
-        if (!out) return NULL;
-    }
-    return out;
-}
-
-static size_t value_line(const struct voidsrc *pkg, const char *name)
-{
-    size_t i;
-    for (i = 0; i < pkg->value_count; ++i)
-        if (!strcmp(pkg->values[i].name, name)) return pkg->values[i].line;
-    return 0;
-}
-
-static int value_present(const struct voidsrc *pkg, const char *name)
-{
-    size_t i;
-    for (i = 0; i < pkg->value_count; ++i)
-        if (!strcmp(pkg->values[i].name, name)) return 1;
-    return 0;
-}
-
-static const struct vs_function *find_function(const struct voidsrc *pkg, const char *name)
-{
-    size_t i;
-    for (i = 0; i < pkg->function_count; ++i)
-        if (!strcmp(pkg->functions[i].name, name)) return &pkg->functions[i];
-    return NULL;
-}
 
 /* the end of a $( ) group that starts at cursor, or NULL when it is unterminated */
-static const char *substitution_end(const char *cursor, const char *stop)
-{
-    size_t depth = 1, i = 0;
-    char inner = 0;
-    for (i = 0; cursor + i < stop; ++i) {
-        char c = cursor[i];
-        if (inner) {
-            if (c == inner) inner = 0;
-            else if (c == '\\' && inner == '"') ++i;
-            continue;
-        }
-        if (c == '\'' || c == '"') inner = c;
-        else if (c == '(') ++depth;
-        else if (c == ')' && !--depth) return cursor + i;
-    }
-    return NULL;
-}
 
 /* 1 while a quote is open, so a value may continue on the next line. a $( ) group
    carries its own quoting, so it never closes the quote that contains it. */
-static int quote_open(const char *text, size_t length)
-{
-    char quote = 0;
-    size_t i = 0;
-    if (length && text[0] == '#') return 0;
-    while (i < length) {
-        char c = text[i];
-        if (quote == '\'') {
-            if (c == '\'') quote = 0;
-            ++i;
-            continue;
-        }
-        if (c == '\\') { i += 2; continue; }
-        if ((c == '$' || c == '`') && text[i + 1] == '(') {
-            const char *close = substitution_end(text + i + 2, text + length);
-            if (!close) return 1;
-            i = (size_t)(close - text) + 1;
-            continue;
-        }
-        if (c == '`') {
-            const char *close = memchr(text + i + 1, '`', length - i - 1);
-            if (!close) return 1;
-            i = (size_t)(close - text) + 1;
-            continue;
-        }
-        if (quote == '"') {
-            if (c == '"') quote = 0;
-            ++i;
-            continue;
-        }
-        if (c == '\'' || c == '"') { quote = c; ++i; continue; }
-        ++i;
-    }
-    return quote ? 1 : 0;
-}
 
 /* the closing brace of a function body, ignoring quoted and substituted text. */
-static const char *block_end(const char *body, const char *stop)
-{
-    size_t depth = 0, i;
-    char quote = 0;
-    for (i = 0; body + i < stop; ++i) {
-        char c = body[i];
-        if (quote) {
-            if (c == quote) quote = 0;
-            else if (c == '\\' && quote == '"') ++i;
-            continue;
-        }
-        /* a comment ends at the newline and its quotes are not shell quotes */
-        if (c == '#') {
-            while (body + i < stop && body[i] != '\n') ++i;
-            continue;
-        }
-        if (c == '\'' || c == '"' || c == '`') { quote = c; continue; }
-        if ((c == '$' || c == '\\') && body + i + 1 < stop &&
-            (body[i + 1] == '(' || body[i + 1] == '{')) {
-            char open = body[i + 1];
-            char close = open == '(' ? ')' : '}';
-            /* the scan starts past the opener, so the first close ends the group */
-            size_t inner = 0;
-            for (i += 2; body + i < stop; ++i) {
-                if (body[i] == open) ++inner;
-                else if (body[i] == close) {
-                    if (inner) --inner;
-                    else break;
-                }
-            }
-            continue;
-        }
-        if (c == '{') ++depth;
-        else if (c == '}') {
-            if (!depth) return body + i;
-            --depth;
-        }
-    }
-    return NULL;
-}
-
-static int push_value(struct voidsrc *pkg, char *name, char *text, size_t line, int append,
-                      int conditional)
-{
-    struct vs_value *grown = realloc(pkg->values, (pkg->value_count + 1) * sizeof *grown);
-    if (!grown) return 0;
-    pkg->values = grown;
-    memset(&grown[pkg->value_count], 0, sizeof grown[0]);
-    grown[pkg->value_count].name = name;
-    grown[pkg->value_count].text = text;
-    grown[pkg->value_count].line = line;
-    grown[pkg->value_count].append = append;
-    grown[pkg->value_count].conditional = conditional;
-    ++pkg->value_count;
-    return 1;
-}
-
-static int push_condition(struct voidsrc *pkg, const char *text, size_t line)
-{
-    struct vs_condition *grown;
-    char *copy = copy_range(text, strlen(text));
-    if (!copy) return 0;
-    grown = realloc(pkg->conditions, (pkg->condition_count + 1) * sizeof *grown);
-    if (!grown) { free(copy); return 0; }
-    pkg->conditions = grown;
-    grown[pkg->condition_count].text = copy;
-    grown[pkg->condition_count].line = line;
-    ++pkg->condition_count;
-    return 1;
-}
 
 /* reads assignments, conditional blocks and function bodies from the template text. */
-static int parse_template(struct voidsrc *pkg)
-{
-    size_t offset = 0, line = 0, depth = 0, cases = 0;
-    while (offset < pkg->length) {
-        char *start = pkg->text + offset;
-        char *newline = memchr(start, '\n', pkg->length - offset);
-        size_t size = newline ? (size_t)(newline - start) : pkg->length - offset;
-        char *next = newline ? newline + 1 : pkg->text + pkg->length;
-        size_t name_length = 0, i;
-        char *cursor;
-        int conditional;
-        ++line;
-        offset = (size_t)(next - pkg->text);
-        while (size && (*start == ' ' || *start == '\t' || start[size - 1] == '\r')) {
-            ++start;
-            --size;
-        }
-        if (!size || *start == '#') continue;
-        conditional = depth > 0;
-        if (!strncmp(start, "if", 2) &&
-            (size == 2 || start[2] == ' ' || start[2] == '\t')) {
-            if (!push_condition(pkg, start, line)) return 1;
-            ++depth;
-            continue;
-        }
-        /* a case block selects values this converter cannot evaluate, so it is reported */
-        if (!strncmp(start, "case", 4) &&
-            (size == 4 || start[4] == ' ' || start[4] == '\t')) {
-            if (!push_condition(pkg, start, line)) return 1;
-            ++depth;
-            ++cases;
-            continue;
-        }
-        if (!strncmp(start, "esac", 4) &&
-            (size == 4 || start[4] == ' ' || start[4] == '\t')) {
-            if (!depth) {
-                fprintf(stderr, "holypkg: template:%zu: esac without case\n", line);
-                return 2;
-            }
-            --depth;
-            if (cases) --cases;
-            continue;
-        }
-        if (!strncmp(start, "esac", 4) && size >= 4) continue;
-        /* a case pattern ends at its closing paren; only the body after it is an assignment */
-        if (cases) {
-            const char *close = memchr(start, ')', size);
-            size_t body = close ? (size_t)(close + 1 - start) : size;
-            while (body < size && isspace((unsigned char)start[body])) ++body;
-            start = start + body;
-            size -= body;
-            if (!size) continue;
-            if (!memchr(start, '=', size)) continue;
-            if (start[0] == '#') continue;
-        }
-        /* a top level vopt_conflict only checks a pair, so it produces no assignment */
-        if (!strncmp(start, "vopt_conflict", 13) &&
-            (size == 13 || start[13] == ' ' || start[13] == '\t')) {
-            if (!push_condition(pkg, start, line)) return 1;
-            continue;
-        }
-        if (!strncmp(start, "export ", 7)) {
-            start += 7;
-            size -= 7;
-            while (size && (*start == ' ' || *start == '\t')) { ++start; --size; }
-            while (size && start[size - 1] == ' ') --size;
-            if (!size) {
-                fprintf(stderr, "holypkg: template:%zu: empty export\n", line);
-                return 2;
-            }
-        }
-        if (!strncmp(start, "elif", 4) || !strncmp(start, "else", 4)) {
-            if (!depth || !push_condition(pkg, start, line)) return 1;
-            continue;
-        }
-        if (!strncmp(start, "fi", 2) && (size == 2 || start[2] == ' ' || start[2] == '\t')) {
-            if (!depth) {
-                fprintf(stderr, "holypkg: template:%zu: fi without if\n", line);
-                return 2;
-            }
-            --depth;
-            continue;
-        }
-        cursor = start;
-        /* a subpackage name carries dashes, a C++ library name carries a double plus,
-           and a package may begin with a digit */
-        while (name_length < size) {
-            if (isdigit((unsigned char)cursor[name_length]) ||
-                name_char(cursor[name_length], !name_length)) {
-                ++name_length;
-                continue;
-            }
-            if (cursor[name_length] == '+') {
-                char next = cursor[name_length + 1];
-                if (next == '+') name_length += 2;
-                else if (name_char(next, 0) || next == '-' || next == '.') ++name_length;
-                else break;
-                continue;
-            }
-            if ((cursor[name_length] == '-' || cursor[name_length] == '.') &&
-                name_char(cursor[name_length + 1], 0)) {
-                ++name_length;
-                continue;
-            }
-            break;
-        }
-        if (name_length + 2 < size && cursor[name_length] == '(' && cursor[name_length + 1] == ')' &&
-            (isspace((unsigned char)cursor[name_length + 2]) || cursor[name_length + 2] == '{')) {
-            const char *brace = memchr(cursor, '{', size);
-            const char *body = brace ? brace + 1 : start + size;
-            const char *close = block_end(body, pkg->text + pkg->length);
-            struct vs_function function;
-            struct vs_function *grown;
-            if (!close) {
-                fprintf(stderr, "holypkg: template:%zu: unterminated function\n", line);
-                return 2;
-            }
-            for (i = 0; body + i < close; ++i) if (body[i] == '\n') ++line;
-            offset = (size_t)(close - pkg->text) + 1;
-            memset(&function, 0, sizeof function);
-            function.name = copy_range(start, name_length);
-            function.body = copy_range(body, (size_t)(close - body));
-            function.length = (size_t)(close - body);
-            function.first = line - (size_t)(close - body > 0 ? 1 : 0);
-            function.last = line;
-            function.conditional = conditional;
-            /* the body may span lines, so the first line is the one the name is on */
-            {
-                size_t before = 0;
-                for (i = 0; i < function.length; ++i) if (function.body[i] == '\n') ++before;
-                function.first = line - before - 1;
-            }
-            if (!function.name || !function.body) {
-                free(function.name);
-                free(function.body);
-                return 1;
-            }
-            grown = realloc(pkg->functions, (pkg->function_count + 1) * sizeof *grown);
-            if (!grown) { free(function.name); free(function.body); return 1; }
-            pkg->functions = grown;
-            pkg->functions[pkg->function_count++] = function;
-            continue;
-        }
-        /* a plain name=value record or an appended name+=value one */
-        if (name_length >= size || (cursor[name_length] != '=' &&
-                                    !(cursor[name_length] == '+' && name_length + 2 < size &&
-                                      cursor[name_length + 1] == '='))) {
-            fprintf(stderr, "holypkg: template:%zu: unsupported top level statement\n", line);
-            return 2;
-        }
-        {
-            char *name = copy_range(start, name_length);
-            size_t at = name_length + 1;
-            int append = 0;
-            char *value;
-            size_t value_size;
-            char *text;
-            if (name_length + 2 < size && cursor[name_length] == '+') { append = 1; at = name_length + 2; }
-            value = cursor + at;
-            value_size = size - at;
-            while (value_size && (*value == ' ' || *value == '\t')) { ++value; --value_size; }
-            /* an unquoted value ends at a comment the way the shell reads it */
-            if (value_size && *value != '"' && *value != '\'') {
-                char quote = 0;
-                size_t index;
-                for (index = 0; index < value_size; ++index) {
-                    if (quote) {
-                        if (value[index] == quote) quote = 0;
-                        continue;
-                    }
-                    if (value[index] == '\'' || value[index] == '"') { quote = value[index]; continue; }
-                    if (value[index] == '#' && (index == 0 || isspace((unsigned char)value[index - 1]))) {
-                        while (index && isspace((unsigned char)value[index - 1])) --index;
-                        value_size = index;
-                        break;
-                    }
-                }
-            }
-            /* a long list continues on the next indented line while the quote is open */
-            if (quote_open(value, value_size)) {
-                size_t used = value_size;
-                char *joined = malloc(used + 2);
-                if (!joined) { free(name); return 1; }
-                memcpy(joined, value, value_size);
-                while (quote_open(joined, used) && offset < pkg->length) {
-                    char *row = pkg->text + offset;
-                    char *row_end = memchr(row, '\n', pkg->length - offset);
-                    size_t row_size = row_end ? (size_t)(row_end - row) : pkg->length - offset;
-                    char *grown;
-                    size_t capacity = used + row_size + 2;
-                    ++line;
-                    offset = (size_t)(row_end ? row_end + 1 : pkg->text + pkg->length) -
-                             (size_t)pkg->text;
-                    grown = realloc(joined, capacity);
-                    if (!grown) { free(joined); free(name); return 1; }
-                    joined = grown;
-                    joined[used++] = '\n';
-                    memcpy(joined + used, row, row_size);
-                    used += row_size;
-                    joined[used] = 0;
-                }
-                if (quote_open(joined, used)) {
-                    fprintf(stderr, "holypkg: template:%zu: unterminated value\n", line);
-                    free(joined);
-                    free(name);
-                    return 2;
-                }
-                text = unquote(joined, used);
-                free(joined);
-            } else {
-                text = unquote(value, value_size);
-            }
-            if (!text || !push_value(pkg, name, text, line, append, conditional)) {
-                free(name);
-                free(text);
-                return 1;
-            }
-        }
-    }
-    if (depth) {
-        fputs("holypkg: template: unterminated if block\n", stderr);
-        return 2;
-    }
-    return 0;
-}
-
-struct note {
-    char **lines;
-    size_t count;
-    size_t carried, preserved, helper, unknown, changes;
-};
-
-static int note_add(struct note *note, const char *kind, const char *format, ...)
-{
-    char body[1024], *line;
-    va_list arguments;
-    char **grown;
-    va_start(arguments, format);
-    if (vsnprintf(body, sizeof body, format, arguments) < 0) { va_end(arguments); return 0; }
-    va_end(arguments);
-    line = malloc(strlen(kind) + strlen(body) + 2);
-    if (!line) return 0;
-    sprintf(line, "%s %s", kind, body);
-    grown = realloc(note->lines, (note->count + 1) * sizeof *grown);
-    if (!grown) { free(line); return 0; }
-    note->lines = grown;
-    note->lines[note->count++] = line;
-    if (!strcmp(kind, "carried")) ++note->carried;
-    else if (!strcmp(kind, "preserved")) ++note->preserved;
-    else if (!strcmp(kind, "helper")) ++note->helper;
-    else if (!strcmp(kind, "unknown")) ++note->unknown;
-    else if (!strcmp(kind, "semantic-change")) ++note->changes;
-    return 1;
-}
-
-static void note_free(struct note *note)
-{
-    size_t i;
-    for (i = 0; i < note->count; ++i) free(note->lines[i]);
-    free(note->lines);
-    memset(note, 0, sizeof *note);
-}
-
-static void token(FILE *out, const char *value)
-{
-    const unsigned char *p = (const unsigned char *)value;
-    fputc('"', out);
-    for (; *p; ++p) {
-        if (*p == '"' || *p == '\\') fprintf(out, "\\%c", *p);
-        else if (*p < 32 || *p >= 127) fprintf(out, "\\x%02x", *p);
-        else fputc(*p, out);
-    }
-    fputc('"', out);
-}
 
 /* a byte search over a template body; the bodies are short and few */
 static const char *find_bytes(const char *body, size_t length, const char *needle)
@@ -575,6 +45,13 @@ static const char *find_bytes(const char *body, size_t length, const char *needl
     return NULL;
 }
 
+/* a shell name continues while it is a letter, a digit or an underscore */
+static int name_char(char c, int first)
+{
+    if (isalpha((unsigned char)c) || c == '_') return 1;
+    return !first && isdigit((unsigned char)c);
+}
+
 static int is_sha256(const char *value)
 {
     size_t i;
@@ -583,98 +60,9 @@ static int is_sha256(const char *value)
     return !value[64];
 }
 
-static const char *relation_name(const char *operator)
-{
-    if (!strcmp(operator, ">=")) return "ge";
-    if (!strcmp(operator, "<=")) return "le";
-    if (!strcmp(operator, ">")) return "gt";
-    if (!strcmp(operator, "<")) return "lt";
-    if (!strcmp(operator, "=")) return "eq";
-    return "any";
-}
-
 /* xbps-src spells a version comparator after the package name without a space. */
-static void emit_dependency(FILE *out, const char *raw, const char *kind)
-{
-    static const char *const operators[] = { ">=", "<=", "=", ">", "<", NULL };
-    char name[256];
-    size_t used = 0;
-    const char *cursor = raw;
-    const char *relation = NULL;
-    while (*cursor == ' ' || *cursor == '\t') ++cursor;
-    if (!*cursor) return;
-    while (*cursor && !isspace((unsigned char)*cursor) && !strchr("<>=~", *cursor) &&
-           used + 1 < sizeof name)
-        name[used++] = *cursor++;
-    name[used] = 0;
-    if (!used) return;
-    {
-        size_t index;
-        for (index = 0; operators[index]; ++index)
-            if (!strncmp(cursor, operators[index], strlen(operators[index]))) {
-                relation = operators[index];
-                cursor += strlen(operators[index]);
-                break;
-            }
-    }
-    while (isspace((unsigned char)*cursor)) ++cursor;
-    fputs(kind, out);
-    fputc(' ', out);
-    token(out, name);
-    if (relation && *cursor) {
-        fputc(' ', out);
-        token(out, relation_name(relation));
-        fputc(' ', out);
-        token(out, cursor);
-    } else {
-        fputs(" \"any\" \"-\"", out);
-    }
-    fputc('\n', out);
-}
 
 /* splits a whitespace separated list into a NULL terminated array of words. */
-static char **words(const char *value, size_t *count)
-{
-    char **list = NULL;
-    size_t used = 0, i = 0;
-    *count = 0;
-    if (!value) return NULL;
-    while (i < strlen(value)) {
-        size_t start;
-        char *copy;
-        char **grown;
-        while (value[i] && isspace((unsigned char)value[i])) ++i;
-        if (!value[i]) break;
-        start = i;
-        while (value[i] && !isspace((unsigned char)value[i])) ++i;
-        copy = copy_range(value + start, i - start);
-        if (!copy) goto failed;
-        grown = realloc(list, (used + 2) * sizeof *grown);
-        if (!grown) { free(copy); goto failed; }
-        list = grown;
-        list[used++] = copy;
-        list[used] = NULL;
-    }
-    if (!list) {
-        list = malloc(sizeof *list);
-        if (!list) return NULL;
-        list[0] = NULL;
-    }
-    *count = used;
-    return list;
-failed:
-    for (i = 0; i < used; ++i) free(list[i]);
-    free(list);
-    return NULL;
-}
-
-static void words_free(char **list)
-{
-    size_t i;
-    if (!list) return;
-    for (i = 0; list[i]; ++i) free(list[i]);
-    free(list);
-}
 
 struct option_set {
     char **names;
@@ -723,32 +111,32 @@ static const char *command_end(const char *start, const char *stop)
 
 /* replaces one $(vopt_...) call with the value its fixed option set produces. */
 static char *option_call(const char *call, size_t length, const struct option_set *set,
-                         struct note *note, int *review, const char *where)
+                         struct recipe_note *note, int *review, const char *where)
 {
-    char *inner = copy_range(call + 2, length - 3);
+    char *inner = holy_shell_copy(call + 2, length - 3);
     char **parts = NULL;
     size_t part_count = 0;
     char *out = NULL;
     const char *function;
     int enabled = 0;
     if (!inner) return NULL;
-    parts = words(inner, &part_count);
+    parts = holy_shell_words(inner, &part_count);
     free(inner);
-    if (!parts || !part_count) { words_free(parts); return NULL; }
+    if (!parts || !part_count) { holy_shell_words_free(parts); return NULL; }
     function = parts[0];
     if (!strcmp(function, "vopt_conflict")) {
         /* xbps-src only checks the pair; nothing appears in the built text */
-        words_free(parts);
-        return copy_range("", 0);
+        holy_shell_words_free(parts);
+        return holy_shell_copy("", 0);
     }
     if (part_count < 2) {
-        note_add(note, "unknown", "helper %s in %s takes no option", function, where);
+        holy_note_add(note, "unknown", "helper %s in %s takes no option", function, where);
         *review = 1;
-        words_free(parts);
+        holy_shell_words_free(parts);
         return NULL;
     }
     if (!option_listed(set, parts[1])) {
-        note_add(note, "unknown", "%s names the option %s, which build_options does not list",
+        holy_note_add(note, "unknown", "%s names the option %s, which build_options does not list",
                  function, parts[1]);
         *review = 1;
     }
@@ -756,17 +144,17 @@ static char *option_call(const char *call, size_t length, const struct option_se
     if (!strcmp(function, "vopt_if")) {
         const char *yes = part_count > 2 ? parts[2] : "";
         const char *no = part_count > 3 ? parts[3] : "";
-        out = copy_range(enabled ? yes : no, strlen(enabled ? yes : no));
+        out = holy_shell_copy(enabled ? yes : no, strlen(enabled ? yes : no));
     } else if (!strcmp(function, "vopt_with")) {
         const char *flag = part_count > 2 ? parts[2] : parts[1];
         char text[512];
         snprintf(text, sizeof text, enabled ? "--with-%s" : "--without-%s", flag);
-        out = copy_range(text, strlen(text));
+        out = holy_shell_copy(text, strlen(text));
     } else if (!strcmp(function, "vopt_enable")) {
         const char *flag = part_count > 2 ? parts[2] : parts[1];
         char text[512];
         snprintf(text, sizeof text, enabled ? "--enable-%s" : "--disable-%s", flag);
-        out = copy_range(text, strlen(text));
+        out = holy_shell_copy(text, strlen(text));
     } else if (!strcmp(function, "vopt_bool") || !strcmp(function, "vopt_feature")) {
         const char *property = part_count > 2 ? parts[2] : parts[1];
         char text[512];
@@ -774,36 +162,36 @@ static char *option_call(const char *call, size_t length, const struct option_se
             snprintf(text, sizeof text, "-D%s=%s", property, enabled ? "true" : "false");
         else
             snprintf(text, sizeof text, "-D%s=%s", property, enabled ? "enabled" : "disabled");
-        out = copy_range(text, strlen(text));
+        out = holy_shell_copy(text, strlen(text));
     } else {
-        note_add(note, "unknown", "helper %s in %s", function, where);
+        holy_note_add(note, "unknown", "helper %s in %s", function, where);
         *review = 1;
     }
-    words_free(parts);
+    holy_shell_words_free(parts);
     return out;
 }
 
 static void option_set_free(struct option_set *set)
 {
     size_t i;
-    words_free(set->names);
+    holy_shell_words_free(set->names);
     for (i = 0; i < set->enabled_count; ++i) free(set->enabled[i]);
     free(set->enabled);
     memset(set, 0, sizeof *set);
 }
 
-static void option_set_read(struct option_set *set, const struct voidsrc *pkg)
+static void option_set_read(struct option_set *set, const struct shell_script *pkg)
 {
-    char *joined = value_join(pkg, "build_options");
-    char *defaults = value_join(pkg, "build_options_default");
+    char *joined = holy_shell_join(pkg, "build_options");
+    char *defaults = holy_shell_join(pkg, "build_options_default");
     memset(set, 0, sizeof *set);
     if (joined) {
-        set->names = words(joined, &set->count);
+        set->names = holy_shell_words(joined, &set->count);
         free(joined);
     }
     if (defaults) {
         size_t count = 0, index;
-        char **list = words(defaults, &count);
+        char **list = holy_shell_words(defaults, &count);
         free(defaults);
         for (index = 0; index < count; ++index) {
             char **grown;
@@ -816,19 +204,19 @@ static void option_set_read(struct option_set *set, const struct voidsrc *pkg)
             ++set->enabled_count;
             set->enabled[set->enabled_count] = NULL;
         }
-        words_free(list);
+        holy_shell_words_free(list);
     }
 }
 
 /* fixes every $(vopt_...) call in one value, so the recipe carries no shell helper. */
-static char *resolve_options(const struct voidsrc *pkg, struct note *note, int *review,
+static char *resolve_options(const struct shell_script *pkg, struct recipe_note *note, int *review,
                              const char *value, const char *where)
 {
     struct option_set set;
     char *out = NULL;
     size_t i = 0, used = 0, capacity;
     if (!value) return NULL;
-    if (!*value || !strstr(value, "$(")) return copy_range(value, strlen(value));
+    if (!*value || !strstr(value, "$(")) return holy_shell_copy(value, strlen(value));
     option_set_read(&set, pkg);
     capacity = strlen(value) + 256;
     out = malloc(capacity);
@@ -934,7 +322,7 @@ static const struct {
 };
 
 /* notes every helper and variable a body uses that the conversion cannot supply */
-static void report_unknowns(const char *body, size_t length, struct note *note, int *review,
+static void report_unknowns(const char *body, size_t length, struct recipe_note *note, int *review,
                             const char *where, int files, int patches)
 {
     static const struct {
@@ -973,7 +361,7 @@ static void report_unknowns(const char *body, size_t length, struct note *note, 
     size_t index;
     for (index = 0; index < sizeof unresolved / sizeof *unresolved; ++index)
         if (find_bytes(body, length, unresolved[index].token)) {
-            note_add(note, "unknown", "%s in %s", unresolved[index].text, where);
+            holy_note_add(note, "unknown", "%s in %s", unresolved[index].text, where);
             *review = 1;
         }
     for (index = 0; variables[index]; ++index) {
@@ -982,7 +370,7 @@ static void report_unknowns(const char *body, size_t length, struct note *note, 
         if (!strcmp(variables[index], "PATCHESDIR") && patches) continue;
         snprintf(braced, sizeof braced, "${%s}", variables[index]);
         if (find_bytes(body, length, braced)) {
-            note_add(note, "unknown", "variable %s in %s", variables[index], where);
+            holy_note_add(note, "unknown", "variable %s in %s", variables[index], where);
             *review = 1;
         }
     }
@@ -998,7 +386,7 @@ static int body_uses_helper(const char *body, size_t length)
 }
 
 /* the xbps-src variables the step prologue rebuilds from the exported paths */
-static char *prologue(const struct voidsrc *pkg, const char *name, const char *version,
+static char *prologue(const struct shell_script *pkg, const char *name, const char *version,
                       const char *release, const char *pkgdir, int helpers, int files, int patches,
                       int split)
 {
@@ -1030,11 +418,11 @@ static char *prologue(const struct voidsrc *pkg, const char *name, const char *v
     if (patches) fputs("PATCHESDIR=\"$HOLY_SRC/patches\"\n", out);
     for (index = 0; carried[index]; ++index) {
         char *value, *fixed;
-        struct note ignored;
+        struct recipe_note ignored;
         int flag = 0;
         memset(&ignored, 0, sizeof ignored);
-        if (!value_present(pkg, carried[index])) continue;
-        value = value_join(pkg, carried[index]);
+        if (!holy_shell_present(pkg, carried[index])) continue;
+        value = holy_shell_join(pkg, carried[index]);
         if (!value || !*value) { free(value); continue; }
         /* a build option call in a variable is fixed before it reaches the prologue */
         fixed = resolve_options(pkg, &ignored, &flag, value, carried[index]);
@@ -1054,46 +442,6 @@ static char *prologue(const struct voidsrc *pkg, const char *name, const char *v
     }
     fclose(out);
     return text;
-}
-
-static int hash_file(const char *path, char digest[65])
-{
-    unsigned char buffer[65536], bytes[32];
-    unsigned size = 0;
-    size_t got, i;
-    EVP_MD_CTX *context = EVP_MD_CTX_new();
-    FILE *in = context ? fopen(path, "rb") : NULL;
-    int result = 0;
-    if (!in || EVP_DigestInit_ex(context, EVP_sha256(), NULL) != 1) goto done;
-    while ((got = fread(buffer, 1, sizeof buffer, in)) > 0)
-        if (EVP_DigestUpdate(context, buffer, got) != 1) goto done;
-    if (ferror(in) || EVP_DigestFinal_ex(context, bytes, &size) != 1 || size != 32) goto done;
-    for (i = 0; i < 32; ++i) snprintf(digest + i * 2, 3, "%02x", bytes[i]);
-    digest[64] = 0;
-    result = 1;
-done:
-    if (in) fclose(in);
-    EVP_MD_CTX_free(context);
-    return result;
-}
-
-static int copy_file(const char *source, const char *target, char digest[65])
-{
-    unsigned char buffer[65536];
-    size_t got;
-    FILE *in = fopen(source, "rb"), *out = fopen(target, "wb");
-    int result = 0;
-    if (!in || !out) goto done;
-    while ((got = fread(buffer, 1, sizeof buffer, in)) > 0)
-        if (fwrite(buffer, 1, got, out) != got) goto done;
-    if (ferror(in) || fflush(out)) goto done;
-    result = 1;
-done:
-    if (in) fclose(in);
-    if (out) { if (fclose(out) && result) result = 0; }
-    if (!result) { unlink(target); return 0; }
-    if (chmod(target, 0600) || !hash_file(target, digest)) return 0;
-    return 1;
 }
 
 static int add_tree(struct archive *writer, const char *root, const char *prefix)
@@ -1175,7 +523,7 @@ done:
     if (archive_write_close(writer) != ARCHIVE_OK) result = 0;
     archive_write_free(writer);
     if (!result) { unlink(target); return 0; }
-    return hash_file(target, digest);
+    return holy_hash_file(target, digest);
 }
 
 /* the identity a distfile may name; every other expansion stays unknown */
@@ -1195,17 +543,17 @@ static const char *identity_value(const char *word, const char *name, const char
     return out;
 }
 
-static int append_text(char *out, size_t *used, size_t *capacity, const char *text, size_t length)
+static int append_text(char **out, size_t *used, size_t *capacity, const char *text, size_t length)
 {
     while (*used + length + 1 > *capacity) {
-        char *grown = realloc(out, *capacity * 2);
+        char *grown = realloc(*out, *capacity * 2);
         if (!grown) return 0;
         *capacity *= 2;
-        out = grown;
+        *out = grown;
     }
-    memcpy(out + *used, text, length);
+    memcpy(*out + *used, text, length);
     *used += length;
-    out[*used] = 0;
+    (*out)[*used] = 0;
     return 1;
 }
 
@@ -1222,7 +570,7 @@ static char *expand_names(const char *value, const char *name, const char *versi
         size_t length = 0, start;
         const char *resolved;
         if (value[i] != '$' || i + 1 >= strlen(value)) {
-            if (!append_text(out, &used, &capacity, value + i, 1)) goto failed;
+            if (!append_text(&out, &used, &capacity, value + i, 1)) goto failed;
             ++i;
             continue;
         }
@@ -1234,12 +582,12 @@ static char *expand_names(const char *value, const char *name, const char *versi
             word[length] = 0;
             resolved = identity_value(word, name, version, release, replacement, sizeof replacement);
             if (!resolved) { *unknown = 1; goto failed_unexpanded; }
-            if (!append_text(out, &used, &capacity, resolved, strlen(resolved))) goto failed;
+            if (!append_text(&out, &used, &capacity, resolved, strlen(resolved))) goto failed;
             i = start + 1;
             continue;
         }
         if (!name_char(value[i + 1], 0)) {
-            if (!append_text(out, &used, &capacity, value + i, 1)) goto failed;
+            if (!append_text(&out, &used, &capacity, value + i, 1)) goto failed;
             ++i;
             continue;
         }
@@ -1249,13 +597,13 @@ static char *expand_names(const char *value, const char *name, const char *versi
         word[length] = 0;
         resolved = identity_value(word, name, version, release, replacement, sizeof replacement);
         if (!resolved) { *unknown = 1; goto failed_unexpanded; }
-        if (!append_text(out, &used, &capacity, resolved, strlen(resolved))) goto failed;
+        if (!append_text(&out, &used, &capacity, resolved, strlen(resolved))) goto failed;
         i = start;
     }
     return out;
 failed_unexpanded:
     /* an expansion this converter does not know keeps its text and needs review */
-    if (!append_text(out, &used, &capacity, value + i, strlen(value + i))) {
+    if (!append_text(&out, &used, &capacity, value + i, strlen(value + i))) {
         free(out);
         return NULL;
     }
@@ -1331,7 +679,7 @@ static int emit_split_step(FILE *out, const char *output, const char *prefix, co
 
 /* the assignments a subpackage function makes outside its pkg_install body. Holy has one
    depend list per recipe, so these are reported rather than moved into the main output. */
-static void split_records(struct note *note, int *review, const struct vs_function *function,
+static void split_records(struct recipe_note *note, int *review, const struct shell_function *function,
                           const char *const *keys, size_t key_count)
 {
     size_t index, start = 0, line = function->first + 1;
@@ -1347,7 +695,7 @@ static void split_records(struct note *note, int *review, const struct vs_functi
             if (function->body[start + at + size] != '=' &&
                 function->body[start + at + size] != '+') continue;
             *review = 1;
-            note_add(note, "preserved", "%s %.*s template:%zu", keys[index],
+            holy_note_add(note, "preserved", "%s %.*s template:%zu", keys[index],
                      (int)(end - start - at), function->body + start + at, line);
         }
         if (end < function->length) ++line;
@@ -1356,7 +704,7 @@ static void split_records(struct note *note, int *review, const struct vs_functi
 }
 
 /* the pkg_install body inside a subpackage function fills one staging tree */
-static int split_body(const struct vs_function *function, struct vs_function *out)
+static int split_body(const struct shell_function *function, struct shell_function *out)
 {
     static const char *const marker = "pkg_install()";
     const char *at = memmem(function->body, function->length, marker, strlen(marker));
@@ -1365,13 +713,13 @@ static int split_body(const struct vs_function *function, struct vs_function *ou
     if (!at) return 0;
     brace = memchr(at, '{', function->length - (size_t)(at - function->body));
     if (!brace) return 0;
-    close = block_end(brace + 1, function->body + function->length);
+    close = holy_shell_block_end(brace + 1, function->body + function->length);
     if (!close) return 0;
     for (index = 0; function->body + index < brace + 1; ++index)
         if (function->body[index] == '\n') ++line;
     memset(out, 0, sizeof *out);
     out->name = strdup("pkg_install");
-    out->body = copy_range(brace + 1, (size_t)(close - brace - 1));
+    out->body = holy_shell_copy(brace + 1, (size_t)(close - brace - 1));
     out->length = (size_t)(close - brace - 1);
     out->first = line;
     out->last = line;
@@ -1387,9 +735,9 @@ static int split_body(const struct vs_function *function, struct vs_function *ou
 
 int holy_convert_voidsrc(const char *input, const char *source, const char *output)
 {
-    struct voidsrc pkg = {0};
-    struct note note = {0};
-    struct { char name[512]; struct vs_function install; } splits[16];
+    struct shell_script pkg = {0};
+    struct recipe_note note = {0};
+    struct { char name[512]; struct shell_function install; } splits[16];
     char name[512] = {0}, version[512] = {0}, release[64] = {0};
     char *summary = NULL, *homepage = NULL, *license = NULL, *maintainer = NULL;
     char *style = NULL, *distfiles = NULL, *checksum = NULL;
@@ -1414,39 +762,13 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
             fputs("holypkg: invalid source name for conversion\n", stderr);
             return 2;
         }
-    {
-        struct stat st;
-        FILE *file;
-        if (stat(input, &st) || !S_ISREG(st.st_mode) || st.st_size > 4 * 1024 * 1024) {
-            fprintf(stderr, "holypkg: template unavailable: %s\n", input);
-            return 6;
-        }
-        pkg.length = (size_t)st.st_size;
-        pkg.text = malloc(pkg.length + 1);
-        file = pkg.text ? fopen(input, "rb") : NULL;
-        if (!file || fread(pkg.text, 1, pkg.length, file) != pkg.length) {
-            if (file) fclose(file);
-            voidsrc_free(&pkg);
-            fputs("holypkg: template could not be read\n", stderr);
-            return 6;
-        }
-        fclose(file);
-        pkg.text[pkg.length] = 0;
-    }
-    pkg.directory = strdup(input);
-    if (!pkg.directory) { voidsrc_free(&pkg); return 1; }
-    {
-        char *slash = strrchr(pkg.directory, '/');
-        if (slash) *slash = 0;
-        else strcpy(pkg.directory, ".");
-    }
-    result = parse_template(&pkg);
+    result = holy_shell_read(input, &pkg);
     if (result) goto done;
 
     {
-        const char *declared = value_join(&pkg, "pkgname");
-        const char *given_version = value_join(&pkg, "version");
-        const char *given_release = value_join(&pkg, "revision");
+        const char *declared = holy_shell_join(&pkg, "pkgname");
+        const char *given_version = holy_shell_join(&pkg, "version");
+        const char *given_release = holy_shell_join(&pkg, "revision");
         if (!declared || !given_version || !given_release) {
             fputs("holypkg: template: pkgname, version and revision are required\n", stderr);
             free((char *)declared);
@@ -1472,73 +794,73 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
         free((char *)given_version);
         free((char *)given_release);
     }
-    summary = value_join(&pkg, "short_desc");
-    homepage = value_join(&pkg, "homepage");
-    license = value_join(&pkg, "license");
-    maintainer = value_join(&pkg, "maintainer");
-    style = value_join(&pkg, "build_style");
+    summary = holy_shell_join(&pkg, "short_desc");
+    homepage = holy_shell_join(&pkg, "homepage");
+    license = holy_shell_join(&pkg, "license");
+    maintainer = holy_shell_join(&pkg, "maintainer");
+    style = holy_shell_join(&pkg, "build_style");
     if (!result && pkg.condition_count) {
         for (k = 0; k < pkg.condition_count; ++k) {
             const char *text = pkg.conditions[k].text;
             review = 1;
             if (!strncmp(text, "vopt_conflict", 13))
-                note_add(&note, "semantic-change",
+                holy_note_add(&note, "semantic-change",
                          "vopt_conflict checked against the fixed option set template:%zu %s",
                          pkg.conditions[k].line, text);
             else
-                note_add(&note, "unknown", "conditional block template:%zu %s",
+                holy_note_add(&note, "unknown", "conditional block template:%zu %s",
                          pkg.conditions[k].line, text);
         }
     }
     for (k = 0; k < pkg.value_count; ++k) {
         if (!pkg.values[k].conditional) continue;
         review = 1;
-        note_add(&note, "unknown", "conditional assignment %s template:%zu",
+        holy_note_add(&note, "unknown", "conditional assignment %s template:%zu",
                  pkg.values[k].name, pkg.values[k].line);
     }
-    note_add(&note, "carried", "name template:%zu", value_line(&pkg, "pkgname"));
-    note_add(&note, "carried", "version template:%zu", value_line(&pkg, "version"));
-    note_add(&note, "carried", "release template:%zu", value_line(&pkg, "revision"));
-    if (summary && *summary) note_add(&note, "carried", "short_desc template:%zu",
-                                      value_line(&pkg, "short_desc"));
-    if (homepage && *homepage) note_add(&note, "carried", "homepage template:%zu",
-                                        value_line(&pkg, "homepage"));
-    if (license && *license) note_add(&note, "carried", "license template:%zu",
-                                      value_line(&pkg, "license"));
-    if (maintainer && *maintainer) note_add(&note, "carried", "maintainer template:%zu",
-                                            value_line(&pkg, "maintainer"));
+    holy_note_add(&note, "carried", "name template:%zu", holy_shell_line(&pkg, "pkgname"));
+    holy_note_add(&note, "carried", "version template:%zu", holy_shell_line(&pkg, "version"));
+    holy_note_add(&note, "carried", "release template:%zu", holy_shell_line(&pkg, "revision"));
+    if (summary && *summary) holy_note_add(&note, "carried", "short_desc template:%zu",
+                                      holy_shell_line(&pkg, "short_desc"));
+    if (homepage && *homepage) holy_note_add(&note, "carried", "homepage template:%zu",
+                                        holy_shell_line(&pkg, "homepage"));
+    if (license && *license) holy_note_add(&note, "carried", "license template:%zu",
+                                      holy_shell_line(&pkg, "license"));
+    if (maintainer && *maintainer) holy_note_add(&note, "carried", "maintainer template:%zu",
+                                            holy_shell_line(&pkg, "maintainer"));
 
     /* the subpackage functions become one output each */
     for (k = 0; k < pkg.function_count; ++k) {
-        const struct vs_function *function = &pkg.functions[k];
+        const struct shell_function *function = &pkg.functions[k];
         size_t name_length = strlen(function->name);
         if (name_length <= 8 || strcmp(function->name + name_length - 8, "_package")) {
             /* a phase function belongs to a step; anything else has no place here */
             if (is_phase_function(function->name)) continue;
             review = 1;
             if (!strcmp(function->name, "do_clean"))
-                note_add(&note, "unknown", "do_clean runs after the package step and has no "
+                holy_note_add(&note, "unknown", "do_clean runs after the package step and has no "
                          "Holy phase template:%zu-%zu", function->first, function->last);
             else
-                note_add(&note, "unknown", "function %s template:%zu-%zu", function->name,
+                holy_note_add(&note, "unknown", "function %s template:%zu-%zu", function->name,
                          function->first, function->last);
             continue;
         }
         if (function->name[strlen(name)] == '_' && !strncmp(function->name, name, strlen(name))) {
             review = 1;
-            note_add(&note, "unknown", "function %s names the main package template:%zu-%zu",
+            holy_note_add(&note, "unknown", "function %s names the main package template:%zu-%zu",
                      function->name, function->first, function->last);
             continue;
         }
         if (splits_used >= sizeof splits / sizeof *splits) {
             review = 1;
-            note_add(&note, "unknown", "more subpackage functions than outputs are carried "
+            holy_note_add(&note, "unknown", "more subpackage functions than outputs are carried "
                      "template:%zu", function->first);
             continue;
         }
         if (!split_body(function, &splits[splits_used].install)) {
             review = 1;
-            note_add(&note, "unknown", "subpackage %s has no pkg_install template:%zu-%zu",
+            holy_note_add(&note, "unknown", "subpackage %s has no pkg_install template:%zu-%zu",
                      function->name, function->first, function->last);
             continue;
         }
@@ -1549,10 +871,10 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
                       4);
         if (function->conditional) {
             review = 1;
-            note_add(&note, "unknown", "subpackage %s is defined in a conditional block "
+            holy_note_add(&note, "unknown", "subpackage %s is defined in a conditional block "
                      "template:%zu", splits[splits_used].name, function->first);
         }
-        note_add(&note, "preserved", "subpackage %s template:%zu-%zu", splits[splits_used].name,
+        holy_note_add(&note, "preserved", "subpackage %s template:%zu-%zu", splits[splits_used].name,
                  function->first, function->last);
         ++splits_used;
     }
@@ -1563,7 +885,7 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
         goto done;
     }
     snprintf(target, sizeof target, "%s/template", output);
-    if (!copy_file(input, target, hash)) {
+    if (!holy_copy_and_hash(input, target, hash)) {
         fputs("holypkg: template copy failed\n", stderr);
         result = 1;
         goto done;
@@ -1576,27 +898,27 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
         result = 1;
         goto done;
     }
-    fputs("format holy-recipe-1\nname ", out); token(out, name);
-    fputs("\nversion ", out); token(out, version);
-    fputs("\nrelease ", out); token(out, release);
+    fputs("format holy-recipe-1\nname ", out); holy_token(out, name);
+    fputs("\nversion ", out); holy_token(out, version);
+    fputs("\nrelease ", out); holy_token(out, release);
     fputs("\narch any\nlibc any\n", out);
-    if (summary && *summary) { fputs("summary ", out); token(out, summary); fputc('\n', out); }
-    if (homepage && *homepage) { fputs("homepage ", out); token(out, homepage); fputc('\n', out); }
-    if (license && *license) { fputs("license ", out); token(out, license); fputc('\n', out); }
+    if (summary && *summary) { fputs("summary ", out); holy_token(out, summary); fputc('\n', out); }
+    if (homepage && *homepage) { fputs("homepage ", out); holy_token(out, homepage); fputc('\n', out); }
+    if (license && *license) { fputs("license ", out); holy_token(out, license); fputc('\n', out); }
     fputs("x-source-family xbps\nx-converter voidsrc-1\n", out);
     if (maintainer && *maintainer) {
-        fputs("x-maintainer ", out); token(out, maintainer); fputc('\n', out);
+        fputs("x-maintainer ", out); holy_token(out, maintainer); fputc('\n', out);
     }
     {
-        char *changelog = value_join(&pkg, "changelog");
+        char *changelog = holy_shell_join(&pkg, "changelog");
         if (changelog && *changelog) {
-            fputs("x-changelog ", out); token(out, changelog); fputc('\n', out);
-            note_add(&note, "carried", "changelog template:%zu", value_line(&pkg, "changelog"));
+            fputs("x-changelog ", out); holy_token(out, changelog); fputc('\n', out);
+            holy_note_add(&note, "carried", "changelog template:%zu", holy_shell_line(&pkg, "changelog"));
         }
         free(changelog);
     }
     if (style && *style) {
-        fputs("x-build-style ", out); token(out, style); fputc('\n', out);
+        fputs("x-build-style ", out); holy_token(out, style); fputc('\n', out);
     }
     {
         static const char *const preserved[] = {
@@ -1612,24 +934,24 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
         for (index = 0; preserved[index]; ++index) {
             char *value;
             char *fixed;
-            if (!value_present(&pkg, preserved[index])) continue;
-            fixed = resolve_options(&pkg, &note, &review, value_join(&pkg, preserved[index]),
+            if (!holy_shell_present(&pkg, preserved[index])) continue;
+            fixed = resolve_options(&pkg, &note, &review, holy_shell_join(&pkg, preserved[index]),
                                     preserved[index]);
             if (!fixed) { wrote = 0; break; }
             value = fixed;
             if (!strcmp(preserved[index], "build_options_default")) {
                 review = 1;
-                note_add(&note, "semantic-change", "build options fixed to build_options_default "
-                         "template:%zu", value_line(&pkg, preserved[index]));
+                holy_note_add(&note, "semantic-change", "build options fixed to build_options_default "
+                         "template:%zu", holy_shell_line(&pkg, preserved[index]));
             } else {
                 review = 1;
-                note_add(&note, "preserved", "%s template:%zu", preserved[index],
-                         value_line(&pkg, preserved[index]));
+                holy_note_add(&note, "preserved", "%s template:%zu", preserved[index],
+                         holy_shell_line(&pkg, preserved[index]));
             }
             fputs("x-", out);
             fputs(preserved[index], out);
             fputc(' ', out);
-            token(out, value);
+            holy_token(out, value);
             fputc('\n', out);
             free(value);
         }
@@ -1637,16 +959,16 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
     }
 
     /* distfiles with their checksum entries */
-    distfiles = value_join(&pkg, "distfiles");
-    checksum = value_join(&pkg, "checksum");
+    distfiles = holy_shell_join(&pkg, "distfiles");
+    checksum = holy_shell_join(&pkg, "checksum");
     {
         size_t distfile_count = 0, digest_count = 0;
-        char **urls = distfiles ? words(distfiles, &distfile_count) : NULL;
-        char **digests = checksum ? words(checksum, &digest_count) : NULL;
+        char **urls = distfiles ? holy_shell_words(distfiles, &distfile_count) : NULL;
+        char **digests = checksum ? holy_shell_words(checksum, &digest_count) : NULL;
         if (distfile_count && !digest_count) {
             review = 1;
-            note_add(&note, "unknown", "distfiles without a checksum template:%zu",
-                     value_line(&pkg, "distfiles"));
+            holy_note_add(&note, "unknown", "distfiles without a checksum template:%zu",
+                     holy_shell_line(&pkg, "distfiles"));
         }
         for (k = 0; k < distfile_count; ++k) {
             const char *entry = urls[k];
@@ -1659,15 +981,15 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
             if (strchr(entry, '>')) {
                 const char *after = strchr(entry, '>') + 1;
                 review = 1;
-                note_add(&note, "semantic-change", "mirror name in distfile %s dropped", entry);
+                holy_note_add(&note, "semantic-change", "mirror name in distfile %s dropped", entry);
                 entry = after;
             }
             url = expand_names(entry, name, version, release, &unknown);
             if (!url || !*url) ok = 0;
             if (ok && unknown) {
                 review = 1;
-                note_add(&note, "unknown", "distfile %s uses an expansion this converter "
-                         "does not know template:%zu", entry, value_line(&pkg, "distfiles"));
+                holy_note_add(&note, "unknown", "distfile %s uses an expansion this converter "
+                         "does not know template:%zu", entry, holy_shell_line(&pkg, "distfiles"));
                 ok = 0;
             }
             base = url ? strrchr(url, '/') : NULL;
@@ -1678,48 +1000,48 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
                 snprintf(original, sizeof original, "%s/%s", pkg.directory, url);
                 snprintf(copied, sizeof copied, "%s/%s", output, base);
                 if (stat(original, &st) || !S_ISREG(st.st_mode) ||
-                    !copy_file(original, copied, ignored)) {
+                    !holy_copy_and_hash(original, copied, ignored)) {
                     review = 1;
-                    note_add(&note, "unknown", "distfile %s is not next to the template "
-                             "template:%zu", url, value_line(&pkg, "distfiles"));
+                    holy_note_add(&note, "unknown", "distfile %s is not next to the template "
+                             "template:%zu", url, holy_shell_line(&pkg, "distfiles"));
                     ok = 0;
                 } else {
-                    note_add(&note, "semantic-change", "local distfile %s copied next to the "
+                    holy_note_add(&note, "semantic-change", "local distfile %s copied next to the "
                              "recipe", url);
                 }
             }
             if (!ok) {
-                if (url) note_add(&note, "unknown", "source %s template:%zu", entry,
-                                  value_line(&pkg, "distfiles"));
+                if (url) holy_note_add(&note, "unknown", "source %s template:%zu", entry,
+                                  holy_shell_line(&pkg, "distfiles"));
                 free(url);
                 continue;
             }
             fputs("source ", out);
-            token(out, base);
+            holy_token(out, base);
             fputc(' ', out);
-            token(out, url);
+            holy_token(out, url);
             fputc('\n', out);
             if (k < digest_count && digests[k][0] == '@') {
                 review = 1;
-                note_add(&note, "unknown", "contents checksum for %s template:%zu", base,
-                         value_line(&pkg, "checksum"));
+                holy_note_add(&note, "unknown", "contents checksum for %s template:%zu", base,
+                         holy_shell_line(&pkg, "checksum"));
             } else if (k < digest_count && is_sha256(digests[k])) {
                 fputs("source-sha256 ", out);
-                token(out, base);
+                holy_token(out, base);
                 fputc(' ', out);
-                token(out, digests[k]);
+                holy_token(out, digests[k]);
                 fputc('\n', out);
             } else {
                 review = 1;
-                note_add(&note, "unknown", "source %s has no sha256 checksum template:%zu", base,
-                         value_line(&pkg, "distfiles"));
+                holy_note_add(&note, "unknown", "source %s has no sha256 checksum template:%zu", base,
+                         holy_shell_line(&pkg, "distfiles"));
             }
-            note_add(&note, "carried", "distfiles %s template:%zu", entry,
-                     value_line(&pkg, "distfiles"));
+            holy_note_add(&note, "carried", "distfiles %s template:%zu", entry,
+                     holy_shell_line(&pkg, "distfiles"));
             free(url);
         }
-        words_free(urls);
-        words_free(digests);
+        holy_shell_words_free(urls);
+        holy_shell_words_free(digests);
     }
     /* the files and patches directories travel as archives the build can stage */
     {
@@ -1751,19 +1073,19 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
                 char named[256];
                 snprintf(named, sizeof named, "%s.tar", trees[index]);
                 fputs("source ", out);
-                token(out, trees[index]);
+                holy_token(out, trees[index]);
                 fputc(' ', out);
-                token(out, named);
+                holy_token(out, named);
                 fputc('\n', out);
             }
             fputs("source-sha256 ", out);
-            token(out, trees[index]);
+            holy_token(out, trees[index]);
             fputc(' ', out);
-            token(out, digest);
+            holy_token(out, digest);
             fputc('\n', out);
-            note_add(&note, "carried", "%s directory beside the template", trees[index]);
+            holy_note_add(&note, "carried", "%s directory beside the template", trees[index]);
             if (patches) {
-                note_add(&note, "semantic-change", "the patches directory is applied with "
+                holy_note_add(&note, "semantic-change", "the patches directory is applied with "
                          "patch and one .args file per patch");
                 fputs("build-depend cmd:patch\n", out);
             }
@@ -1779,50 +1101,50 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
         size_t list_index;
         for (list_index = 0; build_lists[list_index]; ++list_index) {
             size_t count = 0;
-            char *raw = value_join(&pkg, build_lists[list_index]);
-            char **items = raw ? words(raw, &count) : NULL;
+            char *raw = holy_shell_join(&pkg, build_lists[list_index]);
+            char **items = raw ? holy_shell_words(raw, &count) : NULL;
             free(raw);
             for (k = 0; items && k < count; ++k) {
                 char *fixed;
                 if (strchr(items[k], '<') || strchr(items[k], '>')) {
                     review = 1;
-                    note_add(&note, "unknown", "%s %s carries a version template:%zu",
+                    holy_note_add(&note, "unknown", "%s %s carries a version template:%zu",
                              build_lists[list_index], items[k],
-                             value_line(&pkg, build_lists[list_index]));
+                             holy_shell_line(&pkg, build_lists[list_index]));
                     continue;
                 }
                 fixed = resolve_options(&pkg, &note, &review, items[k], build_lists[list_index]);
-                if (!fixed) { words_free(items); wrote = 0; break; }
-                emit_dependency(out, fixed, "build-depend");
-                note_add(&note, "carried", "%s %s template:%zu", build_lists[list_index],
-                         items[k], value_line(&pkg, build_lists[list_index]));
+                if (!fixed) { holy_shell_words_free(items); wrote = 0; break; }
+                holy_emit_dependency(out, fixed, "build-depend");
+                holy_note_add(&note, "carried", "%s %s template:%zu", build_lists[list_index],
+                         items[k], holy_shell_line(&pkg, build_lists[list_index]));
                 free(fixed);
             }
-            words_free(items);
+            holy_shell_words_free(items);
             if (!wrote) { result = 1; goto done; }
         }
     }
     {
         size_t count = 0;
-        char *raw = value_join(&pkg, "depends");
-        char **items = raw ? words(raw, &count) : NULL;
+        char *raw = holy_shell_join(&pkg, "depends");
+        char **items = raw ? holy_shell_words(raw, &count) : NULL;
         free(raw);
         for (k = 0; items && k < count; ++k) {
             char *fixed;
             if (!strncmp(items[k], "virtual?", 8)) {
                 review = 1;
-                note_add(&note, "unknown", "virtual dependency %s template:%zu", items[k],
-                         value_line(&pkg, "depends"));
+                holy_note_add(&note, "unknown", "virtual dependency %s template:%zu", items[k],
+                         holy_shell_line(&pkg, "depends"));
                 continue;
             }
             fixed = resolve_options(&pkg, &note, &review, items[k], "depends");
-            if (!fixed) { words_free(items); wrote = 0; break; }
-            emit_dependency(out, fixed, "depend");
-            note_add(&note, "carried", "depends %s template:%zu", items[k],
-                     value_line(&pkg, "depends"));
+            if (!fixed) { holy_shell_words_free(items); wrote = 0; break; }
+            holy_emit_dependency(out, fixed, "depend");
+            holy_note_add(&note, "carried", "depends %s template:%zu", items[k],
+                     holy_shell_line(&pkg, "depends"));
             free(fixed);
         }
-        words_free(items);
+        holy_shell_words_free(items);
         if (!wrote) { result = 1; goto done; }
     }
     /* the conf_files and mutable_files lists name owned payload paths */
@@ -1832,30 +1154,30 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
         };
         for (index = 0; config_keys[index].key; ++index) {
             size_t count = 0;
-            char *raw = value_join(&pkg, config_keys[index].key);
-            char **items = raw ? words(raw, &count) : NULL;
+            char *raw = holy_shell_join(&pkg, config_keys[index].key);
+            char **items = raw ? holy_shell_words(raw, &count) : NULL;
             free(raw);
             for (k = 0; items && k < count; ++k) {
                 const char *path = items[k];
                 if (path[0] == '/') ++path;
                 if (strpbrk(path, "*?[]$`") || path[0] == '/' || !*path) {
                     review = 1;
-                    note_add(&note, "unknown", "%s %s is not one payload path template:%zu",
+                    holy_note_add(&note, "unknown", "%s %s is not one payload path template:%zu",
                              config_keys[index].key, items[k],
-                             value_line(&pkg, config_keys[index].key));
+                             holy_shell_line(&pkg, config_keys[index].key));
                     continue;
                 }
                 fputs("config ", out);
-                token(out, path);
+                holy_token(out, path);
                 if (config_keys[index].flag) {
                     fputc(' ', out);
                     fputs(config_keys[index].flag, out);
                 }
                 fputc('\n', out);
-                note_add(&note, "carried", "%s %s template:%zu", config_keys[index].key,
-                         items[k], value_line(&pkg, config_keys[index].key));
+                holy_note_add(&note, "carried", "%s %s template:%zu", config_keys[index].key,
+                         items[k], holy_shell_line(&pkg, config_keys[index].key));
             }
-            words_free(items);
+            holy_shell_words_free(items);
         }
     }
     /* an INSTALL or REMOVE file beside the template becomes one hook each */
@@ -1874,23 +1196,23 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
             snprintf(copied, sizeof copied, "%s/%s", output, hooks_map[index].file);
             snprintf(installed, sizeof installed, "usr/share/holy/%s/%s", name,
                      hooks_map[index].file);
-            if (!copy_file(original, copied, ignored)) { wrote = 0; break; }
+            if (!holy_copy_and_hash(original, copied, ignored)) { wrote = 0; break; }
             fputs("source ", out);
-            token(out, hooks_map[index].file);
+            holy_token(out, hooks_map[index].file);
             fputc(' ', out);
-            token(out, hooks_map[index].file);
+            holy_token(out, hooks_map[index].file);
             fputc('\n', out);
             fputs(hooks_map[index].key, out);
             fputc(' ', out);
             fputs("/bin/bash ", out);
-            token(out, installed);
+            holy_token(out, installed);
             fputc('\n', out);
             snprintf(hook_list + strlen(hook_list),
                      sizeof hook_list - strlen(hook_list), " %s", hooks_map[index].file);
             ++hooks_used;
             review = 1;
-            note_add(&note, "preserved", "hook %s", hooks_map[index].file);
-            note_add(&note, "semantic-change", "%s runs with ACTION unset, so its pre and post "
+            holy_note_add(&note, "preserved", "hook %s", hooks_map[index].file);
+            holy_note_add(&note, "semantic-change", "%s runs with ACTION unset, so its pre and post "
                      "branches are not reproduced", hooks_map[index].file);
         }
         if (!wrote) { result = 1; goto done; }
@@ -1898,16 +1220,16 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
 
     /* metapackage=yes makes the output empty; any other value leaves it a runtime package */
     {
-        char *meta = value_join(&pkg, "metapackage");
+        char *meta = holy_shell_join(&pkg, "metapackage");
         int empty = meta && *meta && strcmp(meta, "no") && strcmp(meta, "0");
         fputs("output ", out);
-        token(out, name);
+        holy_token(out, name);
         fputs(empty ? " metapackage\n" : " runtime\n", out);
         free(meta);
     }
     for (k = 0; k < splits_used; ++k) {
         fputs("output ", out);
-        token(out, splits[k].name);
+        holy_token(out, splits[k].name);
         fputs(" runtime\n", out);
     }
     /* every carried body is scanned once, so the prologue can carry the helpers it needs */
@@ -1915,7 +1237,7 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
         const char *slots[3] = { phase_maps[index].pre, phase_maps[index].body,
                                  phase_maps[index].post };
         for (i = 0; i < 3; ++i) {
-            const struct vs_function *function = find_function(&pkg, slots[i]);
+            const struct shell_function *function = holy_shell_function(&pkg, slots[i]);
             if (!function) continue;
             report_unknowns(function->body, function->length, &note, &review, function->name,
                             files, patches);
@@ -1928,7 +1250,7 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
         if (body_uses_helper(splits[k].install.body, splits[k].install.length)) helpers = 1;
     }
     if (helpers)
-        note_add(&note, "helper", "v* helpers carried from common/environment/setup/install.sh");
+        holy_note_add(&note, "helper", "v* helpers carried from common/environment/setup/install.sh");
     if (distfiles || hooks_used || files || patches) {
         /* xbps-src moves a single top level directory to $wrksrc, so HOLY_SRC gets the
            content of that directory rather than the directory itself */
@@ -1954,7 +1276,7 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
               "  rmdir \"$only\" 2>/dev/null || break\n"
               "done\n"
               "UNPACK\n", out);
-        note_add(&note, "semantic-change", "distfiles are extracted into HOLY_SRC, which takes "
+        holy_note_add(&note, "semantic-change", "distfiles are extracted into HOLY_SRC, which takes "
                  "the place of the xbps-src $wrksrc directory");
     }
     {
@@ -1984,15 +1306,15 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
             "done\n";
         for (index = 0; index < sizeof phase_maps / sizeof *phase_maps; ++index) {
             const struct phase_map *map = &phase_maps[index];
-            const struct vs_function *functions[3];
+            const struct shell_function *functions[3];
             char *bodies[3];
             char *prefix;
             char *hook_tail = NULL;
             char working[64];
             size_t missing = 0;
-            functions[0] = find_function(&pkg, map->pre);
-            functions[1] = find_function(&pkg, map->body);
-            functions[2] = find_function(&pkg, map->post);
+            functions[0] = holy_shell_function(&pkg, map->pre);
+            functions[1] = holy_shell_function(&pkg, map->body);
+            functions[2] = holy_shell_function(&pkg, map->post);
             for (i = 0; i < 3; ++i) {
                 bodies[i] = NULL;
                 if (functions[i]) continue;
@@ -2002,16 +1324,16 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
                 /* a build style supplies the steps the template leaves out */
                 if (style && *style && strcmp(map->holy, "fetch") && strcmp(map->holy, "unpack")) {
                     review = 1;
-                    note_add(&note, "helper", "common/build-style/%s.sh supplies the %s step",
+                    holy_note_add(&note, "helper", "common/build-style/%s.sh supplies the %s step",
                              style, map->holy);
                 }
                 continue;
             }
             /* a patches directory needs the prepare step even without a patch function */
             if (patches && !strcmp(map->holy, "prepare"))
-                note_add(&note, "carried", "patches directory applied in the prepare step");
+                holy_note_add(&note, "carried", "patches directory applied in the prepare step");
             if (style && *style)
-                note_add(&note, "helper", "common/build-style/%s.sh is not run, the %s body "
+                holy_note_add(&note, "helper", "common/build-style/%s.sh is not run, the %s body "
                          "comes from the template", style, map->holy);
             prefix = prologue(&pkg, name, version, release, "$HOLY_DEST", helpers, files, patches, 0);
             if (!prefix) { result = 1; goto done; }
@@ -2021,22 +1343,22 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
                 label = resolve_options(&pkg, &note, &review, functions[i]->body,
                                         functions[i]->name);
                 if (!label) {
-                    bodies[i] = copy_range(functions[i]->body, functions[i]->length);
+                    bodies[i] = holy_shell_copy(functions[i]->body, functions[i]->length);
                     if (!bodies[i]) { free(prefix); result = 1; goto done; }
-                    note_add(&note, "unknown", "build option call in %s is not resolved",
+                    holy_note_add(&note, "unknown", "build option call in %s is not resolved",
                              functions[i]->name);
                     review = 1;
                 } else {
                     bodies[i] = label;
                 }
-                note_add(&note, "preserved", "%s template:%zu-%zu", functions[i]->name,
+                holy_note_add(&note, "preserved", "%s template:%zu-%zu", functions[i]->name,
                          functions[i]->first, functions[i]->last);
             }
             {
                 if (hooks_used && !strcmp(map->holy, "package")) {
                     char text[1024];
                     snprintf(text, sizeof text, tail, hook_list);
-                    hook_tail = copy_range(text, strlen(text));
+                    hook_tail = holy_shell_copy(text, strlen(text));
                 }
                 /* xbps-src runs a phase in wrksrc; a Holy step starts in its own working directory */
             snprintf(working, sizeof working, "cd \"$wrksrc\"\n");
@@ -2052,10 +1374,10 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
     }
     /* each subpackage fills the staging tree of its own output */
     for (k = 0; k < splits_used; ++k) {
-        const struct vs_function *install = &splits[k].install;
+        const struct shell_function *install = &splits[k].install;
         char *body, *prefix;
         body = resolve_options(&pkg, &note, &review, install->body, splits[k].name);
-        if (!body) body = copy_range(install->body, install->length);
+        if (!body) body = holy_shell_copy(install->body, install->length);
         prefix = prologue(&pkg, name, version, release, "$HOLY_SPLIT_DEST", helpers, files,
                           patches, 1);
         if (!body || !prefix || !emit_split_step(out, splits[k].name, prefix, body)) {
@@ -2077,14 +1399,14 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
         goto done;
     }
     fputs("format holy-recipe-conversion-1\nconverter voidsrc-1\n", out);
-    fputs("source-name ", out); token(out, source); fputc('\n', out);
+    fputs("source-name ", out); holy_token(out, source); fputc('\n', out);
     fputs("source-file template\n", out);
     fprintf(out, "source-sha256 %s\n", hash);
-    fputs("pkgbase ", out); token(out, name); fputc('\n', out);
-    fputs("version ", out); token(out, version); fputc('\n', out);
-    fputs("release ", out); token(out, release); fputc('\n', out);
+    fputs("pkgbase ", out); holy_token(out, name); fputc('\n', out);
+    fputs("version ", out); holy_token(out, version); fputc('\n', out);
+    fputs("release ", out); holy_token(out, release); fputc('\n', out);
     fputs("arch any\n", out);
-    fputs("recipe ", out); token(out, name); fputs(".recipe\n", out);
+    fputs("recipe ", out); holy_token(out, name); fputs(".recipe\n", out);
     fprintf(out, "status %s\n", review ? "review-required" : "native");
     for (k = 0; k < note.count; ++k) fprintf(out, "%s\n", note.lines[k]);
     fprintf(out, "summary carried %zu preserved %zu helper %zu unknown %zu changes %zu\n",
@@ -2107,9 +1429,9 @@ done:
         free(splits[k].install.name);
         free(splits[k].install.body);
     }
-    note_free(&note);
+    holy_note_free(&note);
     free(summary); free(homepage); free(license); free(maintainer); free(style);
     free(distfiles); free(checksum);
-    voidsrc_free(&pkg);
+    holy_shell_free(&pkg);
     return result;
 }
