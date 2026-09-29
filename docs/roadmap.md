@@ -615,6 +615,12 @@
   not end a function body. Aports, xbps-src, SlackBuilds, RPM spec, Debian
   source, Gentoo, Pacstall, the makepkg build environment and the vm build
   environment remain open.
+  The build runner no longer loses its private build root, keeps a root the
+  caller named, and reaches both the default and the named-root path in the
+  fixture. The same run also restores three interrupted-mutation fixtures whose
+  LD_PRELOAD shims hooked the wrong symbol names under _FILE_OFFSET_BITS=64, and
+  restores the plan-set check that a source binding names an artifact inside the
+  resolved set.
 - [ ] Implement Nix closure, Flatpak, Snap, AppImage, Scoop and WinGet imports
   without silently discarding runtime requirements.
   AppImage type 2 inspect/extract now snapshots the original, checks ELF and
