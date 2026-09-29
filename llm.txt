@@ -1124,7 +1124,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=93988e49d6693dc1eb0007c765f1249ebbaa1bcec540ef3fead8f267772f4473
+holypkg.8 source=holy version=development sha256=80e5056aecacc9d1c50d334cbbc98216e57ebd5d609a6f1953ff423225a5c25d
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1385,8 +1385,12 @@ DESCRIPTION
      arate ABI libraries. Requirements come from  declared  depend  records  and
      from  the	DT_NEEDED  entries  of the built payload; provides come from the
      payload SONAMEs.  The result is an ordinary artifact that a later	transac-
-     tion installs. See holy-recipe(5) for the manifest, phases, split rules and
-     build environments.
+     tion  installs.  A	 split-step  output  receives its own staging tree under
+     HOLY_SPLIT_DEST, so a payload requirement and a  hook  script  are	 written
+     only into the output that carries their file. An unpack step runs after the
+     manager has extracted every source, so it may move or reshape that content.
+     See holy-recipe(5) for the manifest, phases, split rules and build environ-
+     ments.
 
      rpm  index	 reads a local repomd.xml and its primary archive after checking
      the explicit SHA-256 of repomd.xml. The parser  accepts  only  the	 primary

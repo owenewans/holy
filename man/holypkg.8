@@ -304,8 +304,12 @@ declared output. Every output is grouped by the ABI facts of the files it
 receives, so one build can produce a noarch nolibc document output and separate
 ABI libraries. Requirements come from declared depend records and from the
 DT_NEEDED entries of the built payload; provides come from the payload SONAMEs.
-The result is an ordinary artifact that a later transaction installs. See
-holy-recipe(5) for the manifest, phases, split rules and build environments.
+The result is an ordinary artifact that a later transaction installs. A
+split-step output receives its own staging tree under HOLY_SPLIT_DEST, so a
+payload requirement and a hook script are written only into the output that
+carries their file. An unpack step runs after the manager has extracted every
+source, so it may move or reshape that content. See holy-recipe(5) for the
+manifest, phases, split rules and build environments.
 .PP
 rpm index reads a local repomd.xml and its primary archive after checking the
 explicit SHA-256 of repomd.xml. The parser accepts only the primary data type,
