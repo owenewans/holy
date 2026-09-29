@@ -3716,7 +3716,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-recipe.5 source=holy version=development sha256=c6bcd73ef0eac13e94601acb7165593e4c65996d68db94367e9d064e5d3b9697
+holy-recipe.5 source=holy version=development sha256=472cfed13102b84a13935c22364f874cfb73ecbe0da6300667136f875208c204
 HOLY-RECIPE(5)		       Holy package format		  HOLY-RECIPE(5)
 
 NAME
@@ -3806,18 +3806,19 @@ CONFIG FLAGS AND HOOKS
 PHASES
      Normalized phases run in this order:  fetch,  unpack,  prepare,  configure,
      build,  check,  package,  split.  A phase without a step is skipped, except
-     that fetch and unpack are performed by the	 manager  when	no  step  claims
-     them.  Each  step	is  a  separate	 process with its own working directory:
-     build, check, package and split start in HOLY_BUILD, the  other  phases  in
-     HOLY_WORK.
+     that the manager always fetches and  extracts.  Each  step	 is  a	separate
+     process  with  its	 own  working directory: build, check, package and split
+     start in HOLY_BUILD, the other phases in HOLY_WORK. A split step names  its
+     output instead of a phase and always runs after the package phase, whatever
+     the order of its line.
 
      The  manager  sets	 HOLY_WORK,  HOLY_SRC,	HOLY_BUILD, HOLY_DEST, HOLY_OUT,
      HOLY_ARCH, HOLY_LIBC, HOLY_JOBS,  HOLY_BUILD_TARGET,  HOLY_HOST_TARGET  and
-     HOLY_TARGET  to  absolute paths in the selected build root. Fetched sources
-     live  in  HOLY_WORK/sources.  An	archive	  source   is	extracted   into
-     HOLY_SRC/NAME;  a plain file is placed there unchanged. An unpack step runs
-     after the manager has extracted every source, so it  may  move  or	 reshape
-     that content.
+     HOLY_TARGET to absolute paths in the selected build root. A split step also
+     receives  HOLY_SPLIT_DEST.	 Fetched  sources  live in HOLY_WORK/sources. An
+     archive source is extracted into HOLY_SRC/NAME;  a	 plain	file  is  placed
+     there unchanged.  An unpack step runs after the manager has extracted every
+     source, so it may move or reshape that content.
 
 BUILD
      holypkg  build  RECIPE --output NEW_DIRECTORY [--environment host|clean|vm]

@@ -81,17 +81,19 @@ built payload: its SHA-256 is recorded in HOLY/hooks, and the installer reads
 the body from the installed manifest. No hook runs during the build.
 .SH PHASES
 Normalized phases run in this order: fetch, unpack, prepare, configure, build,
-check, package, split. A phase without a step is skipped, except that fetch and
-unpack are performed by the manager when no step claims them. Each step is a
-separate process with its own working directory: build, check, package and
-split start in HOLY_BUILD, the other phases in HOLY_WORK.
+check, package, split. A phase without a step is skipped, except that the
+manager always fetches and extracts. Each step is a separate process with its
+own working directory: build, check, package and split start in HOLY_BUILD, the
+other phases in HOLY_WORK. A split step names its output instead of a phase and
+always runs after the package phase, whatever the order of its line.
 .PP
 The manager sets HOLY_WORK, HOLY_SRC, HOLY_BUILD, HOLY_DEST, HOLY_OUT,
 HOLY_ARCH, HOLY_LIBC, HOLY_JOBS, HOLY_BUILD_TARGET, HOLY_HOST_TARGET and
-HOLY_TARGET to absolute paths in the selected build root. Fetched sources live
-in HOLY_WORK/sources. An archive source is extracted into HOLY_SRC/NAME; a
-plain file is placed there unchanged. An unpack step runs after the manager has
-extracted every source, so it may move or reshape that content.
+HOLY_TARGET to absolute paths in the selected build root. A split step also
+receives HOLY_SPLIT_DEST. Fetched sources live in HOLY_WORK/sources. An archive
+source is extracted into HOLY_SRC/NAME; a plain file is placed there unchanged.
+An unpack step runs after the manager has extracted every source, so it may move
+or reshape that content.
 .SH BUILD
 holypkg build RECIPE --output NEW_DIRECTORY [--environment host|clean|vm]
 [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
