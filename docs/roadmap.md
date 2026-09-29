@@ -592,7 +592,8 @@
   separate file-level evidence. Complex patterns remain review-required. Key enrollment,
   automatic provider selection and a file index remain open.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
-  Gentoo and Pacstall recipe conversion with helper environments and split outputs.
+  Gentoo and Pacstall recipe conversion with helper environments and split
+  outputs.
   The native side of that work now exists: `holypkg build` parses a
   holy-recipe(5) manifest, fetches pinned sources, unpacks them, runs reviewed
   phase steps with absolute HOLY_* paths, and packs one .holy per declared
@@ -677,7 +678,35 @@
   through the normal engine and checks both the ELF group and the noarch group;
   all 2211 upstream scripts from the development and libraries trees convert and
   every produced recipe passes the manager's own validation.
-  RPM spec, Debian source, Gentoo, Pacstall, the makepkg build environment and
+  The RPM spec family converts as well, and needs a parser of its own because a
+  spec is neither shell nor a list of phase functions. `holypkg convert NAME.spec`
+  and `holypkg import --format rpmspec` read the spec, carry Name, Version,
+  Release, Summary, License and URL, collect the %global and %define records and
+  expand the macros that resolve, so a body keeps its own words with _sourcedir,
+  _builddir, _topdir and buildroot rewritten onto the exported paths. A Version
+  or Release written with a macro in it keeps only its literal part and reports
+  the macro, so the value stays what the spec says. BuildRequires becomes
+  build-depend and Requires becomes depend, read one record per line because an
+  rpm requirement carries its comparison with it; Provides, Conflicts,
+  Obsoletes and Recommends become x- records, since none of them is a
+  requirement, and a rich dependency, an rpmlib capability and a requirement
+  naming a file are reported. The prep, build, install and check sections become
+  the matching phases, %setup, %autosetup and %autopatch become a cd into the
+  unpacked tree and a patch pass over the declared patches, the %make_install
+  family and the __ prefixed helpers become the shell line they stand for, and
+  every other rpm section command is reported and left in the body so the build
+  fails visibly rather than losing a step. A %package block becomes an output
+  whose split step copies the paths its own %files list named out of the main
+  tree, because an rpm subpackage is a file list and not a body; the main
+  %files list is reported as a check the install already made. A local Source
+  or Patch file beside the spec is copied and hashed as SHA-256, and one that is
+  absent is reported, since a spec normally pins no digest. A fixture converts a
+  spec with a subpackage, a patch, a file requirement and a rich dependency,
+  builds the produced recipe through the normal engine and checks the three
+  payloads it produced; 387 of the 388 source RPM specs sampled from the Fedora
+  archive convert, the one refusal being a spec with no Name at all, and every
+  produced recipe passes the manager's own validation.
+  Debian source, Gentoo, Pacstall, the makepkg build environment and
   the vm build environment remain open.
   The build runner no longer loses its private build root, keeps a root the
   caller named, and reaches both the default and the named-root path in the

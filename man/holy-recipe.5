@@ -278,6 +278,52 @@ and the $PKG/install tree itself is reported as packaging metadata that stays in
 the payload as ordinary files. The strip pass, the ownership rewrite, the user
 and group creation, the loader cache update and the desktop, mime, icon and font
 cache helpers are reported as unresolved.
+.SS RPM spec
+Name, Version, Release, Summary, License and URL are carried. A Version or
+Release written with a macro in it keeps only its literal part, and the macro
+is reported, so the value stays what the spec says; a field with no literal
+text at all is refused. The distribution suffix on Release is left out, which
+is reported. BuildArch noarch becomes noarch and any other value becomes any,
+because the payload decides the machine, and ExclusiveArch is preserved.
+.PP
+The %global and %define records are collected, and a macro this converter can
+resolve is expanded everywhere it appears: the identity fields, the path
+macros such as _sourcedir, _builddir, _topdir and buildroot, and the directory
+macros such as _bindir and _libdir. A macro that resolves to nothing and is
+optional is left out, an unresolved one stays in the text and is reported, and
+a value that is a pattern rather than a word stays inside the body.
+.PP
+BuildRequires becomes build-depend and Requires becomes depend, with the same
+comparator names as the PKGBUILD converter, and the list is read one record per
+line because an rpm requirement carries its comparison. Provides becomes
+x-provides, Conflicts and Obsoletes become x-conflicts, and Recommends,
+Suggests and Enhances become x-suggests, since none of them is a requirement. A
+requirement that names a file, a rich dependency or an rpmlib capability is
+reported rather than turned into a record.
+.PP
+Source and Patch records name the files the build needs. A local file beside
+the spec is copied next to the recipe and hashed as SHA-256, and one that is
+absent is reported, since a spec normally pins no digest at all. The engine
+fetches and unpacks the recorded sources, so the extracted tree takes the place
+of _sourcedir.
+.PP
+The prep, build, install and check sections become the prepare, build, package
+and check phases, each behind a prologue that rebuilds the macros the body reads
+from the exported paths and changes into _sourcedir/NAME-VERSION when the tree
+was unpacked under that name. %setup, %autosetup and %autopatch become a cd into
+that directory followed by a patch pass over the declared patches, and %make_install,
+%make_build and the __ prefixed helpers become the shell line they stand for.
+Every other rpm section command is reported and left in the body, so the build
+fails visibly rather than losing a step. An rpm conditional, which this
+converter does not choose between, is reported with its section.
+.PP
+A %package block becomes an output, and because an rpm subpackage is a file list
+rather than a body, its split step copies the paths its own %files section named
+out of the main tree. A path that keeps a macro is reported, a %files option
+such as -f is reported, and a subpackage with no %files list gets no payload.
+The main %files list is not carried, since it only checks what the install
+already placed, and that is reported. The %description blocks are not carried.
+
 .SH CONVERSION REPORT
 The report lists every carried, preserved, helper, unknown and changed item with
 its source file and line range, and its status is native or review-required. A
@@ -344,6 +390,8 @@ PKGBUILD: https://pacman.archlinux.page/PKGBUILD.5.html
 APKBUILD: https://wiki.alpinelinux.org/wiki/APKBUILD_Reference
 abuild phases: https://gitlab.alpinelinux.org/alpine/abuild/-/raw/master/functions.sh.in
 abuild default.conf: https://gitlab.alpinelinux.org/alpine/abuild/-/raw/master/default.conf
+RPM spec: https://rpm.org/docs/latest/manual/spec.html
+rpm macros: https://rpm-software-management.github.io/rpm/manual/macros.html
 SlackBuild script: https://slackbuilds.org/howto/
 slack-desc format: https://slackbuilds.org/guidelines/
 Void Manual: https://raw.githubusercontent.com/void-linux/void-packages/master/Manual.md

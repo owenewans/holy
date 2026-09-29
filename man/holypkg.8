@@ -10,7 +10,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
-.B holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild|void|aports|slackbuild --output NEW_DIRECTORY [--public-key FILE (apk only)]
+.B holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild|void|aports|slackbuild|rpmspec --output NEW_DIRECTORY [--public-key FILE (apk only)]
 .br
 .B holypkg build RECIPE --output NEW_DIRECTORY [--environment host|clean|vm] [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
 .br
@@ -2538,10 +2538,11 @@ PKGBUILD as text and writes a conversion directory containing the original
 file, a copy of each local source it names, a holy-recipe(5) manifest and a
 conversion report. A file named template reaches the Void converter, a file
 named APKBUILD reaches the Aports converter, and a name ending in .SlackBuild
-reaches the SlackBuild converter through the same command, while any other name
-reaches the pacman converter, and
-import INPUT --source NAME --format pkgbuild|void|aports|slackbuild --output
-NEW_DIRECTORY names the family explicitly. None of these commands installs a
+reaches the SlackBuild converter, and a name ending in .spec reaches the RPM
+spec converter through the same command, while any other name reaches the pacman
+converter, and
+import INPUT --source NAME --format pkgbuild|void|aports|slackbuild|rpmspec
+--output NEW_DIRECTORY names the family explicitly. None of these commands installs a
 package, builds one, or grants NAME a registered source identity; the report
 records it as provenance.
 .PP
@@ -2610,6 +2611,21 @@ becomes one hook, and this format pins an MD5 sum rather than a SHA-256 digest,
 so a remote archive is reported unless a local copy is beside the script. The
 strip pass, the ownership rewrite, the user and group creation and the loader
 and desktop cache helpers are reported as unresolved.
+.PP
+The RPM spec converter carries Name, Version, Release, Summary, License and
+URL, collects the %global and %define records, and expands the macros it can
+resolve, so a body keeps its own words with _sourcedir, _builddir and buildroot
+rewritten onto the exported paths. BuildRequires becomes build-depend and
+Requires becomes depend, read one record per line so the comparison travels with
+the name, while Provides, Conflicts, Obsoletes and Recommends become x- records
+because none of them is a requirement. The prep, build, install and check
+sections become the matching phases, %setup, %autosetup and %autopatch become a cd
+into the unpacked tree and a patch pass, and every other rpm section command is
+reported and left in the body so the build fails visibly. A %package block
+becomes an output whose split step copies the paths its own %files list named
+out of the main tree. A local Source or Patch file beside the spec is copied and
+hashed as SHA-256; one that is absent is reported, since a spec normally pins
+no digest.
 .PP
 Both reports name every carried, preserved, helper, unknown and changed item
 with its source file and line range, and their status is native or
