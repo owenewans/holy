@@ -593,6 +593,15 @@
   automatic provider selection and a file index remain open.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
   Gentoo and Pacstall recipe conversion with helper environments and split outputs.
+  The native side of that work now exists: `holypkg build` parses a
+  holy-recipe(5) manifest, fetches pinned sources, unpacks them, runs reviewed
+  phase steps with absolute HOLY_* paths, and packs one .holy per declared
+  output. Outputs are grouped by the ABI facts of the payload, so a single
+  build yields a noarch/nolibc document output and separate ABI libraries.
+  Requirements come from declared depend records and payload DT_NEEDED entries;
+  provides come from payload SONAMEs; config flags and runtime hooks are
+  recorded with the produced digests. Conversion from foreign recipe families,
+  helper environments and the vm build environment remain open.
 - [ ] Implement Nix closure, Flatpak, Snap, AppImage, Scoop and WinGet imports
   without silently discarding runtime requirements.
   AppImage type 2 inspect/extract now snapshots the original, checks ELF and

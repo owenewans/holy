@@ -12,6 +12,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage --output NEW_DIRECTORY [--public-key FILE (apk only)]
 .br
+.B holypkg build RECIPE --output NEW_DIRECTORY [--environment host|clean|vm] [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
+.br
 .B holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY
 .br
 .B holypkg apt sync HTTPS_URL --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--ca-file FILE]
@@ -292,6 +294,16 @@ than becoming runtime dependencies. Conflicts, Obsoletes, scriptlets,
 triggers and file capabilities require further conversion support.
 Local import does not verify RPM signatures. Builds without librpm return
 status 6 for this format.
+.PP
+build compiles a local holy-recipe(5) manifest. It fetches every declared
+source under its pinned digest, unpacks archives into HOLY_SRC, runs the
+reviewed phase steps with absolute HOLY_* paths, and packs one .holy per
+declared output. Every output is grouped by the ABI facts of the files it
+receives, so one build can produce a noarch nolibc document output and separate
+ABI libraries. Requirements come from declared depend records and from the
+DT_NEEDED entries of the built payload; provides come from the payload SONAMEs.
+The result is an ordinary artifact that a later transaction installs. See
+holy-recipe(5) for the manifest, phases, split rules and build environments.
 .PP
 rpm index reads a local repomd.xml and its primary archive after checking the
 explicit SHA-256 of repomd.xml. The parser accepts only the primary data type,

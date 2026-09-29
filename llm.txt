@@ -1124,7 +1124,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=91cfc2cc78eecbbb34df6b8840ecbf3d383876ac293bc4c640a419ee72897933
+holypkg.8 source=holy version=development sha256=74dd68187338e66baa8eebb5707c27e21a977bb0f0e5967c1b1e3887d57e2b91
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1147,74 +1147,76 @@ SYNOPSIS
      holypkg  import  INPUT   --source	 NAME	--format   pacman|rpm|deb|slack-
      ware|apk|xbps|appimage   --output	NEW_DIRECTORY  [--public-key  FILE  (apk
      only)]
+     holypkg build RECIPE --output NEW_DIRECTORY  [--environment  host|clean|vm]
+     [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
      holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base
      HTTPS_BASE/ --output NEW_DIRECTORY
-     holypkg apt sync HTTPS_URL --sha256 HASH --source NAME  --base  HTTPS_BASE/
+     holypkg  apt  sync HTTPS_URL --sha256 HASH --source NAME --base HTTPS_BASE/
      --output NEW_DIRECTORY [--ca-file FILE]
-     holypkg  apt  sync-signed	HTTPS_BASE/  SUITE  COMPONENT ARCH --source NAME
-     --keyring FILE --output NEW_DIRECTORY  [--inrelease]  [--files]  [--ca-file
+     holypkg apt sync-signed HTTPS_BASE/  SUITE	 COMPONENT  ARCH  --source  NAME
+     --keyring	FILE  --output	NEW_DIRECTORY [--inrelease] [--files] [--ca-file
      FILE]
      holypkg  apt  sync-source	ALIAS  SUITE  COMPONENT	 ARCH  --root  DIRECTORY
-     --keyring FILE --output NEW_DIRECTORY  [--inrelease]  [--files]  [--ca-file
+     --keyring	FILE  --output	NEW_DIRECTORY [--inrelease] [--files] [--ca-file
      FILE]
      holypkg apt bind ALIAS SUITE COMPONENT INDEX_ARCH CATALOG --root DIRECTORY
-     holypkg  apt search QUERY --catalog DIRECTORY [--source ALIAS --root DIREC-
+     holypkg apt search QUERY --catalog DIRECTORY [--source ALIAS --root  DIREC-
      TORY]
      holypkg apt search QUERY --source ALIAS --suite SUITE --component COMPONENT
      --index-arch ARCH --root DIRECTORY
-     holypkg apt info PACKAGE --catalog DIRECTORY [--source ALIAS --root  DIREC-
+     holypkg  apt info PACKAGE --catalog DIRECTORY [--source ALIAS --root DIREC-
      TORY]
      holypkg apt info PACKAGE --source ALIAS --suite SUITE --component COMPONENT
      --index-arch ARCH --root DIRECTORY
      holypkg apt fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIREC-
-     TORY  [--source  ALIAS --root DIRECTORY] [--ca-file FILE] [--import] [--re-
+     TORY [--source ALIAS --root DIRECTORY] [--ca-file FILE]  [--import]  [--re-
      quire-file /PATH]
-     holypkg apt fetch NAME VERSION ARCH --source ALIAS --suite	 SUITE	--compo-
-     nent  COMPONENT  --index-arch  ARCH --root DIRECTORY --output NEW_DIRECTORY
+     holypkg  apt  fetch NAME VERSION ARCH --source ALIAS --suite SUITE --compo-
+     nent COMPONENT --index-arch ARCH --root  DIRECTORY	 --output  NEW_DIRECTORY
      [--ca-file FILE] [--import] [--require-file /PATH]
      holypkg appimage inspect INPUT
      holypkg appimage extract INPUT --output NEW_DIRECTORY
-     holypkg apk  index	 APKINDEX.tar.gz  --source  NAME  --base  URL/	--output
+     holypkg  apk  index  APKINDEX.tar.gz  --source  NAME  --base  URL/ --output
      NEW_DIRECTORY
      holypkg apk verify-index FILE --public-key FILE
-     holypkg  apk  sync	 SOURCE	 REPO  --root  DIRECTORY  --output NEW_DIRECTORY
-     [--sha256 HASH | --accept-unsigned	 HASH]	[--ca-file  FILE]  [--public-key
+     holypkg apk  sync	SOURCE	REPO  --root  DIRECTORY	 --output  NEW_DIRECTORY
+     [--sha256	HASH  |	 --accept-unsigned  HASH] [--ca-file FILE] [--public-key
      FILE]
-     holypkg  apk  bind	 SOURCE REPO CATALOG --root DIRECTORY [--accept-unsigned
+     holypkg apk bind SOURCE REPO CATALOG  --root  DIRECTORY  [--accept-unsigned
      HASH] [--public-key FILE]
      holypkg apk search QUERY [--catalog DIRECTORY | --source SOURCE --repo REPO
      --root DIRECTORY]
      holypkg apk info PACKAGE [--catalog DIRECTORY | --source SOURCE --repo REPO
      --root DIRECTORY]
-     holypkg apk providers soname:NAME [--catalog DIRECTORY  |	--source  SOURCE
+     holypkg  apk  providers  soname:NAME [--catalog DIRECTORY | --source SOURCE
      --repo REPO --root DIRECTORY]
      holypkg apk fetch-provider soname:NAME ARCH --output NEW_DIRECTORY [--cata-
-     log  DIRECTORY  |	--source  SOURCE --repo REPO --root DIRECTORY] [--sha256
+     log DIRECTORY | --source SOURCE --repo  REPO  --root  DIRECTORY]  [--sha256
      HASH] [--ca-file FILE] [--public-key FILE]
-     holypkg apk fetch NAME VERSION ARCH --output NEW_DIRECTORY	 [--catalog  DI-
-     RECTORY  |	 --source  SOURCE  --repo REPO --root DIRECTORY] [--sha256 HASH]
-     [--ca-file FILE] [--public-key FILE] [--import]  [--require-soname	 SONAME]
+     holypkg  apk  fetch NAME VERSION ARCH --output NEW_DIRECTORY [--catalog DI-
+     RECTORY | --source SOURCE --repo REPO  --root  DIRECTORY]	[--sha256  HASH]
+     [--ca-file	 FILE]	[--public-key FILE] [--import] [--require-soname SONAME]
      [--require-file /PATH]
-     holypkg  xbps index REPODATA --sha256 HASH --source NAME --base HTTPS_BASE/
+     holypkg xbps index REPODATA --sha256 HASH --source NAME --base  HTTPS_BASE/
      --output NEW_DIRECTORY [--public-key FILE]
-     holypkg xbps sync HTTPS_BASE/ ARCH --sha256  HASH	--source  NAME	--output
+     holypkg  xbps  sync  HTTPS_BASE/  ARCH --sha256 HASH --source NAME --output
      NEW_DIRECTORY [--ca-file FILE] [--public-key FILE]
      holypkg xbps sync-source ALIAS ARCH --root DIRECTORY --sha256 HASH --output
      NEW_DIRECTORY [--ca-file FILE] [--public-key FILE]
-     holypkg  xbps  search|info QUERY --catalog DIRECTORY [--source ALIAS --root
+     holypkg xbps search|info QUERY --catalog DIRECTORY [--source  ALIAS  --root
      DIRECTORY]
-     holypkg xbps search|info QUERY --source ALIAS --index-arch ARCH --root  DI-
+     holypkg  xbps search|info QUERY --source ALIAS --index-arch ARCH --root DI-
      RECTORY
      holypkg xbps providers SONAME --catalog DIRECTORY
-     holypkg  xbps  providers SONAME --source ALIAS --index-arch ARCH --root DI-
+     holypkg xbps providers SONAME --source ALIAS --index-arch ARCH  --root  DI-
      RECTORY
-     holypkg xbps fetch NAME VERSION ARCH --catalog DIRECTORY  --output	 NEW_DI-
-     RECTORY  [--ca-file FILE] [--public-key FILE] [--source ALIAS --root DIREC-
+     holypkg  xbps  fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DI-
+     RECTORY [--ca-file FILE] [--public-key FILE] [--source ALIAS --root  DIREC-
      TORY] [--import] [--require-soname SONAME]
-     holypkg xbps fetch NAME  VERSION  ARCH  --source  ALIAS  --index-arch  ARCH
-     --root  DIRECTORY	--output  NEW_DIRECTORY	 [--ca-file  FILE] [--public-key
+     holypkg  xbps  fetch  NAME	 VERSION  ARCH	--source ALIAS --index-arch ARCH
+     --root DIRECTORY  --output	 NEW_DIRECTORY	[--ca-file  FILE]  [--public-key
      FILE] [--import] [--require-soname SONAME]
-     holypkg repo mirror HTTPS_BASE/ --sha256 INDEX_SHA256  --output  NEW_DIREC-
+     holypkg  repo  mirror HTTPS_BASE/ --sha256 INDEX_SHA256 --output NEW_DIREC-
      TORY [--public-key PUBLIC_KEY.pem] [--ca-file FILE]
      holypkg repo seal DIRECTORY [--key PRIVATE_KEY.pem]
      holypkg repo verify DIRECTORY --key PUBLIC_KEY.pem
@@ -1223,28 +1225,28 @@ SYNOPSIS
      holypkg source list --root DIRECTORY
      holypkg source show ALIAS --root DIRECTORY
      holypkg source catalog bind ALIAS MIRROR [--root DIRECTORY]
-     holypkg  sync  SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256
+     holypkg sync SOURCE [--root DIRECTORY] [--output  NEW_DIRECTORY]  [--sha256
      INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--commit GIT_COMMIT] [--ca-
      file FILE]
      holypkg sync APK_SOURCE [--repo REPO] --output NEW_DIRECTORY [--root DIREC-
-     TORY] [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE]  [--public-
+     TORY]  [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] [--public-
      key FILE]
-     holypkg  sync  XBPS_SOURCE --arch ARCH --sha256 HASH --output NEW_DIRECTORY
+     holypkg sync XBPS_SOURCE --arch ARCH --sha256 HASH	 --output  NEW_DIRECTORY
      [--root DIRECTORY] [--ca-file FILE] [--public-key FILE]
-     holypkg sync APT_SOURCE --suite SUITE  --component	 COMPONENT  --index-arch
+     holypkg  sync  APT_SOURCE	--suite SUITE --component COMPONENT --index-arch
      ARCH --keyring FILE --output NEW_DIRECTORY [--root DIRECTORY] [--inrelease]
      [--files] [--ca-file FILE]
      holypkg orphan [--root DIRECTORY] [--json]
-     holypkg  run  SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC]
+     holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH]  [--libc  LIBC]
      [--auto-view] [--view PUBLIC=PRIVATE ...] -- COMMAND [ARGS...]
      holypkg docs --root DIRECTORY --output FILE
      holypkg config check FILE
      holypkg info local:FILE
-     holypkg info SOURCE:PACKAGE [--repo  REPO]	 [--arch  ARCH]	 [--suite  SUITE
-     --component  COMPONENT --index-arch ARCH] [--catalog MIRROR] [--root DIREC-
+     holypkg  info  SOURCE:PACKAGE  [--repo  REPO]  [--arch ARCH] [--suite SUITE
+     --component COMPONENT --index-arch ARCH] [--catalog MIRROR] [--root  DIREC-
      TORY]
      holypkg search QUERY [--source SOURCE] [--repo REPO] [--arch ARCH] [--suite
-     SUITE --component COMPONENT --index-arch ARCH] [--file] [--fuzzy]	[--cata-
+     SUITE  --component COMPONENT --index-arch ARCH] [--file] [--fuzzy] [--cata-
      log MIRROR] [--root DIRECTORY]
      holypkg verify local:FILE
      holypkg manifest local:FILE
@@ -1253,39 +1255,39 @@ SYNOPSIS
      holypkg provides local:FILE
      holypkg provides local:FILE --json
      holypkg solve local:ROOT [local:CANDIDATE ...]
-     holypkg   solve   local:ROOT   [local:CANDIDATE   ...]   --choose	REQUIRE-
+     holypkg  solve   local:ROOT   [local:CANDIDATE   ...]   --choose	REQUIRE-
      MENT_ID=SHA256 [--json]
      holypkg solve local:ROOT [local:CANDIDATE ...] --json
      holypkg fetch local:FILE --output DIRECTORY
      holypkg fetch local:FILE --extract --output DIRECTORY
-     holypkg fetch SOURCE:PACKAGE [--catalog MIRROR] --output  DIRECTORY  [--ex-
+     holypkg  fetch  SOURCE:PACKAGE [--catalog MIRROR] --output DIRECTORY [--ex-
      tract] [--root DIRECTORY]
-     holypkg  fetch  APK_SOURCE:PACKAGE	 --version  VERSION  --arch ARCH [--repo
+     holypkg fetch APK_SOURCE:PACKAGE  --version  VERSION  --arch  ARCH	 [--repo
      REPO]  --output  NEW_DIRECTORY  [--catalog	 DIRECTORY]  [--root  DIRECTORY]
      [--ca-file FILE] [--public-key FILE] [--sha256 HASH] [--import] [--require-
      soname SONAME] [--require-file /PATH]
-     holypkg  fetch  XBPS_SOURCE:PACKAGE  --version VERSION --arch ARCH --output
-     NEW_DIRECTORY [--catalog DIRECTORY]  [--root  DIRECTORY]  [--ca-file  FILE]
+     holypkg fetch XBPS_SOURCE:PACKAGE --version VERSION  --arch  ARCH	--output
+     NEW_DIRECTORY  [--catalog	DIRECTORY]  [--root  DIRECTORY] [--ca-file FILE]
      [--public-key FILE] [--import] [--require-soname SONAME]
-     holypkg  fetch  APT_SOURCE:PACKAGE	 --version  VERSION  --arch ARCH --suite
-     SUITE  --component	 COMPONENT  --index-arch  ARCH	--output   NEW_DIRECTORY
+     holypkg fetch APT_SOURCE:PACKAGE  --version  VERSION  --arch  ARCH	 --suite
+     SUITE   --component  COMPONENT  --index-arch  ARCH	 --output  NEW_DIRECTORY
      [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--import] [--re-
      quire-file /PATH]
-     holypkg  fetch  https://URL  --sha256  SHA256 --output DIRECTORY [--ca-file
+     holypkg fetch https://URL --sha256	 SHA256	 --output  DIRECTORY  [--ca-file
      FILE]
      holypkg pack DIRECTORY --output FILE.holy
      holypkg manifest generate DIRECTORY --output FILE
      holypkg check local:FILE --root DIRECTORY
      holypkg check local:FILE --root DIRECTORY --json
-     holypkg check [SOURCE:PACKAGE] [--root  DIRECTORY]	 [--arch  ARCH]	 [--libc
+     holypkg  check  [SOURCE:PACKAGE]  [--root	DIRECTORY] [--arch ARCH] [--libc
      LIBC] [--json]
      holypkg files SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC]
-     holypkg  why  SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC]
+     holypkg why SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH]  [--libc  LIBC]
      [--json]
      holypkg owner PATH [--root DIRECTORY]
-     holypkg repair SOURCE:PACKAGE  [--root  DIRECTORY]	 [--arch  ARCH]	 [--libc
+     holypkg  repair  SOURCE:PACKAGE  [--root  DIRECTORY]  [--arch ARCH] [--libc
      LIBC] [--plan PLAN_SHA256]
-     holypkg  rm  SOURCE:PACKAGE  [--root DIRECTORY] [--arch ARCH] [--libc LIBC]
+     holypkg rm SOURCE:PACKAGE [--root DIRECTORY] [--arch  ARCH]  [--libc  LIBC]
      [--yes] [--accept-broken]
      holypkg elf FILE
      holypkg scan local:FILE
@@ -1310,21 +1312,21 @@ SYNOPSIS
      holypkg db approve PLAN_SHA256 --root DIRECTORY
      holypkg db recheck --root DIRECTORY
      holypkg db apply --root DIRECTORY
-     holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose  ID=SHA256]
-     [--source	ARTIFACT=SOURCE_ID  ...]  [--accept-arch  SHA256 ...] [--accept-
+     holypkg  db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256]
+     [--source ARTIFACT=SOURCE_ID ...]	[--accept-arch	SHA256	...]  [--accept-
      privileged SHA256 ...] [--skip-hooks SHA256 ...] --root DIRECTORY
-     holypkg  db   apply-set   PLAN_SHA256   ROOT_SHA256   [CANDIDATE_SHA256...]
-     [--choose	 ID=SHA256]  [--source	ARTIFACT=SOURCE_ID  ...]  [--accept-arch
-     SHA256 ...] [--accept-privileged  SHA256  ...]  [--skip-hooks  SHA256  ...]
+     holypkg   db   apply-set	PLAN_SHA256   ROOT_SHA256  [CANDIDATE_SHA256...]
+     [--choose	ID=SHA256]  [--source  ARTIFACT=SOURCE_ID  ...]	  [--accept-arch
+     SHA256  ...]  [--accept-privileged	 SHA256	 ...]  [--skip-hooks SHA256 ...]
      --root DIRECTORY
      holypkg db recover --finish-set|--continue-set --root DIRECTORY
      holypkg db configure-plan SHA256 --root DIRECTORY
      holypkg db configure-apply PLAN_SHA256 SHA256 --root DIRECTORY
      holypkg db configure-recover SHA256 --retry --root DIRECTORY
      holypkg db repair-plan SHA256 --root DIRECTORY
-     holypkg  db  plan-update  OLD_SHA256  NEW_SHA256 [--accept-arch NEW_SHA256]
+     holypkg db plan-update  OLD_SHA256	 NEW_SHA256  [--accept-arch  NEW_SHA256]
      [--accept-privileged NEW_SHA256] --root DIRECTORY
-     holypkg db apply-update PLAN_SHA256  OLD_SHA256  NEW_SHA256  [--accept-arch
+     holypkg  db  apply-update	PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-arch
      NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY
      holypkg  rollback	TRANSACTION  [--root  DIRECTORY]  [--apply  PLAN_SHA256]
      [--accept-arch ARTIFACT_SHA256] [--accept-privileged ARTIFACT_SHA256]
@@ -1352,27 +1354,38 @@ SYNOPSIS
 
 DESCRIPTION
    Local pacman, RPM, Debian, Slackware, APK and XBPS binary import
-     import snapshots a local pacman tar archive, RPM v4 or v6	package,  Debian
+     import  snapshots	a local pacman tar archive, RPM v4 or v6 package, Debian
      .deb, Slackware package, APK v2 or XBPS package, retains its exact bytes as
-     NEW_DIRECTORY/original  and  creates  verified LZ4-frame .holy outputs. The
-     output directory must not exist. --format selects the  adapter  explicitly;
-     --source  records	provenance only and grants no registered source identity
-     or trust.	The command does not install  files  or	 execute  package  code.
+     NEW_DIRECTORY/original and creates verified LZ4-frame  .holy  outputs.  The
+     output  directory	must not exist. --format selects the adapter explicitly;
+     --source records provenance only and grants no registered	source	identity
+     or	 trust.	  The  command	does  not install files or execute package code.
      Without an explicit APK public key, each output records verification=unver-
      ified. An explicit key verifies the APK signature but does not grant a reg-
      istered source identity.
 
-     --format  rpm uses librpm to read the header and payload of v4 and v6 pack-
-     ages.  It	verifies  each	supported  file	 digest	 before	 packaging  with
-     libarchive.   The	importer  checks  header and payload file lists, records
-     config flags and original provenance, and splits observed ELF  ABI	 groups.
-     The  resolver compares RPM epoch, version and release with a dedicated lib-
+     --format rpm uses librpm to read the header and payload of v4 and v6  pack-
+     ages.   It	 verifies  each	 supported  file  digest  before  packaging with
+     libarchive.  The importer checks header and  payload  file	 lists,	 records
+     config  flags  and original provenance, and splits observed ELF ABI groups.
+     The resolver compares RPM epoch, version and release with a dedicated  lib-
      solv RPM comparator. Ordinary versioned Requires and Provides use that com-
      parator.  Automatic self config-file and rpmlib requirements remain in ori-
      gin  rather  than	becoming  runtime  dependencies.  Conflicts,  Obsoletes,
-     scriptlets,  triggers and file capabilities require further conversion sup-
-     port.  Local import does not verify RPM signatures. Builds	 without  librpm
+     scriptlets, triggers and file capabilities require further conversion  sup-
+     port.   Local  import does not verify RPM signatures. Builds without librpm
      return status 6 for this format.
+
+     build compiles a local holy-recipe(5) manifest. It fetches	 every	declared
+     source  under  its	 pinned digest, unpacks archives into HOLY_SRC, runs the
+     reviewed phase steps with absolute HOLY_* paths, and packs	 one  .holy  per
+     declared  output.	Every output is grouped by the ABI facts of the files it
+     receives, so one build can produce a noarch nolibc document output and sep-
+     arate ABI libraries. Requirements come from  declared  depend  records  and
+     from  the	DT_NEEDED  entries  of the built payload; provides come from the
+     payload SONAMEs.  The result is an ordinary artifact that a later	transac-
+     tion installs. See holy-recipe(5) for the manifest, phases, split rules and
+     build environments.
 
      rpm  index	 reads a local repomd.xml and its primary archive after checking
      the explicit SHA-256 of repomd.xml. The parser  accepts  only  the	 primary
@@ -3669,3 +3682,162 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
+holy-recipe.5 source=holy version=development sha256=c6f6c1ccb75f152fc67e811bc500be34cad4ddfc95bc0b01e55f9780b591b09d
+HOLY-RECIPE(5)		       Holy package format		  HOLY-RECIPE(5)
+
+NAME
+     holy-recipe - Holy build recipe, phases and build environments
+
+SYNOPSIS
+     format holy-recipe-1
+     name NAME
+     version VERSION
+     release RELEASE
+     arch ARCH
+     libc LIBC
+     summary TEXT
+     source NAME INPUT
+     source-sha256 NAME DIGEST
+     build-depend EXPRESSION [RELATION VERSION]
+     depend EXPRESSION [RELATION VERSION]
+     output NAME KIND
+     split OUTPUT GLOB
+     config PATH [mutable]
+     hook-install INTERPRETER PATH
+     hook-remove INTERPRETER PATH
+     x-KEY VALUE
+     step PHASE INTERPRETER [ARG...] <<TAG
+     TAG
+     step-file PHASE INTERPRETER [ARG...] PATH
+
+DESCRIPTION
+     A	Holy recipe is a UTF-8 text manifest plus executable steps. The metadata
+     lines use the holy.conf(5) lexer. No shell expansion, variable substitution
+     or command substitution is performed  on  manifest	 values.  An  executable
+     block  starts with step PHASE INTERPRETER and a <<TAG marker; every byte up
+     to a line containing only TAG is the step body. The metadata  parser  never
+     executes  a block. step-file names a script relative to the recipe file in-
+     stead of an inline block. An interpreter with arguments is an argv	 record:
+     the  step runs those words plus the script path, never a concatenated shell
+     string.
+
+     Required keys are format, name, version, release, arch, libc and  at  least
+     one output. format must be holy-recipe-1. A repeated scalar key is an error
+     with  its line number. Unknown keys are errors; keys with the x- prefix are
+     preserved in the produced HOLY/meta. A source may be an https URL,	 an  ab-
+     solute  path  or a path relative to the recipe file. A network source needs
+     source-sha256; a local source with source-sha256 is verified before use and
+     a mismatch is an error.
+
+OUTPUTS
+     output NAME KIND declares one produced artifact. KIND accepts runtime,  de-
+     vel,  docs,  debug and metapackage. split OUTPUT GLOB assigns payload paths
+     to that output using fnmatch semantics; the first matching	 rule  wins  and
+     unmatched	paths  belong  to the first declared output. Every non-directory
+     payload path belongs to exactly one output, and the build fails when a  de-
+     clared output receives nothing.
+
+     Each  output  is  grouped	by the ABI facts of the files it receives. Files
+     without a recognized ELF class land in  the  noarch-nolibc	 group;	 an  ELF
+     whose  machine  or	 runtime cannot be classified fails the build. A payload
+     mixing   several	ABIs   produces	  one	artifact   per	 group,	   named
+     NAME--ARCH--LIBC.holy.  A	symlink	 or a data file in a multi-ABI output is
+     assigned to the first group of that output and  reported  as  ambiguous.  A
+     metapackage output carries no payload and depends on the produced ABI vari-
+     ants of the same build.
+
+CONFIG FLAGS AND HOOKS
+     config PATH marks a payload file as config; config PATH mutable marks it as
+     config,mutable.  The packer writes flag none, so build applies the declared
+     flags to the generated manifest. A path outside the payload  is  an  error.
+     hook-install  and	hook-remove record runtime hooks with an absolute inter-
+     preter and a script path relative to the target root. The script must exist
+     in the built payload: its SHA-256 is recorded in HOLY/hooks,  and	the  in-
+     staller reads the body from the installed manifest. No hook runs during the
+     build.
+
+PHASES
+     Normalized	 phases	 run  in  this order: fetch, unpack, prepare, configure,
+     build, check, package, split. A phase without a  step  is	skipped,  except
+     that  fetch  and  unpack  are  performed by the manager when no step claims
+     them. Each step is a separate  process  with  its	own  working  directory:
+     build,  check,  package  and split start in HOLY_BUILD, the other phases in
+     HOLY_WORK.
+
+     The manager sets  HOLY_WORK,  HOLY_SRC,  HOLY_BUILD,  HOLY_DEST,  HOLY_OUT,
+     HOLY_ARCH,	 HOLY_LIBC,  HOLY_JOBS,	 HOLY_BUILD_TARGET, HOLY_HOST_TARGET and
+     HOLY_TARGET to absolute paths in the selected build root.	Fetched	 sources
+     live   in	 HOLY_WORK/sources.   An   archive   source  is	 extracted  into
+     HOLY_SRC/NAME; a plain file is placed there unchanged.  A	declared  unpack
+     step replaces the manager unpack.
+
+BUILD
+     holypkg  build  RECIPE --output NEW_DIRECTORY [--environment host|clean|vm]
+     [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
+
+     --work selects an existing empty build root; without it a private directory
+     under /tmp is created and removed after a successful build. --keep	 retains
+     it and prints its path. --jobs sets HOLY_JOBS. A recipe phase step is shown
+     with  its interpreter, argv, working directory, uid and full body before it
+     runs; on a terminal the operator answers per step, where  a  accepts  every
+     remaining	step.  Without a terminal and without --yes the build stops with
+     decision-required (3).  --noninteractive always requires --yes.  A	 failing
+     step  aborts the build and reports its phase; an interpreter that cannot be
+     executed returns 6.
+
+     --environment host runs the steps in the current environment. --environment
+     clean creates a separate build root with a fixed PATH and no HOME,	 and  is
+     not  isolation  from  the host kernel. --environment vm needs a booted Holy
+     image and qemu-system; when neither is available it returns 6 and names the
+     missing capability. Git sources, converter evaluation and cross build roots
+     are not implemented and are rejected.
+
+RESULTS
+     Each output artifact is written to the output directory.  Its  manifest  is
+     regenerated  from	the copied payload. HOLY/meta records format, name, ver-
+     sion, release, os, arch, libc, x-version-family  holy,  x-build-target  and
+     installed-size.  HOLY/deps	 carries declared depend records plus one soname
+     requirement per DT_NEEDED entry, each attributed to the file that needs it.
+     HOLY/provides records the package name and the SONAME of every  shared  ob-
+     ject  in  the  payload.  HOLY/origin  records  the recipe inputs with their
+     pinned digests and verification built-locally. HOLY/transform  records  the
+     build  environment	 and the declared build dependencies. The finished .holy
+     is installed by a normal transaction; the build itself never writes to  the
+     target root.
+
+EXAMPLES
+     format holy-recipe-1
+     name example
+     version 1.0
+     release 1
+     arch x86_64
+     libc glibc
+     summary Example package
+     build-depend "toolchain:x86_64-linux-gnu"
+     build-depend cmd:make
+     source src "https://example.org/example-1.0.tar.xz"
+     source-sha256 src "0000000000000000000000000000000000000000000000000000000000000000"
+     output example runtime
+     output example-doc docs
+     split example-doc usr/share/doc/*
+     step build /bin/sh <<BUILD
+     cd "$HOLY_SRC"
+     make -j"$HOLY_JOBS"
+     BUILD
+     step package /bin/sh <<PACKAGE
+     cd "$HOLY_SRC"
+     make DESTDIR="$HOLY_DEST" PREFIX=/usr install
+     PACKAGE
+
+EXIT STATUS
+     0	the build produced every declared output. 1 an operational failure. 2 an
+     invalid recipe or argument. 3 a decision is required. 6 a required artifact
+     or system capability is unavailable.
+
+SOURCES
+     PKGBUILD:	 https://pacman.archlinux.page/PKGBUILD.5.html	 Void	 Manual:
+     https://raw.githubusercontent.com/void-linux/void-packages/master/Manual.md
+     RPM spec: https://rpm.org/docs/latest/manual/spec.html SlackBuild template:
+     https://slackbuilds.org/templates/autotools-template.SlackBuild
+
+holy				      2026			  HOLY-RECIPE(5)

@@ -28,6 +28,7 @@
 #include "../backends/apt.h"
 #include "../backends/apt-release.h"
 #include "../backends/rpm-md.h"
+#include "recipe.h"
 
 #include <stdio.h>
 #include <limits.h>
@@ -1342,6 +1343,38 @@ int main(int argc, char **argv)
         if (argc > 2 && strncmp(argv[2], "local:", 6))
             return add_source(argc, argv);
         return add_local(argc, argv);
+    }
+    if (argc > 2 && !strcmp(argv[1], "build")) {
+        const char *environment = NULL, *work = NULL, *output = NULL;
+        int i, yes = 0, noninteractive = 0, keep = 0;
+        unsigned jobs = 1;
+        for (i = 3; i < argc; ++i) {
+            if (!strcmp(argv[i], "--yes") && !yes) yes = 1;
+            else if (!strcmp(argv[i], "--noninteractive") && !noninteractive) noninteractive = 1;
+            else if (!strcmp(argv[i], "--keep") && !keep) keep = 1;
+            else if (!strcmp(argv[i], "--environment") && !environment && i + 1 < argc)
+                environment = argv[++i];
+            else if (!strcmp(argv[i], "--work") && !work && i + 1 < argc) work = argv[++i];
+            else if (!strcmp(argv[i], "--output") && !output && i + 1 < argc) output = argv[++i];
+            else if (!strcmp(argv[i], "--jobs") && i + 1 < argc) {
+                char *end = NULL;
+                long value = strtol(argv[++i], &end, 10);
+                if (!end || *end || value < 1 || value > 4096) {
+                    fputs("usage: holypkg build RECIPE --output NEW_DIRECTORY "
+                          "[--environment host|clean|vm] [--work NEW_DIRECTORY] "
+                          "[--jobs N] [--yes] [--noninteractive] [--keep]\n", stderr);
+                    return 2;
+                }
+                jobs = (unsigned)value;
+            } else {
+                fputs("usage: holypkg build RECIPE --output NEW_DIRECTORY "
+                      "[--environment host|clean|vm] [--work NEW_DIRECTORY] "
+                      "[--jobs N] [--yes] [--noninteractive] [--keep]\n", stderr);
+                return 2;
+            }
+        }
+        return holy_recipe_build(argv[2], environment ? environment : "host", work, output,
+                                 jobs, yes, noninteractive, keep);
     }
     if (argc > 1 && !strcmp(argv[1], "up")) return holy_up_command(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "run")) return holy_run(argc, argv);

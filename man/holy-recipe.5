@@ -1,0 +1,143 @@
+.TH HOLY-RECIPE 5 "2026" "holy" "Holy package format"
+.SH NAME
+holy-recipe \- Holy build recipe, phases and build environments
+.SH SYNOPSIS
+.nf
+format holy-recipe-1
+name NAME
+version VERSION
+release RELEASE
+arch ARCH
+libc LIBC
+summary TEXT
+source NAME INPUT
+source-sha256 NAME DIGEST
+build-depend EXPRESSION [RELATION VERSION]
+depend EXPRESSION [RELATION VERSION]
+output NAME KIND
+split OUTPUT GLOB
+config PATH [mutable]
+hook-install INTERPRETER PATH
+hook-remove INTERPRETER PATH
+x-KEY VALUE
+step PHASE INTERPRETER [ARG...] <<TAG
+...
+TAG
+step-file PHASE INTERPRETER [ARG...] PATH
+.fi
+.SH DESCRIPTION
+A Holy recipe is a UTF-8 text manifest plus executable steps. The metadata
+lines use the holy.conf(5) lexer. No shell expansion, variable substitution or
+command substitution is performed on manifest values. An executable block
+starts with step PHASE INTERPRETER and a <<TAG marker; every byte up to a line
+containing only TAG is the step body. The metadata parser never executes a
+block. step-file names a script relative to the recipe file instead of an
+inline block. An interpreter with arguments is an argv record: the step runs
+those words plus the script path, never a concatenated shell string.
+.PP
+Required keys are format, name, version, release, arch, libc and at least one
+output. format must be holy-recipe-1. A repeated scalar key is an error with its
+line number. Unknown keys are errors; keys with the x- prefix are preserved in
+the produced HOLY/meta. A source may be an https URL, an absolute path or a
+path relative to the recipe file. A network source needs source-sha256; a local
+source with source-sha256 is verified before use and a mismatch is an error.
+.SH OUTPUTS
+output NAME KIND declares one produced artifact. KIND accepts runtime, devel,
+docs, debug and metapackage. split OUTPUT GLOB assigns payload paths to that
+output using fnmatch semantics; the first matching rule wins and unmatched
+paths belong to the first declared output. Every non-directory payload path
+belongs to exactly one output, and the build fails when a declared output
+receives nothing.
+.PP
+Each output is grouped by the ABI facts of the files it receives. Files without
+a recognized ELF class land in the noarch-nolibc group; an ELF whose machine or
+runtime cannot be classified fails the build. A payload mixing several ABIs
+produces one artifact per group, named NAME--ARCH--LIBC.holy. A symlink or a
+data file in a multi-ABI output is assigned to the first group of that output
+and reported as ambiguous. A metapackage output carries no payload and depends
+on the produced ABI variants of the same build.
+.SH CONFIG FLAGS AND HOOKS
+config PATH marks a payload file as config; config PATH mutable marks it as
+config,mutable. The packer writes flag none, so build applies the declared
+flags to the generated manifest. A path outside the payload is an error.
+hook-install and hook-remove record runtime hooks with an absolute interpreter
+and a script path relative to the target root. The script must exist in the
+built payload: its SHA-256 is recorded in HOLY/hooks, and the installer reads
+the body from the installed manifest. No hook runs during the build.
+.SH PHASES
+Normalized phases run in this order: fetch, unpack, prepare, configure, build,
+check, package, split. A phase without a step is skipped, except that fetch and
+unpack are performed by the manager when no step claims them. Each step is a
+separate process with its own working directory: build, check, package and
+split start in HOLY_BUILD, the other phases in HOLY_WORK.
+.PP
+The manager sets HOLY_WORK, HOLY_SRC, HOLY_BUILD, HOLY_DEST, HOLY_OUT,
+HOLY_ARCH, HOLY_LIBC, HOLY_JOBS, HOLY_BUILD_TARGET, HOLY_HOST_TARGET and
+HOLY_TARGET to absolute paths in the selected build root. Fetched sources live
+in HOLY_WORK/sources. An archive source is extracted into HOLY_SRC/NAME; a
+plain file is placed there unchanged. A declared unpack step replaces the
+manager unpack.
+.SH BUILD
+holypkg build RECIPE --output NEW_DIRECTORY [--environment host|clean|vm]
+[--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
+.PP
+--work selects an existing empty build root; without it a private directory
+under /tmp is created and removed after a successful build. --keep retains it
+and prints its path. --jobs sets HOLY_JOBS. A recipe phase step is shown with
+its interpreter, argv, working directory, uid and full body before it runs; on a
+terminal the operator answers per step, where a accepts every remaining step.
+Without a terminal and without --yes the build stops with decision-required (3).
+--noninteractive always requires --yes. A failing step aborts the build and
+reports its phase; an interpreter that cannot be executed returns 6.
+.PP
+--environment host runs the steps in the current environment. --environment
+clean creates a separate build root with a fixed PATH and no HOME, and is not
+isolation from the host kernel. --environment vm needs a booted Holy image and
+qemu-system; when neither is available it returns 6 and names the missing
+capability. Git sources, converter evaluation and cross build roots are not
+implemented and are rejected.
+.SH RESULTS
+Each output artifact is written to the output directory. Its manifest is
+regenerated from the copied payload. HOLY/meta records format, name, version,
+release, os, arch, libc, x-version-family holy, x-build-target and
+installed-size. HOLY/deps carries declared depend records plus one soname
+requirement per DT_NEEDED entry, each attributed to the file that needs it.
+HOLY/provides records the package name and the SONAME of every shared object in
+the payload. HOLY/origin records the recipe inputs with their pinned digests and
+verification built-locally. HOLY/transform records the build environment and the
+declared build dependencies. The finished .holy is installed by a normal
+transaction; the build itself never writes to the target root.
+.SH EXAMPLES
+.nf
+format holy-recipe-1
+name example
+version 1.0
+release 1
+arch x86_64
+libc glibc
+summary Example package
+build-depend "toolchain:x86_64-linux-gnu"
+build-depend cmd:make
+source src "https://example.org/example-1.0.tar.xz"
+source-sha256 src "0000000000000000000000000000000000000000000000000000000000000000"
+output example runtime
+output example-doc docs
+split example-doc usr/share/doc/*
+step build /bin/sh <<BUILD
+cd "$HOLY_SRC"
+make -j"$HOLY_JOBS"
+BUILD
+step package /bin/sh <<PACKAGE
+cd "$HOLY_SRC"
+make DESTDIR="$HOLY_DEST" PREFIX=/usr install
+PACKAGE
+.fi
+.SH EXIT STATUS
+0 the build produced every declared output. 1 an operational failure. 2 an
+invalid recipe or argument. 3 a decision is required. 6 a required artifact or
+system capability is unavailable.
+.SH SOURCES
+PKGBUILD: https://pacman.archlinux.page/PKGBUILD.5.html
+Void Manual: https://raw.githubusercontent.com/void-linux/void-packages/master/Manual.md
+RPM spec: https://rpm.org/docs/latest/manual/spec.html
+SlackBuild template: https://slackbuilds.org/templates/autotools-template.SlackBuild
