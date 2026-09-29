@@ -10,11 +10,13 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
-.B holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild|void|aports|slackbuild|rpmspec --output NEW_DIRECTORY [--public-key FILE (apk only)]
+.B holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild|void|aports|slackbuild|rpmspec|debian
+.br
+.B "     --output NEW_DIRECTORY [--public-key FILE (apk only)]"
 .br
 .B holypkg build RECIPE --output NEW_DIRECTORY [--environment host|clean|vm] [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
 .br
-.B holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|TEMPLATE --source NAME --output NEW_DIRECTORY
+.B holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|debian|TEMPLATE --source NAME --output NEW_DIRECTORY
 .br
 .B holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY
 .br
@@ -2538,10 +2540,11 @@ PKGBUILD as text and writes a conversion directory containing the original
 file, a copy of each local source it names, a holy-recipe(5) manifest and a
 conversion report. A file named template reaches the Void converter, a file
 named APKBUILD reaches the Aports converter, and a name ending in .SlackBuild
-reaches the SlackBuild converter, and a name ending in .spec reaches the RPM
-spec converter through the same command, while any other name reaches the pacman
+reaches the SlackBuild converter, a name ending in .spec reaches the RPM
+spec converter and a directory named debian reaches the Debian converter
+through the same command, while any other name reaches the pacman
 converter, and
-import INPUT --source NAME --format pkgbuild|void|aports|slackbuild|rpmspec
+import INPUT --source NAME --format pkgbuild|void|aports|slackbuild|rpmspec|debian
 --output NEW_DIRECTORY names the family explicitly. None of these commands installs a
 package, builds one, or grants NAME a registered source identity; the report
 records it as provenance.
@@ -2627,7 +2630,25 @@ out of the main tree. A local Source or Patch file beside the spec is copied and
 hashed as SHA-256; one that is absent is reported, since a spec normally pins
 no digest.
 .PP
-Both reports name every carried, preserved, helper, unknown and changed item
+The Debian converter reads debian/control and takes the version from the first
+record of debian/changelog, so the distribution version is what the recipe
+records. The Debian revision becomes the Holy release, an epoch is preserved
+and dropped, and a native package with no revision gets release one. A
+relationship field is a comma separated list of groups and a group may offer
+alternatives with a pipe, so the first alternative of each group is carried and
+the rest are reported, while Provides, Breaks, Conflicts, Replaces, Recommends,
+Suggests and Enhances become x- records. A dpkg substitution variable such as
+$ {misc:Depends} is reported rather than guessed. Each binary stanza becomes an
+output, and a binary that names a .install, .docs, .manpages or .links file list
+becomes a subpackage whose split step copies the paths that list named out of
+the main tree, while the binary that names no list owns the whole tree.
+debian/rules becomes the build step behind a prologue that sets
+DEB_HOST_MULTIARCH and DEB_BUILD_OPTIONS, and every debhelper call, every
+debhelper override and dpkg-buildpackage are reported and left in the body so
+the build fails visibly. The maintainer scripts, debian/copyright,
+debian/watch and debian/source/format are copied next to the recipe.
+.PP
+All of these reports name every carried, preserved, helper, unknown and changed item
 with its source file and line range, and their status is native or
 review-required. A review-required conversion returns 3 with the recipe
 written; a computed identity, a missing identity or malformed text returns 2,

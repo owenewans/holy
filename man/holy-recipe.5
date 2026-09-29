@@ -324,6 +324,58 @@ such as -f is reported, and a subpackage with no %files list gets no payload.
 The main %files list is not carried, since it only checks what the install
 already placed, and that is reported. The %description blocks are not carried.
 
+.SS Debian source package
+A debian directory is recognized by its basename, or named with
+.BR "import \-\-format debian" .
+The version comes from the first record of debian/changelog, which is the
+distribution version rather than the upstream one. It is split at the last
+dash: an all-numeric tail is the Debian revision and becomes the Holy
+release, and a version with no such tail is native, so its release is one.
+Either outcome is reported, as is an epoch, which names a packaging revision
+order and is dropped. A changelog with no version on its first line is
+malformed. The source stanza gives the name, the section gives the summary of
+the main binary package, and Homepage becomes the homepage.
+
+.SH
+A relationship field is a comma separated list of groups, and a group may
+offer alternatives with a pipe. One Holy depend record names one package, so
+the first alternative of each group is carried and the rest are reported.
+Build-Depends and Build-Depends-Indep become build-depend, Depends and
+Pre-Depends become depend, with the same comparator names as the PKGBUILD
+converter; a strict comparison becomes lt or gt, and a Debian version has the
+same epoch and revision, so the version keeps its upstream part. Provides
+becomes x-provides, Breaks, Conflicts and Replaces become x-conflicts, and
+Recommends, Suggests and Enhances become x-suggests. A dpkg substitution
+variable such as $ {misc:Depends} is filled in by dpkg and is reported, and an
+entry with an architecture qualifier is reported rather than turned into a
+record. Only the source stanza and the main binary package reach the recipe;
+a requirement of a subpackage is reported, since that package is built on its
+own.
+
+.SH
+Each binary stanza becomes an output. A binary that names a file list beside
+the control file is a subpackage, and because a debian subpackage is a file
+list rather than a body, its split step copies the paths that list names out
+of the main tree, which is reported. A .install line is a source and a
+destination, and a line with no destination names the source itself, so a
+directory destination is copied whole. A .docs, .manpages and .links list names
+a path the same way, and a list that names no path is reported instead of
+written as a split step that would fill no tree. The binary that names no file
+list is the main output and owns the whole tree. A source with no binary
+stanza still builds one output, and more than one binary that names no file
+list is reported, since the converter cannot tell which one is the main tree.
+
+.SH
+debian/rules becomes the build step, behind a prologue that sets
+DEB_HOST_MULTIARCH and DEB_BUILD_OPTIONS and changes into the source tree. dh
+is a macro framework rather than a script, so every debhelper call, every
+debhelper override and dpkg-buildpackage are reported and left in the body,
+which means the build fails visibly rather than losing a step. The
+maintainer scripts, debian/copyright, debian/watch and debian/source/format
+are copied next to the recipe and reported; a lintian-overrides file is
+reported as well, since it suppresses a report rather than building
+anything. Standards-Version is preserved.
+
 .SH CONVERSION REPORT
 The report lists every carried, preserved, helper, unknown and changed item with
 its source file and line range, and its status is native or review-required. A
@@ -399,3 +451,7 @@ v* helpers: https://raw.githubusercontent.com/void-linux/void-packages/master/co
 build style: https://raw.githubusercontent.com/void-linux/void-packages/master/common/build-style/gnu-makefile.sh
 RPM spec: https://rpm.org/docs/latest/manual/spec.html
 SlackBuild template: https://slackbuilds.org/templates/autotools-template.SlackBuild
+Debian control fields: https://www.debian.org/doc/debian-policy/ch-controlfields.html
+Debian package relationships: https://www.debian.org/doc/debian-policy/ch-relationships.html
+Debian packaging concepts: https://www.debian.org/doc/debian-policy/concepts.html
+debhelper: https://manpages.debian.org/trixie/debhelper/debhelper.1.en.html

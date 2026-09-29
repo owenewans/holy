@@ -706,7 +706,44 @@
   payloads it produced; 387 of the 388 source RPM specs sampled from the Fedora
   archive convert, the one refusal being a spec with no Name at all, and every
   produced recipe passes the manager's own validation.
-  Debian source, Gentoo, Pacstall, the makepkg build environment and
+  The Debian source family converts as well, and needs a parser of its own
+  because a source package is a set of files rather than one program text.
+  `holypkg convert debian` and `holypkg import --format debian` read
+  debian/control, which is RFC822 with continuation lines, and take the version
+  from the first record of debian/changelog, since that is the distribution
+  version and not the upstream one. It is split at the last dash: an all-numeric
+  tail is the Debian revision and becomes the Holy release, a version with no
+  such tail is native and gets release one, and either outcome is reported, as
+  is an epoch, which names a packaging revision order and is dropped. A
+  relationship field is a comma separated list of groups and a group may offer
+  alternatives with a pipe, so the first alternative of each group is carried
+  and the rest are reported; Build-Depends and Build-Depends-Indep become
+  build-depend, Depends and Pre-Depends become depend, a strict comparison
+  becomes lt or gt, and Provides, Breaks, Conflicts, Replaces, Recommends,
+  Suggests and Enhances become x- records, since none of them is a requirement.
+  A dpkg substitution variable such as ${misc:Depends} is reported rather than
+  guessed, and an entry with an architecture qualifier is reported instead of
+  being turned into a record. Each binary stanza becomes an output, and a binary
+  that names a .install, .docs, .manpages or .links file list becomes a
+  subpackage whose split step copies the paths that list named out of the main
+  tree, because a debian subpackage is a file list and not a body; a list line
+  is a source and a destination, and a line with no destination names the source
+  itself, while a list that names no path at all is reported rather than written
+  as a split step that would fill no tree. The binary that names no file list
+  owns the whole tree, and more than one such binary is reported since the
+  converter cannot tell which one is the main tree. debian/rules becomes the
+  build step behind a prologue that sets DEB_HOST_MULTIARCH and
+  DEB_BUILD_OPTIONS; dh is a macro framework rather than a script, so every
+  debhelper call, every debhelper override and dpkg-buildpackage are reported and
+  left in the body so the build fails visibly. The maintainer scripts,
+  debian/copyright, debian/watch and debian/source/format are copied next to the
+  recipe and reported, and a lintian-overrides file is reported as suppressing a
+  report rather than building anything. A fixture converts a package with a
+  subpackage file list, a maintainer script, an alternative and a build
+  profile, and checks the split payloads, the version split and the malformed
+  and empty cases; all 398 source packages sampled from the Debian trixie
+  archive convert and every produced recipe passes the manager's own validation.
+  Gentoo, Pacstall, the makepkg build environment and
   the vm build environment remain open.
   The build runner no longer loses its private build root, keeps a root the
   caller named, and reaches both the default and the named-root path in the

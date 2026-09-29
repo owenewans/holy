@@ -30,6 +30,7 @@
 #include "../backends/rpm-md.h"
 #include "../backends/aports.h"
 #include "../backends/pkgbuild.h"
+#include "../backends/debsrc.h"
 #include "../backends/rpmspec.h"
 #include "../backends/slackbuild.h"
 #include "../backends/voidsrc.h"
@@ -1816,12 +1817,15 @@ int main(int argc, char **argv)
             if (!strcmp(argv[6], "rpmspec")) {
                 return holy_convert_rpmspec(argv[2], argv[4], argv[8]);
             }
+            if (!strcmp(argv[6], "debian")) {
+                return holy_convert_debsrc(argv[2], argv[4], argv[8]);
+            }
         }
         if (argc == 11 && !strcmp(argv[3], "--source") && !strcmp(argv[5], "--format") &&
             !strcmp(argv[6], "apk") && !strcmp(argv[7], "--output") &&
             !strcmp(argv[9], "--public-key"))
             return holy_import_apk(argv[2], argv[4], argv[8], argv[10]);
-        fputs("usage: holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild|void|aports|slackbuild|rpmspec --output DIRECTORY [--public-key FILE (apk only)]\n", stderr);
+        fputs("usage: holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild|void|aports|slackbuild|rpmspec|debian --output DIRECTORY [--public-key FILE (apk only)]\n", stderr);
         return 2;
     }
 
@@ -1840,10 +1844,13 @@ int main(int argc, char **argv)
                 if (at > 5 && !strcmp(base + at - 5, ".spec")) {
                     return holy_convert_rpmspec(argv[2], argv[4], argv[6]);
                 }
+                if (!strcmp(base, "debian")) {
+                    return holy_convert_debsrc(argv[2], argv[4], argv[6]);
+                }
             }
             return holy_convert_pkgbuild(argv[2], argv[4], argv[6]);
         }
-        fputs("usage: holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|TEMPLATE --source NAME --output NEW_DIRECTORY\n",
+        fputs("usage: holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|debian|TEMPLATE --source NAME --output NEW_DIRECTORY\n",
               stderr);
         return 2;
     }
