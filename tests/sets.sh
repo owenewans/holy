@@ -217,7 +217,8 @@ cat > "$tmp/fault.c" <<'C'
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
-int openat(int dir, const char *path, int flags, ...)
+/* the binary is built with _FILE_OFFSET_BITS=64, so it calls openat64 */
+int openat64(int dir, const char *path, int flags, ...)
 {
     static int (*real_openat)(int, const char *, int, ...);
     mode_t mode = 0;
@@ -229,7 +230,7 @@ int openat(int dir, const char *path, int flags, ...)
         va_end(ap);
     }
     if (!real_openat) {
-        void *symbol = dlsym(RTLD_NEXT, "openat");
+        void *symbol = dlsym(RTLD_NEXT, "openat64");
         memcpy(&real_openat, &symbol, sizeof real_openat);
         if (!real_openat) abort();
     }

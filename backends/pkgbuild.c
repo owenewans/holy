@@ -259,10 +259,11 @@ static int parse_list(struct pkgbuild *pkg, const char *name, const char *body, 
     struct kb_list *list = list_for(pkg, name, line, 1);
     size_t i = 0;
     if (!list) return 0;
+    /* a shell array separates elements on whitespace, so a comma stays in the name */
     while (i < length) {
         char quote = 0;
         size_t start;
-        while (i < length && (isspace((unsigned char)body[i]) || body[i] == ',')) ++i;
+        while (i < length && isspace((unsigned char)body[i])) ++i;
         if (i >= length) break;
         start = i;
         while (i < length) {
@@ -272,7 +273,7 @@ static int parse_list(struct pkgbuild *pkg, const char *name, const char *body, 
                 else if (c == '\\' && quote == '"' && i + 1 < length) ++i;
             } else if (c == '\'' || c == '"') {
                 quote = c;
-            } else if (isspace((unsigned char)c) || c == ',') {
+            } else if (isspace((unsigned char)c)) {
                 break;
             }
             ++i;
