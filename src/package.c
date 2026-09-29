@@ -2,6 +2,7 @@
 #include "package.h"
 #include "config.h"
 #include "version.h"
+#include "../backends/rpm-version.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -150,6 +151,12 @@ static int read_meta(const char *path, const char *data, size_t length, int emit
             fprintf(stderr, "%s: invalid Holy native version or release in HOLY/meta\n", path);
             ok = 0;
         }
+    }
+    if (ok && values[7] && !strcmp(values[7], "rpm") &&
+        (!holy_rpm_version_valid(values[2]) || !holy_rpm_version_valid(values[3]) ||
+         strchr(values[2], '-') || strchr(values[3], ':') || strchr(values[3], '-'))) {
+        fprintf(stderr, "%s: invalid RPM version or release in HOLY/meta\n", path);
+        ok = 0;
     }
     if (ok && emit) for (i = 0; i < sizeof fields / sizeof *fields; ++i)
         if (values[i]) printf("%s %s\n", fields[i], values[i]);

@@ -284,12 +284,14 @@ verifies the APK signature but does not grant a registered source identity.
 --format rpm uses librpm to read the header and payload of v4 and v6 packages.
 It verifies each supported file digest before packaging with libarchive.
 The importer checks header and payload file lists, records config
-flags and original provenance, and splits observed ELF ABI groups. RPM
-scriptlets, triggers, file capabilities, epochs and versions
-outside the current Holy comparator require further conversion support.
-Versioned RPM requirements remain attributed foreign requirements because
-the native comparator does not implement RPM ordering. Local import does not
-verify RPM signatures. Builds without librpm return status 6 for this format.
+flags and original provenance, and splits observed ELF ABI groups. The
+resolver compares RPM epoch, version and release with a dedicated libsolv
+RPM comparator. Ordinary versioned Requires and Provides use that comparator.
+Automatic self config-file and rpmlib requirements remain in origin rather
+than becoming runtime dependencies. Conflicts, Obsoletes, scriptlets,
+triggers and file capabilities require further conversion support.
+Local import does not verify RPM signatures. Builds without librpm return
+status 6 for this format.
 .PP
 --format deb reads the Debian ar members debian-binary, control.tar and
 data.tar in order, including supported compressed variants. It retains control

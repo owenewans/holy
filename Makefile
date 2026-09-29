@@ -156,8 +156,12 @@ check-static-import:
 	python3 tests/static-import.py "$(STATIC_HOLYPKG)"
 
 .PHONY: check-rpm
-check-rpm: holypkg
+check-rpm: holypkg tests/rpm-version-helper
+	./tests/rpm-version-helper
 	python3 tests/rpm-import.py ./holypkg
+
+tests/rpm-version-helper: tests/rpm-version.c backends/rpm-version.c backends/rpm-version.h .build-config
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOLV_CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o $@ tests/rpm-version.c backends/rpm-version.c $(SOLV_LIBS)
 
 .PHONY: check-xbps-import
 check-xbps-import: holypkg
@@ -193,12 +197,15 @@ static:
 	$(MAKE) clean
 	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" RPM_CFLAGS= RPM_LIBS= SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lplist-2.0 -lssl -lcrypto -llz4 -lzstd -llzma -lbz2 -lz -leu -Wl,--end-group -lpthread -ldl" all
 
-HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/script.o src/elf.o src/scan.o src/stage.o src/repo.o src/sign.o src/git.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o src/appimage.o src/up.o src/version.o src/run.o backends/pacman.o backends/pacman-version.o backends/deb-version.o backends/apk-version.o backends/xbps-version.o backends/xbps.o backends/apk.o backends/apt.o backends/apt-release.o backends/apt-bind.o
+HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/script.o src/elf.o src/scan.o src/stage.o src/repo.o src/sign.o src/git.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o src/appimage.o src/up.o src/version.o src/run.o backends/pacman.o backends/pacman-version.o backends/deb-version.o backends/apk-version.o backends/xbps-version.o backends/rpm-version.o backends/xbps.o backends/apk.o backends/apt.o backends/apt-release.o backends/apt-bind.o
 
 holypkg: $(HOLY_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(SOLV_LIBS)
 
 src/solve.o: src/solve.c $(wildcard src/*.h) .build-config
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOLV_CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -c -o $@ $<
+
+backends/rpm-version.o: backends/rpm-version.c backends/rpm-version.h .build-config
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOLV_CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -c -o $@ $<
 
 backends/%.o: backends/%.c $(wildcard backends/*.h) .build-config
@@ -215,7 +222,7 @@ check-init: holy-init
 check-hooks: holypkg
 	CC="$(CC)" sh tests/hooks.sh ./holypkg
 
-check: check-pacman check-deb check-apt check-slackware check-apk check-xbps-import check-xbps-version check-xbps-index check-appimage check-run check-hooks check-apk-version check-apk-index check-apk-fetch check-native-version holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
+check: check-pacman check-deb check-apt check-slackware check-apk check-xbps-import check-xbps-version check-xbps-index check-appimage check-run check-hooks check-apk-version check-apk-index check-apk-fetch check-native-version $(if $(RPM_LIBS),check-rpm) holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg
@@ -371,4 +378,4 @@ clean:
 	rm -f holyinstall src/disk.o
 	rm -f holygetiso src/getiso.o
 	rm -f .build-config .build-config.tmp
-	rm -f holypkg tests/resolution tests/solver tests/install-helper tests/pacman-helper tests/deb-version-helper tests/apk-version-helper tests/xbps-version-helper tests/native-version-helper $(HOLY_OBJECTS)
+	rm -f holypkg tests/resolution tests/solver tests/install-helper tests/pacman-helper tests/deb-version-helper tests/apk-version-helper tests/xbps-version-helper tests/rpm-version-helper tests/native-version-helper $(HOLY_OBJECTS)

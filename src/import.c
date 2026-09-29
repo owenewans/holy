@@ -13,6 +13,7 @@
 #include "../backends/apk-version.h"
 #include "../backends/apk.h"
 #include "../backends/xbps-version.h"
+#include "../backends/rpm-version.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -1149,6 +1150,13 @@ static void requirement(FILE *out, const char *id, const char *consumer, const c
 }
 
 #ifdef HOLY_HAVE_RPM
+static int rpm_simple_capability(const char *name)
+{
+    const unsigned char *p = (const unsigned char *)name;
+    for (; *p; ++p) if (*p <= 32 || *p == 127) return 0;
+    return 1;
+}
+
 static int rpm_relations(FILE *deps, FILE *provides, FILE *origin, const struct rpm_metadata *rpm,
                          const char *arch, const char *libc)
 {
@@ -1172,14 +1180,15 @@ static int rpm_relations(FILE *deps, FILE *provides, FILE *origin, const struct 
         }
         for (j = 0; j < count; ++j) {
             const char *name, *version = "", *relation = "any";
-            uint32_t bits = 0;
+            uint32_t bits = 0, all_flags = 0;
             char id[48], original[1024];
             if (rpmtdSetIndex(n, j) < 0) { ok = 0; break; }
             name = rpmtdGetString(n);
             if (!name || !*name || strlen(name) >= sizeof original / 2) { ok = 0; break; }
             if (rpmtdCount(v)) { if (rpmtdSetIndex(v, j) < 0) { ok = 0; break; } version = rpmtdGetString(v); }
-            if (rpmtdCount(f)) { if (rpmtdSetIndex(f, j) < 0) { ok = 0; break; } bits = (uint32_t)rpmtdGetNumber(f); }
+            if (rpmtdCount(f)) { if (rpmtdSetIndex(f, j) < 0) { ok = 0; break; } all_flags = (uint32_t)rpmtdGetNumber(f); }
             if (!version) { ok = 0; break; }
+            bits = all_flags;
             bits &= RPMSENSE_LESS | RPMSENSE_GREATER | RPMSENSE_EQUAL;
             if (bits == RPMSENSE_EQUAL) relation = "eq";
             else if (bits == (RPMSENSE_GREATER | RPMSENSE_EQUAL)) relation = "ge";
@@ -1188,23 +1197,35 @@ static int rpm_relations(FILE *deps, FILE *provides, FILE *origin, const struct 
             else if (bits == RPMSENSE_LESS) relation = "lt";
             else if (bits) relation = "foreign";
             snprintf(id, sizeof id, "rpm-%zu-%u", k, j);
-            snprintf(original, sizeof original, "%s %s %s", name, relation, version);
+            if (snprintf(original, sizeof original, "%s %s %s", name, relation, version) >=
+                (int)sizeof original) { ok = 0; break; }
             fputs("rpm-relation ", origin);
             token(origin, k == 0 ? "Requires" : k == 1 ? "Provides" :
                           k == 2 ? "Conflicts" : "Obsoletes");
-            fputc(' ', origin); token(origin, original); fputc('\n', origin);
+            fputc(' ', origin); token(origin, original);
+            fprintf(origin, " %u\n", all_flags);
             if (k == 1) {
-                if (!bits && !*version) {
+                if (rpm_simple_capability(name) && ((!bits && !*version) ||
+                    (bits == RPMSENSE_EQUAL && holy_rpm_version_valid(version)))) {
                     fputs("provide package ", provides); token(provides, name);
-                    fputs(" any any ", provides); token(provides, "-");
+                    fputs(" any any ", provides); token(provides, *version ? version : "-");
                     fputs(" rpm\n", provides);
                 }
             } else if (k == 0 && !strncmp(name, "rpmlib(", 7)) {
                 /* rpmlib names describe the archive format, not a runtime dependency. */
-            } else if (k == 0 && name[0] != '/' && !*version &&
-                       strcmp(relation, "foreign"))
-                requirement(deps, id, rpm->name, "package", name, "any", "any", relation,
-                            *version ? version : "-", original, "rpm:Requires");
+            } else if (k == 0 && (all_flags & RPMSENSE_CONFIG) &&
+                       !strncmp(name, "config(", 7) &&
+                       strlen(name) == strlen(rpm->name) + 8 &&
+                       !strncmp(name + 7, rpm->name, strlen(rpm->name)) &&
+                       name[strlen(name) - 1] == ')') {
+                /* rpm emits a config-file requirement on the package itself. */
+            } else if (k == 0 && rpm_simple_capability(name) && strcmp(relation, "foreign") &&
+                       ((!bits && !*version) || (bits && *version && holy_rpm_version_valid(version))) &&
+                       (name[0] != '/' || !bits) &&
+                       !(all_flags & ~(RPMSENSE_LESS | RPMSENSE_GREATER | RPMSENSE_EQUAL)))
+                requirement(deps, id, rpm->name, name[0] == '/' ? "file" : "package", name,
+                            "any", "any", relation, *version ? version : "-", original,
+                            "rpm:Requires");
             else
                 requirement(deps, id, rpm->name, "foreign", original, arch, libc, "any", "-",
                             original, k == 0 ? "rpm:Requires" : k == 2 ? "rpm:Conflicts" : "rpm:Obsoletes");
@@ -2248,12 +2269,20 @@ static int rpm_header(const char *snapshot, struct rpm_metadata *meta)
     meta->arch = strdup(value);
     if (!meta->name || !meta->version || !meta->release || !meta->arch) { result = 1; goto done; }
     {
-        int order;
-        if (!holy_version_compare(meta->version, meta->version, &order) ||
-            !holy_version_compare(meta->release, meta->release, &order) ||
-            headerGetNumber(h, RPMTAG_EPOCH)) {
-            fputs("holypkg: RPM version or epoch requires RPM comparator support\n", stderr);
-            result = 3; goto done;
+        uint64_t epoch = headerGetNumber(h, RPMTAG_EPOCH);
+        if (epoch) {
+            size_t length = strlen(meta->version) + 32;
+            char *with_epoch = malloc(length);
+            if (!with_epoch) { result = 1; goto done; }
+            snprintf(with_epoch, length, "%llu:%s", (unsigned long long)epoch, meta->version);
+            free(meta->version);
+            meta->version = with_epoch;
+        }
+        if (!holy_rpm_version_valid(meta->version) ||
+            !holy_rpm_version_valid(meta->release) ||
+            strchr(meta->release, ':') || strchr(meta->release, '-')) {
+            fputs("holypkg: invalid RPM version or release\n", stderr);
+            result = 2; goto done;
         }
     }
     if (strcmp(meta->arch, "noarch") && strcmp(meta->arch, "i686") &&

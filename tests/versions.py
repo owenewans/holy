@@ -37,7 +37,7 @@ with tempfile.TemporaryDirectory(prefix="holy-versions-") as scratch:
 
     old, old_hash = package("old", "library", "1:2.0-1")
     new, new_hash = package("new", "library", "1:2.0-3")
-    foreign, _ = package("foreign", "library", "999:99-99", family="rpm")
+    foreign, _ = package("foreign", "library", "999:99", family="rpm")
     unknown, _ = package("unknown", "library", "999:99-99", family=None)
     wrong_arch, _ = package("wrong-arch", "library", "1:2.0-3", arch="x86")
     for relation, version, expected in (
@@ -63,7 +63,7 @@ with tempfile.TemporaryDirectory(prefix="holy-versions-") as scratch:
     scope, _ = package("scope", "app", "1-1", dependency("any", "-", "any", "nolibc"))
     run("solve", "local:" + str(scope), "local:" + str(wrong_libc), status=4)
     run("solve", "local:" + str(scope), "local:" + str(new))
-    for family in (None, "future", "rpm"):
+    for family in (None, "future"):
         unsupported, _ = package("unsupported-" + str(family), "app", "1-1", dependency("ge", "1"), family)
         run("solve", "local:" + str(unsupported), "local:" + str(new), status=6)
     release, _ = package("no-release", "app", "1-1", dependency("eq", "1:2.0"))
@@ -112,7 +112,7 @@ with tempfile.TemporaryDirectory(prefix="holy-versions-") as scratch:
     scoped_alias, _ = package("scoped-alias", "implementation", "1-1", arch="x86", provides=claim)
     scoped_app, _ = package("scoped-alias-app", "app", "1-1", dependency("ge", "2:1.0-2", "noarch", "nolibc"))
     run("solve", "local:" + str(scoped_app), "local:" + str(scoped_alias), status=4)
-    alien_alias, _ = package("alien-alias", "implementation", "1-1", family="rpm", provides=claim)
+    alien_alias, _ = package("alien-alias", "implementation", "1", family="rpm", provides=claim)
     run("solve", "local:" + str(alias_app), "local:" + str(alien_alias), status=4)
     alias_root = tmp / "alias-root"
     alias_root.mkdir()

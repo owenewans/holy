@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import io
+import hashlib
 import shutil
 import subprocess
 import sys
@@ -41,6 +42,30 @@ touch %{buildroot}/usr/share/holy-rpm-fixture/empty
     return root / "RPMS" / "noarch" / "holy-rpm-fixture-1.0-1.noarch.rpm"
 
 
+def build_provider(root, version, epoch=0):
+    spec = root / "SPECS" / "holy-rpm-provider.spec"
+    spec.write_text(f"""Name: holy-rpm-provider
+Version: {version}
+Release: 1
+Epoch: {epoch}
+Summary: Holy RPM provider fixture
+License: MIT
+BuildArch: noarch
+Provides: sample-lib = {str(epoch) + ':' if epoch else ''}{version}-1
+%description
+Local RPM provider fixture.
+%install
+mkdir -p %{{buildroot}}/usr/share/holy-rpm-provider
+printf 'provider\\n' > %{{buildroot}}/usr/share/holy-rpm-provider/data
+%files
+/usr/share/holy-rpm-provider/data
+""")
+    subprocess.run(["rpmbuild", "-bb", "--define", "_rpmformat 4",
+                    "--define", f"_topdir {root}", str(spec)],
+                   check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return root / "RPMS" / "noarch" / f"holy-rpm-provider-{version}-1.noarch.rpm"
+
+
 def run(binary, package, output):
     return subprocess.run([binary, "import", str(package), "--source", "rpm-fixture",
                            "--format", "rpm", "--output", str(output)],
@@ -48,9 +73,10 @@ def run(binary, package, output):
 
 
 def main():
-    if not shutil.which("rpmbuild"):
-        print("rpmbuild required for RPM import fixture", file=sys.stderr)
-        return 6
+    for tool in ("rpmbuild", "lz4"):
+        if not shutil.which(tool):
+            print(f"{tool} required for RPM import fixture", file=sys.stderr)
+            return 6
     binary = os.path.abspath(sys.argv[1])
     with tempfile.TemporaryDirectory() as temp:
         root = Path(temp)
@@ -71,10 +97,29 @@ def main():
             assert ' config ' in read('HOLY/files')
             assert 'data-hardlink' in read('HOLY/files')
             assert 'data-symlink' in read('HOLY/files')
-            assert '"foreign" "sample-lib ge 1.2"' in read('HOLY/deps')
+            assert '"package" "sample-lib" "any" "any" "ge" "1.2"' in read('HOLY/deps')
             assert 'rpmlib(' not in read('HOLY/deps')
             assert 'rpmlib(' in read('HOLY/origin')
             assert 'verification unverified' in read('HOLY/origin')
+        providers = []
+        for version in ("1.1", "1.3"):
+            provider_rpm = build_provider(root, version)
+            target = root / f"provider-{version}"
+            result = run(binary, provider_rpm, target)
+            assert result.returncode == 0, result.stderr
+            providers.append(target / "holy-rpm-provider--noarch--nolibc.holy")
+        solve = lambda *items: subprocess.run([binary, "solve", *["local:" + str(item)
+                                  for item in items]], text=True, capture_output=True)
+        assert solve(artifact, providers[0]).returncode == 4
+        result = solve(artifact, *providers)
+        assert result.returncode == 0, result.stderr
+        assert 'selected ' + hashlib.sha256(providers[1].read_bytes()).hexdigest() in result.stdout
+        epoch_rpm = build_provider(root, "0.1", epoch=1)
+        epoch_output = root / "provider-epoch"
+        result = run(binary, epoch_rpm, epoch_output)
+        assert result.returncode == 0, result.stderr
+        epoch_package = epoch_output / "holy-rpm-provider--noarch--nolibc.holy"
+        assert solve(artifact, epoch_package).returncode == 0
         truncated = root / "truncated.rpm"
         truncated.write_bytes(package.read_bytes()[:-16])
         assert run(binary, truncated, root / "truncated").returncode != 0

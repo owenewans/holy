@@ -1116,7 +1116,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holypkg.8 source=holy version=development sha256=8e69e370ab84dbbd2dfaa70be38f3480cdf5a9344c763f0751080dd1b1ffd795
+holypkg.8 source=holy version=development sha256=ad02b4ee00b6ce147ea184a81b4906bbaae59aca6f88c4b3214e5bd3a1c4982f
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1358,11 +1358,13 @@ DESCRIPTION
      ages.  It	verifies  each	supported  file	 digest	 before	 packaging  with
      libarchive.   The	importer  checks  header and payload file lists, records
      config flags and original provenance, and splits observed ELF  ABI	 groups.
-     RPM  scriptlets,  triggers,  file capabilities, epochs and versions outside
-     the current Holy comparator require further conversion support.   Versioned
-     RPM  requirements remain attributed foreign requirements because the native
-     comparator does not implement RPM ordering. Local import  does  not  verify
-     RPM signatures. Builds without librpm return status 6 for this format.
+     The  resolver compares RPM epoch, version and release with a dedicated lib-
+     solv RPM comparator. Ordinary versioned Requires and Provides use that com-
+     parator.  Automatic self config-file and rpmlib requirements remain in ori-
+     gin  rather  than	becoming  runtime  dependencies.  Conflicts,  Obsoletes,
+     scriptlets,  triggers and file capabilities require further conversion sup-
+     port.  Local import does not verify RPM signatures. Builds	 without  librpm
+     return status 6 for this format.
 
      --format  deb  reads  the	Debian ar members debian-binary, control.tar and
      data.tar in order, including supported compressed variants. It retains con-

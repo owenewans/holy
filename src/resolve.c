@@ -12,6 +12,7 @@
 #include "version.h"
 #include "../backends/apk-version.h"
 #include "../backends/xbps-version.h"
+#include "../backends/rpm-version.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -52,7 +53,8 @@ static const struct version_adapter version_adapters[] = {
     {"deb", holy_deb_version_compare},
     {"holy", holy_version_compare},
     {"apk", holy_apk_version_compare},
-    {"xbps", holy_xbps_version_compare}
+    {"xbps", holy_xbps_version_compare},
+    {"rpm", holy_rpm_version_compare}
 };
 
 struct local_item {
@@ -284,11 +286,13 @@ static int package_edge_matches(const struct local_item *consumer,
     if (!strcmp(base, candidate->capability)) {
         const char *candidate_version = candidate->identity.version;
         char *with_revision = NULL;
-        if (constrained && !strcmp(family, "xbps") && candidate->identity.release) {
+        if (constrained && (!strcmp(family, "xbps") || !strcmp(family, "rpm")) &&
+            candidate->identity.release) {
             size_t length = strlen(candidate_version) + strlen(candidate->identity.release) + 2;
             with_revision = malloc(length);
             if (!with_revision) { free(base); return -1; }
-            snprintf(with_revision, length, "%s_%s", candidate_version, candidate->identity.release);
+            snprintf(with_revision, length, "%s%c%s", candidate_version,
+                     !strcmp(family, "rpm") ? '-' : '_', candidate->identity.release);
             candidate_version = with_revision;
         }
         matches = version_matches(candidate_version, edge, adapter);
