@@ -27,6 +27,7 @@
 #include "../backends/xbps.h"
 #include "../backends/apt.h"
 #include "../backends/apt-release.h"
+#include "../backends/rpm-md.h"
 
 #include <stdio.h>
 #include <limits.h>
@@ -1290,6 +1291,36 @@ int main(int argc, char **argv)
     }
     if (argc > 1 && !strcmp(argv[1], "up")) return holy_up_command(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "run")) return holy_run(argc, argv);
+    if (argc > 2 && !strcmp(argv[1], "rpm")) {
+        if (argc == 13 && !strcmp(argv[2], "index") &&
+            !strcmp(argv[5], "--sha256") && !strcmp(argv[7], "--source") &&
+            !strcmp(argv[9], "--base") && !strcmp(argv[11], "--output"))
+            return holy_rpm_md_index(argv[3], argv[4], argv[6], argv[8], argv[10], argv[12]);
+        if ((argc == 10 || argc == 12) && !strcmp(argv[2], "sync") &&
+            !strcmp(argv[4], "--sha256") && !strcmp(argv[6], "--source") &&
+            !strcmp(argv[8], "--output") &&
+            (argc == 10 || !strcmp(argv[10], "--ca-file")))
+            return holy_rpm_md_sync(argv[3], argv[5], argv[7], argv[9],
+                                    argc == 12 ? argv[11] : NULL);
+        if (argc == 6 && (!strcmp(argv[2], "search") || !strcmp(argv[2], "info")) &&
+            !strcmp(argv[4], "--catalog"))
+            return holy_rpm_md_query(argv[5], argv[3], !strcmp(argv[2], "info"));
+        if (argc >= 10 && argc <= 13 && !strcmp(argv[2], "fetch") &&
+            !strcmp(argv[6], "--catalog") && !strcmp(argv[8], "--output")) {
+            const char *ca_file = NULL;
+            int imported = 0, i;
+            for (i = 10; i < argc;) {
+                if (!strcmp(argv[i], "--import") && !imported) { imported = 1; ++i; }
+                else if (i + 1 < argc && !strcmp(argv[i], "--ca-file") && !ca_file) {
+                    ca_file = argv[i + 1]; i += 2;
+                } else break;
+            }
+            if (i == argc) return holy_rpm_md_fetch(argv[7], argv[3], argv[4], argv[5],
+                                                      argv[9], ca_file, imported);
+        }
+        fputs("usage: holypkg rpm index REPOMD PRIMARY --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY | rpm sync HTTPS_BASE/ --sha256 HASH --source NAME --output NEW_DIRECTORY [--ca-file FILE] | rpm search|info QUERY --catalog DIRECTORY | rpm fetch NAME EVR ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--import]\n", stderr);
+        return 2;
+    }
     if (argc > 2 && !strcmp(argv[1], "apt")) {
         if (argc >= 13 && argc <= 17 && !strcmp(argv[2], "sync-source") &&
             !strcmp(argv[7], "--root") && !strcmp(argv[9], "--keyring") &&

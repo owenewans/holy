@@ -5,8 +5,11 @@ LDFLAGS ?=
 LDLIBS ?= -larchive -lcrypto -lelf -lcurl -lplist-2.0 -lz
 RPM_CFLAGS ?= $(shell pkg-config --cflags rpm 2>/dev/null)
 RPM_LIBS ?= $(shell pkg-config --libs rpm 2>/dev/null)
+RPMMD_CFLAGS ?= $(shell pkg-config --cflags libxml-2.0 2>/dev/null)
+RPMMD_LIBS ?= $(if $(RPM_LIBS),$(shell pkg-config --libs libxml-2.0 2>/dev/null))
 CPPFLAGS += $(if $(RPM_LIBS),-DHOLY_HAVE_RPM $(RPM_CFLAGS))
-LDLIBS += $(RPM_LIBS)
+CPPFLAGS += $(if $(RPMMD_LIBS),-DHOLY_HAVE_RPMMD $(RPMMD_CFLAGS))
+LDLIBS += $(RPM_LIBS) $(RPMMD_LIBS)
 PREFIX ?= /usr
 DESTDIR ?=
 MANPAGES = $(wildcard man/*.[578])
@@ -21,6 +24,7 @@ SOLV_LIBS ?= $(shell pkg-config --libs libsolv 2>/dev/null) -lz
 	$(file >>$(holy_build_config_tmp),CFLAGS=$(CFLAGS))
 	$(file >>$(holy_build_config_tmp),LDFLAGS=$(LDFLAGS))
 	$(file >>$(holy_build_config_tmp),LDLIBS=$(LDLIBS))
+	$(file >>$(holy_build_config_tmp),RPMMD_LIBS=$(RPMMD_LIBS))
 	$(file >>$(holy_build_config_tmp),SOLV_CFLAGS=$(SOLV_CFLAGS))
 	$(file >>$(holy_build_config_tmp),SOLV_LIBS=$(SOLV_LIBS))
 	@cmp -s "$(holy_build_config_tmp)" "$@" || mv "$(holy_build_config_tmp)" "$@"
@@ -159,6 +163,7 @@ check-static-import:
 check-rpm: holypkg tests/rpm-version-helper
 	./tests/rpm-version-helper
 	python3 tests/rpm-import.py ./holypkg
+	python3 tests/rpm-md.py ./holypkg
 
 tests/rpm-version-helper: tests/rpm-version.c backends/rpm-version.c backends/rpm-version.h .build-config
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOLV_CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o $@ tests/rpm-version.c backends/rpm-version.c $(SOLV_LIBS)
@@ -195,9 +200,9 @@ static:
 	@test -n "$(STATIC_DEPS)" || { echo 'STATIC_DEPS must name the musl dependency prefix' >&2; exit 6; }
 	@test -x "$(STATIC_DEPS)/bin/holy-musl-gcc" && grep -qx 'exit 0' "$(STATIC_DEPS)/build.record" || { echo 'static dependency build is incomplete' >&2; exit 6; }
 	$(MAKE) clean
-	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" RPM_CFLAGS= RPM_LIBS= SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lplist-2.0 -lssl -lcrypto -llz4 -lzstd -llzma -lbz2 -lz -leu -Wl,--end-group -lpthread -ldl" all
+	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" RPM_CFLAGS= RPM_LIBS= RPMMD_CFLAGS= RPMMD_LIBS= SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lplist-2.0 -lssl -lcrypto -llz4 -lzstd -llzma -lbz2 -lz -leu -Wl,--end-group -lpthread -ldl" all
 
-HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/script.o src/elf.o src/scan.o src/stage.o src/repo.o src/sign.o src/git.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o src/appimage.o src/up.o src/version.o src/run.o backends/pacman.o backends/pacman-version.o backends/deb-version.o backends/apk-version.o backends/xbps-version.o backends/rpm-version.o backends/xbps.o backends/apk.o backends/apt.o backends/apt-release.o backends/apt-bind.o
+HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/script.o src/elf.o src/scan.o src/stage.o src/repo.o src/sign.o src/git.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o src/appimage.o src/up.o src/version.o src/run.o backends/pacman.o backends/pacman-version.o backends/deb-version.o backends/apk-version.o backends/xbps-version.o backends/rpm-version.o backends/rpm-md.o backends/xbps.o backends/apk.o backends/apt.o backends/apt-release.o backends/apt-bind.o
 
 holypkg: $(HOLY_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(SOLV_LIBS)
