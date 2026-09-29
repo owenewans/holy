@@ -119,12 +119,15 @@ recorded as provenance; it grants no installed source id. The original file is
 never executed.
 .PP
 pkgbase, pkgver, pkgrel, pkgdesc, url, license, arch, epoch, depends,
-makedepends, checkdepends, optdepends and backup are carried. A comparison
-operator becomes the matching relation: >= ge, <= le, > gt, < lt, = eq. arch maps
-x86_64, x86 to i686, and noarch or any unchanged; any other list needs review.
-A source entry has $pkgbase, $pkgname, $pkgver and $pkgrel expanded, and a
-sha256sums entry becomes source-sha256. A local source is copied next to the
-recipe and its original PKGBUILD line is recorded.
+makedepends, checkdepends, optdepends and backup are carried. A list is read the
+way a shell reads one: whitespace separates elements, so a comma belongs to the
+element that holds it. A comparison operator becomes the matching relation:
+>= ge, <= le, > gt, < lt, = eq. arch maps x86_64, x86 to i686, and noarch or
+any unchanged; any other list needs review. A source entry has $pkgbase,
+$pkgname, $pkgver and $pkgrel expanded, and a sha256sums entry becomes
+source-sha256. A local source is copied next to the recipe and its original
+PKGBUILD line is recorded. A function body ends at the first closing brace that
+is not quoted and not part of a command or parameter substitution.
 .PP
 prepare, build, check and package keep their bodies in Bash, preceded by a
 prologue that rebuilds the makepkg variables from the exported Holy paths:
