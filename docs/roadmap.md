@@ -655,8 +655,30 @@
   with four declared subpackages, builds the produced recipe through the normal
   engine and checks the resulting split payloads and hook; all 1668 upstream
   APKBUILDs from aports convert and every produced recipe passes the manager's
-  own validation. SlackBuilds, RPM spec, Debian source, Gentoo, Pacstall, the
-  makepkg build environment and the vm build environment remain open.
+  own validation.
+  The SlackBuilds family converts as well, and needs a different shape because a
+  SlackBuild script is one linear shell program rather than a set of phase
+  functions. `holypkg convert NAME.SlackBuild` and
+  `holypkg import --format slackbuild` read the script, carry PRGNAM, VERSION,
+  BUILD, TAG and PKGTYPE in either the plain or the ${NAME:-value} form, and put
+  the whole body into a single build step whose prologue maps $ARCH onto
+  $HOLY_ARCH, $CWD and $TMP onto $HOLY_SRC, $PKG onto $HOLY_DEST and $OUTPUT onto
+  $HOLY_OUT. The cd $PKG and the /sbin/makepkg call are left out because the
+  engine packs the payload, and so is a tar line reading $CWD, because the engine
+  has already unpacked the recorded archive. slack-desc beside the script carries
+  the summary, homepage, requires and conflicts, and the info file carries the
+  upstream URL and its MD5 sum, which is reported as unusable; a local archive is
+  copied next to the recipe and hashed as SHA-256 instead, and every other file
+  the script reads through $CWD travels beside it as a source. A doinst.sh becomes
+  one hook, the $PKG/install tree is reported as packaging metadata, and the strip
+  pass, the ownership rewrite, the user and group creation and the loader and
+  desktop cache helpers are reported as unresolved. A fixture converts a script
+  with a local archive, a patch and an install hook, builds the produced recipe
+  through the normal engine and checks both the ELF group and the noarch group;
+  all 2211 upstream scripts from the development and libraries trees convert and
+  every produced recipe passes the manager's own validation.
+  RPM spec, Debian source, Gentoo, Pacstall, the makepkg build environment and
+  the vm build environment remain open.
   The build runner no longer loses its private build root, keeps a root the
   caller named, and reaches both the default and the named-root path in the
   fixture. The same run also restores three interrupted-mutation fixtures whose

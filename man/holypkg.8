@@ -10,11 +10,11 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
-.B holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild|void|aports --output NEW_DIRECTORY [--public-key FILE (apk only)]
+.B holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild|void|aports|slackbuild --output NEW_DIRECTORY [--public-key FILE (apk only)]
 .br
 .B holypkg build RECIPE --output NEW_DIRECTORY [--environment host|clean|vm] [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
 .br
-.B holypkg convert PKGBUILD|APKBUILD|TEMPLATE --source NAME --output NEW_DIRECTORY
+.B holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|TEMPLATE --source NAME --output NEW_DIRECTORY
 .br
 .B holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY
 .br
@@ -2536,13 +2536,14 @@ a registered source identity.
 holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY reads one
 PKGBUILD as text and writes a conversion directory containing the original
 file, a copy of each local source it names, a holy-recipe(5) manifest and a
-conversion report. A file named template reaches the Void converter and a file
-named APKBUILD reaches the Aports converter through the same command, while any
-other name reaches the pacman converter, and
-import INPUT --source NAME --format pkgbuild|void|aports --output NEW_DIRECTORY
-names the family explicitly. None of these commands installs a package, builds
-one, or grants NAME a registered source identity; the report records it as
-provenance.
+conversion report. A file named template reaches the Void converter, a file
+named APKBUILD reaches the Aports converter, and a name ending in .SlackBuild
+reaches the SlackBuild converter through the same command, while any other name
+reaches the pacman converter, and
+import INPUT --source NAME --format pkgbuild|void|aports|slackbuild --output
+NEW_DIRECTORY names the family explicitly. None of these commands installs a
+package, builds one, or grants NAME a registered source identity; the report
+records it as provenance.
 .PP
 The PKGBUILD converter carries pkgbase, pkgver, pkgrel, pkgdesc, url, license,
 arch, epoch, depends, makedepends, checkdepends, optdepends and backup,
@@ -2595,6 +2596,20 @@ rather than fetched, while a local source beside the APKBUILD is copied and
 hashed as SHA-256. The default_* helpers, the abuild phases the template leaves
 out, the cross and chroot variables and any top level statement abuild would
 source as a shell script are reported rather than run.
+.PP
+The SlackBuild converter carries PRGNAM, VERSION, BUILD, TAG and PKGTYPE, reads
+the summary, homepage, requires and conflicts out of slack-desc, and reads the
+upstream URL and the MD5 sum out of the info file. A SlackBuild script is one
+linear shell program, so it becomes a single build step whose prologue maps
+$ARCH onto $HOLY_ARCH, $CWD and $TMP onto $HOLY_SRC, $PKG onto $HOLY_DEST and
+$OUTPUT onto $HOLY_OUT. The cd $PKG and the /sbin/makepkg call are left out
+because the engine packs the payload, and so is a tar line that reads $CWD,
+because the engine has already unpacked the recorded archive. Every other file
+the script reads through $CWD travels beside the recipe as a source, a doinst.sh
+becomes one hook, and this format pins an MD5 sum rather than a SHA-256 digest,
+so a remote archive is reported unless a local copy is beside the script. The
+strip pass, the ownership rewrite, the user and group creation and the loader
+and desktop cache helpers are reported as unresolved.
 .PP
 Both reports name every carried, preserved, helper, unknown and changed item
 with its source file and line range, and their status is native or

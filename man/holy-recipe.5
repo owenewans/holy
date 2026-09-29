@@ -246,6 +246,38 @@ so is any other top level statement, since abuild sources the file as a shell
 script and the converter executes none of it. The default_* helpers, the abuild
 phases the template leaves out, the cross and chroot variables, $CBUILD, $CHOST,
 $CTARGET and $CARCH are reported as unresolved or unreproduced.
+.SS SlackBuild script
+PRGNAM, VERSION, BUILD, TAG and PKGTYPE are carried, whether they are written as
+NAME=value or as NAME=${NAME:-value}; a computed value is reported instead of
+guessed. A SlackBuild script is one linear shell program rather than a set of
+phase functions, so it becomes a single build step, and the prologue rebuilds
+the variables the script reads: $ARCH becomes $HOLY_ARCH, $CWD and $TMP become
+$HOLY_SRC, $PKG becomes $HOLY_DEST with $DESTDIR the same, $OUTPUT becomes
+$HOLY_OUT, and $SLKCFLAGS, $CFLAGS, $CXXFLAGS, $LDFLAGS and $MAKEFLAGS are
+rebuilt from $HOLY_JOBS.
+.PP
+The body runs from the set -e line to the /sbin/makepkg call, and the cd $PKG
+before that call is left out, because the engine packs the payload. The engine
+also fetches and unpacks the recorded archive, so a tar line that reads $CWD is
+reported and left out, as is the rm -rf $PRGNAM-$VERSION that precedes it. The
+machine the script picks with uname -m becomes $HOLY_ARCH and the LIBDIRSUFFIX
+it derives per machine becomes empty on x86_64, both reported. The archive name
+comes from the tar line with $PRGNAM, $VERSION and $BUILD expanded; an archive
+that is not beside the script is reported, since this format pins an MD5 sum
+rather than a SHA-256 digest, and a local one is copied next to the recipe and
+hashed as SHA-256. Every other file the script reads through $CWD travels beside
+the recipe and is declared as a source, so the engine stages it where $CWD points
+during a step.
+.PP
+slack-desc beside the script carries the summary, the homepage, and the requires
+and conflicts lists, which become depend and x-conflicts; the other field keys
+are preserved with their lines. The info file beside the script carries the
+upstream DOWNLOAD and its MD5SUM, which is reported as unusable. A doinst.sh the
+script copies into $PKG/install becomes one hook and is copied into the payload,
+and the $PKG/install tree itself is reported as packaging metadata that stays in
+the payload as ordinary files. The strip pass, the ownership rewrite, the user
+and group creation, the loader cache update and the desktop, mime, icon and font
+cache helpers are reported as unresolved.
 .SH CONVERSION REPORT
 The report lists every carried, preserved, helper, unknown and changed item with
 its source file and line range, and its status is native or review-required. A
@@ -312,6 +344,8 @@ PKGBUILD: https://pacman.archlinux.page/PKGBUILD.5.html
 APKBUILD: https://wiki.alpinelinux.org/wiki/APKBUILD_Reference
 abuild phases: https://gitlab.alpinelinux.org/alpine/abuild/-/raw/master/functions.sh.in
 abuild default.conf: https://gitlab.alpinelinux.org/alpine/abuild/-/raw/master/default.conf
+SlackBuild script: https://slackbuilds.org/howto/
+slack-desc format: https://slackbuilds.org/guidelines/
 Void Manual: https://raw.githubusercontent.com/void-linux/void-packages/master/Manual.md
 v* helpers: https://raw.githubusercontent.com/void-linux/void-packages/master/common/environment/setup/install.sh
 build style: https://raw.githubusercontent.com/void-linux/void-packages/master/common/build-style/gnu-makefile.sh
