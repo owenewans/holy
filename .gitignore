@@ -18,5 +18,6 @@
 /tests/apk-version-helper
 /tests/native-version-helper
 /tests/rpm-version-helper
+/tests/xbps-version-helper
 /conv/
 /.opencode/

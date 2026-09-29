@@ -4050,6 +4050,15 @@ static int build_set(const char *root_path, int root, int dir,
             if (!strcmp(skipped_hooks[i], set->resolution.artifacts[j])) break;
         if (j == set->resolution.artifact_count) { result = 3; goto done; }
     }
+    /* a caller binding is a decision about one artifact, so it must land in the set.
+       a source binding instead offers every staged candidate, and the resolver may
+       drop one, so those are not checked here. */
+    if (!catalog_index)
+        for (i = 0; i < binding_count; ++i) {
+            for (j = 0; j < set->resolution.artifact_count; ++j)
+                if (!strncmp(bindings[i], set->resolution.artifacts[j], 64)) break;
+            if (j == set->resolution.artifact_count) { result = 3; goto done; }
+        }
     result = 1;
     set->items = calloc(set->resolution.artifact_count, sizeof *set->items);
     if (!set->items || !holy_resolution_record(&set->resolution, &set->graph,

@@ -506,11 +506,12 @@ cat > "$tmp/transition-fault.c" <<'C'
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
-int fstatat(int dir, const char *path, struct stat *st, int flags)
+/* the helper is built with _FILE_OFFSET_BITS=64, so it calls fstatat64 */
+int fstatat64(int dir, const char *path, struct stat *st, int flags)
 {
     int (*actual)(int, const char *, struct stat *, int);
     const char *phase = getenv("HOLY_TRANSITION_FAULT");
-    void *symbol = dlsym(RTLD_NEXT, "fstatat");
+    void *symbol = dlsym(RTLD_NEXT, "fstatat64");
     memcpy(&actual, &symbol, sizeof actual);
     if (!actual) abort();
     if (phase && !strcmp(phase, "race") && !strcmp(path, ".holy-update-first")) {
