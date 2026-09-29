@@ -110,6 +110,48 @@ def main():
                 "--source", "fixture", "--base", base, "--output", root / "bad-pin", status=1)
             (catalog / "catalog").write_text("tampered\n")
             run("rpm", "search", "holy", "--catalog", catalog, status=6)
+
+            # registered source flow: plan, apply, sync, bound query, bound fetch
+            target = root / "target"
+            target.mkdir()
+            run("db", "init", "--root", target)
+            config = root / "holy.conf"
+            config.write_text(
+                "[source fixture]\ntype rpm-md\n"
+                f"url \"{base}\"\n")
+            plan = root / "source.plan"
+            plan.write_text(run("source", "plan", "--config", config, "--root", target))
+            run("source", "apply", plan, "--sha256", sha(plan.read_bytes()), "--root", target)
+            assert "fixture" in run("source", "list", "--root", target)
+            run("sync", "fixture", "--sha256", pinned, "--output", root / "bound",
+                "--root", target, "--ca-file", root / "cert.pem")
+            assert "holy-rpm-fixture 1.0-1 noarch" in run(
+                "search", "fixture", "--source", "fixture", "--root", target)
+            assert sha(package) in run("info", "fixture:holy-rpm-fixture", "--root", target)
+            bound = root / "bound-fetch"
+            run("fetch", "fixture:holy-rpm-fixture", "--version", "1.0-1",
+                "--arch", "noarch", "--output", bound, "--root", target,
+                "--ca-file", root / "cert.pem", "--import")
+            assert (bound / "converted/holy-rpm-fixture--noarch--nolibc.holy").is_file()
+            # a source change invalidates the binding; queries report it as unavailable
+            config.write_text(
+                "[source fixture]\ntype rpm-md\n"
+                f"url \"{base}other/\"\n")
+            # trust require is unavailable: this backend pins a hash, not a signature
+            config.write_text(
+                "[source fixture]\ntype rpm-md\n"
+                f"url \"{base}\"\ntrust require\n")
+            rejected = root / "require.plan"
+            rejected.write_text(run("source", "plan", "--config", config, "--root", target,
+                                    status=2))
+            config.write_text(
+                "[source fixture]\ntype rpm-md\n"
+                f"url \"{base}other/\"\n")
+            moved = root / "moved.plan"
+            moved.write_text(run("source", "plan", "--config", config, "--root", target))
+            run("source", "apply", moved, "--sha256", sha(moved.read_bytes()),
+                "--root", target)
+            run("search", "fixture", "--source", "fixture", "--root", target, status=6)
         finally:
             server.shutdown()
             server.server_close()

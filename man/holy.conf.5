@@ -122,6 +122,14 @@ adding a source does not import public keys from the network.
 The --inrelease option selects a clearsigned InRelease; without it sync-source
 uses Release and Release.gpg.
 .PP
+A registered RPM-MD source uses type rpm-md and one url HTTPS_BASE/, with no
+repo entries. The base is the repository root that serves
+repodata/repomd.xml. holypkg sync RPM_MD_SOURCE takes an explicit repomd
+--sha256 pin and records the source-id in the catalog it writes. No repository
+signature is checked, so trust require is not available for this backend.
+Query and fetch select the source by alias and recheck the registered url and
+source-id against the stored catalog.
+.PP
 A registered XBPS source uses type xbps and one url HTTPS_BASE/. public-key
 points to an RSA PEM public key; source plan freezes the SHA-256 fingerprint
 of its public-key encoding. trust require needs that key. xbps sync-source

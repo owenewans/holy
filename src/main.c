@@ -307,6 +307,35 @@ static int fetch_source(int argc, char **argv)
                                      required_soname);
         goto done;
     }
+    if (!strcmp(family, "rpm-md")) {
+        char *path = NULL;
+        if (extract || repo || sha256 || public_key || required_soname ||
+            required_file || suite || component || index_arch) { result = 2; goto done; }
+        if (!version || !arch) {
+            fprintf(stderr, "holypkg: RPM-MD fetch needs --version and --arch for %s:%s\n",
+                    alias, separator + 1);
+            result = 3; goto done;
+        }
+        result = holy_rpm_md_catalog_path(root, alias, &path);
+        if (!result && catalog) {
+            char *selected = realpath(catalog, NULL);
+            char *registered = realpath(path, NULL);
+            result = selected && registered && !strcmp(selected, registered) ? 0 : 6;
+            free(selected); free(registered);
+        }
+        if (!result) {
+            char id[65];
+            char *base = NULL, *trust = NULL;
+            result = holy_source_rpm_md(root, alias, id, &base, &trust);
+            if (!result) result = holy_rpm_md_source_catalog(path, id, base);
+            free(base); free(trust);
+        }
+        if (!result)
+            result = holy_rpm_md_fetch(path, separator + 1, version, arch,
+                                       output, ca_file, import);
+        free(path);
+        goto done;
+    }
     if (!strcmp(family, "apt")) {
         if (extract || repo || sha256 || public_key || required_soname ||
             (required_file && !import)) { result = 2; goto done; }
@@ -335,7 +364,7 @@ static int fetch_source(int argc, char **argv)
     if (!result) result = holy_repo_fetch_name(catalog, separator + 1, output, extract);
 done:
     if (result == 2)
-        fputs("usage: holypkg fetch SOURCE:PACKAGE [--catalog MIRROR] --output DIRECTORY [--extract] [--root DIRECTORY] | holypkg fetch APK_SOURCE:PACKAGE --version VERSION --arch ARCH [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--sha256 HASH] [--import] [--require-soname SONAME] [--require-file /PATH] | holypkg fetch XBPS_SOURCE:PACKAGE --version VERSION --arch ARCH --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--import] [--require-soname SONAME] | holypkg fetch APT_SOURCE:PACKAGE --version VERSION --arch ARCH --suite SUITE --component COMPONENT --index-arch ARCH --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--import] [--require-file /PATH]\n", stderr);
+        fputs("usage: holypkg fetch SOURCE:PACKAGE [--catalog MIRROR] --output DIRECTORY [--extract] [--root DIRECTORY] | holypkg fetch APK_SOURCE:PACKAGE --version VERSION --arch ARCH [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--sha256 HASH] [--import] [--require-soname SONAME] [--require-file /PATH] | holypkg fetch XBPS_SOURCE:PACKAGE --version VERSION --arch ARCH --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--import] [--require-soname SONAME] | holypkg fetch APT_SOURCE:PACKAGE --version VERSION --arch ARCH --suite SUITE --component COMPONENT --index-arch ARCH --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--import] [--require-file /PATH] | holypkg fetch RPM_MD_SOURCE:PACKAGE --version EVR --arch ARCH --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--import]\n", stderr);
     for (j = 0; j < repo_count; ++j) free(repos[j]);
     free(repos);
     free(alias); free(bound_catalog); free(family);
@@ -470,6 +499,12 @@ static int query_source(int argc, char **argv, int search)
                 if (!rc) rc = holy_source_active_id(root, current, source_id);
                 if (!rc) printf(" id %s\n", source_id);
                 if (!rc) rc = holy_xbps_query(path, name, 0);
+            } else if (!rc && !strcmp(family, "rpm-md")) {
+                rc = arch || file_search ? 6 :
+                     holy_rpm_md_catalog_path(root, current, &path);
+                if (!rc) rc = holy_source_active_id(root, current, source_id);
+                if (!rc) printf(" id %s\n", source_id);
+                if (!rc) rc = holy_rpm_md_query(path, name, 0);
             } else if (!rc && !strcmp(family, "apt")) {
                 rc = !suite ? 6 : holy_apt_catalog_path(root, current, suite,
                                                         component, index_arch, &path);
@@ -522,6 +557,25 @@ static int query_source(int argc, char **argv, int search)
             if (!result) result = holy_source_active_id(root, alias, source_id);
             if (!result) result = holy_xbps_query(catalog, name, !search);
             if (!result) printf("source-id %s\n", source_id);
+            goto done;
+        }
+        if (!strcmp(family, "rpm-md")) {
+            char *path = NULL;
+            free(family);
+            if (repo || arch || suite || file_search) { result = file_search ? 6 : 2; goto done; }
+            result = holy_rpm_md_catalog_path(root, alias, &path);
+            if (!result && catalog) {
+                char *selected = realpath(catalog, NULL);
+                char *registered = realpath(path, NULL);
+                result = selected && registered && !strcmp(selected, registered) ? 0 : 6;
+                free(selected); free(registered);
+            }
+            if (!result) {
+                result = holy_source_active_id(root, alias, source_id);
+                if (!result) result = holy_rpm_md_query(path, name, !search);
+                if (!result) printf("source-id %s\n", source_id);
+            }
+            free(path);
             goto done;
         }
         if (!strcmp(family, "apt")) {
@@ -1295,13 +1349,13 @@ int main(int argc, char **argv)
         if (argc == 13 && !strcmp(argv[2], "index") &&
             !strcmp(argv[5], "--sha256") && !strcmp(argv[7], "--source") &&
             !strcmp(argv[9], "--base") && !strcmp(argv[11], "--output"))
-            return holy_rpm_md_index(argv[3], argv[4], argv[6], argv[8], argv[10], argv[12]);
+            return holy_rpm_md_index(argv[3], argv[4], argv[6], argv[8], argv[10], argv[12], NULL);
         if ((argc == 10 || argc == 12) && !strcmp(argv[2], "sync") &&
             !strcmp(argv[4], "--sha256") && !strcmp(argv[6], "--source") &&
             !strcmp(argv[8], "--output") &&
             (argc == 10 || !strcmp(argv[10], "--ca-file")))
             return holy_rpm_md_sync(argv[3], argv[5], argv[7], argv[9],
-                                    argc == 12 ? argv[11] : NULL);
+                                    argc == 12 ? argv[11] : NULL, NULL);
         if (argc == 6 && (!strcmp(argv[2], "search") || !strcmp(argv[2], "info")) &&
             !strcmp(argv[4], "--catalog"))
             return holy_rpm_md_query(argv[5], argv[3], !strcmp(argv[2], "info"));
@@ -1826,6 +1880,20 @@ sync_done:
                 free(base); free(trust);
                 return result;
             }
+            if (!strcmp(family, "rpm-md")) {
+                char id[65];
+                char *base = NULL, *trust = NULL;
+                free(family);
+                if (!digest || !output || repo || arch || accepted || commit ||
+                    public_key || suite || keyring || inrelease || files)
+                    goto sync_usage;
+                result = holy_source_rpm_md(root, argv[2], id, &base, &trust);
+                if (result) { free(base); free(trust); return result; }
+                result = holy_rpm_md_sync(base, digest, argv[2], output, ca_file, id);
+                if (!result) result = holy_rpm_md_bind(root, argv[2], output);
+                free(base); free(trust);
+                return result;
+            }
             if (!strcmp(family, "apt")) {
                 free(family);
                 if (!suite || !keyring || !output || repo || arch || digest ||
@@ -1844,7 +1912,7 @@ sync_done:
                                         ca_file, commit);
         }
 sync_usage:
-        fputs("usage: holypkg sync SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256 INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--commit GIT_COMMIT] [--ca-file FILE] | holypkg sync APK_SOURCE [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] [--public-key FILE] | holypkg sync XBPS_SOURCE --arch ARCH --sha256 HASH --output NEW_DIRECTORY [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] | holypkg sync APT_SOURCE --suite SUITE --component COMPONENT --index-arch ARCH --keyring FILE --output NEW_DIRECTORY [--root DIRECTORY] [--inrelease] [--files] [--ca-file FILE]\n", stderr);
+        fputs("usage: holypkg sync SOURCE [--root DIRECTORY] [--output NEW_DIRECTORY] [--sha256 INDEX_SHA256 | --accept-unsigned INDEX_SHA256] [--commit GIT_COMMIT] [--ca-file FILE] | holypkg sync APK_SOURCE [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--sha256 HASH | --accept-unsigned HASH] [--ca-file FILE] [--public-key FILE] | holypkg sync XBPS_SOURCE --arch ARCH --sha256 HASH --output NEW_DIRECTORY [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] | holypkg sync APT_SOURCE --suite SUITE --component COMPONENT --index-arch ARCH --keyring FILE --output NEW_DIRECTORY [--root DIRECTORY] [--inrelease] [--files] [--ca-file FILE] | holypkg sync RPM_MD_SOURCE --sha256 REPOMD_SHA256 --output NEW_DIRECTORY [--root DIRECTORY] [--ca-file FILE]\n", stderr);
         return 2;
     }
 

@@ -32,6 +32,9 @@ int holy_source_apt(const char *root, const char *alias,
                     char id[65], char **url, char **trust, char key[65]);
 int holy_source_xbps(const char *root, const char *alias,
                      char id[65], char **url, char **trust, char key[65]);
+/* reads an active RPM-MD source with one https base and no repository list. */
+int holy_source_rpm_md(const char *root, const char *alias,
+                       char id[65], char **url, char **trust);
 /* checks one explicit sealed mirror against the active source definition. */
 int holy_source_catalog(const char *root, const char *alias,
                         const char *catalog, char source_id[65]);

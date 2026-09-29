@@ -1,24 +1,34 @@
-#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
 #include "rpm-md.h"
 
 #ifndef HOLY_HAVE_RPMMD
 #include <stdio.h>
 int holy_rpm_md_index(const char *a, const char *b, const char *c, const char *d,
-                      const char *e, const char *f)
-{ (void)a; (void)b; (void)c; (void)d; (void)e; (void)f;
+                      const char *e, const char *f, const char *g)
+{ (void)a; (void)b; (void)c; (void)d; (void)e; (void)f; (void)g;
   fputs("holypkg: rpm-md requires librpm and libxml2 at build time\n", stderr); return 6; }
-int holy_rpm_md_sync(const char *a, const char *b, const char *c, const char *d, const char *e)
-{ (void)a; (void)b; (void)c; (void)d; (void)e; return 6; }
+int holy_rpm_md_sync(const char *a, const char *b, const char *c, const char *d,
+                     const char *e, const char *f)
+{ (void)a; (void)b; (void)c; (void)d; (void)e; (void)f; return 6; }
 int holy_rpm_md_query(const char *a, const char *b, int c)
 { (void)a; (void)b; (void)c; return 6; }
 int holy_rpm_md_fetch(const char *a, const char *b, const char *c, const char *d,
                       const char *e, const char *f, int g)
 { (void)a; (void)b; (void)c; (void)d; (void)e; (void)f; (void)g; return 6; }
+int holy_rpm_md_source_catalog(const char *a, const char *b, const char *c)
+{ (void)a; (void)b; (void)c; return 6; }
+int holy_rpm_md_bind(const char *a, const char *b, const char *c)
+{ (void)a; (void)b; (void)c; return 6; }
+int holy_rpm_md_catalog_path(const char *a, const char *b, char **c)
+{ (void)a; (void)b; (void)c; return 6; }
 #else
 
 #include "rpm-version.h"
 #include "../src/fetch.h"
 #include "../src/import.h"
+#include "../src/source.h"
+#include "../src/stage.h"
+#include "../src/state.h"
 
 #include <archive.h>
 #include <libxml/xmlreader.h>
@@ -42,11 +52,31 @@ struct rpmmd_row {
 struct rpmmd_catalog {
     FILE *file;
     char source[256], base[2048], repomd[65], primary[65], catalog[65];
+    char source_id[65];
 };
 
 static int digest(const char *value)
 {
     return value && strlen(value) == 64 && strspn(value, "0123456789abcdef") == 64;
+}
+
+static int hash_fd(int fd, char result[65])
+{
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    unsigned char digest[32], buffer[65536];
+    unsigned length;
+    ssize_t got;
+    size_t i;
+    int ok = 0;
+    if (!ctx || lseek(fd, 0, SEEK_SET) < 0 || EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1) goto done;
+    while ((got = read(fd, buffer, sizeof buffer)) > 0)
+        if (EVP_DigestUpdate(ctx, buffer, (size_t)got) != 1) goto done;
+    if (got || EVP_DigestFinal_ex(ctx, digest, &length) != 1 || length != 32) goto done;
+    for (i = 0; i < 32; ++i) snprintf(result + i * 2, 3, "%02x", digest[i]);
+    ok = 1;
+done:
+    EVP_MD_CTX_free(ctx);
+    return ok;
 }
 
 static int label(const char *value, size_t limit)
@@ -326,7 +356,8 @@ done:
 }
 
 int holy_rpm_md_index(const char *repomd, const char *primary, const char *expected,
-                      const char *source, const char *base, const char *output)
+                      const char *source, const char *base, const char *output,
+                      const char *source_id)
 {
     struct rpmmd_row *rows = NULL;
     struct stat st;
@@ -338,6 +369,7 @@ int holy_rpm_md_index(const char *repomd, const char *primary, const char *expec
     int dir = -1, result = 1;
     if (!repomd || !primary || !expected || !digest(expected) ||
         !source || !label(source, 256) || !strcmp(source, "local") ||
+        (source_id && !digest(source_id)) ||
         !base || !output || !(test_url = child_url(base, "repodata/repomd.xml"))) {
         free(test_url); return 2;
     }
@@ -382,8 +414,10 @@ int holy_rpm_md_index(const char *repomd, const char *primary, const char *expec
         record = fdopen(fd, "w");
         if (!record) { close(fd); goto done; }
     }
-    fprintf(record, "format holy-rpm-md-index-1\nsource %s\nbase %s\nrepomd-sha256 %s\nprimary-sha256 %s\ncatalog-sha256 %s\npackages %zu\nfile-coverage unavailable\ndependency-coverage partial\nstate complete\n",
-            source, base, expected, primary_hash, catalog_hash, count);
+    fprintf(record, "format holy-rpm-md-index-1\nsource %s\nbase %s\nrepomd-sha256 %s\nprimary-sha256 %s\ncatalog-sha256 %s\n",
+            source, base, expected, primary_hash, catalog_hash);
+    if (source_id) fprintf(record, "source-id %s\n", source_id);
+    fprintf(record, "packages %zu\nfile-coverage unavailable\ndependency-coverage partial\nstate complete\n", count);
     if (ferror(record) || fflush(record) || fsync(fileno(record))) goto done;
     if (fclose(record)) { record = NULL; goto done; }
     record = NULL;
@@ -432,6 +466,7 @@ static int open_catalog(const char *directory, struct rpmmd_catalog *state)
         else if (!strcmp(line, "repomd-sha256")) { target = state->repomd; capacity = sizeof state->repomd; }
         else if (!strcmp(line, "primary-sha256")) { target = state->primary; capacity = sizeof state->primary; }
         else if (!strcmp(line, "catalog-sha256")) { target = state->catalog; capacity = sizeof state->catalog; }
+        else if (!strcmp(line, "source-id")) { target = state->source_id; capacity = sizeof state->source_id; }
         else if (!strcmp(line, "state") && value && !strcmp(value, "complete") && !complete) {
             complete = 1; continue;
         } else if (!strcmp(line, "packages") || !strcmp(line, "file-coverage") ||
@@ -442,6 +477,7 @@ static int open_catalog(const char *directory, struct rpmmd_catalog *state)
     }
     if (ferror(record) || !complete || !label(state->source, sizeof state->source) ||
         !digest(state->repomd) || !digest(state->primary) || !digest(state->catalog) ||
+        (state->source_id[0] && !digest(state->source_id)) ||
         !hash_file(repomd_path, actual, 16 * 1024 * 1024) || strcmp(actual, state->repomd) ||
         !hash_file(primary_path, actual, 128 * 1024 * 1024) || strcmp(actual, state->primary) ||
         !hash_file(catalog_path, actual, 256 * 1024 * 1024) || strcmp(actual, state->catalog)) goto done;
@@ -499,14 +535,174 @@ int holy_rpm_md_query(const char *directory, const char *query, int info)
     return status < 0 ? 2 : !matches ? 4 : info && matches > 1 ? 3 : 0;
 }
 
+/* the bound catalog must name this exact source-id and mirror base. */
+int holy_rpm_md_source_catalog(const char *directory, const char *id, const char *base)
+{
+    struct rpmmd_catalog state;
+    int ok;
+    if (!directory || !digest(id) || !base || !open_catalog(directory, &state)) return 6;
+    ok = !strcmp(state.source_id, id) && !strcmp(state.base, base);
+    fclose(state.file);
+    return ok ? 0 : 6;
+}
+
+static int binding_name(const char *id, char name[130])
+{
+    unsigned char sum[32];
+    unsigned length;
+    size_t i;
+    if (!digest(id) ||
+        EVP_Digest(id, strlen(id), sum, &length, EVP_sha256(), NULL) != 1 || length != 32)
+        return 0;
+    memcpy(name, id, 64);
+    name[64] = '.';
+    for (i = 0; i < 32; ++i) snprintf(name + 65 + 2 * i, 3, "%02x", sum[i]);
+    return 1;
+}
+
+static int binding_dir(int database, int create)
+{
+    struct stat st;
+    int dir;
+    if (create && mkdirat(database, "rpm-md-catalogs", 0700) && errno != EEXIST) return -1;
+    dir = openat(database, "rpm-md-catalogs", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dir < 0) return -1;
+    if (fstat(dir, &st) || !S_ISDIR(st.st_mode) || st.st_uid != geteuid() ||
+        (st.st_mode & 0022)) { close(dir); return -1; }
+    return dir;
+}
+
+int holy_rpm_md_bind(const char *root, const char *source, const char *catalog)
+{
+    char id[65], name[130], digest_value[65], temporary[43] = {0};
+    char *base = NULL, *trust = NULL, *path = NULL, *root_path = NULL, *record = NULL;
+    const char *stored_path, *path_key;
+    unsigned long long generation;
+    size_t size, used = 0;
+    int database = -1, dir = -1, fd = -1, catalog_dir = -1, result;
+    result = holy_source_rpm_md(root, source, id, &base, &trust);
+    if (result) goto done;
+    if (!binding_name(id, name) || !catalog || !(path = realpath(catalog, NULL))) {
+        result = 2; goto done;
+    }
+    if (strchr(path, '\n') || strlen(path) > 1024 * 1024) { result = 2; goto done; }
+    result = holy_rpm_md_source_catalog(path, id, base);
+    if (result) goto done;
+    root_path = realpath(root, NULL);
+    if (!root_path) { result = 6; goto done; }
+    path_key = "path";
+    stored_path = path;
+    if (strcmp(root_path, "/") && !strncmp(path, root_path, strlen(root_path)) &&
+        path[strlen(root_path)] == '/') {
+        path_key = "root-path";
+        stored_path = path + strlen(root_path);
+    }
+    catalog_dir = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    fd = catalog_dir < 0 ? -1 : openat(catalog_dir, "conversion", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0 || !hash_fd(fd, digest_value)) { result = 6; goto done; }
+    close(fd); fd = -1;
+    size = strlen(path) + 256;
+    record = malloc(size);
+    if (!record) { result = 1; goto done; }
+    snprintf(record, size, "format holy-rpm-md-binding-1\nsource-id %s\nconversion-sha256 %s\n%s %s\n",
+             id, digest_value, path_key, stored_path);
+    size = strlen(record);
+    database = holy_state_lock(root, 1, &generation, &result);
+    if (database < 0) goto done;
+    dir = binding_dir(database, 1);
+    if (dir < 0 || (fd = holy_temporary_at(dir, temporary)) < 0) { result = 1; goto done; }
+    while (used < size) {
+        ssize_t written = write(fd, record + used, size - used);
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) { result = 1; goto done; }
+        used += (size_t)written;
+    }
+    if (fsync(fd) || renameat(dir, temporary, dir, name) || fsync(dir)) { result = 1; goto done; }
+    result = 0;
+done:
+    if (fd >= 0) close(fd);
+    if (dir >= 0) {
+        if (temporary[0]) unlinkat(dir, temporary, 0);
+        close(dir);
+    }
+    if (catalog_dir >= 0) close(catalog_dir);
+    if (database >= 0) close(database);
+    free(base); free(trust); free(path); free(root_path); free(record);
+    return result;
+}
+
+int holy_rpm_md_catalog_path(const char *root, const char *source, char **catalog)
+{
+    struct stat st;
+    char id[65], name[130], saved_id[65], saved_digest[65], actual[65];
+    char *base = NULL, *trust = NULL, *line = NULL, *path = NULL;
+    char *root_path = NULL, *candidate = NULL;
+    size_t capacity = 0;
+    unsigned long long generation;
+    FILE *record = NULL;
+    int database = -1, dir = -1, fd = -1, catalog_dir = -1, result;
+    *catalog = NULL;
+    result = holy_source_rpm_md(root, source, id, &base, &trust);
+    if (result) goto done;
+    if (!binding_name(id, name)) { result = 2; goto done; }
+    database = holy_state_lock(root, 0, &generation, &result);
+    if (database < 0) goto done;
+    dir = binding_dir(database, 0);
+    fd = dir < 0 ? -1 : openat(dir, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size <= 0 || st.st_size > 1024 * 1024 + 512 ||
+        st.st_uid != geteuid() || (st.st_mode & 0022)) { result = 6; goto done; }
+    record = fdopen(fd, "r");
+    if (!record) { result = 1; goto done; }
+    fd = -1;
+    if (getline(&line, &capacity, record) < 0 ||
+        strcmp(line, "format holy-rpm-md-binding-1\n") ||
+        getline(&line, &capacity, record) < 0 ||
+        sscanf(line, "source-id %64s\n", saved_id) != 1 || strcmp(saved_id, id) ||
+        getline(&line, &capacity, record) < 0 ||
+        sscanf(line, "conversion-sha256 %64s\n", saved_digest) != 1 ||
+        !digest(saved_digest) || getline(&line, &capacity, record) < 0 ||
+        (strncmp(line, "path ", 5) && strncmp(line, "root-path ", 10)) ||
+        strlen(line) > 1024 * 1024 + 12 ||
+        line[strlen(line) - 1] != '\n' ||
+        fgetc(record) != EOF || ferror(record)) { result = 6; goto done; }
+    line[strlen(line) - 1] = 0;
+    if (!strncmp(line, "root-path ", 10)) {
+        root_path = realpath(root, NULL);
+        if (!root_path || line[10] != '/' ||
+            strlen(root_path) > (size_t)-1 - strlen(line + 10) - 1) { result = 6; goto done; }
+        candidate = malloc(strlen(root_path) + strlen(line + 10) + 1);
+        if (!candidate) { result = 1; goto done; }
+        if (!strcmp(root_path, "/")) strcpy(candidate, line + 10);
+        else sprintf(candidate, "%s%s", root_path, line + 10);
+    } else candidate = strdup(line + 5);
+    if (!candidate) { result = 1; goto done; }
+    path = realpath(candidate, NULL);
+    if (!path || strcmp(path, candidate)) { result = 6; goto done; }
+    catalog_dir = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    fd = catalog_dir < 0 ? -1 : openat(catalog_dir, "conversion", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0 || !hash_fd(fd, actual) || strcmp(actual, saved_digest)) { result = 6; goto done; }
+    result = holy_rpm_md_source_catalog(path, id, base);
+    if (!result) { *catalog = path; path = NULL; }
+done:
+    if (fd >= 0) close(fd);
+    if (record) fclose(record);
+    if (catalog_dir >= 0) close(catalog_dir);
+    if (dir >= 0) close(dir);
+    if (database >= 0) close(database);
+    free(base); free(trust); free(line); free(path); free(root_path); free(candidate);
+    return result;
+}
+
 int holy_rpm_md_sync(const char *base, const char *expected, const char *source,
-                     const char *output, const char *ca_file)
+                     const char *output, const char *ca_file, const char *source_id)
 {
     char temporary[] = "/tmp/holy-rpm-md-XXXXXX", href[1024] = {0};
     char hash[65] = {0}, received[65] = {0};
     char *repomd_url = NULL, *primary_url = NULL, *repomd = NULL, *primary = NULL;
     int result = 2;
-    if (!base || !digest(expected) || !source || !label(source, 256) || !output ||
+    if (!base || !digest(expected) || !source || !label(source, 256) ||
+        (source_id && !digest(source_id)) || !output ||
         !(repomd_url = child_url(base, "repodata/repomd.xml"))) goto done;
     if (!mkdtemp(temporary)) { result = 1; goto done; }
     repomd = path_join(temporary, expected);
@@ -521,7 +717,7 @@ int holy_rpm_md_sync(const char *base, const char *expected, const char *source,
     if (strcmp(hash, received)) { result = 4; goto cleanup; }
     primary = path_join(temporary, hash);
     if (!primary) { result = 1; goto cleanup; }
-    result = holy_rpm_md_index(repomd, primary, expected, source, base, output);
+    result = holy_rpm_md_index(repomd, primary, expected, source, base, output, source_id);
 cleanup:
     if (primary) unlink(primary);
     if (repomd) unlink(repomd);

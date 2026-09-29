@@ -268,6 +268,7 @@ static int parse_registry(const char *data, struct registry *r)
                     strstr(v[4], "type \"holy-git\"\n") ||
                     strstr(v[4], "type \"apk\"\n") ||
                     strstr(v[4], "type \"apt\"\n") ||
+                    strstr(v[4], "type \"rpm-md\"\n") ||
                     strstr(v[4], "type \"xbps\"\n")));
             for (i = 0; ok && i < r->count; ++i)
                 if (!strcmp(r->items[i].id, id) || (active && r->items[i].active && !strcmp(r->items[i].alias, v[2]))) ok = 0;
@@ -500,7 +501,13 @@ int holy_source_plan(const char *path, const char *root)
             fprintf(stderr, "holypkg: [%s] trust require needs public-key\n", e->section);
             free(trust); result = 2; goto done;
         }
-        if (!strcmp(e->values[0], "apt") || !strcmp(e->values[0], "xbps")) {
+        if (!strcmp(e->values[0], "rpm-md") && !strcmp(trust, "require")) {
+            fprintf(stderr, "holypkg: [%s] rpm-md checks no repository signature; "
+                    "trust require is unavailable\n", e->section);
+            free(trust); result = 2; goto done;
+        }
+        if (!strcmp(e->values[0], "apt") || !strcmp(e->values[0], "xbps") ||
+            !strcmp(e->values[0], "rpm-md")) {
             const struct holy_entry *endpoint = config_field(&config, e->section, "url");
             char *probe = endpoint ? holy_fetch_child_url(endpoint->values[0], "probe") : NULL;
             int repos = 0;
@@ -1142,6 +1149,60 @@ done:
     if (result) {
         free(*url); free(*trust); *url = *trust = NULL;
         id[0] = key[0] = 0;
+    }
+    free(selected); free(data); clear_registry(&registry); close(dir);
+    return result;
+}
+
+/* rpm-md mirrors one https base and carries no repository list or key. */
+int holy_source_rpm_md(const char *root, const char *alias,
+                       char id[65], char **url, char **trust)
+{
+    struct registry registry = {0};
+    char *data = NULL, *selected = NULL;
+    const char *line;
+    unsigned long long generation;
+    size_t i;
+    int dir, result = 1, rpm = 0, repos = 0;
+    id[0] = 0;
+    *url = *trust = NULL;
+    if (!root || !alias || !*alias || !strcmp(alias, "local")) return 2;
+    dir = holy_state_lock(root, 0, &generation, &result);
+    if (dir < 0) return result;
+    data = load_registry(dir, &registry);
+    if (!data) goto done;
+    result = 6;
+    for (i = 0; i < registry.count; ++i)
+        if (registry.items[i].active && !strcmp(registry.items[i].alias, alias)) break;
+    if (i == registry.count) goto done;
+    line = registry.items[i].definition;
+    while (*line) {
+        const char *end = strchr(line, '\n');
+        char **v = NULL;
+        size_t n = 0;
+        if (!end || !tokens(line, (size_t)(end - line), &v, &n)) {
+            holy_tokens_free(v, n); result = 2; goto done;
+        }
+        if (n == 2 && !strcmp(v[0], "type")) rpm = !strcmp(v[1], "rpm-md");
+        else if (n == 2 && !strcmp(v[0], "url")) {
+            if (selected) { holy_tokens_free(v, n); result = 2; goto done; }
+            selected = strdup(v[1]);
+            if (!selected) { holy_tokens_free(v, n); result = 1; goto done; }
+        } else if (n == 3 && !strcmp(v[0], "repo")) repos = 1;
+        holy_tokens_free(v, n);
+        line = end + 1;
+    }
+    if (!rpm || repos || !selected || strncmp(selected, "https://", 8) ||
+        selected[strlen(selected) - 1] != '/') goto done;
+    *trust = strdup(registry.items[i].trust);
+    if (!*trust) { result = 1; goto done; }
+    *url = selected; selected = NULL;
+    memcpy(id, registry.items[i].id, 65);
+    result = 0;
+done:
+    if (result) {
+        free(*url); free(*trust); *url = *trust = NULL;
+        id[0] = 0;
     }
     free(selected); free(data); clear_registry(&registry); close(dir);
     return result;

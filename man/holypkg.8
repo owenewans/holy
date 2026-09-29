@@ -293,6 +293,31 @@ triggers and file capabilities require further conversion support.
 Local import does not verify RPM signatures. Builds without librpm return
 status 6 for this format.
 .PP
+rpm index reads a local repomd.xml and its primary archive after checking the
+explicit SHA-256 of repomd.xml. The parser accepts only the primary data type,
+one sha256 checksum and one relative location. It records package name, epoch,
+version, release, architecture, archive SHA-256, size and repository href.
+rpm sync retrieves repomd.xml and the primary archive over HTTPS with the same
+required hash, then converts them. The catalog stores that normalized row set;
+file-index coverage is unavailable and dependency coverage is partial, because
+primary provides entries are not yet indexed. Search and info read the catalog
+after rechecking the repomd, primary and catalog digests. rpm fetch selects an
+exact name/EVR/architecture, downloads the archive, checks size and SHA-256, and
+can import it with the same converter as --format rpm. The standalone
+index/sync source name records provenance but does not register a source-id.
+.PP
+A registered RPM-MD source uses type rpm-md and one url HTTPS_BASE/. holypkg
+sync RPM_MD_SOURCE requires an explicit repomd --sha256 pin, records the
+registry source-id in the conversion record and binds the catalog under the
+target database. The common fetch RPM_MD_SOURCE:PACKAGE command takes --version
+and --arch, checks the bound catalog and the current registry, and downloads
+through the same verifier. A missing version or architecture returns
+decision-required (3). An explicit --catalog must resolve to the bound catalog
+directory. Changing the registered url leaves the earlier binding invalid, so
+search and fetch report coverage unavailable until a new sync succeeds. No
+repository signature is checked: verification stays hash-pinned, and trust
+require needs a key this backend does not implement.
+.PP
 --format deb reads the Debian ar members debian-binary, control.tar and
 data.tar in order, including supported compressed variants. It retains control
 files beneath HOLY/foreign/deb and each control field with its source line in
