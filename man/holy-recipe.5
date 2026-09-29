@@ -161,7 +161,9 @@ installed-size, plus any x- record. HOLY/deps carries declared depend records
 plus one soname requirement per DT_NEEDED entry, each attributed to the file that
 needs it and written only into the output that carries that file.
 HOLY/provides records the package name and the SONAME of every shared object in
-the payload. HOLY/origin records the recipe inputs with their pinned digests and
+the payload. HOLY/hooks records a declared hook only in the output whose payload
+holds its script, and the build fails if an output declares a hook it does not
+carry. HOLY/origin records the recipe inputs with their pinned digests and
 verification built-locally. HOLY/transform records the build environment and the
 declared build dependencies. The finished .holy is installed by a normal
 transaction; the build itself never writes to the target root.

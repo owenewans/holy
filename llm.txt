@@ -3716,7 +3716,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-recipe.5 source=holy version=development sha256=472cfed13102b84a13935c22364f874cfb73ecbe0da6300667136f875208c204
+holy-recipe.5 source=holy version=development sha256=ee9a500e099a73df1ab0ebc64a37cbc79511aa6c2888b7d00f0b6066cced002f
 HOLY-RECIPE(5)		       Holy package format		  HOLY-RECIPE(5)
 
 NAME
@@ -3893,11 +3893,13 @@ RESULTS
      records plus one soname requirement per DT_NEEDED entry, each attributed to
      the  file	that needs it and written only into the output that carries that
      file.  HOLY/provides records the package  name  and  the  SONAME  of  every
-     shared  object  in	 the payload. HOLY/origin records the recipe inputs with
-     their pinned digests and verification built-locally. HOLY/transform records
-     the build environment and the declared  build  dependencies.  The	finished
-     .holy  is	installed by a normal transaction; the build itself never writes
-     to the target root.
+     shared  object  in	 the payload. HOLY/hooks records a declared hook only in
+     the output whose payload holds its script, and the build fails if an output
+     declares a hook it does not carry. HOLY/origin records  the  recipe  inputs
+     with  their  pinned  digests and verification built-locally. HOLY/transform
+     records the build environment and the declared build dependencies. The fin-
+     ished .holy is installed by a normal transaction; the  build  itself  never
+     writes to the target root.
 
 EXAMPLES
      format holy-recipe-1
@@ -3933,12 +3935,12 @@ EXAMPLES
      DOCS
 
 EXIT STATUS
-     0 the build produced every declared output. 1 an operational failure. 2  an
-     invalid  recipe,  argument or conversion. 3 a decision is required. 6 a re-
+     0	the build produced every declared output. 1 an operational failure. 2 an
+     invalid recipe, argument or conversion. 3 a decision is required. 6  a  re-
      quired artifact or system capability is unavailable.
 
 SOURCES
-     PKGBUILD:	 https://pacman.archlinux.page/PKGBUILD.5.html	 Void	 Manual:
+     PKGBUILD:	  https://pacman.archlinux.page/PKGBUILD.5.html	  Void	 Manual:
      https://raw.githubusercontent.com/void-linux/void-packages/master/Manual.md
      RPM spec: https://rpm.org/docs/latest/manual/spec.html SlackBuild template:
      https://slackbuilds.org/templates/autotools-template.SlackBuild
