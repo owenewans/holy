@@ -376,6 +376,52 @@ are copied next to the recipe and reported; a lintian-overrides file is
 reported as well, since it suppresses a report rather than building
 anything. Standards-Version is preserved.
 
+.SS Gentoo ebuild
+An ebuild is recognized by its .ebuild suffix, or named with
+.BR "import \-\-format gentoo" .
+It states its identity in its file name, which is PN-PV-rPR.ebuild, so the name
+is the text before the last dash a digit follows and the version is what
+follows it; a trailing -rN is the revision and becomes the Holy release, and a
+file name with no revision gets release one. An epoch names a packaging
+revision order rather than a version, so it is preserved and dropped. A file
+name that carries no version is malformed. EAPI, LICENSE and SLOT are carried,
+DESCRIPTION is the summary, and HOMEPAGE is the homepage. KEYWORDS names the
+machines an ebuild is tested on rather than the machine that builds it, so
+arch is any.
+
+.SH
+The engine fetches and unpacks the recorded sources, so the extracted tree
+takes the place of WORKDIR, which is reported. A mirror:// entry names no single
+address and is reported, and a remote archive is reported too, because a Gentoo
+Manifest pins a BLAKE2B and a SHA-512 rather than the SHA-256 a Holy source
+needs. A PATCHES entry, and any other file named beside the ebuild, is copied
+next to the recipe and hashed as SHA-256. An entry behind a USE flag is a file
+the converter cannot reach, and is reported.
+
+.SH
+A dependency atom is a category, a package and an optional comparison. The
+category is dropped and the name is what a record holds, a blocker becomes
+x-conflicts, and a version keeps its upstream part with the same comparator
+names as the PKGBUILD converter. A ~ atom is a range and a wildcard is not a
+version, so both are reported; a slot, a use dependency and a virtual, which
+names an interface rather than a package, are reported as well. RDEPEND and
+PDEPEND become depend and DEPEND and BDEPEND become build-depend. A USE
+conditional and an any-of group are reported, since a Holy recipe has no USE
+flags and cannot choose between the members of a group, and the atoms inside
+one are carried anyway so the build still holds them. IUSE, REQUIRED_USE,
+RESTRICT and PROPERTIES are reported as package manager settings.
+
+.SH
+Each standard phase function becomes the matching phase, and a phase the
+ebuild leaves out is the one the inherited eclasses supply. A body keeps its
+own shell behind a prologue that rebuilds EPREFIX, ED, D, DESTDIR, WORKDIR,
+DISTDIR, T, PN, PV, PR, PF, P, PVR, EAPI and changes into the source tree. An
+eclass is a helper environment, so every inherited one is reported, and so is
+every ebuild.sh helper a body calls, which means the build fails visibly rather
+than losing a step. A pkg_preinst, pkg_postinst, pkg_prerm or pkg_postrm
+function runs at install time through Portage, and a Holy hook carries a script
+rather than a function, so each is reported.
+
 .SH CONVERSION REPORT
 The report lists every carried, preserved, helper, unknown and changed item with
 its source file and line range, and its status is native or review-required. A
@@ -455,3 +501,7 @@ Debian control fields: https://www.debian.org/doc/debian-policy/ch-controlfields
 Debian package relationships: https://www.debian.org/doc/debian-policy/ch-relationships.html
 Debian packaging concepts: https://www.debian.org/doc/debian-policy/concepts.html
 debhelper: https://manpages.debian.org/trixie/debhelper/debhelper.1.en.html
+Gentoo ebuild: https://wiki.gentoo.org/wiki/Ebuild
+Package specification: https://wiki.gentoo.org/wiki/Repository_format
+eclass: https://wiki.gentoo.org/wiki/Eclass
+USE flag dependencies: https://wiki.gentoo.org/wiki/USE_atoms

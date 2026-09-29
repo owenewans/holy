@@ -1124,7 +1124,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=66dafa1b8d144d9d6b9a349a5ed88f0f92c9f80b0877f38faa7618b89c891bf2
+holypkg.8 source=holy version=development sha256=c321778a04b28769ff8e512b14d0dfa326be97ea771a9af917164ea24ff1adca
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1144,13 +1144,14 @@ SYNOPSIS
      ROR]  [--choose  SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256]
      [--accept-privileged SHA256] [--root DIRECTORY] [--yes] [--noninteractive]
      holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
-     holypkg  import  INPUT   --source	 NAME	--format   pacman|rpm|deb|slack-
-     ware|apk|xbps|appimage|pkgbuild|void|aports|slackbuild|rpmspec|debian
+     holypkg import INPUT  --source  NAME	 --format  pacman|rpm|deb|slack-
+     ware|apk|xbps|appimage|pkgbuild|void|aports	 |slackbuild|rpmspec|de-
+     bian|gentoo
 	  --output NEW_DIRECTORY [--public-key FILE (apk only)]
-     holypkg  build  RECIPE --output NEW_DIRECTORY [--environment host|clean|vm]
+     holypkg build RECIPE --output NEW_DIRECTORY  [--environment  host|clean|vm]
      [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
-     holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|debian|TEMPLATE
-     --source NAME --output NEW_DIRECTORY
+     holypkg	   convert	 PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|de-
+     bian|NAME.ebuild|TEMPLATE --source NAME --output NEW_DIRECTORY
      holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base
      HTTPS_BASE/ --output NEW_DIRECTORY
      holypkg apt sync HTTPS_URL --sha256 HASH --source NAME  --base  HTTPS_BASE/
@@ -3674,13 +3675,13 @@ RUN INSTALLED COMMAND
      conversion report. A file named template reaches the Void converter, a file
      named  APKBUILD  reaches the Aports converter, and a name ending in .Slack-
      Build reaches the SlackBuild converter, a name ending in .spec reaches  the
-     RPM  spec	converter  and	a directory named debian reaches the Debian con-
-     verter through the same command, while any other name  reaches  the  pacman
-     converter,	   and	  import    INPUT    --source	 NAME	 --format   pkg-
-     build|void|aports|slackbuild|rpmspec|debian  --output  NEW_DIRECTORY  names
-     the  family  explicitly.  None of these commands installs a package, builds
-     one, or grants NAME a registered source identity; the report records it  as
-     provenance.
+     RPM  spec	converter, a directory named debian reaches the Debian converter
+     and a name ending in .ebuild reaches the Gentoo converter through the  same
+     command,  while any other name reaches the pacman converter, and import IN-
+     PUT  --source  NAME  --format   pkgbuild|void|aports|slackbuild|rpmspec|de-
+     bian|gentoo  --output  NEW_DIRECTORY  names  the family explicitly. None of
+     these commands installs a package, builds one, or grants NAME a  registered
+     source identity; the report records it as provenance.
 
      The  PKGBUILD  converter carries pkgbase, pkgver, pkgrel, pkgdesc, url, li-
      cense, arch, epoch,  depends,  makedepends,  checkdepends,	 optdepends  and
@@ -3811,7 +3812,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-recipe.5 source=holy version=development sha256=fa2bd9cf6ac9e6a74bdd2a2bf6fb85dbea31f303e7dee1e3be9e13e437f04a51
+holy-recipe.5 source=holy version=development sha256=5f45db68b74fcf91b00da6cc36651f5658b213a3086346d0ee834ba9f53f79cb
 HOLY-RECIPE(5)		       Holy package format		  HOLY-RECIPE(5)
 
 NAME
@@ -4222,6 +4223,54 @@ debian/rules becomes the build step, behind a prologue that sets
      Standards-Version is preserved.
 
 
+   Gentoo ebuild
+     An	 ebuild is recognized by its .ebuild suffix, or named with import --for-
+     mat gentoo.  It states its identity in  its  file	name,  which  is  PN-PV-
+     rPR.ebuild,  so  the  name is the text before the last dash a digit follows
+     and the version is what follows it; a trailing -rN is the revision and  be-
+     comes  the Holy release, and a file name with no revision gets release one.
+     An epoch names a packaging revision order rather than a version, so  it  is
+     preserved	and  dropped.  A file name that carries no version is malformed.
+     EAPI, LICENSE and SLOT are carried, DESCRIPTION is the summary,  and  HOME-
+     PAGE  is  the  homepage. KEYWORDS names the machines an ebuild is tested on
+     rather than the machine that builds it, so arch is any.
+
+
+The engine fetches and unpacks the recorded sources, so the extracted tree
+     takes the place of WORKDIR, which is reported. A mirror:// entry  names  no
+     single  address  and is reported, and a remote archive is reported too, be-
+     cause a Gentoo Manifest pins a  BLAKE2B  and  a  SHA-512  rather  than  the
+     SHA-256  a Holy source needs. A PATCHES entry, and any other file named be-
+     side the ebuild, is copied next to the recipe and hashed as SHA-256. An en-
+     try behind a USE flag is a file the converter  cannot  reach,  and	 is  re-
+     ported.
+
+
+A dependency atom is a category, a package and an optional comparison. The
+     category  is dropped and the name is what a record holds, a blocker becomes
+     x-conflicts, and a version keeps its upstream part with the same comparator
+     names as the PKGBUILD converter. A ~ atom is a range and a wildcard is  not
+     a	version,  so  both are reported; a slot, a use dependency and a virtual,
+     which names an interface rather than a package, are reported as well.  RDE-
+     PEND  and PDEPEND become depend and DEPEND and BDEPEND become build-depend.
+     A USE conditional and an any-of group are reported, since a Holy recipe has
+     no USE flags and cannot choose between the members	 of  a	group,	and  the
+     atoms  inside  one	 are carried anyway so the build still holds them. IUSE,
+     REQUIRED_USE, RESTRICT and PROPERTIES are reported as package manager  set-
+     tings.
+
+
+Each standard phase function becomes the matching phase, and a phase the
+     ebuild  leaves  out  is the one the inherited eclasses supply. A body keeps
+     its own shell behind a prologue that  rebuilds  EPREFIX,  ED,  D,	DESTDIR,
+     WORKDIR,  DISTDIR,	 T,  PN,  PV,  PR, PF, P, PVR, EAPI and changes into the
+     source tree. An eclass is a helper environment, so every inherited	 one  is
+     reported,	and  so	 is every ebuild.sh helper a body calls, which means the
+     build fails visibly rather than losing a step. A pkg_preinst, pkg_postinst,
+     pkg_prerm or pkg_postrm function runs at install time through Portage,  and
+     a Holy hook carries a script rather than a function, so each is reported.
+
+
 CONVERSION REPORT
      The report lists every carried, preserved, helper, unknown and changed item
      with its source file and line range, and its status is native or review-re-
@@ -4304,6 +4353,10 @@ SOURCES
      Debian  package relationships: https://www.debian.org/doc/debian-policy/ch-
      relationships.html	   Debian    packaging	   concepts:	 https://www.de-
      bian.org/doc/debian-policy/concepts.html	debhelper:  https://manpages.de-
-     bian.org/trixie/debhelper/debhelper.1.en.html
+     bian.org/trixie/debhelper/debhelper.1.en.html	  Gentoo	 ebuild:
+     https://wiki.gentoo.org/wiki/Ebuild	  Package	  specification:
+     https://wiki.gentoo.org/wiki/Repository_format  eclass:   https://wiki.gen-
+     too.org/wiki/Eclass     USE     flag     dependencies:    https://wiki.gen-
+     too.org/wiki/USE_atoms
 
 holy				      2026			  HOLY-RECIPE(5)

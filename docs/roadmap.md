@@ -743,7 +743,38 @@
   profile, and checks the split payloads, the version split and the malformed
   and empty cases; all 398 source packages sampled from the Debian trixie
   archive convert and every produced recipe passes the manager's own validation.
-  Gentoo, Pacstall, the makepkg build environment and
+  The Gentoo ebuild family converts as well, and needs the shared shell parser
+  rather than a parser of its own, because an ebuild is bash with a metadata
+  header. `holypkg convert NAME.ebuild` and `holypkg import --format gentoo`
+  read it, take the identity from the file name, which is PN-PV-rPR.ebuild, so a
+  trailing -rN becomes the Holy release, a file name with no revision gets
+  release one and an epoch is preserved and dropped. EAPI, LICENSE and SLOT are
+  carried, and KEYWORDS names the machines an ebuild is tested on rather than
+  the machine that builds it, so arch is any. A mirror:// entry names no single
+  address and a remote archive has no digest, since a Gentoo Manifest pins a
+  BLAKE2B and a SHA-512 rather than the SHA-256 a Holy source needs, so both
+  are reported, while a PATCHES entry and any other file named beside the ebuild
+  is copied next to the recipe and hashed as SHA-256. A dependency atom keeps
+  its package name and its comparison, a blocker becomes x-conflicts, and a USE
+  conditional, an any-of group, a slot, a use dependency and a virtual are
+  reported, since a Holy recipe has no USE flags and cannot choose between the
+  members of a group; the atoms inside one are carried anyway so the build
+  still holds them. Each standard phase function becomes the matching phase
+  behind a prologue that rebuilds the variables Portage exports onto the Holy
+  paths, a phase the ebuild leaves out is the one the inherited eclasses supply,
+  and every eclass and every ebuild.sh helper a body calls is reported rather
+  than run, so the build fails visibly. A fixture converts an ebuild with two
+  local patches, a blocker, an any-of group, a slot, a use dependency, a virtual
+  and a maintainer script, and checks the patches, the split identity and the
+  malformed cases; the parser work this needed fixes four gaps that a Void
+  template and an APKBUILD could not reach, namely a trailing comment that
+  holds an apostrophe, a line continuation that reads as an unterminated value,
+  a heredoc whose body holds a brace, and a parenthesized list written one
+  element per line, so 12191 of the 12192 ebuilds in the gentoo tree sampled
+  convert, the one refusal being the package skeleton, which carries no version
+  in its file name, and every produced recipe passes the manager's own
+  validation.
+  Pacstall, the makepkg build environment and
   the vm build environment remain open.
   The build runner no longer loses its private build root, keeps a root the
   caller named, and reaches both the default and the named-root path in the

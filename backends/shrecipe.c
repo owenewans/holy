@@ -168,8 +168,10 @@ void holy_shell_function_free(struct shell_function *function)
     memset(function, 0, sizeof *function);
 }
 
-/* the end of a $( ) group that starts at cursor, or NULL when it is unterminated */
-static const char *substitution_end(const char *cursor, const char *stop)
+/* the end of a ( ) or { } group that starts at cursor, or NULL when it is
+   unterminated. a quote inside the group carries its own end, so a closing
+   character inside a string does not close the group. */
+static const char *group_end(const char *cursor, const char *stop, char open, char close)
 {
     size_t depth = 1, i = 0;
     char inner = 0;
@@ -180,15 +182,22 @@ static const char *substitution_end(const char *cursor, const char *stop)
             else if (c == '\\' && inner == '"') ++i;
             continue;
         }
+        if (c == '\\') { ++i; continue; }
         if (c == '\'' || c == '"') inner = c;
-        else if (c == '(') ++depth;
-        else if (c == ')' && !--depth) return cursor + i;
+        else if (c == open) ++depth;
+        else if (c == close && !--depth) return cursor + i;
     }
     return NULL;
 }
 
+static const char *substitution_end(const char *cursor, const char *stop)
+{
+    return group_end(cursor, stop, '(', ')');
+}
+
 /* 1 while a quote is open, so a value may continue on the next line. a $( ) group
-   carries its own quoting, so it never closes the quote that contains it. */
+   carries its own quoting, so it never closes the quote that contains it. a comment
+   ends at the newline, and a quote inside one is not a shell quote. */
 static int quote_open(const char *text, size_t length)
 {
     char quote = 0;
@@ -201,7 +210,19 @@ static int quote_open(const char *text, size_t length)
             ++i;
             continue;
         }
+        if (quote == '"') {
+            /* a backslash escapes inside a double quoted string, so \" closes nothing */
+            if (c == '\\') { i += 2; continue; }
+            if (c == '"') quote = 0;
+            ++i;
+            continue;
+        }
         if (c == '\\') { i += 2; continue; }
+        /* a comment is not quoted, so an apostrophe in one opens no quote */
+        if (c == '#' && (i == 0 || isspace((unsigned char)text[i - 1]))) {
+            while (i < length && text[i] != '\n') ++i;
+            continue;
+        }
         if (c == '`' && text[i + 1] == '(') {
             const char *close = substitution_end(text + i + 2, text + length);
             if (!close) return 1;
@@ -214,18 +235,37 @@ static int quote_open(const char *text, size_t length)
             i = (size_t)(close - text) + 1;
             continue;
         }
-        if (quote == '"') {
-            if (c == '"') quote = 0;
-            ++i;
-            continue;
-        }
         if (c == '\'' || c == '"') { quote = c; ++i; continue; }
         ++i;
     }
     return quote ? 1 : 0;
 }
 
-/* the closing brace of a function body, ignoring quoted, substituted and commented text */
+/* the terminator word of a heredoc that starts at offset, with its length and
+   whether it is a <<- terminator that may carry leading tabs, or NULL */
+static const char *heredoc_word(const char *body, size_t offset, const char *stop,
+                                size_t *length, int *strip)
+{
+    const char *cursor = body + offset, *word;
+    *strip = 0;
+    if (cursor < stop && *cursor == '-') { ++cursor; *strip = 1; }
+    if (cursor < stop && (*cursor == '\'' || *cursor == '"')) {
+        char quote = *cursor;
+        word = ++cursor;
+        while (cursor < stop && *cursor != quote) ++cursor;
+    } else {
+        word = cursor;
+        while (cursor < stop && !isspace((unsigned char)*cursor) && *cursor != ';' &&
+               *cursor != '|' && *cursor != '&' && *cursor != '(')
+            ++cursor;
+    }
+    if (cursor <= word || cursor > stop) return NULL;
+    *length = (size_t)(cursor - word);
+    return word;
+}
+
+/* the closing brace of a function body, ignoring quoted, substituted, commented
+   and heredoc text */
 const char *holy_shell_block_end(const char *body, const char *stop)
 {
     size_t depth = 0, i;
@@ -242,17 +282,37 @@ const char *holy_shell_block_end(const char *body, const char *stop)
             while (body + i < stop && body[i] != '\n') ++i;
             continue;
         }
+        /* an escaped character is neither a quote nor a brace */
+        if (c == '\\') { ++i; continue; }
         if (c == '\'' || c == '"' || c == '`') { quote = c; continue; }
         if ((c == '$' || c == '\\') && body + i + 1 < stop &&
             (body[i + 1] == '(' || body[i + 1] == '{')) {
             char open = body[i + 1];
-            char close = open == '(' ? ')' : '}';
-            size_t inner = 0;
-            for (i += 2; body + i < stop; ++i) {
-                if (body[i] == open) ++inner;
-                else if (body[i] == close) {
-                    if (inner) --inner;
-                    else break;
+            const char *close = group_end(body + i + 2, stop, open, open == '(' ? ')' : '}');
+            i = close ? (size_t)(close - body) : (size_t)(stop - body) - 1;
+            continue;
+        }
+        /* a heredoc body is literal text, so a brace in it closes nothing. a <<< is
+           a here string, whose word is the whole rest of the command, not a body. */
+        if (c == '<' && body + i + 1 < stop && body[i + 1] == '<' &&
+            !(body + i + 2 < stop && body[i + 2] == '<')) {
+            size_t used = 0;
+            int strip = 0;
+            const char *word = heredoc_word(body, i + 2, stop, &used, &strip);
+            if (!word) continue;
+            /* the body ends at the line that names the terminator on its own, and a
+               <<- terminator may carry leading tabs */
+            for (i = (size_t)(word - body); body + i < stop; ++i) {
+                const char *row;
+                char after;
+                if (body[i] != '\n') continue;
+                row = body + i + 1;
+                if (strip) while (row < stop && *row == '\t') ++row;
+                if ((size_t)(row - body) + used >= (size_t)(stop - body)) break;
+                after = row[used];
+                if (!memcmp(row, word, used) && (after == '\n' || after == 0)) {
+                    i = (size_t)(row - body) + used - 1;
+                    break;
                 }
             }
             continue;
@@ -334,6 +394,8 @@ static int push_list(struct shell_script *script, const char *name, const char *
 }
 
 /* the closing paren of a list body, or NULL */
+/* a shell list runs until its closing paren, so a newline is an element separator
+   like any other blank, and a comment ends at the newline */
 static const char *list_end(const char *cursor, const char *stop)
 {
     char quote = 0;
@@ -344,8 +406,12 @@ static const char *list_end(const char *cursor, const char *stop)
             else if (c == '\\' && quote == '"' && cursor + 1 < stop) ++cursor;
             continue;
         }
+        if (c == '#' && (cursor == stop || !cursor[-1] || isspace((unsigned char)cursor[-1]))) {
+            while (cursor < stop && *cursor != '\n') ++cursor;
+            continue;
+        }
         if (c == '\'' || c == '"') quote = c;
-        else if (c == ')' || c == '\n') return cursor;
+        else if (c == ')') return cursor;
     }
     return NULL;
 }
@@ -490,7 +556,11 @@ static int parse(struct shell_script *script, const char *label)
             script->functions[script->function_count++] = function;
             continue;
         }
-        if (name_length + 2 < size && cursor[name_length] == '(' && cursor[name_length + 1] == ')') {
+        /* a list is written name=( one element per line ) as often as it is written
+           on one line, so an opening paren alone starts a list too */
+        if (name_length + 1 < size && cursor[name_length] == '(' &&
+            (cursor[name_length + 1] == ')' ||
+             (cursor[name_length + 1] == '\n' && name_length + 2 == size))) {
             const char *body = cursor + name_length + 2;
             const char *close = list_end(body, script->text + script->length);
             char *name = holy_shell_copy(start, name_length);
@@ -537,6 +607,18 @@ static int parse(struct shell_script *script, const char *label)
             value = cursor + at;
             value_size = size - at;
             while (value_size && (*value == ' ' || *value == '\t')) { ++value; --value_size; }
+            /* a list runs to its closing paren, which is often several lines below,
+               and an element may hold a comment, so the value ends at that paren */
+            if (value_size && *value == '(') {
+                const char *close = list_end(value + 1, script->text + script->length);
+                if (close) {
+                    value_size = (size_t)(close - value) + 1;
+                    offset = (size_t)(close - script->text) + 1;
+                    for (i = 0; i < value_size; ++i) if (value[i] == '\n') ++line;
+                    text = holy_shell_unquote(value, value_size);
+                    goto recorded;
+                }
+            }
             /* an unquoted value ends at a comment the way the shell reads it */
             if (value_size && *value != '"' && *value != '\'') {
                 char quote = 0;
@@ -592,6 +674,7 @@ static int parse(struct shell_script *script, const char *label)
             } else {
                 text = holy_shell_unquote(value, value_size);
             }
+            recorded:
             if (!name || !text || !push_value(script, name, text, line, append, conditional)) {
                 free(name);
                 free(text);

@@ -10,13 +10,15 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
-.B holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild|void|aports|slackbuild|rpmspec|debian
+.B holypkg import INPUT --source NAME
+.B "     --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild|void|aports"
+.B "     |slackbuild|rpmspec|debian|gentoo"
 .br
 .B "     --output NEW_DIRECTORY [--public-key FILE (apk only)]"
 .br
 .B holypkg build RECIPE --output NEW_DIRECTORY [--environment host|clean|vm] [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
 .br
-.B holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|debian|TEMPLATE --source NAME --output NEW_DIRECTORY
+.B holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|debian|NAME.ebuild|TEMPLATE --source NAME --output NEW_DIRECTORY
 .br
 .B holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY
 .br
@@ -2541,10 +2543,10 @@ file, a copy of each local source it names, a holy-recipe(5) manifest and a
 conversion report. A file named template reaches the Void converter, a file
 named APKBUILD reaches the Aports converter, and a name ending in .SlackBuild
 reaches the SlackBuild converter, a name ending in .spec reaches the RPM
-spec converter and a directory named debian reaches the Debian converter
-through the same command, while any other name reaches the pacman
-converter, and
-import INPUT --source NAME --format pkgbuild|void|aports|slackbuild|rpmspec|debian
+spec converter, a directory named debian reaches the Debian converter and a
+name ending in .ebuild reaches the Gentoo converter through the same command,
+while any other name reaches the pacman converter, and
+import INPUT --source NAME --format pkgbuild|void|aports|slackbuild|rpmspec|debian|gentoo
 --output NEW_DIRECTORY names the family explicitly. None of these commands installs a
 package, builds one, or grants NAME a registered source identity; the report
 records it as provenance.
