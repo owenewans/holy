@@ -107,8 +107,9 @@ check-repo-closure: holypkg
 	sh tests/repo-closure.sh ./holypkg
 
 .PHONY: check-git-source
-check-git-source: holypkg
+check-git-source: holypkg holygetiso
 	sh tests/git-source.sh ./holypkg
+	sh tests/install-source-stage.sh ./holypkg
 
 .PHONY: bootstrap-storage
 bootstrap-storage: holypkg
