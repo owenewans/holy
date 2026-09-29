@@ -609,7 +609,7 @@
   each package_NAME function becomes a split output; and a conversion report
   lists every carried, preserved, helper, unknown and changed item with its
   PKGBUILD line range. A fixture converts a real PKGBUILD, builds the produced
-  recipe through the normal engine and installs its split outputs. Aports,
+  recipe through the normal engine and installs its split outputs.
   The converter also reads lists the way a shell does, so a comma inside an
   element belongs to its name, and a brace inside a parameter expansion does
   not end a function body. Aports, xbps-src, SlackBuilds, RPM spec, Debian
