@@ -99,8 +99,10 @@ holypkg build RECIPE --output NEW_DIRECTORY [--environment host|clean|vm]
 [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
 .PP
 --work selects an existing empty build root; without it a private directory
-under /tmp is created and removed after a successful build. --keep retains it
-and prints its path. --jobs sets HOLY_JOBS. A recipe phase step is shown with
+under /tmp is created and removed after a successful build. --keep retains a
+root the manager created and prints its path; with --work the root already
+belongs to the caller and is never removed, so the printed line names the
+caller instead. --jobs sets HOLY_JOBS. A recipe phase step is shown with
 its interpreter, argv, working directory, uid and full body before it runs; on a
 terminal the operator answers per step, where a accepts every remaining step.
 Without a terminal and without --yes the build stops with decision-required (3).

@@ -1888,8 +1888,9 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
 done:
     if (result && result != 1)
         fprintf(stderr, "holypkg: build failed (status %d)\n", result);
-    if (work && !keep && !result) remove_tree(work);
-    else if (work && keep) printf("build root kept %s\n", work);
+    /* a kept root was not created here when the caller named one, so report it */
+    if (work && keep) printf("build root kept %s\n", own_work ? own_work : "(caller)");
+    else if (work && !result) remove_tree(work);
     free(requirements);
     payload_free(&payload);
     run_paths_free(&paths);

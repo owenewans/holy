@@ -310,6 +310,34 @@ SPLIT
         assert "extra" not in main_meta["HOLY/files"]
         assert "extra" in extra_meta["HOLY/files"]
         assert "main" not in extra_meta["HOLY/files"]
+
+        # a build without --work keeps its private root for the whole run
+        run("build", root / "split.recipe", "--output", root / "implicit-out", "--yes")
+        implicit, _ = read_metadata(root / "implicit-out" /
+                                    "split-demo--noarch--nolibc.holy")
+        assert "main" in implicit["HOLY/files"]
+        write(root / "keep.recipe", """format holy-recipe-1
+name keep-demo
+version 1
+release 1
+arch noarch
+libc nolibc
+output keep-demo runtime
+step package /bin/sh <<PACKAGE
+printf 'kept\\n' > "$HOLY_DEST/kept"
+PACKAGE
+""")
+        kept = run("build", root / "keep.recipe", "--output", root / "keep-out",
+                   "--yes", "--keep")
+        root_path = Path(kept.split("build root kept ")[1].split()[0])
+        assert root_path.is_dir() and (root_path / "dest").is_dir()
+        # a root named by --work belongs to the caller, so it survives either way
+        named = root / "named-work"
+        named.mkdir()
+        kept = run("build", root / "keep.recipe", "--output", root / "keep-out-2",
+                   "--work", named, "--yes", "--keep")
+        assert "build root kept (caller)" in kept
+        assert named.is_dir()
         write(root / "bad-split.recipe", """format holy-recipe-1
 name split-bad
 version 1

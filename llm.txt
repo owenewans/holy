@@ -3716,7 +3716,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-recipe.5 source=holy version=development sha256=ee9a500e099a73df1ab0ebc64a37cbc79511aa6c2888b7d00f0b6066cced002f
+holy-recipe.5 source=holy version=development sha256=d49f7246418230b88fce54efd84cbb712cf370b13b991b2da63c7a59dff5ae10
 HOLY-RECIPE(5)		       Holy package format		  HOLY-RECIPE(5)
 
 NAME
@@ -3826,7 +3826,9 @@ BUILD
 
      --work selects an existing empty build root; without it a private directory
      under /tmp is created and removed after a successful build. --keep	 retains
-     it and prints its path. --jobs sets HOLY_JOBS. A recipe phase step is shown
+     a	root  the  manager created and prints its path; with --work the root al-
+     ready belongs to the caller and is never removed, so the printed line names
+     the caller instead. --jobs sets HOLY_JOBS. A recipe  phase	 step  is  shown
      with  its interpreter, argv, working directory, uid and full body before it
      runs; on a terminal the operator answers per step, where  a  accepts  every
      remaining	step.  Without a terminal and without --yes the build stops with
