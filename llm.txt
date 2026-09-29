@@ -3716,7 +3716,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-recipe.5 source=holy version=development sha256=0ce13fdd667bf7d0f26a108c7aa313465ffac750db2b8b6c5d5f6112dab15310
+holy-recipe.5 source=holy version=development sha256=c6bcd73ef0eac13e94601acb7165593e4c65996d68db94367e9d064e5d3b9697
 HOLY-RECIPE(5)		       Holy package format		  HOLY-RECIPE(5)
 
 NAME
@@ -3761,10 +3761,13 @@ DESCRIPTION
      Required  keys  are format, name, version, release, arch, libc and at least
      one output. format must be holy-recipe-1. A repeated scalar key is an error
      with its line number. Unknown keys are errors; keys with the x- prefix  are
-     preserved	in  the produced HOLY/meta. A source may be an https URL, an ab-
-     solute path or a path relative to the recipe file. A network  source  needs
-     source-sha256; a local source with source-sha256 is verified before use and
-     a mismatch is an error.
+     preserved in the produced HOLY/meta as one key with its words rejoined into
+     a	single	quoted	value, since HOLY/meta records one key and one value per
+     line. A source may be an https URL, an absolute path or a path relative  to
+     the  recipe file. A network source needs source-sha256; a local source with
+     source-sha256 is verified before use and a mismatch is an error. An archive
+     source is extracted as a compressed tar when libarchive recognizes it,  and
+     a plain file is placed unchanged.
 
 OUTPUTS
      output  NAME KIND declares one produced artifact. KIND accepts runtime, de-

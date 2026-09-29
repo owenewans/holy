@@ -43,9 +43,12 @@ phase.
 Required keys are format, name, version, release, arch, libc and at least one
 output. format must be holy-recipe-1. A repeated scalar key is an error with its
 line number. Unknown keys are errors; keys with the x- prefix are preserved in
-the produced HOLY/meta. A source may be an https URL, an absolute path or a
-path relative to the recipe file. A network source needs source-sha256; a local
-source with source-sha256 is verified before use and a mismatch is an error.
+the produced HOLY/meta as one key with its words rejoined into a single quoted
+value, since HOLY/meta records one key and one value per line. A source may be an
+https URL, an absolute path or a path relative to the recipe file. A network
+source needs source-sha256; a local source with source-sha256 is verified before
+use and a mismatch is an error. An archive source is extracted as a compressed
+tar when libarchive recognizes it, and a plain file is placed unchanged.
 .SH OUTPUTS
 output NAME KIND declares one produced artifact. KIND accepts runtime, devel,
 docs, debug and metapackage. split OUTPUT GLOB assigns payload paths to that
