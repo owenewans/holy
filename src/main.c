@@ -1826,7 +1826,7 @@ int main(int argc, char **argv)
             if (!strcmp(base, "APKBUILD")) return holy_convert_aports(argv[2], argv[4], argv[6]);
             return holy_convert_pkgbuild(argv[2], argv[4], argv[6]);
         }
-        fputs("usage: holypkg convert PKGBUILD|TEMPLATE --source NAME --output NEW_DIRECTORY\n",
+        fputs("usage: holypkg convert PKGBUILD|APKBUILD|TEMPLATE --source NAME --output NEW_DIRECTORY\n",
               stderr);
         return 2;
     }
