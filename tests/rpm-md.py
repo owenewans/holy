@@ -26,15 +26,23 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def metadata(package, href):
-    primary = (f'''<?xml version="1.0"?>
-<metadata xmlns="http://linux.duke.edu/metadata/common" packages="1">
-  <package type="rpm"><name>holy-rpm-fixture</name><arch>noarch</arch>
-    <version epoch="0" ver="1.0" rel="1"/>
+def metadata(entries):
+    body = []
+    for name, evr, arch, package, href, provides in entries:
+        version = f'<version epoch="{evr[0]}" ver="{evr[1]}" rel="{evr[2]}"/>'
+        offered = "".join(f'<rpm:entry name="{item}"/>' for item in provides)
+        section = f"<rpm:provides>{offered}</rpm:provides>" if offered else ""
+        body.append(f'''  <package type="rpm"><name>{name}</name><arch>{arch}</arch>
+    {version}
     <checksum type="sha256" pkgid="YES">{sha(package)}</checksum>
     <size package="{len(package)}"/>
     <location href="{href}"/>
-  </package>
+    {section}
+  </package>''')
+    primary = (f'''<?xml version="1.0"?>
+<metadata xmlns="http://linux.duke.edu/metadata/common"
+          xmlns:rpm="http://linux.duke.edu/metadata/rpm" packages="{len(entries)}">
+{chr(10).join(body)}
 </metadata>''').encode()
     packed = gzip.compress(primary, mtime=0)
     repomd = (f'''<?xml version="1.0"?>
@@ -57,13 +65,21 @@ def main():
         root = Path(scratch)
         (root / "SPECS").mkdir()
         package = module.build(root, 4).read_bytes()
+        provider = module.build_provider(root, "1.3").read_bytes()
         serve = root / "serve"
         (serve / "repodata").mkdir(parents=True)
         (serve / "Packages").mkdir()
         filename = "holy-rpm-fixture-1.0-1.noarch.rpm"
         href = "Packages/" + filename
         (serve / href).write_bytes(package)
-        repomd, primary = metadata(package, href)
+        provider_href = "Packages/holy-rpm-provider-1.3-1.noarch.rpm"
+        (serve / provider_href).write_bytes(provider)
+        repomd, primary = metadata([
+            ("holy-rpm-fixture", ("0", "1.0", "1"), "noarch", package, href,
+             ["holy-rpm-fixture", "sample-lib"]),
+            ("holy-rpm-provider", ("0", "1.3", "1"), "noarch", provider,
+             provider_href, ["holy-rpm-provider", "sample-lib"]),
+        ])
         (serve / "repodata/repomd.xml").write_bytes(repomd)
         (serve / "repodata/primary.xml.gz").write_bytes(primary)
         subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
@@ -96,6 +112,13 @@ def main():
                 "--source", "fixture", "--base", base, "--output", catalog)
             assert "holy-rpm-fixture 1.0-1 noarch" in run("rpm", "search", "fixture", "--catalog", catalog)
             assert sha(package) in run("rpm", "info", "holy-rpm-fixture", "--catalog", catalog)
+            # exact capability lookup over the primary provides index
+            listed = run("rpm", "providers", "sample-lib", "--catalog", catalog)
+            assert "candidate holy-rpm-fixture 1.0-1 noarch" in listed
+            assert "candidate holy-rpm-provider 1.3-1 noarch" in listed
+            assert "listed 2 candidates" in listed
+            assert "listed 0 candidates" in run("rpm", "providers", "libabsent.so.1",
+                                                "--catalog", catalog)
             fetched = root / "fetched"
             run("rpm", "fetch", "holy-rpm-fixture", "1.0-1", "noarch", "--catalog",
                 catalog, "--output", fetched, "--ca-file", root / "cert.pem", "--import")
@@ -127,6 +150,8 @@ def main():
                 "--root", target, "--ca-file", root / "cert.pem")
             assert "holy-rpm-fixture 1.0-1 noarch" in run(
                 "search", "fixture", "--source", "fixture", "--root", target)
+            assert "candidate holy-rpm-provider 1.3-1 noarch" in run(
+                "rpm", "providers", "sample-lib", "--source", "fixture", "--root", target)
             assert sha(package) in run("info", "fixture:holy-rpm-fixture", "--root", target)
             bound = root / "bound-fetch"
             run("fetch", "fixture:holy-rpm-fixture", "--version", "1.0-1",

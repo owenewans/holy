@@ -1,4 +1,4 @@
-holy.conf.5 source=holy version=development sha256=31972aecc93235a67694a648f820c69221b3b5a500ec2b97f036144a11bf8bb0
+holy.conf.5 source=holy version=development sha256=e4a579af5be8f10bddb18a78414b1aaaacf3a8b6ed5198cb5d19ccede91b7706
 HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
 
 NAME
@@ -138,19 +138,19 @@ SOURCE IDENTITIES
      no repo entries. The base is the repository root that  serves  repodata/re-
      pomd.xml.	holypkg sync RPM_MD_SOURCE takes an explicit repomd --sha256 pin
      and records the source-id in the catalog it writes. No repository signature
-     is checked, so trust require is not available for this backend.  Query  and
-     fetch select the source by alias and recheck the registered url and source-
-     id against the stored catalog.
+     is checked, so trust require is not available for this backend.  Query, ca-
+     pability lookup and fetch select the source by alias and recheck the regis-
+     tered url and source-id against the stored catalog.
 
      A registered XBPS source uses type xbps and one url HTTPS_BASE/. public-key
-     points  to	 an  RSA PEM public key; source plan freezes the SHA-256 finger-
-     print of its public-key encoding. trust require needs that key. xbps  sync-
+     points to an RSA PEM public key; source plan freezes  the	SHA-256	 finger-
+     print  of its public-key encoding. trust require needs that key. xbps sync-
      source checks the selected key against the registry and the index metadata.
-     It	 also  requires	 an  explicit repodata SHA-256 pin. Source-aware queries
-     check the catalog's source-id, URL and recorded key fingerprint. Fetch  re-
-     quires  the  same	key file and verifies the package .sig2 signature. sync-
-     source also binds the catalog's conversion digest under  the  target  data-
-     base;  later  queries can select that binding by source and index architec-
+     It also requires an explicit repodata  SHA-256  pin.  Source-aware	 queries
+     check  the catalog's source-id, URL and recorded key fingerprint. Fetch re-
+     quires the same key file and verifies the package	.sig2  signature.  sync-
+     source  also  binds  the catalog's conversion digest under the target data-
+     base; later queries can select that binding by source and	index  architec-
      ture.
 
 Holy				 September 2026			    HOLY.CONF(5)
@@ -1124,7 +1124,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=3e0bcdafc8fcc8c680e4ecb9699e09803bed043f92efbd0e4a7c0aa04917c0ce
+holypkg.8 source=holy version=development sha256=91cfc2cc78eecbbb34df6b8840ecbf3d383876ac293bc4c640a419ee72897933
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1380,13 +1380,19 @@ DESCRIPTION
      age name, epoch, version, release, architecture, archive SHA-256, size  and
      repository	 href.	 rpm  sync  retrieves repomd.xml and the primary archive
      over HTTPS with the same required hash, then  converts  them.  The	 catalog
-     stores  that normalized row set; file-index coverage is unavailable and de-
-     pendency coverage is partial, because primary provides entries are not  yet
-     indexed. Search and info read the catalog after rechecking the repomd, pri-
-     mary and catalog digests. rpm fetch selects an exact name/EVR/architecture,
-     downloads	the archive, checks size and SHA-256, and can import it with the
-     same converter as --format	 rpm.  The  standalone	index/sync  source  name
-     records provenance but does not register a source-id.
+     stores that normalized row set.  The converter also builds a digest-checked
+     capabilities  index  from	the primary.xml rpm:provides entries. File-index
+     coverage is unavailable; dependency coverage stays	 partial  because  file-
+     based  requirements need payload scan. Search and info read the catalog af-
+     ter rechecking the repomd, primary, catalog and capabilities  digests.  rpm
+     providers CAPABILITY returns exact, source-attributed candidate hints with-
+     out  downloading  every archive. The claim remains unverified until the se-
+     lected payload is imported and its ELF files are checked. An  absent  match
+     means  no	declared hint in this index, not proof that the source lacks the
+     capability. rpm fetch selects an exact name/EVR/architecture, downloads the
+     archive, checks size and SHA-256, and can import it with the same converter
+     as --format rpm. The standalone index/sync source name  records  provenance
+     but does not register a source-id.
 
      A	registered  RPM-MD  source  uses  type	rpm-md	and one url HTTPS_BASE/.
      holypkg sync  RPM_MD_SOURCE  requires  an	explicit  repomd  --sha256  pin,

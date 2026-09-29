@@ -298,13 +298,19 @@ explicit SHA-256 of repomd.xml. The parser accepts only the primary data type,
 one sha256 checksum and one relative location. It records package name, epoch,
 version, release, architecture, archive SHA-256, size and repository href.
 rpm sync retrieves repomd.xml and the primary archive over HTTPS with the same
-required hash, then converts them. The catalog stores that normalized row set;
-file-index coverage is unavailable and dependency coverage is partial, because
-primary provides entries are not yet indexed. Search and info read the catalog
-after rechecking the repomd, primary and catalog digests. rpm fetch selects an
-exact name/EVR/architecture, downloads the archive, checks size and SHA-256, and
-can import it with the same converter as --format rpm. The standalone
-index/sync source name records provenance but does not register a source-id.
+required hash, then converts them. The catalog stores that normalized row set.
+The converter also builds a digest-checked capabilities index from the
+primary.xml rpm:provides entries. File-index coverage is unavailable;
+dependency coverage stays partial because file-based requirements need payload
+scan. Search and info read the catalog after rechecking the repomd, primary,
+catalog and capabilities digests. rpm providers CAPABILITY returns exact,
+source-attributed candidate hints without downloading every archive. The claim
+remains unverified until the selected payload is imported and its ELF files are
+checked. An absent match means no declared hint in this index, not proof that
+the source lacks the capability. rpm fetch selects an exact name/EVR/architecture,
+downloads the archive, checks size and SHA-256, and can import it with the same
+converter as --format rpm. The standalone index/sync source name records
+provenance but does not register a source-id.
 .PP
 A registered RPM-MD source uses type rpm-md and one url HTTPS_BASE/. holypkg
 sync RPM_MD_SOURCE requires an explicit repomd --sha256 pin, records the

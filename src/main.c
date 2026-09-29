@@ -1359,6 +1359,16 @@ int main(int argc, char **argv)
         if (argc == 6 && (!strcmp(argv[2], "search") || !strcmp(argv[2], "info")) &&
             !strcmp(argv[4], "--catalog"))
             return holy_rpm_md_query(argv[5], argv[3], !strcmp(argv[2], "info"));
+        if (argc == 6 && !strcmp(argv[2], "providers") && !strcmp(argv[4], "--catalog"))
+            return holy_rpm_md_providers(argv[5], argv[3]);
+        if (argc == 8 && !strcmp(argv[2], "providers") &&
+            !strcmp(argv[4], "--source") && !strcmp(argv[6], "--root")) {
+            char *catalog = NULL;
+            int result = holy_rpm_md_catalog_path(argv[7], argv[5], &catalog);
+            if (!result) result = holy_rpm_md_providers(catalog, argv[3]);
+            free(catalog);
+            return result;
+        }
         if (argc >= 10 && argc <= 13 && !strcmp(argv[2], "fetch") &&
             !strcmp(argv[6], "--catalog") && !strcmp(argv[8], "--output")) {
             const char *ca_file = NULL;
@@ -1372,7 +1382,7 @@ int main(int argc, char **argv)
             if (i == argc) return holy_rpm_md_fetch(argv[7], argv[3], argv[4], argv[5],
                                                       argv[9], ca_file, imported);
         }
-        fputs("usage: holypkg rpm index REPOMD PRIMARY --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY | rpm sync HTTPS_BASE/ --sha256 HASH --source NAME --output NEW_DIRECTORY [--ca-file FILE] | rpm search|info QUERY --catalog DIRECTORY | rpm fetch NAME EVR ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--import]\n", stderr);
+        fputs("usage: holypkg rpm index REPOMD PRIMARY --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY | rpm sync HTTPS_BASE/ --sha256 HASH --source NAME --output NEW_DIRECTORY [--ca-file FILE] | rpm search|info QUERY --catalog DIRECTORY | rpm providers CAPABILITY --catalog DIRECTORY | rpm providers CAPABILITY --source ALIAS --root DIRECTORY | rpm fetch NAME EVR ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--import]\n", stderr);
         return 2;
     }
     if (argc > 2 && !strcmp(argv[1], "apt")) {

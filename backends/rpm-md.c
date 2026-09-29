@@ -12,6 +12,8 @@ int holy_rpm_md_sync(const char *a, const char *b, const char *c, const char *d,
 { (void)a; (void)b; (void)c; (void)d; (void)e; (void)f; return 6; }
 int holy_rpm_md_query(const char *a, const char *b, int c)
 { (void)a; (void)b; (void)c; return 6; }
+int holy_rpm_md_providers(const char *a, const char *b)
+{ (void)a; (void)b; return 6; }
 int holy_rpm_md_fetch(const char *a, const char *b, const char *c, const char *d,
                       const char *e, const char *f, int g)
 { (void)a; (void)b; (void)c; (void)d; (void)e; (void)f; (void)g; return 6; }
@@ -47,12 +49,24 @@ int holy_rpm_md_catalog_path(const char *a, const char *b, char **c)
 struct rpmmd_row {
     char name[256], evr[256], arch[64], hash[65], href[1024];
     unsigned long long size;
+    char **provides;
+    size_t provide_count;
 };
+
+/* rpm declares capabilities such as libfoo.so.1(N) or plain names. */
+static int provide_label(const char *value)
+{
+    const unsigned char *p = (const unsigned char *)value;
+    size_t length;
+    if (!p || !(length = strlen(value)) || length > 255) return 0;
+    for (; *p; ++p) if (*p < 33 || *p > 126) return 0;
+    return 1;
+}
 
 struct rpmmd_catalog {
     FILE *file;
     char source[256], base[2048], repomd[65], primary[65], catalog[65];
-    char source_id[65];
+    char capabilities[65], source_id[65];
 };
 
 static int digest(const char *value)
@@ -159,6 +173,13 @@ static int element(xmlTextReaderPtr reader, const char *name)
     return current && !xmlStrcmp(current, (const xmlChar *)name);
 }
 
+/* primary metadata carries capability entries in the rpm namespace. */
+static int rpm_element(xmlTextReaderPtr reader)
+{
+    const xmlChar *prefix = xmlTextReaderConstPrefix(reader);
+    return prefix && !xmlStrcmp(prefix, (const xmlChar *)"rpm");
+}
+
 static int contents(xmlTextReaderPtr reader, char *out, size_t capacity)
 {
     xmlChar *value = xmlTextReaderReadString(reader);
@@ -239,13 +260,69 @@ static int row_order(const void *a, const void *b)
     return result;
 }
 
+struct rpmmd_capability {
+    const char *provides;
+    const struct rpmmd_row *row;
+};
+
+static int capability_order(const void *a, const void *b)
+{
+    const struct rpmmd_capability *left = a, *right = b;
+    int result = strcmp(left->provides, right->provides);
+    return result ? result : row_order(left->row, right->row);
+}
+
+static int write_capabilities(int dir, const struct rpmmd_row *rows, size_t count,
+                              char output[65])
+{
+    struct rpmmd_capability *caps = NULL;
+    FILE *stream = NULL;
+    size_t total = 0, used = 0, i, j;
+    int fd = -1, ok = 0;
+    for (i = 0; i < count; ++i) {
+        if (rows[i].provide_count > (size_t)-1 - total) return 0;
+        total += rows[i].provide_count;
+    }
+    caps = calloc(total ? total : 1, sizeof *caps);
+    if (!caps) return 0;
+    for (i = 0; i < count; ++i)
+        for (j = 0; j < rows[i].provide_count; ++j) {
+            caps[used].provides = rows[i].provides[j];
+            caps[used++].row = &rows[i];
+        }
+    qsort(caps, used, sizeof *caps, capability_order);
+    fd = openat(dir, "capabilities", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0 || !(stream = fdopen(fd, "w"))) goto done;
+    fd = -1;
+    fputs("format holy-rpm-md-capabilities-1\n", stream);
+    for (i = 0; i < used; ++i) {
+        const struct rpmmd_row *row = caps[i].row;
+        if (i && !capability_order(&caps[i-1], &caps[i])) continue;
+        fprintf(stream, "provides %s %s %s %s %s\n", caps[i].provides,
+                row->name, row->evr, row->arch, row->hash);
+    }
+    {
+        int failed = ferror(stream) || fflush(stream) || fsync(fileno(stream));
+        if (fclose(stream)) failed = 1;
+        stream = NULL;
+        if (failed) goto done;
+    }
+    fd = openat(dir, "capabilities", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd >= 0) ok = hash_fd(fd, output);
+done:
+    if (stream) fclose(stream);
+    if (fd >= 0) close(fd);
+    free(caps);
+    return ok;
+}
+
 static int parse_primary(FILE *primary, struct rpmmd_row **result, size_t *count)
 {
     xmlTextReaderPtr reader;
     struct rpmmd_row *rows = NULL, row = {0};
     size_t used = 0, capacity = 0;
     unsigned long long declared = 0;
-    int fd = dup(fileno(primary)), step, root = 0, in_package = 0, ok = 0;
+    int fd = dup(fileno(primary)), step, root = 0, in_package = 0, in_provides = 0, ok = 0;
     if (fd < 0) return 0;
     reader = xmlReaderForFd(fd, NULL, NULL, XML_PARSE_NONET | XML_PARSE_COMPACT |
                            XML_PARSE_NOERROR | XML_PARSE_NOWARNING);
@@ -298,7 +375,24 @@ static int parse_primary(FILE *primary, struct rpmmd_row **result, size_t *count
                     !number(size, &row.size)) goto done;
             } else if (element(reader, "location")) {
                 if (row.href[0] || !attr(reader, "href", row.href, sizeof row.href)) goto done;
+            } else if (element(reader, "provides") && rpm_element(reader)) {
+                in_provides = 1;
             }
+        } else if (in_package && in_provides && type == XML_READER_TYPE_ELEMENT &&
+                   element(reader, "entry") && rpm_element(reader)) {
+            char capability[256];
+            char **grown;
+            if (row.provide_count >= 4096 || !attr(reader, "name", capability, sizeof capability) ||
+                !provide_label(capability)) goto done;
+            grown = realloc(row.provides, (row.provide_count + 1) * sizeof *grown);
+            if (!grown) goto done;
+            row.provides = grown;
+            row.provides[row.provide_count] = strdup(capability);
+            if (!row.provides[row.provide_count]) goto done;
+            ++row.provide_count;
+        } else if (in_package && type == XML_READER_TYPE_END_ELEMENT && depth == 2 &&
+                   element(reader, "provides") && rpm_element(reader)) {
+            in_provides = 0;
         } else if (in_package && type == XML_READER_TYPE_END_ELEMENT && depth == 1 &&
                    element(reader, "package")) {
             struct rpmmd_row *grown;
@@ -312,16 +406,35 @@ static int parse_primary(FILE *primary, struct rpmmd_row **result, size_t *count
                 rows = grown; capacity = next;
             }
             rows[used++] = row;
+            memset(&row, 0, sizeof row);
             in_package = 0;
         }
     }
-    if (step || root != 1 || in_package || used != declared) goto done;
+    if (step || root != 1 || in_package || in_provides || used != declared) goto done;
     qsort(rows, used, sizeof *rows, row_order);
-    for (size_t i = 1; i < used; ++i) if (!row_order(&rows[i-1], &rows[i])) goto done;
+    for (size_t i = 1; i < used; ++i)
+        if (!row_order(&rows[i-1], &rows[i])) {
+            for (i = 0; i < used; ++i) {
+                size_t j;
+                for (j = 0; j < rows[i].provide_count; ++j) free(rows[i].provides[j]);
+                free(rows[i].provides);
+            }
+            free(rows);
+            return 0;
+        }
     *result = rows; *count = used; rows = NULL; ok = 1;
 done:
     xmlFreeTextReader(reader);
-    free(rows);
+    if (rows) {
+        size_t i, j;
+        for (i = 0; i < used; ++i) {
+            for (j = 0; j < rows[i].provide_count; ++j) free(rows[i].provides[j]);
+            free(rows[i].provides);
+        }
+        free(rows);
+    }
+    for (size_t j = 0; j < row.provide_count; ++j) free(row.provides[j]);
+    free(row.provides);
     return ok;
 }
 
@@ -362,10 +475,11 @@ int holy_rpm_md_index(const char *repomd, const char *primary, const char *expec
     struct rpmmd_row *rows = NULL;
     struct stat st;
     char href[1024] = {0}, primary_hash[65] = {0}, actual[65], catalog_hash[65];
+    char capabilities_hash[65] = {0};
     char staged[70], *repomd_path = NULL, *primary_path = NULL, *catalog_path = NULL;
     char *test_url = NULL;
     FILE *expanded = NULL, *catalog = NULL, *record = NULL;
-    size_t count = 0, i;
+    size_t count = 0, i, provides = 0;
     int dir = -1, result = 1;
     if (!repomd || !primary || !expected || !digest(expected) ||
         !source || !label(source, 256) || !strcmp(source, "local") ||
@@ -408,16 +522,19 @@ int holy_rpm_md_index(const char *repomd, const char *primary, const char *expec
     if (fclose(catalog)) { catalog = NULL; goto done; }
     catalog = NULL;
     if (!hash_file(catalog_path, catalog_hash, 256 * 1024 * 1024)) goto done;
+    if (!write_capabilities(dir, rows, count, capabilities_hash)) goto done;
+    for (i = 0; i < count; ++i) provides += rows[i].provide_count;
     {
         int fd = openat(dir, "conversion", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
         if (fd < 0) goto done;
         record = fdopen(fd, "w");
         if (!record) { close(fd); goto done; }
     }
-    fprintf(record, "format holy-rpm-md-index-1\nsource %s\nbase %s\nrepomd-sha256 %s\nprimary-sha256 %s\ncatalog-sha256 %s\n",
-            source, base, expected, primary_hash, catalog_hash);
+    fprintf(record, "format holy-rpm-md-index-1\nsource %s\nbase %s\nrepomd-sha256 %s\nprimary-sha256 %s\ncatalog-sha256 %s\ncapabilities-sha256 %s\n",
+            source, base, expected, primary_hash, catalog_hash, capabilities_hash);
     if (source_id) fprintf(record, "source-id %s\n", source_id);
-    fprintf(record, "packages %zu\nfile-coverage unavailable\ndependency-coverage partial\nstate complete\n", count);
+    fprintf(record, "packages %zu\nprovides %zu\nfile-coverage unavailable\ndependency-coverage partial\nstate complete\n",
+            count, provides);
     if (ferror(record) || fflush(record) || fsync(fileno(record))) goto done;
     if (fclose(record)) { record = NULL; goto done; }
     record = NULL;
@@ -438,6 +555,7 @@ static int open_catalog(const char *directory, struct rpmmd_catalog *state)
 {
     char *record_path = path_join(directory, "conversion");
     char *catalog_path = path_join(directory, "catalog");
+    char *capabilities_path = path_join(directory, "capabilities");
     char *repomd_path = path_join(directory, "repomd");
     char *primary_path = path_join(directory, "primary");
     char line[4096], actual[65];
@@ -446,7 +564,8 @@ static int open_catalog(const char *directory, struct rpmmd_catalog *state)
     int dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     int fd, complete = 0, ok = 0;
     memset(state, 0, sizeof *state);
-    if (dir < 0 || !record_path || !catalog_path || !repomd_path || !primary_path ||
+    if (dir < 0 || !record_path || !catalog_path || !capabilities_path ||
+        !repomd_path || !primary_path ||
         fstat(dir, &st) || st.st_uid != geteuid() || (st.st_mode & 0022)) goto done;
     fd = openat(dir, "conversion", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0) goto done;
@@ -466,10 +585,14 @@ static int open_catalog(const char *directory, struct rpmmd_catalog *state)
         else if (!strcmp(line, "repomd-sha256")) { target = state->repomd; capacity = sizeof state->repomd; }
         else if (!strcmp(line, "primary-sha256")) { target = state->primary; capacity = sizeof state->primary; }
         else if (!strcmp(line, "catalog-sha256")) { target = state->catalog; capacity = sizeof state->catalog; }
+        else if (!strcmp(line, "capabilities-sha256")) {
+            target = state->capabilities; capacity = sizeof state->capabilities;
+        }
         else if (!strcmp(line, "source-id")) { target = state->source_id; capacity = sizeof state->source_id; }
         else if (!strcmp(line, "state") && value && !strcmp(value, "complete") && !complete) {
             complete = 1; continue;
-        } else if (!strcmp(line, "packages") || !strcmp(line, "file-coverage") ||
+        } else if (!strcmp(line, "packages") || !strcmp(line, "provides") ||
+                   !strcmp(line, "file-coverage") ||
                    !strcmp(line, "dependency-coverage")) continue;
         else goto done;
         if (!value || !*value || strlen(value) >= capacity || target[0]) goto done;
@@ -477,10 +600,13 @@ static int open_catalog(const char *directory, struct rpmmd_catalog *state)
     }
     if (ferror(record) || !complete || !label(state->source, sizeof state->source) ||
         !digest(state->repomd) || !digest(state->primary) || !digest(state->catalog) ||
+        !digest(state->capabilities) ||
         (state->source_id[0] && !digest(state->source_id)) ||
         !hash_file(repomd_path, actual, 16 * 1024 * 1024) || strcmp(actual, state->repomd) ||
         !hash_file(primary_path, actual, 128 * 1024 * 1024) || strcmp(actual, state->primary) ||
-        !hash_file(catalog_path, actual, 256 * 1024 * 1024) || strcmp(actual, state->catalog)) goto done;
+        !hash_file(catalog_path, actual, 256 * 1024 * 1024) || strcmp(actual, state->catalog) ||
+        !hash_file(capabilities_path, actual, 256 * 1024 * 1024) ||
+        strcmp(actual, state->capabilities)) goto done;
     {
         char *url = child_url(state->base, "repodata/repomd.xml");
         if (!url) goto done;
@@ -496,7 +622,8 @@ done:
     if (!ok && state->file) { fclose(state->file); state->file = NULL; }
     if (record) fclose(record);
     if (dir >= 0) close(dir);
-    free(record_path); free(catalog_path); free(repomd_path); free(primary_path);
+    free(record_path); free(catalog_path); free(capabilities_path);
+    free(repomd_path); free(primary_path);
     return ok;
 }
 
@@ -513,6 +640,63 @@ static int next_row(FILE *file, struct rpmmd_row *row)
            holy_rpm_version_valid(row->evr) && label(row->arch, sizeof row->arch) &&
            digest(row->hash) && href_valid(row->href) && row->size > 0 &&
            row->size <= 1024ULL * 1024 * 1024 ? 1 : -1;
+}
+
+/* exact capability lookup; an absent hint is not proof of absence in the source. */
+int holy_rpm_md_providers(const char *directory, const char *capability)
+{
+    struct rpmmd_catalog catalog;
+    struct stat st;
+    char line[1200], actual[65], *matches = NULL;
+    size_t matches_size = 0, count = 0;
+    FILE *input = NULL, *out = NULL;
+    int dir = -1, fd = -1, result = 6;
+    if (!capability || !provide_label(capability) || !open_catalog(directory, &catalog)) return 6;
+    fclose(catalog.file);
+    dir = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    fd = dir < 0 ? -1 : openat(dir, "capabilities", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_uid != geteuid() || (st.st_mode & 0022) ||
+        st.st_size <= 0 || st.st_size > 256LL * 1024 * 1024 ||
+        !hash_fd(fd, actual) || strcmp(actual, catalog.capabilities) ||
+        lseek(fd, 0, SEEK_SET) < 0 || !(input = fdopen(fd, "r"))) goto done;
+    fd = -1;
+    if (!fgets(line, sizeof line, input) ||
+        strcmp(line, "format holy-rpm-md-capabilities-1\n")) goto done;
+    out = open_memstream(&matches, &matches_size);
+    if (!out) { result = 1; goto done; }
+    while (fgets(line, sizeof line, input)) {
+        char found[256], name[256], evr[256], arch[64], hash[65];
+        int end = 0;
+        if (sscanf(line, "provides %255s %255s %255s %63s %64s%n",
+                   found, name, evr, arch, hash, &end) != 5 ||
+            !end || line[end] != '\n' || line[end + 1] ||
+            !provide_label(found) || !label(name, 256) ||
+            !holy_rpm_version_valid(evr) || !label(arch, 64) || !digest(hash)) {
+            result = 2; goto done;
+        }
+        if (strcmp(found, capability)) continue;
+        if (++count > 10000) { result = 6; goto done; }
+        fprintf(out, "candidate %s %s %s %s index-hint\n", name, evr, arch, hash);
+    }
+    {
+        int failed = ferror(input) || ferror(out);
+        if (fclose(out)) failed = 1;
+        out = NULL;
+        if (failed) { result = 1; goto done; }
+    }
+    if (matches_size && fwrite(matches, 1, matches_size, stdout) != matches_size) {
+        result = 1; goto done;
+    }
+    printf("listed %zu candidates coverage partial\n", count);
+    result = 0;
+done:
+    if (out) fclose(out);
+    if (input) fclose(input);
+    if (fd >= 0) close(fd);
+    if (dir >= 0) close(dir);
+    free(matches);
+    return result;
 }
 
 int holy_rpm_md_query(const char *directory, const char *query, int info)
