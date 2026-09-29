@@ -56,7 +56,7 @@ struct recipe_config {
 };
 
 struct recipe_step {
-    char *phase, *tag, *body, *file;
+    char *phase, *tag, *body, *file, *output;
     char **argv;
     size_t argc;
     size_t length;
@@ -127,7 +127,7 @@ static void recipe_free(struct recipe *r)
     free(r->configs);
     for (i = 0; i < r->step_count; ++i) {
         free(r->steps[i].phase); free(r->steps[i].tag); free(r->steps[i].body);
-        free(r->steps[i].file);
+        free(r->steps[i].file); free(r->steps[i].output);
         for (j = 0; j < r->steps[i].argc; ++j) free(r->steps[i].argv[j]);
         free(r->steps[i].argv);
     }
@@ -231,7 +231,7 @@ static int parse_step(struct recipe *recipe, const char *header, size_t length,
                       size_t line)
 {
     char **tokens = NULL;
-    size_t count = 0, i, block = 0;
+    size_t count = 0, i, block = 0, base = 1;
     char *error = NULL;
     struct recipe_step *step, *grown;
     int ok = 0;
@@ -240,15 +240,18 @@ static int parse_step(struct recipe *recipe, const char *header, size_t length,
         free(error);
         return 2;
     }
-    if (count < 4 || (strcmp(tokens[0], "step") && strcmp(tokens[0], "step-file"))) {
+    if (count < 4 || (strcmp(tokens[0], "step") && strcmp(tokens[0], "step-file") &&
+                      strcmp(tokens[0], "split-step"))) {
         holy_tokens_free(tokens, count);
         return problem(file, line, "step needs a phase, an interpreter and <<TAG or a script path");
     }
-    if (phase_index(tokens[1]) < 0) {
+    /* a split step names its output before the phase */
+    if (!strcmp(tokens[0], "split-step")) base = 2;
+    if (phase_index(tokens[base]) < 0) {
         holy_tokens_free(tokens, count);
-        return problem(file, line, "unknown phase %s", tokens[1]);
+        return problem(file, line, "unknown phase %s", tokens[base]);
     }
-    if (!strcmp(tokens[0], "step")) {
+    if (!strcmp(tokens[0], "step") || !strcmp(tokens[0], "split-step")) {
         size_t tag_length = strlen(tokens[count - 1]);
         if (tag_length < 3 || strncmp(tokens[count - 1], "<<", 2)) {
             holy_tokens_free(tokens, count);
@@ -266,8 +269,9 @@ static int parse_step(struct recipe *recipe, const char *header, size_t length,
     step = &recipe->steps[recipe->step_count];
     memset(step, 0, sizeof *step);
     step->line = line;
-    step->phase = strdup(tokens[1]);
-    step->argc = block ? block - 2 : count - 3;
+    step->phase = strdup(tokens[base]);
+    step->argc = block ? block - (base + 1) : count - (base + 2);
+    if (base == 2) step->output = strdup(tokens[1]);
     if (block) {
         step->tag = strdup(tokens[count - 1] + 2);
         step->body = malloc(body_length + 1);
@@ -280,19 +284,21 @@ static int parse_step(struct recipe *recipe, const char *header, size_t length,
         step->file = strdup(tokens[count - 1]);
         if (!step->argc) step->argc = 1;
     }
-    if (!step->phase || (block ? !step->tag || !step->body : !step->file)) goto done;
+    if (!step->phase || (base == 2 ? !step->output : 0) ||
+        (block ? !step->tag || !step->body : !step->file)) goto done;
     if (!step->argc) goto done;
     step->argv = calloc(step->argc + 1, sizeof *step->argv);
     if (!step->argv) goto done;
     for (i = 0; i < step->argc; ++i) {
-        if (block) step->argv[i] = strdup(tokens[i + 2]);
-        else step->argv[i] = strdup(i + 2 < count - 1 ? tokens[i + 2] : tokens[count - 1]);
+        if (block) step->argv[i] = strdup(tokens[i + base + 1]);
+        else step->argv[i] = strdup(i + base + 1 < count - 1 ? tokens[i + base + 1] : tokens[count - 1]);
         if (!step->argv[i]) goto done;
     }
     ok = 1;
 done:
     if (!ok) {
         free(step->phase); free(step->tag); free(step->body); free(step->file);
+        free(step->output);
         for (i = 0; i < step->argc; ++i) free(step->argv[i]);
         free(step->argv);
         memset(step, 0, sizeof *step);
@@ -330,11 +336,12 @@ static int parse_recipe(const char *path, struct recipe *recipe)
         offset += size + 1;
         ++line;
         if (!size || start[0] == '#') continue;
-        if (!strncmp(start, "step ", 5) || !strncmp(start, "step-file ", 10)) {
+        if (!strncmp(start, "step ", 5) || !strncmp(start, "step-file ", 10) ||
+            !strncmp(start, "split-step ", 11)) {
             char *cursor = end + 1, *stop = NULL;
             size_t remaining = length - offset, body = 0;
             char *tag = NULL;
-            if (strncmp(start, "step ", 5)) {
+            if (strncmp(start, "step ", 5) && strncmp(start, "split-step ", 11)) {
                 result = parse_step(recipe, start, size, NULL, 0, path, line);
                 if (result) goto done;
                 continue;
@@ -549,25 +556,37 @@ static int parse_recipe(const char *path, struct recipe *recipe)
             ++*total;
             result = 0;
         } else if (!strncmp(tokens[0], "x-", 2) && count >= 2) {
-            size_t i;
-            size_t used = recipe->extra ? strlen(recipe->extra) : 0;
-            char *text_line = malloc(strlen(tokens[0]) + 2);
-            if (!text_line) { holy_tokens_free(tokens, count); result = 1; goto done; }
-            sprintf(text_line, "%s ", tokens[0]);
+            /* HOLY/meta accepts one key and one value, so the words are rejoined
+               and requoted into a single value, one record per line. */
+            size_t i, used = recipe->extra ? strlen(recipe->extra) : 0, needed = strlen(tokens[0]) + 3;
+            char *record;
+            for (i = 1; i < count; ++i) needed += strlen(tokens[i]) * 2 + 3;
+            record = malloc(needed);
+            if (!record) { holy_tokens_free(tokens, count); result = 1; goto done; }
+            needed = (size_t)sprintf(record, "%s \"", tokens[0]);
             for (i = 1; i < count; ++i) {
-                char *grown = realloc(text_line, strlen(text_line) + strlen(tokens[i]) + 2);
-                if (!grown) { free(text_line); holy_tokens_free(tokens, count); result = 1; goto done; }
-                text_line = grown;
-                strcat(text_line, tokens[i]);
-                strcat(text_line, " ");
+                const unsigned char *p = (const unsigned char *)tokens[i];
+                if (i > 1) record[needed++] = ' ';
+                for (; *p; ++p) {
+                    if (*p == '"' || *p == '\\') record[needed++] = '\\';
+                    else if (*p < 32 || *p >= 127) {
+                        sprintf(record + needed, "\\x%02x", *p);
+                        needed += 4;
+                        continue;
+                    }
+                    record[needed++] = (char)*p;
+                }
             }
+            record[needed++] = '"';
+            record[needed++] = '\n';
+            record[needed] = 0;
             {
-                char *joined_extra = realloc(recipe->extra, used + strlen(text_line) + 1);
-                if (!joined_extra) { free(text_line); holy_tokens_free(tokens, count); result = 1; goto done; }
-                recipe->extra = joined_extra;
-                memcpy(recipe->extra + used, text_line, strlen(text_line) + 1);
+                char *joined = realloc(recipe->extra, used + needed + 1);
+                if (!joined) { free(record); holy_tokens_free(tokens, count); result = 1; goto done; }
+                recipe->extra = joined;
+                memcpy(recipe->extra + used, record, needed + 1);
             }
-            free(text_line);
+            free(record);
             result = 0;
         } else {
             result = problem(path, line, "unknown key %s", tokens[0]);
@@ -629,6 +648,21 @@ static int validate_recipe(struct recipe *recipe, const char *path)
     for (i = 0; i < recipe->depend_count; ++i) {
         if (!recipe->depends[i].name[0]) {
             fprintf(stderr, "holypkg: %s: depend needs a name\n", path);
+            return 2;
+        }
+    }
+    for (i = 0; i < recipe->step_count; ++i) {
+        size_t k;
+        if (!recipe->steps[i].output) continue;
+        for (k = 0; k < recipe->output_count; ++k)
+            if (!strcmp(recipe->outputs[k].name, recipe->steps[i].output)) break;
+        if (k == recipe->output_count) {
+            fprintf(stderr, "holypkg: %s: split-step names an undeclared output %s\n",
+                    path, recipe->steps[i].output);
+            return 2;
+        }
+        if (strcmp(recipe->steps[i].phase, "split")) {
+            fprintf(stderr, "holypkg: %s: split-step must run in the split phase\n", path);
             return 2;
         }
     }
@@ -737,26 +771,32 @@ done:
     return result;
 }
 
+/* creates every missing parent of a path that lies inside the target. */
+static int make_parents(char *path)
+{
+    char *parent = strdup(path), *slash;
+    int result = 0;
+    if (!parent) return 0;
+    for (slash = strchr(parent, '/'); slash; slash = strchr(slash + 1, '/')) {
+        *slash = 0;
+        if (*parent && mkdir(parent, 0700) && errno != EEXIST) goto done;
+        *slash = '/';
+    }
+    result = 1;
+done:
+    free(parent);
+    return result;
+}
+
+/* extracts one tar archive, compressed or not, with a total size bound. */
 static int unpack_archive(const char *archive_path, const char *target)
 {
     struct archive *a = archive_read_new();
-    struct archive_entry *entry;
+    struct archive_entry *entry = NULL;
     char buffer[65536];
-    la_ssize_t got;
+    la_ssize_t copied;
     unsigned long long total = 0;
-    int ok = 0;
-    if (!a) return 0;
-    if (archive_read_support_filter_all(a) != ARCHIVE_OK ||
-        archive_read_support_format_tar(a) != ARCHIVE_OK ||
-        archive_read_support_format_raw(a) != ARCHIVE_OK ||
-        archive_read_open_filename(a, archive_path, 65536) != ARCHIVE_OK) goto done;
-    while ((got = archive_read_data(a, buffer, sizeof buffer)) > 0) {
-        if (total > 1024ULL * 1024 * 1024 - (unsigned long long)got) goto done;
-        total += (unsigned long long)got;
-    }
-    if (got) goto done;
-    archive_read_free(a);
-    a = archive_read_new();
+    int ok = 0, first = 1;
     if (!a) return 0;
     if (archive_read_support_filter_all(a) != ARCHIVE_OK ||
         archive_read_support_format_tar(a) != ARCHIVE_OK ||
@@ -765,33 +805,46 @@ static int unpack_archive(const char *archive_path, const char *target)
         archive_read_free(a);
         return 0;
     }
-    while (archive_read_next_header(a, &entry) == ARCHIVE_OK) {
+    while (first ? 1 : archive_read_next_header(a, &entry) == ARCHIVE_OK) {
         char *path = NULL;
-        const char *name = archive_entry_pathname(entry);
+        const char *name;
         int fd;
+        first = 0;
+        if (!entry) break;
+        name = archive_entry_pathname(entry);
         if (!safe_path(name)) { archive_read_free(a); return 0; }
         path = joined(target, name);
         if (!path) { archive_read_free(a); return 1; }
         if (archive_entry_filetype(entry) == AE_IFDIR) {
-            if (mkdir(path, 0700) && errno != EEXIST) { free(path); archive_read_free(a); return 0; }
+            if (!make_parents(path) || (mkdir(path, 0700) && errno != EEXIST)) {
+                free(path); archive_read_free(a);
+                return 0;
+            }
         } else if (archive_entry_filetype(entry) == AE_IFLNK) {
             const char *link = archive_entry_symlink(entry);
-            if (!link || !safe_path(link) || symlink(link, path)) { free(path); archive_read_free(a); return 0; }
+            if (!link || !safe_path(link) || !make_parents(path) || symlink(link, path)) {
+                free(path); archive_read_free(a);
+                return 0;
+            }
         } else if (archive_entry_filetype(entry) == AE_IFREG) {
-            la_ssize_t copied;
             mode_t mode = archive_entry_perm(entry);
+            if (!make_parents(path)) { free(path); archive_read_free(a); return 0; }
             fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, mode & 0777);
             if (fd < 0) { free(path); archive_read_free(a); return 0; }
-            while ((copied = archive_read_data(a, buffer, sizeof buffer)) > 0)
-                if (write(fd, buffer, (size_t)copied) != (ssize_t)copied) {
-                    close(fd); free(path); archive_read_free(a); return 0;
+            while ((copied = archive_read_data(a, buffer, sizeof buffer)) > 0) {
+                if (total > 1024ULL * 1024 * 1024 - (unsigned long long)copied ||
+                    write(fd, buffer, (size_t)copied) != (ssize_t)copied) {
+                    close(fd); free(path); archive_read_free(a);
+                    return 0;
                 }
+                total += (unsigned long long)copied;
+            }
             if (copied < 0 || close(fd)) { free(path); archive_read_free(a); return 0; }
         }
         free(path);
     }
+    if (archive_errno(a) != 0) { archive_read_free(a); return 0; }
     ok = 1;
-done:
     archive_read_free(a);
     return ok;
 }
@@ -812,7 +865,8 @@ static int write_file(const char *path, const char *body, size_t length, unsigne
 
 static int run_step(const struct recipe_step *step, const char *work, const char *recipe_dir,
                     const struct recipe *recipe, const char *environment, unsigned jobs,
-                    int approve_all, int noninteractive, int *approve_rest)
+                    int approve_all, int noninteractive, int *approve_rest,
+                    const char *split_dest)
 {
     char *script = NULL, *argv[64] = {0};
     char work_buffer[4096], src_buffer[4096], build_buffer[4096], dest_buffer[4096];
@@ -892,6 +946,7 @@ static int run_step(const struct recipe_step *step, const char *work, const char
         setenv("HOLY_BUILD_TARGET", target_buffer, 1);
         setenv("HOLY_HOST_TARGET", target_buffer, 1);
         setenv("HOLY_TARGET", target_buffer, 1);
+        if (split_dest) setenv("HOLY_SPLIT_DEST", split_dest, 1);
         if (library) setenv("LD_LIBRARY_PATH", library, 1);
         if (!strcmp(environment, "clean")) {
             unsetenv("HOME");
@@ -916,6 +971,8 @@ struct payload_entry {
     char *path;
     char *link;
     char *group;
+    char *root;
+    char *owner;
     unsigned int mode;
     unsigned long long size;
     int directory;
@@ -934,6 +991,8 @@ static void payload_free(struct payload *payload)
     for (i = 0; i < payload->count; ++i) {
         free(payload->items[i].path);
         free(payload->items[i].link);
+        free(payload->items[i].root);
+        free(payload->items[i].owner);
     }
     for (i = 0; i < payload->group_count; ++i) free(payload->groups[i]);
     free(payload->items);
@@ -941,8 +1000,8 @@ static void payload_free(struct payload *payload)
 }
 
 static int payload_add(struct payload *payload, const char *path, const char *link,
-                       const char *group, unsigned int mode,
-                       unsigned long long size, int directory)
+                       const char *group, const char *root, const char *owner,
+                       unsigned int mode, unsigned long long size, int directory)
 {
     struct payload_entry *grown = realloc(payload->items, (payload->count + 1) * sizeof *grown);
     if (!grown) return 0;
@@ -951,11 +1010,14 @@ static int payload_add(struct payload *payload, const char *path, const char *li
     grown[payload->count].path = strdup(path);
     grown[payload->count].link = link ? strdup(link) : NULL;
     grown[payload->count].group = group ? strdup(group) : NULL;
+    grown[payload->count].root = strdup(root);
+    grown[payload->count].owner = owner ? strdup(owner) : NULL;
     grown[payload->count].mode = mode;
     grown[payload->count].size = size;
     grown[payload->count].directory = directory;
     if (!grown[payload->count].path || (link && !grown[payload->count].link) ||
-        (group && !grown[payload->count].group)) return 0;
+        !grown[payload->count].root || (group && !grown[payload->count].group) ||
+        (owner && !grown[payload->count].owner)) return 0;
     ++payload->count;
     return 1;
 }
@@ -966,7 +1028,8 @@ static int entry_order(const void *left, const void *right)
                   ((const struct payload_entry *)right)->path);
 }
 
-static int collect_payload(const char *root, const char *relative, struct payload *payload)
+static int collect_payload(const char *root, const char *relative, const char *owner,
+                           struct payload *payload)
 {
     char *path = relative && *relative ? joined(root, relative) : strdup(root);
     DIR *dir;
@@ -988,9 +1051,9 @@ static int collect_payload(const char *root, const char *relative, struct payloa
         if (!child_relative || !child_path) { ok = 0; goto next; }
         if (lstat(child_path, &st)) goto next;
         if (S_ISDIR(st.st_mode)) {
-            if (!payload_add(payload, child_relative, NULL, NULL,
+            if (!payload_add(payload, child_relative, NULL, NULL, root, owner,
                              (unsigned int)(st.st_mode & 07777), 0, 1)) ok = 0;
-            else ok = collect_payload(root, child_relative, payload);
+            else ok = collect_payload(root, child_relative, owner, payload);
         } else if (S_ISLNK(st.st_mode)) {
             char target[4096];
             ssize_t length = readlink(child_path, target, sizeof target - 1);
@@ -999,7 +1062,8 @@ static int collect_payload(const char *root, const char *relative, struct payloa
             if (!safe_path(target)) {
                 fprintf(stderr, "holypkg: unsafe payload symlink %s -> %s\n", child_relative, target);
                 ok = 0;
-            } else if (!payload_add(payload, child_relative, target, NULL, 0777, 0, 0)) ok = 0;
+            } else if (!payload_add(payload, child_relative, target, NULL, root, owner, 0777, 0, 0))
+                ok = 0;
         } else if (S_ISREG(st.st_mode)) {
             const char *group = "noarch-nolibc";
             struct holy_elf_info info;
@@ -1033,7 +1097,7 @@ static int collect_payload(const char *root, const char *relative, struct payloa
             }
             if (ok) {
                 size = (unsigned long long)st.st_size;
-                ok = payload_add(payload, child_relative, NULL, group,
+                ok = payload_add(payload, child_relative, NULL, group, root, owner,
                                  (unsigned int)(st.st_mode & 07777), size, 0);
             }
         }
@@ -1112,6 +1176,13 @@ static const char *output_for(const struct recipe *recipe, const char *path)
     return recipe->output_count ? recipe->outputs[0].name : NULL;
 }
 
+/* a split step owns its whole staging tree, so no pattern may redirect it. */
+static const char *entry_output(const struct recipe *recipe, const struct payload_entry *entry)
+{
+    if (entry->owner) return entry->owner;
+    return output_for(recipe, entry->path);
+}
+
 static void split_group(const char *group, char arch[64], char libc[64])
 {
     char *dash;
@@ -1137,6 +1208,9 @@ static void token(FILE *out, const char *value)
 struct requirement {
     char kind[32], name[256], arch[64], libc[64], relation[16], version[128];
     char evidence[256];
+    /* a payload requirement belongs to the one output and ABI group that carry it. */
+    char scope[512];
+    char group[64];
 };
 
 static int requirement_line(FILE *out, unsigned index, const char *consumer,
@@ -1158,16 +1232,37 @@ static int requirement_line(FILE *out, unsigned index, const char *consumer,
     return ferror(out) ? 0 : 1;
 }
 
-static int hook_digest(const char *dest, const char *relative, char hash[65])
+static int requirement_applies(const struct requirement *item, const char *output_name,
+                               const char *group)
 {
-    char *path = joined(dest, relative);
+    if (item->scope[0] && strcmp(item->scope, output_name)) return 0;
+    if (item->group[0] && group && strcmp(item->group, group)) return 0;
+    return 1;
+}
+
+/* a hook script may live in the main tree or in the staging tree of a split output.
+   returns 1 with a digest, 0 when this output does not carry the script, -1 on error. */
+static int hook_digest(const struct recipe *recipe, const struct payload *payload,
+                       const char *output_name, const char *relative, char hash[65],
+                       int *claimed)
+{
+    char *path = NULL;
     struct stat st;
     int fd = -1, ok = 0;
     unsigned char buffer[65536], digest_bytes[32];
     ssize_t got;
-    size_t used = 0;
+    size_t used = 0, i;
     EVP_MD_CTX *context = NULL;
     unsigned length;
+    *claimed = 0;
+    for (i = 0; i < payload->count; ++i) {
+        const struct payload_entry *entry = &payload->items[i];
+        const char *target = entry->directory ? NULL : entry_output(recipe, entry);
+        if (!target || strcmp(target, output_name) || strcmp(entry->path, relative)) continue;
+        path = joined(entry->root, relative);
+        *claimed = 1;
+        break;
+    }
     if (!path) return 0;
     fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size > 1024 * 1024) goto done;
@@ -1182,6 +1277,7 @@ done:
     EVP_MD_CTX_free(context);
     if (fd >= 0) close(fd);
     free(path);
+    if (!ok && *claimed) return -1;
     return ok;
 }
 
@@ -1261,7 +1357,7 @@ static int collect_output_groups(const struct recipe *recipe, const char *output
     size_t i, k, used = 0;
     for (i = 0; i < payload->count; ++i) {
         const struct payload_entry *entry = &payload->items[i];
-        const char *target = entry->directory ? NULL : output_for(recipe, entry->path);
+        const char *target = entry->directory ? NULL : entry_output(recipe, entry);
         if (!entry->group || !target || strcmp(target, output_name)) continue;
         for (k = 0; k < used; ++k)
             if (!strcmp(groups[k].name, entry->group)) break;
@@ -1276,7 +1372,7 @@ static int collect_output_groups(const struct recipe *recipe, const char *output
 }
 
 static int emit_output(struct recipe *recipe, const char *group, const char *output_name,
-                       const char *kind, const char *dest, const char *output_directory,
+                       const char *kind, const char *output_directory,
                        unsigned serial, int multi_group, const struct payload *payload,
                        struct requirement *requirements, size_t requirement_count,
                        const char **variants, size_t variant_count)
@@ -1311,7 +1407,7 @@ static int emit_output(struct recipe *recipe, const char *group, const char *out
             const struct payload_entry *entry = &payload->items[i];
             const char *target;
             if (entry->directory) continue;
-            target = output_for(recipe, entry->path);
+            target = entry_output(recipe, entry);
             if (!target || strcmp(target, output_name)) continue;
             if (entry->group && strcmp(entry->group, group)) continue;
             if (!entry->group && multi_group) {
@@ -1319,7 +1415,7 @@ static int emit_output(struct recipe *recipe, const char *group, const char *out
                 printf("ambiguous %s assigned to %s--%s\n", entry->path, output_name, group);
                 continue;
             }
-            if (!copy_into(data, dest, entry)) { free(data); goto done; }
+            if (!copy_into(data, entry->root, entry)) { free(data); goto done; }
             size += entry->size;
             ++included;
         }
@@ -1375,10 +1471,12 @@ static int emit_output(struct recipe *recipe, const char *group, const char *out
     {
         FILE *out = fopen(deps_path, "w");
         if (!out) goto done;
-        for (i = 0; i < requirement_count; ++i)
+        for (i = 0; i < requirement_count; ++i) {
+            if (!requirement_applies(&requirements[i], output_name, group)) continue;
             if (!requirement_line(out, (unsigned)i, output_name, &requirements[i])) {
                 fclose(out); goto done;
             }
+        }
         for (i = 0; i < variant_count; ++i) {
             struct requirement metapackage;
             memset(&metapackage, 0, sizeof metapackage);
@@ -1402,7 +1500,7 @@ static int emit_output(struct recipe *recipe, const char *group, const char *out
         fprintf(out, "provide package \"%s\" any any \"-\" holy\n", output_name);
         for (i = 0; i < payload->count; ++i) {
             const struct payload_entry *entry = &payload->items[i];
-            const char *target = entry->directory ? NULL : output_for(recipe, entry->path);
+            const char *target = entry->directory ? NULL : entry_output(recipe, entry);
             struct holy_elf_info info;
             char *path;
             if (entry->directory || entry->link || !target || strcmp(target, output_name)) continue;
@@ -1422,17 +1520,24 @@ static int emit_output(struct recipe *recipe, const char *group, const char *out
     {
         FILE *out = fopen(hooks_path, "w");
         if (!out) goto done;
+        /* a hook belongs to the output that carries its script */
         for (i = 0; i < recipe->hook_install_count; ++i) {
             char hash[65];
-            if (!hook_digest(dest, recipe->hook_install[i].path, hash)) { fclose(out); goto done; }
-            fprintf(out, "hook postinstall \"%s\" \"%s\" sha256 %s\n",
-                    recipe->hook_install[i].interpreter, recipe->hook_install[i].path, hash);
+            int found = hook_digest(recipe, payload, output_name,
+                                    recipe->hook_install[i].path, hash, &found);
+            if (found < 0) { fclose(out); goto done; }
+            if (found && fprintf(out, "hook postinstall \"%s\" \"%s\" sha256 %s\n",
+                                 recipe->hook_install[i].interpreter,
+                                 recipe->hook_install[i].path, hash) < 0) { fclose(out); goto done; }
         }
         for (i = 0; i < recipe->hook_remove_count; ++i) {
             char hash[65];
-            if (!hook_digest(dest, recipe->hook_remove[i].path, hash)) { fclose(out); goto done; }
-            fprintf(out, "hook preremove \"%s\" \"%s\" sha256 %s\n",
-                    recipe->hook_remove[i].interpreter, recipe->hook_remove[i].path, hash);
+            int found = hook_digest(recipe, payload, output_name,
+                                    recipe->hook_remove[i].path, hash, &found);
+            if (found < 0) { fclose(out); goto done; }
+            if (found && fprintf(out, "hook preremove \"%s\" \"%s\" sha256 %s\n",
+                                 recipe->hook_remove[i].interpreter,
+                                 recipe->hook_remove[i].path, hash) < 0) { fclose(out); goto done; }
         }
         if (fclose(out)) goto done;
     }
@@ -1596,11 +1701,7 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
     for (i = 0; i < recipe.source_count; ++i) {
         char filename[512];
         struct stat st;
-        int has_step = 0;
         snprintf(filename, sizeof filename, "%s", recipe.sources[i].name);
-        for (k = 0; k < recipe.step_count; ++k)
-            if (!strcmp(recipe.steps[k].phase, "unpack")) has_step = 1;
-        if (has_step) continue;
         {
             char *archive_path = joined(paths.sources, filename);
             char *target = joined(paths.src, filename);
@@ -1621,14 +1722,46 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
     for (k = 0; k < sizeof phases / sizeof *phases; ++k) {
         for (i = 0; i < recipe.step_count; ++i) {
             if (strcmp(recipe.steps[i].phase, phases[k])) continue;
+            if (recipe.steps[i].output) continue;
             result = run_step(&recipe.steps[i], work, recipe_dir, &recipe, environment, jobs,
-                              approve_all, noninteractive, &approve_rest);
+                              approve_all, noninteractive, &approve_rest, NULL);
             if (result) goto done;
         }
         if (k == 0 || k == 1) continue;
         if (k == 3 && !recipe.step_count) continue;
     }
-    if (!collect_payload(paths.dest, NULL, &payload)) { result = 1; goto done; }
+    /* a split step fills its own staging tree; the scan then reads that tree */
+    for (i = 0; i < recipe.step_count; ++i) {
+        char *root, *stage;
+        if (!recipe.steps[i].output) continue;
+        root = joined(work, "split");
+        if (!root) { result = 1; goto done; }
+        if (mkdir(root, 0700) && errno != EEXIST) {
+            fprintf(stderr, "holypkg: split staging unavailable: %s\n", root);
+            free(root);
+            result = 1;
+            goto done;
+        }
+        stage = joined(root, recipe.steps[i].output);
+        if (!stage || mkdir(stage, 0700)) {
+            fprintf(stderr, "holypkg: split staging unavailable for %s\n", recipe.steps[i].output);
+            free(root); free(stage);
+            result = 1;
+            goto done;
+        }
+        result = run_step(&recipe.steps[i], work, recipe_dir, &recipe, environment, jobs,
+                          approve_all, noninteractive, &approve_rest, stage);
+        if (!result) result = collect_payload(stage, NULL, recipe.steps[i].output, &payload) ? 0 : 1;
+        if (result) {
+            fprintf(stderr, "holypkg: split step for %s produced no usable tree\n",
+                    recipe.steps[i].output);
+            free(root); free(stage);
+            goto done;
+        }
+        printf("split %s staged %s\n", recipe.steps[i].output, stage);
+        free(root); free(stage);
+    }
+    if (!collect_payload(paths.dest, NULL, NULL, &payload)) { result = 1; goto done; }
     qsort(payload.items, payload.count, sizeof *payload.items, entry_order);
     if (!payload.count) {
         fprintf(stderr, "holypkg: package phase installed no files into the destination\n");
@@ -1640,7 +1773,7 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
         struct holy_elf_info info;
         char *absolute;
         if (entry->directory || entry->link || !entry->group) continue;
-        absolute = joined(paths.dest, entry->path);
+        absolute = joined(entry->root, entry->path);
         if (!absolute) { result = 1; goto done; }
         if (!holy_elf_read(absolute, &info)) {
             for (k = 0; k < info.needed_count; ++k) {
@@ -1669,6 +1802,11 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
                          sizeof requirements[requirement_count].version, "-");
                 snprintf(requirements[requirement_count].evidence,
                          sizeof requirements[requirement_count].evidence, "%s", entry->path);
+                snprintf(requirements[requirement_count].scope,
+                         sizeof requirements[requirement_count].scope, "%s",
+                         entry_output(&recipe, entry));
+                snprintf(requirements[requirement_count].group,
+                         sizeof requirements[requirement_count].group, "%s", entry->group);
                 ++requirement_count;
             }
             holy_elf_free(&info);
@@ -1720,7 +1858,7 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
             }
             if (!strcmp(recipe.outputs[i].kind, "metapackage")) {
                 if (emit_output(&recipe, "noarch-nolibc", recipe.outputs[i].name,
-                                recipe.outputs[i].kind, paths.dest, output, serial,
+                                recipe.outputs[i].kind, output, serial,
                                 group_count > 1, &payload, requirements, requirement_count,
                                 variants, variant_count)) { result = 1; goto done; }
                 ++serial;
@@ -1732,7 +1870,7 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
             }
             for (g = 0; g < (size_t)group_count; ++g) {
                 if (emit_output(&recipe, groups[g].name, recipe.outputs[i].name,
-                                recipe.outputs[i].kind, paths.dest, output, serial,
+                                recipe.outputs[i].kind, output, serial,
                                 group_count > 1, &payload, requirements, requirement_count,
                                 NULL, 0)) {
                     result = 1; goto done;

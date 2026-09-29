@@ -17,3 +17,6 @@
 /tests/deb-version-helper
 /tests/apk-version-helper
 /tests/native-version-helper
+/tests/rpm-version-helper
+/conv/
+/.opencode/

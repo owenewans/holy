@@ -10,9 +10,11 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
-.B holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage --output NEW_DIRECTORY [--public-key FILE (apk only)]
+.B holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild --output NEW_DIRECTORY [--public-key FILE (apk only)]
 .br
 .B holypkg build RECIPE --output NEW_DIRECTORY [--environment host|clean|vm] [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
+.br
+.B holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY
 .br
 .B holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY
 .br
@@ -2526,6 +2528,32 @@ the same extraction and records NAME as unverified provenance. It returns
 status 3 after writing the reviewable output because no native .holy can be
 issued until dependency and path decisions are complete. NAME does not grant
 a registered source identity.
+.SS PKGBUILD conversion
+holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY reads one
+PKGBUILD as text and writes a conversion directory containing the original
+file, a copy of each local source it names, a holy-recipe(5) manifest and a
+conversion report. import INPUT --source NAME --format pkgbuild --output
+NEW_DIRECTORY performs the same conversion. Neither command installs a package,
+builds one, or grants NAME a registered source identity; the report records it
+as provenance.
+.PP
+The converter carries pkgbase, pkgver, pkgrel, pkgdesc, url, license, arch,
+epoch, depends, makedepends, checkdepends, optdepends and backup, expands
+$pkgbase, $pkgname, $pkgver and $pkgrel inside source entries, and turns a
+sha256sums entry into source-sha256. The build, check and package bodies keep
+their original Bash with a prologue that maps the makepkg working variables
+onto the exported Holy paths, so $srcdir is $HOLY_SRC and $pkgdir is
+$HOLY_DEST, or $HOLY_SPLIT_DEST inside a package_NAME split output. An
+install= fragment is copied into the payload and recorded as one postinstall
+hook. provides, conflicts, replaces, noextract, validpgpkeys, options,
+non-SHA-256 checksums and architecture-specific source lists are preserved as
+x- records or reported as unknown. The report names every carried, preserved,
+helper, unknown and changed item with its PKGBUILD line range, and its status
+is native or review-required. A review-required conversion returns 3 with the
+recipe written; a computed version, a missing pkgbase or malformed text returns
+2, and an unreadable input returns 6. The build environment of makepkg itself is
+not reproduced, so a converted recipe reports makepkg.conf and the phase
+environments as unresolved helpers.
 .SS Prepared source set
 add SOURCE:PACKAGE --prepare prints the selected set, source bindings and
 plan hash, then returns success without installing files or writing a

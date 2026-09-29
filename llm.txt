@@ -1124,7 +1124,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=74dd68187338e66baa8eebb5707c27e21a977bb0f0e5967c1b1e3887d57e2b91
+holypkg.8 source=holy version=development sha256=a10e5a5dd1b0b805a272665df49187aba62a8ff7108488af689befb5946b75d0
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1145,10 +1145,11 @@ SYNOPSIS
      [--accept-privileged SHA256] [--root DIRECTORY] [--yes] [--noninteractive]
      holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
      holypkg  import  INPUT   --source	 NAME	--format   pacman|rpm|deb|slack-
-     ware|apk|xbps|appimage   --output	NEW_DIRECTORY  [--public-key  FILE  (apk
-     only)]
+     ware|apk|xbps|appimage|pkgbuild  --output	NEW_DIRECTORY [--public-key FILE
+     (apk only)]
      holypkg build RECIPE --output NEW_DIRECTORY  [--environment  host|clean|vm]
      [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
+     holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY
      holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base
      HTTPS_BASE/ --output NEW_DIRECTORY
      holypkg  apt  sync HTTPS_URL --sha256 HASH --source NAME --base HTTPS_BASE/
@@ -3661,6 +3662,34 @@ RUN INSTALLED COMMAND
      issued  until  dependency	and  path  decisions are complete. NAME does not
      grant a registered source identity.
 
+   PKGBUILD conversion
+     holypkg convert PKGBUILD --source NAME  --output  NEW_DIRECTORY  reads  one
+     PKGBUILD  as text and writes a conversion directory containing the original
+     file, a copy of each local source it names, a holy-recipe(5) manifest and a
+     conversion report. import INPUT --source NAME  --format  pkgbuild	--output
+     NEW_DIRECTORY  performs  the  same	 conversion.  Neither command installs a
+     package, builds one, or grants NAME a registered source identity;	the  re-
+     port records it as provenance.
+
+     The converter carries pkgbase, pkgver, pkgrel, pkgdesc, url, license, arch,
+     epoch,  depends,  makedepends, checkdepends, optdepends and backup, expands
+     $pkgbase, $pkgname, $pkgver and $pkgrel inside source entries, and turns  a
+     sha256sums	 entry	into  source-sha256. The build, check and package bodies
+     keep their original Bash with a prologue  that  maps  the	makepkg	 working
+     variables onto the exported Holy paths, so $srcdir is $HOLY_SRC and $pkgdir
+     is	 $HOLY_DEST,  or $HOLY_SPLIT_DEST inside a package_NAME split output. An
+     install= fragment is copied into the payload and recorded	as  one	 postin-
+     stall  hook.  provides,  conflicts,  replaces, noextract, validpgpkeys, op-
+     tions, non-SHA-256 checksums and  architecture-specific  source  lists  are
+     preserved as x- records or reported as unknown. The report names every car-
+     ried,  preserved,	helper,	 unknown and changed item with its PKGBUILD line
+     range, and its status is native or review-required. A review-required  con-
+     version  returns  3  with the recipe written; a computed version, a missing
+     pkgbase or malformed text returns 2, and an unreadable input returns 6. The
+     build environment of makepkg itself  is  not  reproduced,	so  a  converted
+     recipe  reports  makepkg.conf  and	 the  phase  environments  as unresolved
+     helpers.
+
    Prepared source set
      add SOURCE:PACKAGE --prepare prints the selected set, source  bindings  and
      plan  hash,  then	returns	 success  without  installing files or writing a
@@ -3682,7 +3711,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-recipe.5 source=holy version=development sha256=c6f6c1ccb75f152fc67e811bc500be34cad4ddfc95bc0b01e55f9780b591b09d
+holy-recipe.5 source=holy version=development sha256=c903e8bb197fabc7449e7c8806616814d9034969a03987e77d38c26aa966add0
 HOLY-RECIPE(5)		       Holy package format		  HOLY-RECIPE(5)
 
 NAME
@@ -3709,6 +3738,8 @@ SYNOPSIS
      step PHASE INTERPRETER [ARG...] <<TAG
      TAG
      step-file PHASE INTERPRETER [ARG...] PATH
+     split-step OUTPUT split INTERPRETER [ARG...] <<TAG
+     TAG
 
 DESCRIPTION
      A	Holy recipe is a UTF-8 text manifest plus executable steps. The metadata
@@ -3719,57 +3750,66 @@ DESCRIPTION
      executes  a block. step-file names a script relative to the recipe file in-
      stead of an inline block. An interpreter with arguments is an argv	 record:
      the  step runs those words plus the script path, never a concatenated shell
-     string.
+     string. split-step names the output it fills instead of a phase, so it  may
+     only appear in the split phase.
 
-     Required keys are format, name, version, release, arch, libc and  at  least
+     Required  keys  are format, name, version, release, arch, libc and at least
      one output. format must be holy-recipe-1. A repeated scalar key is an error
-     with  its line number. Unknown keys are errors; keys with the x- prefix are
-     preserved in the produced HOLY/meta. A source may be an https URL,	 an  ab-
-     solute  path  or a path relative to the recipe file. A network source needs
+     with its line number. Unknown keys are errors; keys with the x- prefix  are
+     preserved	in  the produced HOLY/meta. A source may be an https URL, an ab-
+     solute path or a path relative to the recipe file. A network  source  needs
      source-sha256; a local source with source-sha256 is verified before use and
      a mismatch is an error.
 
 OUTPUTS
-     output NAME KIND declares one produced artifact. KIND accepts runtime,  de-
-     vel,  docs,  debug and metapackage. split OUTPUT GLOB assigns payload paths
-     to that output using fnmatch semantics; the first matching	 rule  wins  and
-     unmatched	paths  belong  to the first declared output. Every non-directory
-     payload path belongs to exactly one output, and the build fails when a  de-
+     output  NAME KIND declares one produced artifact. KIND accepts runtime, de-
+     vel, docs, debug and metapackage. split OUTPUT GLOB assigns  payload  paths
+     to	 that  output  using fnmatch semantics; the first matching rule wins and
+     unmatched paths belong to the first declared  output.  Every  non-directory
+     payload  path belongs to exactly one output, and the build fails when a de-
      clared output receives nothing.
 
-     Each  output  is  grouped	by the ABI facts of the files it receives. Files
-     without a recognized ELF class land in  the  noarch-nolibc	 group;	 an  ELF
-     whose  machine  or	 runtime cannot be classified fails the build. A payload
-     mixing   several	ABIs   produces	  one	artifact   per	 group,	   named
-     NAME--ARCH--LIBC.holy.  A	symlink	 or a data file in a multi-ABI output is
-     assigned to the first group of that output and  reported  as  ambiguous.  A
+     split-step OUTPUT fills a private staging tree for that output. It runs af-
+     ter the package phase with HOLY_SPLIT_DEST set to that tree, and every path
+     it creates belongs to OUTPUT. No split pattern may	 redirect  those  paths,
+     and a split step whose staging tree stays empty fails the build. A require-
+     ment  found in a file, and a hook whose script sits in a tree, are recorded
+     only in the output that carries that file.
+
+     Each output is grouped by the ABI facts of the  files  it	receives.  Files
+     without  a	 recognized  ELF  class	 land in the noarch-nolibc group; an ELF
+     whose machine or runtime cannot be classified fails the  build.  A	 payload
+     mixing    several	 ABIs	produces   one	 artifact   per	  group,   named
+     NAME--ARCH--LIBC.holy. A symlink or a data file in a  multi-ABI  output  is
+     assigned  to  the	first  group of that output and reported as ambiguous. A
      metapackage output carries no payload and depends on the produced ABI vari-
      ants of the same build.
 
 CONFIG FLAGS AND HOOKS
      config PATH marks a payload file as config; config PATH mutable marks it as
-     config,mutable.  The packer writes flag none, so build applies the declared
-     flags to the generated manifest. A path outside the payload  is  an  error.
-     hook-install  and	hook-remove record runtime hooks with an absolute inter-
+     config,mutable. The packer writes flag none, so build applies the	declared
+     flags  to	the  generated manifest. A path outside the payload is an error.
+     hook-install and hook-remove record runtime hooks with an	absolute  inter-
      preter and a script path relative to the target root. The script must exist
-     in the built payload: its SHA-256 is recorded in HOLY/hooks,  and	the  in-
+     in	 the  built  payload: its SHA-256 is recorded in HOLY/hooks, and the in-
      staller reads the body from the installed manifest. No hook runs during the
      build.
 
 PHASES
-     Normalized	 phases	 run  in  this order: fetch, unpack, prepare, configure,
-     build, check, package, split. A phase without a  step  is	skipped,  except
-     that  fetch  and  unpack  are  performed by the manager when no step claims
-     them. Each step is a separate  process  with  its	own  working  directory:
-     build,  check,  package  and split start in HOLY_BUILD, the other phases in
+     Normalized phases run in this order:  fetch,  unpack,  prepare,  configure,
+     build,  check,  package,  split.  A phase without a step is skipped, except
+     that fetch and unpack are performed by the	 manager  when	no  step  claims
+     them.  Each  step	is  a  separate	 process with its own working directory:
+     build, check, package and split start in HOLY_BUILD, the  other  phases  in
      HOLY_WORK.
 
-     The manager sets  HOLY_WORK,  HOLY_SRC,  HOLY_BUILD,  HOLY_DEST,  HOLY_OUT,
-     HOLY_ARCH,	 HOLY_LIBC,  HOLY_JOBS,	 HOLY_BUILD_TARGET, HOLY_HOST_TARGET and
-     HOLY_TARGET to absolute paths in the selected build root.	Fetched	 sources
-     live   in	 HOLY_WORK/sources.   An   archive   source  is	 extracted  into
-     HOLY_SRC/NAME; a plain file is placed there unchanged.  A	declared  unpack
-     step replaces the manager unpack.
+     The  manager  sets	 HOLY_WORK,  HOLY_SRC,	HOLY_BUILD, HOLY_DEST, HOLY_OUT,
+     HOLY_ARCH, HOLY_LIBC, HOLY_JOBS,  HOLY_BUILD_TARGET,  HOLY_HOST_TARGET  and
+     HOLY_TARGET  to  absolute paths in the selected build root. Fetched sources
+     live  in  HOLY_WORK/sources.  An	archive	  source   is	extracted   into
+     HOLY_SRC/NAME;  a plain file is placed there unchanged. An unpack step runs
+     after the manager has extracted every source, so it  may  move  or	 reshape
+     that content.
 
 BUILD
      holypkg  build  RECIPE --output NEW_DIRECTORY [--environment host|clean|vm]
@@ -3792,18 +3832,59 @@ BUILD
      missing capability. Git sources, converter evaluation and cross build roots
      are not implemented and are rejected.
 
+CONVERSION
+     holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY  holypkg  im-
+     port PKGBUILD --source NAME --format pkgbuild --output NEW_DIRECTORY
+
+     The  converter  reads  a PKGBUILD as text and writes a conversion directory
+     holding the original file, a copy of every local source it names,	a  holy-
+     recipe-1 manifest and a conversion report. NAME is a source alias without a
+     colon  and is recorded as provenance; it grants no installed source id. The
+     original file is never executed.
+
+     pkgbase, pkgver, pkgrel,  pkgdesc,	 url,  license,	 arch,	epoch,	depends,
+     makedepends,  checkdepends, optdepends and backup are carried. A comparison
+     operator becomes the matching relation: >= ge, <= le, > gt,  <  lt,  =  eq.
+     arch  maps x86_64, x86 to i686, and noarch or any unchanged; any other list
+     needs review.  A source entry has $pkgbase, $pkgname, $pkgver  and	 $pkgrel
+     expanded,	and  a sha256sums entry becomes source-sha256. A local source is
+     copied next to the recipe and its original PKGBUILD line is recorded.
+
+     prepare, build, check and package keep their bodies in Bash, preceded by  a
+     prologue  that rebuilds the makepkg variables from the exported Holy paths:
+     $pkgdir  becomes  $HOLY_DEST,  $srcdir  becomes  $HOLY_SRC,  $startdir  and
+     $builddir	become	$HOLY_BUILD,  and  a $pkgdir inside a split step becomes
+     $HOLY_SPLIT_DEST.	$srcdest, $pkgdest, CFLAGS, CXXFLAGS, CPPFLAGS,	 LDFLAGS
+     and  MAKEFLAGS are redefined only when the environment leaves them empty. A
+     single source is lifted out of its own name directory so that  HOLY_SRC  is
+     the  makepkg  $srcdir.  A	package_NAME function becomes split-step for the
+     output NAME, and install= fragments  are  copied  into  the  payload  under
+     /usr/share/holy  and  recorded  as	 a  postinstall hook, so pre_install and
+     post_install arrive as one hook.
+
+     provides, conflicts and replaces, epoch, groups,  noextract,  validpgpkeys,
+     options,  non-SHA-256  checksums and architecture-specific source lists are
+     preserved as x- records or reported as unknown. The report lists every car-
+     ried, preserved, helper, unknown and changed item with  its  PKGBUILD  line
+     range,  and its status is native or review-required. A review-required con-
+     version returns 3 with the recipe written,	 since	review	is  a  statement
+     about  execution,	not  about  whether the text could be carried. A missing
+     pkgbase, a computed pkgver or pkgrel, or malformed text returns 2;	 an  un-
+     readable input returns 6.
+
 RESULTS
-     Each output artifact is written to the output directory.  Its  manifest  is
-     regenerated  from	the copied payload. HOLY/meta records format, name, ver-
-     sion, release, os, arch, libc, x-version-family  holy,  x-build-target  and
-     installed-size.  HOLY/deps	 carries declared depend records plus one soname
-     requirement per DT_NEEDED entry, each attributed to the file that needs it.
-     HOLY/provides records the package name and the SONAME of every  shared  ob-
-     ject  in  the  payload.  HOLY/origin  records  the recipe inputs with their
-     pinned digests and verification built-locally. HOLY/transform  records  the
-     build  environment	 and the declared build dependencies. The finished .holy
-     is installed by a normal transaction; the build itself never writes to  the
-     target root.
+     Each  output  artifact  is written to the output directory. Its manifest is
+     regenerated from the copied payload. HOLY/meta records format,  name,  ver-
+     sion,  release,  os,  arch, libc, x-version-family holy, x-build-target and
+     installed-size, plus any  x-  record.  HOLY/deps  carries	declared  depend
+     records plus one soname requirement per DT_NEEDED entry, each attributed to
+     the  file	that needs it and written only into the output that carries that
+     file.  HOLY/provides records the package  name  and  the  SONAME  of  every
+     shared  object  in	 the payload. HOLY/origin records the recipe inputs with
+     their pinned digests and verification built-locally. HOLY/transform records
+     the build environment and the declared  build  dependencies.  The	finished
+     .holy  is	installed by a normal transaction; the build itself never writes
+     to the target root.
 
 EXAMPLES
      format holy-recipe-1
@@ -3829,10 +3910,19 @@ EXAMPLES
      make DESTDIR="$HOLY_DEST" PREFIX=/usr install
      PACKAGE
 
+     A second output built from its own staging tree:
+
+     output example runtime
+     output example-doc docs
+     split-step example-doc split /bin/sh <<DOCS
+     mkdir -p "$HOLY_SPLIT_DEST/usr/share/doc/example"
+     cp README "$HOLY_SPLIT_DEST/usr/share/doc/example/README"
+     DOCS
+
 EXIT STATUS
-     0	the build produced every declared output. 1 an operational failure. 2 an
-     invalid recipe or argument. 3 a decision is required. 6 a required artifact
-     or system capability is unavailable.
+     0 the build produced every declared output. 1 an operational failure. 2  an
+     invalid  recipe,  argument or conversion. 3 a decision is required. 6 a re-
+     quired artifact or system capability is unavailable.
 
 SOURCES
      PKGBUILD:	 https://pacman.archlinux.page/PKGBUILD.5.html	 Void	 Manual:

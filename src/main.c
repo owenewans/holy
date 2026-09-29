@@ -28,6 +28,7 @@
 #include "../backends/apt.h"
 #include "../backends/apt-release.h"
 #include "../backends/rpm-md.h"
+#include "../backends/pkgbuild.h"
 #include "recipe.h"
 
 #include <stdio.h>
@@ -1802,12 +1803,20 @@ int main(int argc, char **argv)
             if (!strcmp(argv[6], "apk")) return holy_import_apk(argv[2], argv[4], argv[8], NULL);
             if (!strcmp(argv[6], "xbps")) return holy_import_xbps(argv[2], argv[4], argv[8]);
             if (!strcmp(argv[6], "appimage")) return holy_import_appimage(argv[2], argv[4], argv[8]);
+            if (!strcmp(argv[6], "pkgbuild")) return holy_convert_pkgbuild(argv[2], argv[4], argv[8]);
         }
         if (argc == 11 && !strcmp(argv[3], "--source") && !strcmp(argv[5], "--format") &&
             !strcmp(argv[6], "apk") && !strcmp(argv[7], "--output") &&
             !strcmp(argv[9], "--public-key"))
             return holy_import_apk(argv[2], argv[4], argv[8], argv[10]);
-        fputs("usage: holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage --output DIRECTORY [--public-key FILE (apk only)]\n", stderr);
+        fputs("usage: holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild --output DIRECTORY [--public-key FILE (apk only)]\n", stderr);
+        return 2;
+    }
+
+    if (argc > 1 && !strcmp(argv[1], "convert")) {
+        if (argc == 7 && !strcmp(argv[3], "--source") && !strcmp(argv[5], "--output"))
+            return holy_convert_pkgbuild(argv[2], argv[4], argv[6]);
+        fputs("usage: holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY\n", stderr);
         return 2;
     }
 

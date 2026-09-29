@@ -600,8 +600,18 @@
   build yields a noarch/nolibc document output and separate ABI libraries.
   Requirements come from declared depend records and payload DT_NEEDED entries;
   provides come from payload SONAMEs; config flags and runtime hooks are
-  recorded with the produced digests. Conversion from foreign recipe families,
-  helper environments and the vm build environment remain open.
+  recorded with the produced digests. `split-step` gives one output its own
+  staging tree, so a payload requirement and a hook script are written only into
+  the output that carries their file. The PKGBUILD family converts: identity,
+  dependencies with their comparison relations, source entries with their
+  sha256sums, backup paths and install fragments are carried; the phase bodies
+  keep their Bash with the makepkg variables mapped onto the exported paths;
+  each package_NAME function becomes a split output; and a conversion report
+  lists every carried, preserved, helper, unknown and changed item with its
+  PKGBUILD line range. A fixture converts a real PKGBUILD, builds the produced
+  recipe through the normal engine and installs its split outputs. Aports,
+  xbps-src, SlackBuilds, RPM spec, Debian source, Gentoo, Pacstall, the makepkg
+  build environment and the vm build environment remain open.
 - [ ] Implement Nix closure, Flatpak, Snap, AppImage, Scoop and WinGet imports
   without silently discarding runtime requirements.
   AppImage type 2 inspect/extract now snapshots the original, checks ELF and

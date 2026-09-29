@@ -28,6 +28,9 @@ make check-root
 objcopy, as and ld.
 `make check` includes the internal libsolv fixture. libsolv development files
 must be available through pkg-config; the check fails if they are absent.
+`make check-pkgbuild` converts PKGBUILD fixtures into
+[holy-recipe(5)](man/holy-recipe.5) manifests and builds the results; it needs
+gcc, make and tar.
 `make check-root` exercises package mutations only inside disposable target
 directories. It does not test a booted system.
 `make check-install` exercises [holyinstall(8)](man/holyinstall.8) text menu,
