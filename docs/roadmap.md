@@ -888,7 +888,14 @@
   installer, the Windows integration keys and the bucket update keys are
   dropped and counted. Nothing runs the artifact and no Wine requirement is
   invented, so the import returns decision-required.
-  Nix and WinGet remain open.
+  The closure fixture now proves the shape a Nix closure needs: one shared object
+  package with two application packages that name it by exact path, one owner and
+  several dependents. Removing an application leaves the object and the other
+  application intact, removing the object is refused while an application still
+  needs it, accepting the broken dependents removes it and the check report names
+  the provider that is gone, and restoring the object makes the surviving
+  application whole again.
+  Nix closure import and WinGet remain open.
 - [ ] Implement `holypkg run`, context-specific provider paths, grouped `up --prepare`,
   isolated root/VM trials and full `check` reports.
   The existing run launcher now derives private PATH directories from the

@@ -1730,7 +1730,12 @@ the path to exist in the live rootfs; db check compares actual contents.
 The top-level owner command calls this database lookup for the selected root.
 .PP
 Database rm removes one intact supported installed instance by artifact
-SHA-256. It verifies all listed files before mutation, refuses changed files
+SHA-256. An object package several installed applications depend on has one
+owner and several dependents: removing one application leaves the object and the
+other application untouched, while removing the object itself returns
+decision-required until the caller passes --accept-broken, and db check --all then
+reports the provider that is gone. It verifies all listed files before mutation,
+refuses changed files
 and pending reservations, then writes a removing journal. Before journaling,
 it also checks the other installed manifests for conflicting ownership claims;
 shared directories are allowed. A conflict returns 4 without deleting files.
