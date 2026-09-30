@@ -48,7 +48,9 @@ plan=$(plan_hash)
 test "${#plan}" -eq 64
 grep -qx "selected $app app explicit" "$tmp/out"
 grep -qx "selected $lib lib dependency" "$tmp/out"
-test "$(wc -l < "$tmp/out")" -eq 4
+# a selection where nothing is offered twice states that with one summary line
+grep -qx "set-conflicts generation 0 artifacts 2 capabilities 0 conflicts 0 read-only" "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 5
 test "$(cat "$db/generation")" -eq 0
 test ! -e "$root/usr/share/app"
 expect 0 "$bin" db plan-set "$app" "$unused" "$lib" --root "$root"

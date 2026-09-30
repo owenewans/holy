@@ -1,17 +1,19 @@
-/* a read-only conflict report over the installed set. a set is resolved one
-   requirement at a time, so two installed artifacts can end up offering one
-   capability: two providers of one SONAME, two providers of one package name,
-   two declared owners of one file path, or two private programs of one name,
-   where the run PATH derived from the private trees picks one by sort order. the
-   report names every provider and the reason, and changes nothing. it is the
-   answer to a question the set transaction does not ask, since a set that installs
-   cleanly can still leave an ambiguous name behind. */
+/* a read-only conflict report over the installed set, and the same claim collection
+   over the package archives of a planned set. a set is resolved one requirement at a
+   time, so two artifacts can end up offering one capability: two providers of one
+   SONAME, two providers of one package name, two declared owners of one file path,
+   or two private programs of one name, where the run PATH derived from the private
+   trees picks one by sort order. the report names every provider and the reason, and
+   changes nothing. the set transaction states the same facts about its own selection
+   before it stages a file, since a set that installs cleanly can still leave an
+   ambiguous name behind. */
 
 #define _POSIX_C_SOURCE 200809L
 #include "conflict.h"
 #include "config.h"
 #include "provides.h"
 #include "state.h"
+#include "verify.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -24,60 +26,47 @@
 #define CONFLICT_CLAIMS 1000000
 #define CONFLICT_LENGTH (16 * 1024 * 1024)
 
-struct claim {
-    char *kind;      /* package, soname, file or private-command */
-    char *name;
-    char *arch;
-    char *libc;
-    char digest[65];
-};
-
-struct report {
-    struct claim *claims;
-    size_t count, limit;
-    size_t instances;
-};
-
-static void free_claims(struct report *report)
+void holy_conflict_claims_free(struct holy_conflict_claims *claims)
 {
     size_t i;
-    for (i = 0; i < report->count; ++i) {
-        free(report->claims[i].kind);
-        free(report->claims[i].name);
-        free(report->claims[i].arch);
-        free(report->claims[i].libc);
+    for (i = 0; i < claims->count; ++i) {
+        free(claims->claim[i].kind);
+        free(claims->claim[i].name);
+        free(claims->claim[i].arch);
+        free(claims->claim[i].libc);
     }
-    free(report->claims);
-    memset(report, 0, sizeof *report);
+    free(claims->claim);
+    memset(claims, 0, sizeof *claims);
 }
 
-static int add_claim(struct report *report, const char *kind, const char *name,
-                     const char *arch, const char *libc, const char *digest)
+int holy_conflict_claims_push(struct holy_conflict_claims *claims, const char *kind,
+                              const char *name, const char *arch, const char *libc,
+                              const char *digest)
 {
-    struct claim *grown;
-    if (report->count == report->limit) {
-        size_t next = report->limit ? report->limit * 2 : 256;
+    struct holy_conflict_claim *grown;
+    if (claims->count == claims->limit) {
+        size_t next = claims->limit ? claims->limit * 2 : 256;
         if (next > CONFLICT_CLAIMS) return 0;
-        grown = realloc(report->claims, next * sizeof *grown);
+        grown = realloc(claims->claim, next * sizeof *grown);
         if (!grown) return 0;
-        report->claims = grown;
-        report->limit = next;
+        claims->claim = grown;
+        claims->limit = next;
     }
-    report->claims[report->count].kind = strdup(kind);
-    report->claims[report->count].name = strdup(name);
-    report->claims[report->count].arch = strdup(arch ? arch : "-");
-    report->claims[report->count].libc = strdup(libc ? libc : "-");
-    if (!report->claims[report->count].kind || !report->claims[report->count].name ||
-        !report->claims[report->count].arch || !report->claims[report->count].libc) return 0;
-    memcpy(report->claims[report->count].digest, digest, 65);
-    ++report->count;
+    claims->claim[claims->count].kind = strdup(kind);
+    claims->claim[claims->count].name = strdup(name);
+    claims->claim[claims->count].arch = strdup(arch ? arch : "-");
+    claims->claim[claims->count].libc = strdup(libc ? libc : "-");
+    if (!claims->claim[claims->count].kind || !claims->claim[claims->count].name ||
+        !claims->claim[claims->count].arch || !claims->claim[claims->count].libc) return 0;
+    memcpy(claims->claim[claims->count].digest, digest, 65);
+    ++claims->count;
     return 1;
 }
 
 /* the record read is bound to the digest the visitor supplies, so the provider
    identity comes from the instance rather than from the record itself */
 struct provider_context {
-    struct report *report;
+    struct holy_conflict_claims *claims;
     char digest[65];
 };
 
@@ -88,7 +77,7 @@ static int collect_capability(void *opaque, const char *kind, const char *name,
     struct provider_context *context = opaque;
     (void)version; (void)evidence;
     if (strcmp(kind, "package") && strcmp(kind, "soname") && strcmp(kind, "file")) return 1;
-    return add_claim(context->report, kind, name, arch, libc, context->digest);
+    return holy_conflict_claims_push(context->claims, kind, name, arch, libc, context->digest);
 }
 
 /* a private program is the last component of a private bin directory, which is
@@ -117,7 +106,21 @@ static int private_program(const char *path, char *program, size_t size)
     return 0;
 }
 
-static int collect_files(int files, struct report *report, const char *digest)
+struct private_context {
+    struct holy_conflict_claims *claims;
+    const char *digest;
+};
+
+static int collect_private(void *opaque, const struct holy_manifest_entry *entry)
+{
+    struct private_context *context = opaque;
+    char program[256];
+    if (entry->directory || !private_program(entry->path, program, sizeof program)) return 1;
+    return holy_conflict_claims_push(context->claims, "private-command", program,
+                                     NULL, NULL, context->digest);
+}
+
+static int collect_files(int files, struct holy_conflict_claims *claims, const char *digest)
 {
     struct stat st;
     FILE *stream = NULL;
@@ -144,7 +147,7 @@ static int collect_files(int files, struct report *report, const char *digest)
         free(error);
         if (count && !strcmp(fields[0], "file") && count == 12 &&
             private_program(fields[1], program, sizeof program) &&
-            !add_claim(report, "private-command", program, NULL, NULL, digest)) {
+            !holy_conflict_claims_push(claims, "private-command", program, NULL, NULL, digest)) {
             holy_tokens_free(fields, count); goto done;
         }
         holy_tokens_free(fields, count);
@@ -156,17 +159,30 @@ done:
     return ok;
 }
 
+int holy_conflict_claims_package(struct holy_conflict_claims *claims,
+                                 const char *package, const char *digest)
+{
+    struct private_context private = {claims, digest};
+    struct provider_context provider = {claims, {0}};
+    if (claims->count >= CONFLICT_CLAIMS) return 1;
+    memcpy(provider.digest, digest, 65);
+    if (!holy_provides_visit(package, collect_capability, &provider)) return 0;
+    if (!holy_verify_visit(package, collect_private, &private)) return 0;
+    ++claims->instances;
+    return 1;
+}
+
 static int collect(void *context, int root, int item, const char *digest)
 {
     struct provider_context provider = {context, {0}};
-    struct report *report = context;
+    struct holy_conflict_claims *claims = context;
     int files;
     (void)root;
-    if (report->count >= CONFLICT_CLAIMS) return 1;
+    if (claims->count >= CONFLICT_CLAIMS) return 1;
     memcpy(provider.digest, digest, 65);
     files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (files < 0) return 1;
-    if (!collect_files(files, report, digest)) { close(files); return 1; }
+    if (!collect_files(files, claims, digest)) { close(files); return 1; }
     close(files);
     files = openat(item, "provides", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (files < 0) return 1;
@@ -174,13 +190,13 @@ static int collect(void *context, int root, int item, const char *digest)
         close(files); return 1;
     }
     close(files);
-    ++report->instances;
+    ++claims->instances;
     return 0;
 }
 
 static int compare_claims(const void *left, const void *right)
 {
-    const struct claim *a = left, *b = right;
+    const struct holy_conflict_claim *a = left, *b = right;
     int order = strcmp(a->kind, b->kind);
     if (order) return order;
     order = strcmp(a->name, b->name);
@@ -200,7 +216,7 @@ static void quoted(const char *text, int json)
     putchar('"');
 }
 
-static const char *reason_for(const struct claim *claims, size_t from, size_t to,
+static const char *reason_for(const struct holy_conflict_claim *claims, size_t from, size_t to,
                               int *mixed_abi)
 {
     size_t i;
@@ -216,7 +232,7 @@ static const char *reason_for(const struct claim *claims, size_t from, size_t to
            "duplicate-provider";
 }
 
-static void emit(const struct claim *claims, size_t from, size_t to, int json)
+static void emit(const struct holy_conflict_claim *claims, size_t from, size_t to, int json)
 {
     size_t i;
     int mixed_abi = 0;
@@ -251,15 +267,49 @@ static void emit(const struct claim *claims, size_t from, size_t to, int json)
     }
 }
 
+/* the range of one capability, from a sorted claim list. returns the end offset and
+   sets found when two distinct artifacts offer it. */
+static size_t finding_end(const struct holy_conflict_claims *claims, size_t from, int *found)
+{
+    size_t end = from + 1;
+    while (end < claims->count && !strcmp(claims->claim[end].kind, claims->claim[from].kind) &&
+           !strcmp(claims->claim[end].name, claims->claim[from].name)) ++end;
+    /* one artifact may state a capability twice; only distinct owners collide */
+    *found = end - from > 1 && strcmp(claims->claim[from].digest, claims->claim[from + 1].digest);
+    return end;
+}
+
+size_t holy_conflict_claims_findings(struct holy_conflict_claims *claims)
+{
+    size_t i, findings = 0;
+    if (claims->count) qsort(claims->claim, claims->count, sizeof *claims->claim, compare_claims);
+    for (i = 0; i < claims->count; ) {
+        int found = 0;
+        i = finding_end(claims, i, &found);
+        if (found) ++findings;
+    }
+    return findings;
+}
+
+void holy_conflict_claims_print(const struct holy_conflict_claims *claims, int json)
+{
+    size_t i;
+    for (i = 0; i < claims->count; ) {
+        int found = 0;
+        size_t end = finding_end(claims, i, &found);
+        if (found) emit(claims->claim, i, end, json);
+        i = end;
+    }
+}
+
 int holy_conflict_report(const char *root, int json)
 {
-    struct report report = {0};
-    struct claim *sorted;
-    size_t i, findings = 0;
+    struct holy_conflict_claims claims = {0};
+    size_t findings;
     unsigned long long generation = 0;
     int result;
     if (!root || !*root) return 2;
-    result = holy_state_visit(root, collect, &report, &generation);
+    result = holy_state_visit(root, collect, &claims, &generation);
     if (result) {
         const char *code = result == 5 ? "incomplete-transaction" :
                            result == 6 ? "unavailable-instance-or-graph" : "invalid-state";
@@ -267,31 +317,20 @@ int holy_conflict_report(const char *root, int json)
         if (json)
             printf("{\"schema\":\"holy-conflict-1\",\"type\":\"error\",\"code\":\"%s\",\"status\":%d}\n",
                    code, result);
-        free_claims(&report);
+        holy_conflict_claims_free(&claims);
         return result;
     }
-    sorted = report.claims;
-    qsort(sorted, report.count, sizeof *sorted, compare_claims);
-    for (i = 0; i < report.count; ) {
-        size_t end = i + 1;
-        while (end < report.count && !strcmp(sorted[end].kind, sorted[i].kind) &&
-               !strcmp(sorted[end].name, sorted[i].name)) ++end;
-        /* one artifact may state a capability twice; only distinct owners collide */
-        if (end - i > 1 && strcmp(sorted[i].digest, sorted[i + 1].digest)) {
-            emit(sorted, i, end, json);
-            ++findings;
-        }
-        i = end;
-    }
+    findings = holy_conflict_claims_findings(&claims);
+    holy_conflict_claims_print(&claims, json);
     if (json)
         printf("{\"schema\":\"holy-conflict-1\",\"type\":\"summary\",\"generation\":%llu,"
                "\"installed\":%zu,\"capabilities\":%zu,\"findings\":%zu}\n",
-               generation, report.instances, report.count, findings);
+               generation, claims.instances, claims.count, findings);
     else
         printf("generation %llu installed %zu capabilities %zu conflicts %zu read-only\n",
-               generation, report.instances, report.count, findings);
+               generation, claims.instances, claims.count, findings);
     if (ferror(stdout)) result = 1;
     else result = findings ? 1 : 0;
-    free_claims(&report);
+    holy_conflict_claims_free(&claims);
     return result;
 }

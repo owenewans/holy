@@ -1040,8 +1040,14 @@
   a second provider of the same SONAME, a second artifact claiming one package name,
   two artifacts declaring one file path and two private programs of one name, and
   checks each finding, its reason and its provider list, alongside the refusals for a
-  root with no database and a pending transaction. Automatic conflict detection
-  inside the installation transaction itself remains open.
+  root with no database and a pending transaction. The claim collection behind that
+  report is now shared with the set transaction: db plan-set states the capabilities
+  its own selection offers twice, with the same kinds, reasons and provider list, and
+  db apply-set prints the same findings before it stages the first payload file. A
+  selection with two providers of one SONAME, two private programs of one name or
+  two different-ABI offers of one name is reported in the plan rather than left to a
+  later report. Conflicts between a selection and the already installed set remain
+  outside the plan, and an automatic choice between two candidates remains open.
 
 ## Base system and images
 

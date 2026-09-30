@@ -67,6 +67,11 @@ def install(root, plan_digests):
     return out
 
 
+def plan_of(text):
+    """the plan hash a plan-set line carries, which apply-set and the journal name"""
+    return [line.split()[10] for line in text.splitlines() if line.startswith("plan-set ")][0]
+
+
 def findings(root):
     """the report over a root that has a conflict, which is status 1"""
     text = call("conflict", "--root", root, "--json", status=1)
@@ -161,6 +166,62 @@ def main():
         text = call("conflict", "--root", other_root, status=1)
         assert "installed 2" in text, text
 
+        # the selection itself can offer one capability twice, and the plan states it
+        # before a file is staged
+        set_root = base / "set-root"
+        (set_root / "usr/share").mkdir(parents=True)
+        call("db", "init", "--root", set_root)
+        twin_a = build(set_root, base / "tree5", "twin-a",
+                       files={"usr/share/twin-a.so.1": "a\n"},
+                       provides="provide package twin-a noarch nolibc - metadata\n"
+                                "provide soname libtwin.so.1 noarch nolibc - metadata\n")
+        twin_b = build(set_root, base / "tree6", "twin-b",
+                       files={"usr/share/twin-b.so.1": "b\n"},
+                       provides="provide package twin-b noarch nolibc - metadata\n"
+                                "provide soname libtwin.so.1 noarch nolibc - metadata\n")
+        twin_app = build(set_root, base / "tree5b", "twin-app",
+                         files={"usr/share/twin-app": "the application\n"},
+                         deps="require dep-1 twin-app package twin-a noarch nolibc any - "
+                              "twin-a metadata\n"
+                              "require dep-2 twin-app package twin-b noarch nolibc any - "
+                              "twin-b metadata\n")
+        out = call("db", "plan-set", twin_app, twin_a, twin_b, "--root", set_root)
+        assert 'conflict soname "libtwin.so.1" providers 2 reason duplicate-provider' in out, out
+        assert "provider %s arch \"noarch\" libc \"nolibc\"" % twin_a in out, out
+        assert "provider %s" % twin_b in out, out
+        assert "set-conflicts generation 0 artifacts 3 capabilities 4 conflicts 1 read-only" in out, out
+        twin_plan = plan_of(out)
+        # a selection with nothing twice states that too
+        lone = build(set_root, base / "tree7", "lone", files={"usr/share/lone": "alone\n"},
+                     provides="provide soname liblone.so.1 noarch nolibc - metadata\n")
+
+        out = call("db", "plan-set", lone, "--root", set_root)
+        assert "conflict " not in out, out
+        assert "set-conflicts generation 0 artifacts 1 capabilities 1 conflicts 0 read-only" in out, out
+        # two offers of one SONAME with different ABIs is a mismatch, not a duplicate
+        abi_a = build(set_root, base / "tree8", "abi-twin-a", files={"usr/share/abi-twin-a": "a\n"},
+                      provides="provide package abi-twin-a noarch nolibc - metadata\n"
+                               "provide soname libabitwin.so.1 x86_64 glibc - metadata\n")
+        abi_b = build(set_root, base / "tree9", "abi-twin-b", files={"usr/share/abi-twin-b": "b\n"},
+                      provides="provide package abi-twin-b noarch nolibc - metadata\n"
+                               "provide soname libabitwin.so.1 x86_64 musl - metadata\n")
+        abi_app = build(set_root, base / "tree9b", "abi-twin-app",
+                        files={"usr/share/abi-twin-app": "the application\n"},
+                        deps="require dep-1 abi-twin-app package abi-twin-a noarch nolibc any - "
+                             "abi-twin-a metadata\n"
+                             "require dep-2 abi-twin-app package abi-twin-b noarch nolibc any - "
+                             "abi-twin-b metadata\n")
+        out = call("db", "plan-set", abi_app, abi_a, abi_b, "--root", set_root)
+        assert 'conflict soname "libabitwin.so.1" providers 2 reason abi-mismatch' in out, out
+        # the transaction states the same facts before the first payload file lands
+        out = call("db", "apply-set", twin_plan, twin_app, twin_a, twin_b, "--root", set_root)
+        assert out.index("conflict soname") < out.index("applied"), out
+        assert "committed-set" in out, out
+        found = findings(set_root)
+        assert [(record["kind"], record["name"], record["reason"]) for record in found] == [
+            ("soname", "libtwin.so.1", "duplicate-provider")], found
+        assert "installed 3" in call("conflict", "--root", set_root, status=1)
+
         # two providers of one SONAME with different ABIs is a mismatch, not a duplicate
         abi_root = base / "abi-root"
         (abi_root / "usr/share").mkdir(parents=True)
@@ -237,6 +298,26 @@ def main():
             "usr/lib/holy/private/private-c/usr/bin/other": tool.read_bytes()})
         install(private_root, [single])
         assert "conflicts 1 read-only" in call("conflict", "--root", private_root, status=1)
+        # one selection that takes both programs of one name states the shadowing,
+        # since a run PATH built from both private trees resolves it by sort order
+        pair_root = base / "private-set-root"
+        (pair_root / "usr/share").mkdir(parents=True)
+        call("db", "init", "--root", pair_root)
+        pair_a = build(pair_root, base / "tree12", "pair-a", arch="x86_64", provides=(
+            "provide package pair-a x86_64 nolibc - metadata\n"), files={
+            "usr/lib/holy/private/pair-a/usr/bin/tool": tool.read_bytes()})
+        pair_b = build(pair_root, base / "tree13", "pair-b", arch="x86_64", provides=(
+            "provide package pair-b x86_64 nolibc - metadata\n"), files={
+            "usr/lib/holy/private/pair-b/usr/bin/tool": tool.read_bytes()})
+        pair_app = build(pair_root, base / "tree14", "pair-app", arch="x86_64",
+                         files={"usr/share/pair-app": "the application\n"},
+                         deps="require dep-1 pair-app package pair-a x86_64 nolibc any - "
+                              "pair-a metadata\n"
+                              "require dep-2 pair-app package pair-b x86_64 nolibc any - "
+                              "pair-b metadata\n")
+        out = call("db", "plan-set", pair_app, pair_a, pair_b, "--root", pair_root)
+        assert 'conflict private-command "tool" providers 2 reason shadowed-path' in out, out
+        assert "set-conflicts generation 0 artifacts 3 capabilities 4 conflicts 1 read-only" in out, out
 
         # a report over a root with no database, and over a pending transaction
         empty = base / "empty-root"

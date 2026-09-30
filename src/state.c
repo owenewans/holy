@@ -8,6 +8,7 @@
 #include "extract.h"
 #include "package.h"
 #include "install.h"
+#include "conflict.h"
 #include "config.h"
 #include "resolve.h"
 #include "scan.h"
@@ -3205,6 +3206,8 @@ struct install_set {
     struct holy_resolution resolution;
     struct set_item *items;
     size_t count, paths;
+    struct holy_conflict_claims capabilities;
+    size_t capability_findings;
     struct set_claim *claims;
     size_t claim_count;
     char *graph;
@@ -3242,6 +3245,7 @@ static void free_set(struct install_set *set)
     }
     for (i = 0; i < set->claim_count; ++i) free(set->claims[i].path);
     free(set->claims);
+    holy_conflict_claims_free(&set->capabilities);
     free(set->items);
     free(set->graph);
     for (i = 0; i < set->binding_count; ++i) free(set->bindings[i]);
@@ -4265,6 +4269,10 @@ static int build_set(const char *root_path, int root, int dir,
         if (!holy_verify_visit(item->snapshot, set_claim, set)) goto done;
     }
     if (!set_claims_valid(set)) { result = 4; goto done; }
+    for (i = 0; i < set->count; ++i)
+        if (!holy_conflict_claims_package(&set->capabilities, set->items[i].snapshot,
+                                          set->items[i].identity.digest)) { result = 6; goto done; }
+    set->capability_findings = holy_conflict_claims_findings(&set->capabilities);
     if (!set_soname_paths(set, root)) { result = 3; goto done; }
     if (!same_root(root_path, &st)) { result = 4; goto done; }
     set->bindings = calloc(set->count, sizeof *set->bindings);
@@ -4558,6 +4566,15 @@ static int set_generation(int dir, unsigned long long generation)
     return ok;
 }
 
+/* the capabilities the selection itself offers twice, stated before a file is staged
+   and in the plan that asked for it */
+static void print_set_conflicts(const struct install_set *set, unsigned long long generation)
+{
+    holy_conflict_claims_print(&set->capabilities, 0);
+    printf("set-conflicts generation %llu artifacts %zu capabilities %zu conflicts %zu read-only\n",
+           generation, set->count, set->capabilities.count, set->capability_findings);
+}
+
 static int state_set(const char *const *digests, size_t count, const char *choice,
                      const char *approved, const char *root_path,
                      const char *const *bindings, size_t binding_count,
@@ -4592,6 +4609,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
         printf("plan-set generation %llu root %s artifacts %zu paths %zu sha256 %s read-only\n",
                generation, set.resolution.root, set.count, set.paths, set.hash);
         if (set.catalog_index[0]) printf("catalog-index %s\n", set.catalog_index);
+        print_set_conflicts(&set, generation);
         for (i = 0; i < set.count; ++i)
             printf("selected %s %s %s\n", set.items[i].identity.digest,
                    set.items[i].identity.name,
@@ -4616,6 +4634,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
         goto done;
     }
     if (strcmp(set.hash, approved)) { result = 3; goto done; }
+    print_set_conflicts(&set, generation);
     installed = child_dir(dir, "installed", 0);
     transactions = child_dir(dir, "transactions", 0);
     if (installed < 0 || transactions < 0) { result = 1; goto done; }
