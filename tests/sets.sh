@@ -13,6 +13,21 @@ expect() {
     if "$@" > "$tmp/out" 2> "$tmp/err"; then actual=0; else actual=$?; fi
     test "$actual" -eq "$expected" || { cat "$tmp/out" "$tmp/err"; exit 1; }
 }
+service_package() {
+    name=$1
+    rm -rf "$tree"
+    mkdir -p "$tree/HOLY" "$tree/DATA/usr/share" "$tree/DATA/etc/dinit.d"
+    printf 'format holy-package-1\nname %s\nversion 1\nrelease 1\nos linux\narch noarch\nlibc nolibc\n' "$name" > "$tree/HOLY/meta"
+    for field in deps provides hooks origin transform; do : > "$tree/HOLY/$field"; done
+    printf '%s\n' "$name" > "$tree/DATA/usr/share/$name"
+    printf 'type = process\ncommand = /usr/bin/%s\n' "$name" > "$tree/DATA/etc/dinit.d/$name"
+    mkdir -p "$tree/DATA/usr/lib/holy-units"
+    printf 'type = process\n' > "$tree/DATA/usr/lib/holy-units/$name"
+    "$bin" manifest generate "$tree" --output "$tmp/files" > "$tmp/out"
+    mv "$tmp/files" "$tree/HOLY/files"
+    "$bin" pack "$tree" --output "$tmp/$name.holy" > "$tmp/out"
+    "$bin" cache stage "local:$tmp/$name.holy" --root "$root" > "$tmp/out"
+}
 package() {
     name=$1 path=$2 dependency=$3
     rm -rf "$tree"
@@ -316,4 +331,17 @@ rm "$root/var/cache/holypkg/objects/sha256/$unused.holy"
 expect 0 "$bin" db rm "$app" --root "$root"
 expect 0 "$bin" db plan-set "$app" --root "$root"
 grep -qx "selected $lib lib installed" "$tmp/out"
+# a unit below the boot services directory is a service dinit starts on its own, so the
+# plan names it, and a unit kept outside that directory is not one
+service_package service-fixture
+service=$(sha256sum "$tmp/service-fixture.holy" | cut -d ' ' -f 1)
+expect 0 "$bin" db plan-set "$service" --root "$root"
+grep -qx "service $service service-fixture path /etc/dinit.d/service-fixture state starts-at-next-boot" "$tmp/out"
+test "$(grep -c '^service ' "$tmp/out")" -eq 1
+service_plan=$(plan_hash)
+expect 0 "$bin" db apply-set "$service_plan" "$service" --root "$root"
+test -f "$root/etc/dinit.d/service-fixture"
+expect 0 "$bin" db check --all --root "$root"
+expect 0 "$bin" db rm "$service" --root "$root"
+test ! -e "$root/etc/dinit.d/service-fixture"
 printf 'package set fixtures passed\n'

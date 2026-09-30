@@ -3253,6 +3253,15 @@ struct set_claim {
     int directory;
 };
 
+/* a service unit is a file the boot profile starts on its own: dinit starts every
+   service in its services directory, so placing one there is enabling it and starting
+   it, which the spec says takes a consent of its own. the plan states every unit a set
+   would place, so the review document names what would start at the next boot. */
+struct set_service {
+    char *path;
+    char *artifact;
+};
+
 struct install_set {
     struct holy_resolution resolution;
     struct set_item *items;
@@ -3267,6 +3276,8 @@ struct install_set {
     size_t binding_count;
     struct holy_override_record_info *overrides;
     size_t override_count;
+    struct set_service *services;
+    size_t service_count;
     char hash[65];
     char host[65];
     char catalog_index[65];
@@ -3304,6 +3315,11 @@ static void free_set(struct install_set *set)
     for (i = 0; i < set->binding_count; ++i) free(set->bindings[i]);
     free(set->bindings);
     holy_override_records_free(set->overrides, set->override_count);
+    for (i = 0; i < set->service_count; ++i) {
+        free(set->services[i].path);
+        free(set->services[i].artifact);
+    }
+    free(set->services);
     holy_resolution_free(&set->resolution);
     memset(set, 0, sizeof *set);
 }
@@ -3327,6 +3343,76 @@ static int set_claim(void *context, const struct holy_manifest_entry *entry)
     claims->gid = entry->gid;
     ++set->claim_count;
     return 1;
+}
+
+/* the service directory the boot profile starts from, in the manifest form the claims
+   use. a unit below it is a file dinit starts without anything else being asked. */
+static const char service_directory[] = "etc/dinit.d/";
+
+static int service_unit(const char *path)
+{
+    size_t length = strlen(path), tail;
+    if (strncmp(path, service_directory, sizeof service_directory - 1)) return 0;
+    tail = length - (sizeof service_directory - 1);
+    return tail > 0 && path[length - 1] != '/';
+}
+
+static int set_service(void *context, const char *artifact, const char *path)
+{
+    struct install_set *set = context;
+    struct set_service *services;
+    size_t i;
+    if (set->service_count >= 65536) return 0;
+    for (i = 0; i < set->service_count; ++i)
+        if (!strcmp(set->services[i].path, path)) return 1;
+    services = realloc(set->services, (set->service_count + 1) * sizeof *services);
+    if (!services) return 0;
+    set->services = services;
+    services = &set->services[set->service_count];
+    services->path = strdup(path);
+    services->artifact = strdup(artifact);
+    if (!services->path || !services->artifact) {
+        free(services->path);
+        free(services->artifact);
+        return 0;
+    }
+    ++set->service_count;
+    return 1;
+}
+
+struct service_scan {
+    struct install_set *set;
+    const char *artifact;
+    int failed;
+};
+
+static int service_entry(void *context, const struct holy_manifest_entry *entry)
+{
+    struct service_scan *scan = context;
+    size_t length = strlen(entry->path);
+    if (entry->directory || entry->link || entry->hardlink ||
+        length < sizeof service_directory || entry->path[length - 1] == '/') return 1;
+    if (!service_unit(entry->path)) return 1;
+    if (!set_service(scan->set, scan->artifact, entry->path)) {
+        scan->failed = 1;
+        return 0;
+    }
+    return 1;
+}
+
+static int service_scan(const char *snapshot, struct install_set *set, const char *artifact)
+{
+    struct service_scan scan = {set, artifact, 0};
+    return holy_verify_visit(snapshot, service_entry, &scan) && !scan.failed;
+}
+
+static void print_set_services(const struct install_set *set)
+{
+    size_t i;
+    for (i = 0; i < set->service_count; ++i)
+        printf("service %s %s path /%s state starts-at-next-boot\n",
+               set->services[i].artifact, set->services[i].path + sizeof service_directory - 1,
+               set->services[i].path);
 }
 
 static int claim_order(const void *left, const void *right)
@@ -4433,6 +4519,7 @@ static int build_set(const char *root_path, int root, int dir,
         }
         result = 1;
         if (!holy_verify_visit(item->snapshot, set_claim, set)) goto done;
+        if (!service_scan(item->snapshot, set, item->identity.digest)) goto done;
     }
     if (!set_claims_valid(set)) { result = 4; goto done; }
     for (i = 0; i < set->count; ++i)
@@ -4841,6 +4928,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
         if (set.catalog_index[0]) printf("catalog-index %s\n", set.catalog_index);
         print_set_conflicts(&set, generation);
         print_set_overrides(&set);
+        print_set_services(&set);
         for (i = 0; i < set.count; ++i)
             printf("selected %s %s %s\n", set.items[i].identity.digest,
                    set.items[i].identity.name,
@@ -4867,6 +4955,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
     if (strcmp(set.hash, approved)) { result = 3; goto done; }
     print_set_conflicts(&set, generation);
     print_set_overrides(&set);
+    print_set_services(&set);
     installed = child_dir(dir, "installed", 0);
     transactions = child_dir(dir, "transactions", 0);
     if (installed < 0 || transactions < 0) { result = 1; goto done; }

@@ -428,8 +428,14 @@
   place is reported as already applied. a patched file is payload drift
   by the manifest that recorded the packaged bytes, so db check reports
   a changed file afterwards and the plan refuses to write it again.
-  Re-applying a record on a later version is still open, as do service
-  consent, general rollback and per-phase recovery.
+  A set plan states every service unit its artifacts ship as
+  service ARTIFACT NAME path /etc/dinit.d/NAME state starts-at-next-boot,
+  since dinit starts every unit in that directory and placing one there is
+  both enabling and starting it. a unit an artifact keeps outside that
+  directory is not started by placing it and the plan does not state it.
+  The separate consent a set needs before it starts a service is still
+  open, as are re-applying a record on a later version, general rollback
+  and per-phase recovery.
 - [x] Carry config/mutable flags through verified manifests and installed checks;
   import Debian conffiles as config files, reject invalid declarations, and
   report changed-config.

@@ -2658,6 +2658,19 @@ digest of the installed artifact set, in artifact order. A VM trial owns a
 separate image, which the QEMU runner measures as it copies that image, so
 --mode vm reports image none reason no-vm-runner and one unknown check.
 .PP
+A unit below etc/dinit.d is a service dinit starts without anything else being
+asked, so a set plan states every one its artifacts ship:
+
+service ARTIFACT NAME path /etc/dinit.d/NAME state starts-at-next-boot
+
+A unit the artifact keeps outside that directory, for instance under
+/usr/lib, is not started by placing it and the plan does not state it. Placing
+a unit in the services directory is both enabling and starting it, which the
+specification says takes a consent of its own; a separate consent that a set
+needs for it is not implemented yet, so the plan states what would start and
+the decision is the review of that plan.
+
+.PP
 The requested set is the plan inputs, and each one is a fact about a bound record
 rather than a claim that the plan installs or runs anything:
 plan-document, source-binding, catalog-generation, old-archive, slot-candidate,
