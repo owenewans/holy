@@ -581,6 +581,47 @@ block, a service block, a test block and a def other than install are reported: 
 bottle is a prebuilt foreign binary, a launchd job has no Linux counterpart, a
 Homebrew test harness does not exist here and a development checkout is not the
 pinned source.
+.SS Guix package definition
+A definition is recognized by its .scm suffix, or named with
+.BR "import \-\-format guix" .
+It is Scheme, and it is read as text and never evaluated. The name, version,
+synopsis, homepage, license and build system are carried, a definition that states
+no version records zero, which is reported, and a definition whose package form
+states no name takes the name of its define-public variable, which is reported as a
+change.
+
+.PP
+An origin becomes one pinned source. A url-fetch is fetched by its uri, a uri written
+as a string-append becomes the concatenation of its literals and the expression is
+reported, and the base32 digest a definition writes is decoded into the hex a Holy
+source records. An origin that is not a url-fetch is reported, since a git or a local
+origin is a source this converter does not fetch. A definition that states no origin
+is refused, since a build has no source to fetch.
+
+.PP
+Each name in inputs becomes depend and each name in native-inputs becomes
+build-depend. A versioned entry contributes only its name, since a version constraint
+is not a name a record can hold, and the entry is reported. A requirement a definition
+writes as a name with a range the reader does not walk is reported.
+
+.PP
+The build system becomes the tools it runs. gnu-build-system becomes autoreconf when
+the source carries configure.ac or configure.in, then configure with the payload
+prefix, make and make install, since a guix build configures the package prefix and
+stages the install with DESTDIR. cmake-build-system and meson-build-system become
+their three commands, and a build system this reader does not replace, and the
+trivial one whose procedure is a Scheme body, are reported. An engine lift puts the
+extracted source root where a guix build runs, since the engine extracts an archive
+under its own name and a distribution tarball keeps one top directory inside it.
+
+.PP
+A #:configure-flags, #:make-flags or #:install-flags argument whose entries are
+literal strings becomes the flags of the phase that takes them; an argument whose
+entry is a Scheme expression keeps its text and is reported. A #:phases argument
+replaces the build system phases, a #:tests? that turns the suite off is reported as a
+change, and a patch-shebang and any expression the reader does not evaluate, such as a
+modulo, are reported.
+
 .SH CONVERSION REPORTThe report lists every carried, preserved, helper, unknown and changed item with
 its source file and line range, and its status is native or review-required. A
 review-required conversion returns 3 with the recipe written, since review is a

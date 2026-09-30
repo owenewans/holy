@@ -204,6 +204,10 @@ check-flatpak: holypkg
 check-brew: holypkg
 	python3 tests/brew.py ./holypkg
 
+.PHONY: check-guix
+check-guix: holypkg
+	python3 tests/guix.py ./holypkg
+
 .PHONY: check-scoop
 check-scoop: holypkg
 	python3 tests/scoop.py ./holypkg
@@ -284,7 +288,7 @@ static:
 	$(MAKE) clean
 	$(MAKE) CC="$(STATIC_DEPS)/bin/holy-musl-gcc" CPPFLAGS="-isystem $(STATIC_DEPS)/include" RPM_CFLAGS= RPM_LIBS= RPMMD_CFLAGS= RPMMD_LIBS= SOLV_CFLAGS="-isystem $(STATIC_DEPS)/include" SOLV_LIBS="-lsolv -lz" LDFLAGS="-static -L$(STATIC_DEPS)/lib" LDLIBS="-Wl,--start-group -larchive -lelf -lcurl -lplist-2.0 -lssl -lcrypto -llz4 -lzstd -llzma -lbz2 -lz -leu -Wl,--end-group -lpthread -ldl" all
 
-HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/script.o src/elf.o src/scan.o src/stage.o src/repo.o src/sign.o src/git.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o src/appimage.o src/up.o src/version.o src/run.o src/recipe.o src/image.o src/snap.o src/scoop.o src/artifact.o src/winget.o src/nix.o src/split.o src/eopkg.o src/conflict.o backends/pkgbuild.o backends/shrecipe.o backends/voidsrc.o backends/aports.o backends/slackbuild.o backends/rpmspec.o backends/debsrc.o backends/gentoo.o backends/pacstall.o backends/flatpak.o backends/brew.o backends/pacman.o backends/pacman-version.o backends/deb-version.o backends/apk-version.o backends/xbps-version.o backends/rpm-version.o backends/rpm-md.o backends/xbps.o backends/apk.o backends/apt.o backends/apt-release.o backends/apt-bind.o
+HOLY_OBJECTS = src/main.o src/config.o src/package.o src/verify.o src/fetch.o src/extract.o src/check.o src/script.o src/elf.o src/scan.o src/stage.o src/repo.o src/sign.o src/git.o src/preview.o src/deps.o src/provides.o src/cache.o src/state.o src/solve.o src/resolve.o src/install.o src/pack.o src/docs.o src/graph.o src/source.o src/change.o src/import.o src/appimage.o src/up.o src/version.o src/run.o src/recipe.o src/image.o src/snap.o src/scoop.o src/artifact.o src/winget.o src/nix.o src/split.o src/eopkg.o src/conflict.o backends/pkgbuild.o backends/shrecipe.o backends/voidsrc.o backends/aports.o backends/slackbuild.o backends/rpmspec.o backends/debsrc.o backends/gentoo.o backends/pacstall.o backends/flatpak.o backends/brew.o backends/guix.o backends/pacman.o backends/pacman-version.o backends/deb-version.o backends/apk-version.o backends/xbps-version.o backends/rpm-version.o backends/rpm-md.o backends/xbps.o backends/apk.o backends/apt.o backends/apt-release.o backends/apt-bind.o
 
 holypkg: $(HOLY_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LDLIBS) $(SOLV_LIBS)
@@ -309,7 +313,7 @@ check-init: holy-init
 check-hooks: holypkg
 	CC="$(CC)" sh tests/hooks.sh ./holypkg
 
-check: check-pacman check-deb check-apt check-slackware check-apk check-xbps-import check-xbps-version check-xbps-index check-appimage check-snap check-run check-recipe check-split check-debug check-pkgbuild check-void check-aports check-slackbuild check-rpmspec check-debsrc check-gentoo check-pacstall check-flatpak check-brew check-scoop check-winget check-nix check-eopkg check-conflict check-closure check-cc check-hooks check-apk-version check-apk-index check-apk-fetch check-native-version $(if $(RPM_LIBS),check-rpm) holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
+check: check-pacman check-deb check-apt check-slackware check-apk check-xbps-import check-xbps-version check-xbps-index check-appimage check-snap check-run check-recipe check-split check-debug check-pkgbuild check-void check-aports check-slackbuild check-rpmspec check-debsrc check-gentoo check-pacstall check-flatpak check-brew check-guix check-scoop check-winget check-nix check-eopkg check-conflict check-closure check-cc check-hooks check-apk-version check-apk-index check-apk-fetch check-native-version $(if $(RPM_LIBS),check-rpm) holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg

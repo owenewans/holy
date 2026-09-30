@@ -42,6 +42,7 @@
 #include "../backends/pacstall.h"
 #include "../backends/flatpak.h"
 #include "../backends/brew.h"
+#include "../backends/guix.h"
 #include "../backends/rpmspec.h"
 #include "../backends/slackbuild.h"
 #include "../backends/voidsrc.h"
@@ -1853,7 +1854,7 @@ int main(int argc, char **argv)
             !strcmp(argv[6], "apk") && !strcmp(argv[7], "--output") &&
             !strcmp(argv[9], "--public-key"))
             return holy_import_apk(argv[2], argv[4], argv[8], argv[10]);
-        fputs("usage: holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|scoop|winget|nix|eopkg|pkgbuild|void|aports|slackbuild|rpmspec|debian|gentoo|pacstall|flatpak|homebrew --output DIRECTORY [--public-key FILE (apk only)]\n", stderr);
+        fputs("usage: holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|scoop|winget|nix|eopkg|pkgbuild|void|aports|slackbuild|rpmspec|debian|gentoo|pacstall|flatpak|homebrew|guix --output DIRECTORY [--public-key FILE (apk only)]\n", stderr);
         return 2;
     }
 
@@ -1884,6 +1885,9 @@ int main(int argc, char **argv)
                 if (at > 3 && !strcmp(base + at - 3, ".rb")) {
                     return holy_convert_brew(argv[2], argv[4], argv[6]);
                 }
+                if (at > 4 && !strcmp(base + at - 4, ".scm")) {
+                    return holy_convert_guix(argv[2], argv[4], argv[6]);
+                }
                 if ((at > 5 && !strcmp(base + at - 5, ".json")) ||
                     (at > 4 && (!strcmp(base + at - 4, ".yml") ||
                                 !strcmp(base + at - 5, ".yaml")))) {
@@ -1892,7 +1896,7 @@ int main(int argc, char **argv)
             }
             return holy_convert_pkgbuild(argv[2], argv[4], argv[6]);
         }
-        fputs("usage: holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|debian|NAME.ebuild|NAME.pacscript|NAME.rb|NAME.json|TEMPLATE --source NAME --output NEW_DIRECTORY\n",
+        fputs("usage: holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|debian|NAME.ebuild|NAME.pacscript|NAME.rb|NAME.scm|NAME.json|TEMPLATE --source NAME --output NEW_DIRECTORY\n",
               stderr);
         return 2;
     }

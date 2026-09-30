@@ -570,7 +570,8 @@
   Ed25519 key now rejects unsigned or changed bound catalogs. A rootless
   system-cache workflow remains open.
 - [ ] Implement remaining foreign binary adapters and file indexes with real
-  fixtures: RPM, eopkg, homebrew and guix. APT has a pinned local index
+  fixtures: RPM, eopkg, homebrew and guix, all of which now have one. APT has a
+  pinned local index
   and HTTPS fetch/import path; APK has a separate index/fetch path.
   XBPS local binary import parses plist metadata, checks payload hashes and
   resolves simple versioned dependencies with a bounded Dewey comparator.
@@ -618,11 +619,25 @@
   dependency becomes one exact package requirement whose original field is the
   releaseFrom value the metadata states. The install tar travels whole under a private
   path, since a Solus layout is recorded rather than claimed, and an install script, a
-  COMAR object, a delta and a signature are dropped rather than run or trusted. Guix
-  remains open.
+  COMAR object, a delta and a signature are dropped rather than run or trusted.
+  A Guix package definition converter now reads the definition as Scheme text and
+  never evaluates it. The name, version, synopsis, homepage, license and build system
+  are carried, an origin becomes one pinned source with the base32 digest decoded into
+  the hex a Holy source records, and an origin that is not a url-fetch is reported.
+  Each name in inputs becomes a runtime requirement and each name in native-inputs a
+  build requirement, where a versioned entry contributes only its name. The build
+  system becomes the tools it runs: gnu-build-system becomes autoreconf, configure
+  with the payload prefix, make and make install, and cmake and meson become their
+  three commands, while a system this reader does not replace is reported. An
+  argument whose entries are literal strings becomes the flags of the phase that takes
+  them, and an argument that computes a value keeps its text and is reported. A
+  fixture converts a mechanical definition, builds the recipe it produced into a real
+  package, and converts a definition with a git origin, a trivial build system, a
+  versioned input, a phase list, a computed flag and a modulo expression, checking
+  every named refusal.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
   Gentoo, Pacstall, Homebrew and Guix recipe conversion with helper environments
-  and split outputs.
+  and split outputs. Every named family now has a converter.
   The native side of that work now exists: `holypkg build` parses a
   holy-recipe(5) manifest, fetches pinned sources, unpacks them, runs reviewed
   phase steps with absolute HOLY_* paths, and packs one .holy per declared
