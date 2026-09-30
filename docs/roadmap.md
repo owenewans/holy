@@ -902,10 +902,23 @@
   package requirements, every nested block that is not one is skipped and counted, and
   the installer, Windows and catalog keys are dropped with a count. Nothing runs the
   artifact, so the import returns decision-required.
+  The Nix closure importer reads a capture that names its store paths, the output root,
+  the entry points and the references between them, and emits one package per store
+  path. Every store path has to sit beside the capture, since nothing builds a store,
+  and each travels whole under /usr/lib/holy/private/NAME/store/STORE_PATH/. A
+  reference to a carried store path becomes a package requirement, so one object two
+  applications name has one owner and two dependents, and a reference to a store path
+  the capture does not carry becomes a requirement whose original field is the store
+  hash. One pass over a store path's own bytes confirms each reference the capture
+  declares, and the report counts the ones the payload does not carry. Nix states no
+  version, so every package records 0 and the store hash is its identity. A fixture
+  installs the closure, removes one application and sees the object survive, and the
+  removal of the object is refused while the other application still needs it. Nothing
+  is executed, so the import returns decision-required and names the store view a Nix
+  program with absolute paths would need.
   `make check-cc` now compiles the core with tcc, gcc and clang in turn, packs a
   package with each result and verifies it, and returns 6 when a toolchain is
   absent, so the three named host compilers are checked rather than assumed.
-  Nix closure import remains open.
 - [ ] Implement `holypkg run`, context-specific provider paths, grouped `up --prepare`,
   isolated root/VM trials and full `check` reports.
   The existing run launcher now derives private PATH directories from the

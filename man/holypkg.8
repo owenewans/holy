@@ -11,8 +11,8 @@ holypkg \- Holy local package tooling prototype
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
 .B holypkg import INPUT --source NAME
-.B "     --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|scoop|winget|pkgbuild|void|aports"
-.B "     |slackbuild|rpmspec|debian|gentoo|pacstall|flatpak"
+.B "     --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|scoop|winget|nix|pkgbuild"
+.B "     |void|aports|slackbuild|rpmspec|debian|gentoo|pacstall|flatpak"
 .br
 .B "     --output NEW_DIRECTORY [--public-key FILE (apk only)]"
 .br
@@ -2691,6 +2691,51 @@ key counted. The installer keys, the Windows integration keys and the catalog ke
 dropped and counted the way the Scoop report counts them, and the catalog is named as
 a WinGet catalog rather than a bucket. Nothing in the artifact is executed and no Wine
 requirement is recorded, so import returns status 3 after writing the output.
+.SS Nix closures
+import CAPTURE --source NAME --format nix --output NEW_DIRECTORY reads one
+captured closure as text and writes a conversion directory holding the capture, one
+native package per store path and a closure report. A store path is a 32-character
+Nix base32 hash, a hyphen and a name, with or without the /nix/store prefix, and a
+store path name the package format cannot record is refused with status 2 rather than
+rewritten. Two store paths of one name would need one rewritten package name, so the
+capture is refused with status 2 as well.
+.PP
+The capture is one record per line: path STORE_PATH declares a store path of the
+closure, root STORE_PATH names the output root, entry STORE_PATH PATH names the
+program a store path starts, and references STORE_PATH STORE_PATH... declares the
+store paths one path needs. A path or a root is named once; a reference to a store
+path the capture does not declare loses a closure member, so it is refused with
+status 2. A record name this converter does not model is counted and reported, since
+an unread reference is a requirement nobody counted.
+.PP
+Every store path has to sit beside the capture as a directory named for it, because
+nothing runs to build or fetch a store, and an absent one returns 6. Each store path
+travels whole under /usr/lib/holy/private/NAME/store/STORE_PATH/, and one pass over
+its own bytes confirms the references the capture declares: a reference the payload
+carries is confirmed and a reference it does not is counted, because a store records
+the references itself and a payload cannot prove that a store path has none.
+.PP
+A reference to a store path the capture carries becomes one package requirement on
+that name, so two applications that name the same store path share one package with
+one owner and several dependents, and removing an application leaves it. A reference
+to a store path the capture does not carry becomes a requirement on that name whose
+original field is the store hash, and the target needs a source that provides it; the
+requirement states no architecture and no runtime, since the store path that would
+state one is the one the capture does not carry. Nix states no version, so every
+package records version 0 and the store hash is its identity, recorded as
+x-nix-store-hash.
+.PP
+A store path that states an entry point gets a link at
+/usr/lib/holy/private/NAME/usr/bin/NAME and a generated launcher at /usr/bin/NAME
+that starts it in the package run context with holypkg run SOURCE:NAME. A store path
+that names no entry point claims no public bin path, and the report says so rather
+than guessing one. An entry point that is not an executable file of its own store path
+is refused with status 3.
+.PP
+Nothing is executed. No Nix store, daemon, profile or sandbox is reproduced, and a
+program that opens an absolute /nix/store path needs a store view this manager does
+not build, which the report and the transform record name. import returns status 3
+after writing the output. NAME does not grant a registered source identity.
 .SS Recipe conversion
 holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY reads one
 PKGBUILD as text and writes a conversion directory containing the original
