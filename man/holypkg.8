@@ -112,6 +112,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg orphan [--root DIRECTORY] [--json]
 .br
+.B holypkg conflict [--root DIRECTORY] [--json]
+.br
 .B holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--auto-view] [--view PUBLIC=PRIVATE ...] -- COMMAND [ARGS...]
 .br
 .B holypkg docs --root DIRECTORY --output FILE
@@ -2492,6 +2494,38 @@ produces a partial orphan list. Errors produce one error event with code and
 status: invalid-state (1), missing-provider (4), incomplete-transaction (5), or
 unknown-installed-graph (6). Legacy installed entries without saved graphs
 require migration before this analysis can prove reachability.
+.SH INSTALLED CONFLICTS
+conflict reads a consistent installed-state snapshot under the database's shared
+lock and reports the capabilities two installed artifacts both offer. The default
+root is /. It answers a question a set transaction does not ask: a set resolves one
+requirement at a time, so it installs cleanly and still leaves a name two artifacts
+claim. The command changes nothing, runs no package code and needs no cache.
+.PP
+Four kinds of claim are read. A package name two artifacts provide is
+mixed-providers, a SONAME two artifacts provide is duplicate-provider, a file path
+two artifacts declare is duplicate-provider, and a program name two private trees
+place in a bin directory is shadowed-path, since the PATH a run derives from the
+private trees resolves that name by sort order. A private program is the last
+component of a path under /usr/lib/holy/private/ARTIFACT-ID/ followed by usr/bin,
+bin, usr/sbin or sbin, which is the shape a package's private layout has.
+.PP
+Two providers of one SONAME whose arch or libc records differ are abi-mismatch
+rather than a duplicate, since one name is a different capability for each
+runtime. The report names every provider with its artifact hash, its arch and
+libc record and the capability, so the reader decides which one a set meant rather
+than being told one of them is correct. One artifact stating a capability twice
+is not a conflict, since there is only one owner.
+.PP
+Text output is one conflict line per finding, naming the kind, the capability, the
+provider count, the reason and every provider, followed by a generation, installed,
+capabilities and conflicts summary. Names use the metadata lexer's byte escapes.
+With --json, holy-conflict-1 finding events contain kind, name, reason and a
+providers array of artifact, arch, libc and package, ordered by artifact hash, and
+the final summary carries generation, installed, capabilities and findings. Status
+is 0 when nothing collides, 1 when a conflict was found, 2 for an invalid argument,
+5 for an incomplete transaction and 6 when an instance or graph record is
+unavailable. A pending transaction means the installed set is mid-change, so no
+finding from it would be a fact.
 .SH RUN INSTALLED COMMAND
 run selects one installed slot by source alias and package name. Use --arch and
 --libc when several installed slots share that name. The local alias selects a

@@ -17,6 +17,7 @@
 #include "pack.h"
 #include "docs.h"
 #include "graph.h"
+#include "conflict.h"
 #include "source.h"
 #include "stage.h"
 #include "import.h"
@@ -2045,6 +2046,16 @@ sync_usage:
         return 2;
     }
 
+    if (argc > 1 && !strcmp(argv[1], "conflict")) {
+        const char *root = "/";
+        int json = 0, i;
+        for (i = 2; i < argc; ++i) {
+            if (!strcmp(argv[i], "--root") && i + 1 < argc && !strcmp(root, "/")) root = argv[++i];
+            else if (!strcmp(argv[i], "--json") && !json) json = 1;
+            else { fputs("usage: holypkg conflict [--root DIRECTORY] [--json]\n", stderr); return 2; }
+        }
+        return holy_conflict_report(root, json);
+    }
     if (argc > 1 && !strcmp(argv[1], "orphan")) {
         const char *root = "/";
         int i, json = 0, root_seen = 0;

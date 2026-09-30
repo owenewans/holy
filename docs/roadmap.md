@@ -982,7 +982,18 @@
   mappings. The command after -- may now name a manifest-owned private file
   under /usr/lib/holy/private/ARTIFACT-ID/ with a bin directory and a plain file
   name after it, which is how a package whose payload is private starts its own
-  entry point. Automatic conflict detection during installation remains open.
+  entry point.
+  `holypkg conflict` now reads the installed set and reports every capability two
+  artifacts both offer: a package name two providers claim, a SONAME two providers
+  claim, a file path two artifacts declare and a program name two private trees
+  place in a bin directory, which the run PATH resolves by sort order. Two
+  providers of one SONAME with different arch or libc records are an abi mismatch
+  rather than a duplicate. A fixture installs a shared object and its consumer, adds
+  a second provider of the same SONAME, a second artifact claiming one package name,
+  two artifacts declaring one file path and two private programs of one name, and
+  checks each finding, its reason and its provider list, alongside the refusals for a
+  root with no database and a pending transaction. Automatic conflict detection
+  inside the installation transaction itself remains open.
 
 ## Base system and images
 
