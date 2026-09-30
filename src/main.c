@@ -30,6 +30,7 @@
 #include "nix.h"
 #include "split.h"
 #include "eopkg.h"
+#include "test.h"
 #include "up.h"
 #include "run.h"
 #include "../backends/apk.h"
@@ -1559,6 +1560,7 @@ int main(int argc, char **argv)
         return 2;
     }
     if (argc > 1 && !strcmp(argv[1], "apply")) return holy_apply_command(argc, argv);
+    if (argc > 1 && !strcmp(argv[1], "test")) return holy_test_command(argc - 2, argv + 2);
     if (argc > 2 && !strcmp(argv[1], "xbps")) {
         if ((argc == 12 || argc == 14) && !strcmp(argv[2], "index") &&
             !strcmp(argv[4], "--sha256") && !strcmp(argv[6], "--source") &&

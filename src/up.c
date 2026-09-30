@@ -388,32 +388,27 @@ done:
     return ok;
 }
 
-int holy_apply_command(int argc, char **argv)
+int holy_up_plan_read(const char *path, const char *approved, struct holy_up_plan *plan)
 {
-    const char *root = "/", *approved = NULL;
-    char *snapshot = NULL, *old_snapshot = NULL, *data = NULL, *cursor, *body;
+    struct stat st;
+    char actual[65], recorded[65], *data = NULL, *cursor, *snapshot = NULL, *body = NULL;
     char *source = NULL, *alias = NULL, *catalog = NULL, *index = NULL;
     char *old = NULL, *next = NULL, *inner = NULL, *arch = NULL, *privileged = NULL;
-    struct holy_package_identity old_identity = {0};
-    char actual[65], source_id[65], current[65];
     size_t size = 0;
-    int input = -1, staged = -1, dir = -1, result = 2;
-    if (argc == 5 && !strcmp(argv[3], "--sha256")) approved = argv[4];
-    else if (argc == 7 && !strcmp(argv[3], "--sha256") &&
-             !strcmp(argv[5], "--root")) { approved = argv[4]; root = argv[6]; }
-    if (!approved || !digest_valid(approved) || !*root) goto done;
-    input = open(argv[2], O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
-    if (input < 0) { result = 6; goto done; }
-    {
-        struct stat st;
-        if (fstat(input, &st) || !S_ISREG(st.st_mode) || st.st_size < 32 ||
-            st.st_size > 64 * 1024 * 1024) { result = 2; goto done; }
-    }
+    int input = -1, staged = -1, result = 6;
+    memset(plan, 0, sizeof *plan);
+    if (!path || !*path || (approved && !digest_valid(approved))) return 2;
+    input = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (input < 0) return 6;
+    /* a hostile rename after the open cannot change the bytes that are parsed */
+    if (fstat(input, &st) || !S_ISREG(st.st_mode) || st.st_size < 32 ||
+        st.st_size > 64 * 1024 * 1024) { result = 2; goto done; }
     snapshot = holy_stage_fd(input, "holy-up-plan");
     staged = snapshot ? open(snapshot, O_RDONLY | O_NOFOLLOW | O_CLOEXEC) : -1;
     if (staged < 0 || !(data = read_plan(staged, &size))) { result = 2; goto done; }
     if (!digest_bytes(data, size, actual)) { result = 1; goto done; }
-    if (strcmp(actual, approved)) { result = 3; goto done; }
+    memcpy(recorded, actual, 65);
+    if (approved && strcmp(actual, approved)) { result = 3; goto done; }
     if (strncmp(data, "format holy-up-plan-1\n", 22)) { result = 2; goto done; }
     cursor = data + 22;
     if (!take_field(&cursor, "source-id", &source) ||
@@ -435,19 +430,69 @@ int holy_apply_command(int argc, char **argv)
         !digest_bytes(body, strlen(body), actual) || strcmp(actual, inner)) {
         result = 2; goto done;
     }
-    dir = open(catalog, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    plan->body = strdup(body);
+    if (!plan->body) { result = 1; goto done; }
+    plan->body_length = strlen(body);
+    plan->source_id = source; source = NULL;
+    plan->alias = alias; alias = NULL;
+    plan->catalog = catalog; catalog = NULL;
+    plan->index = index; index = NULL;
+    plan->old_digest = old; old = NULL;
+    plan->new_digest = next; next = NULL;
+    plan->state_plan = inner; inner = NULL;
+    plan->accept_arch = arch; arch = NULL;
+    plan->accept_privileged = privileged; privileged = NULL;
+    /* the plan digest is the document digest, which the body digest check reuses */
+    memcpy(plan->hash, recorded, 65);
+    result = 0;
+done:
+    if (staged >= 0) close(staged);
+    if (input >= 0) close(input);
+    if (snapshot) { unlink(snapshot); free(snapshot); }
+    free(data); free(source); free(alias); free(catalog); free(index);
+    free(old); free(next); free(inner); free(arch); free(privileged);
+    if (result) holy_up_plan_free(plan);
+    return result;
+}
+
+void holy_up_plan_free(struct holy_up_plan *plan)
+{
+    if (!plan) return;
+    free(plan->source_id); free(plan->alias); free(plan->catalog);
+    free(plan->index); free(plan->old_digest); free(plan->new_digest);
+    free(plan->state_plan); free(plan->accept_arch); free(plan->accept_privileged);
+    free(plan->body);
+    memset(plan, 0, sizeof *plan);
+}
+
+int holy_apply_command(int argc, char **argv)
+{
+    const char *root = "/", *approved = NULL;
+    struct holy_up_plan plan = {0};
+    struct holy_package_identity old_identity = {0};
+    char source_id[65], current[65];
+    int dir = -1, result = 2;
+    char *old_snapshot = NULL;
+    if (argc == 5 && !strcmp(argv[3], "--sha256")) approved = argv[4];
+    else if (argc == 7 && !strcmp(argv[3], "--sha256") &&
+             !strcmp(argv[5], "--root")) { approved = argv[4]; root = argv[6]; }
+    if (!approved || !digest_valid(approved) || !*root) goto done;
+    result = holy_up_plan_read(argv[2], approved, &plan);
+    if (result) goto done;
+    dir = open(plan.catalog, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dir < 0 || flock(dir, LOCK_SH)) { result = 6; goto done; }
-    result = holy_source_active_id(root, alias, source_id);
+    result = holy_source_active_id(root, plan.alias, source_id);
     if (result) goto done;
-    if (strcmp(source, source_id)) { result = 3; goto done; }
-    result = holy_source_catalog(root, alias, catalog, source_id);
+    if (strcmp(plan.source_id, source_id)) { result = 3; goto done; }
+    result = holy_source_catalog(root, plan.alias, plan.catalog, source_id);
     if (result) goto done;
-    old_snapshot = holy_cache_snapshot(old, root);
+    old_snapshot = holy_cache_snapshot(plan.old_digest, root);
     if (!old_snapshot || !holy_package_identity(old_snapshot, &old_identity) ||
-        strcmp(old_identity.digest, old)) { result = 6; goto done; }
-    result = holy_repo_catalog_slot_digest(catalog, &old_identity, next, current);
+        strcmp(old_identity.digest, plan.old_digest)) { result = 6; goto done; }
+    result = holy_repo_catalog_slot_digest(plan.catalog, &old_identity,
+                                           plan.new_digest, current);
     if (result != 0 && result != 3) goto done;
-    if (strcmp(current, index)) {
+    if (strcmp(current, plan.index)) {
         fprintf(stderr, "holypkg: prepared catalog generation changed\n");
         result = 3; goto done;
     }
@@ -455,20 +500,17 @@ int holy_apply_command(int argc, char **argv)
         fprintf(stderr, "holypkg: prepared artifact absent from source slot\n");
         goto done;
     }
-    result = holy_state_apply_update(inner, old, next,
-                                     strcmp(arch, "-") ? arch : NULL,
-                                     strcmp(privileged, "-") ? privileged : NULL,
+    result = holy_state_apply_update(plan.state_plan, plan.old_digest,
+                                     plan.new_digest,
+                                     strcmp(plan.accept_arch, "-") ? plan.accept_arch : NULL,
+                                     strcmp(plan.accept_privileged, "-") ? plan.accept_privileged : NULL,
                                      root);
 done:
     if (result == 2)
         fputs("usage: holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]\n", stderr);
     if (dir >= 0) close(dir);
-    if (staged >= 0) close(staged);
-    if (input >= 0) close(input);
-    if (snapshot) { unlink(snapshot); free(snapshot); }
     if (old_snapshot) { unlink(old_snapshot); free(old_snapshot); }
     holy_package_identity_free(&old_identity);
-    free(data); free(source); free(alias); free(catalog); free(index);
-    free(old); free(next); free(inner); free(arch); free(privileged);
+    holy_up_plan_free(&plan);
     return result;
 }

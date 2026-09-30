@@ -83,6 +83,24 @@ def boot_frames(lines, disk):
     return frames, True
 
 
+def copy_consistency(before, after, copied):
+    """how a copied boot input compares with the source it was copied from"""
+    if before != after:
+        return 'input-changed-during-copy'
+    return 'verified' if before == copied else 'copy-mismatch'
+
+
+def copy_input(source, destination):
+    """copies one boot input and records the bytes read on both sides of the copy, so a
+    source that changes while it is copied cannot pass as a faithful copy"""
+    before = digest(source)
+    shutil.copyfile(source, destination)
+    after = digest(source)
+    copied = digest(destination)
+    return {'source_sha256': before, 'source_after_sha256': after, 'sha256': copied,
+            'copy_consistency': copy_consistency(before, after, copied)}
+
+
 def disk_format(qemu_img, path):
     details = json.loads(subprocess.check_output(
         [qemu_img, 'info', '--output=json', str(path)], text=True))
@@ -188,19 +206,17 @@ def main():
     inputs = {}
     if media == 'iso':
         inputs['iso'] = {'source': str(iso.resolve())}
-        shutil.copyfile(iso, run / 'input.iso')
+        inputs['iso'].update(copy_input(iso, run / 'input.iso'))
         os.chmod(run / 'input.iso', 0o444)
-        inputs['iso']['sha256'] = digest(run / 'input.iso')
     if disk_path:
         format_name = disk_format(qemu_img, disk_path)
         base = run / ('root-base.' + format_name)
-        shutil.copyfile(disk_path, base)
+        inputs['root_disk'] = {'source': str(Path(disk_path).resolve()),
+                               'format': format_name}
+        inputs['root_disk'].update(copy_input(disk_path, base))
         os.chmod(base, 0o444)
         if disk_format(qemu_img, base) != format_name:
             error('copied root disk changed format', 6)
-        inputs['root_disk'] = {'source': str(Path(disk_path).resolve()),
-                               'sha256': digest(base), 'format': format_name,
-                               'copy_consistency': 'unverified'}
         subprocess.run([qemu_img, 'create', '-q', '-f', 'qcow2', '-F', format_name, '-b',
                         str(base), str(run / 'root.qcow2')], check=True)
     for field in ('KERNEL_IMAGE', 'INITRAMFS', 'ROOT_IMAGE'):
@@ -492,8 +508,12 @@ def main():
         served = {entry['path'] for entry in requests if entry['status'] == 200}
         if not wanted_requests <= served or not any(item['type'] == 1 for item in dns_queries):
             reason, result = 'network-fixture-incomplete', 'fail'
+    inconsistent = sorted(name for name, item in inputs.items()
+                          if item.get('copy_consistency', 'verified') != 'verified')
     if not base_unchanged:
         reason, result = 'changed-read-only-base', 'fail'
+    elif inconsistent:
+        reason, result = 'inconsistent-input-copy', 'fail'
     boots = []
     for index, wanted in enumerate(expected_boots):
         actual = frames[index] if index < len(frames) else set()
@@ -521,6 +541,7 @@ def main():
               'boot_media': media,
               'first_boot_completed_seconds': first_completed,
               'reason': reason, 'result': result,
+              'inconsistent_inputs': inconsistent,
               'missing_markers': ([f'boot-{b["boot"]}: {marker}' for b in boots for marker in b['missing_markers']]
                                   if disk_path else sorted(expected - seen)),
               'checks': {marker: 'pass' if marker in seen else 'unknown' for marker in sorted(expected)},

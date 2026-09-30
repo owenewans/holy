@@ -1306,8 +1306,33 @@
   and per-stage reports with boot numbers; repeated markers in one boot do not
   renew a deadline. The default removes copied boot inputs and writable
   overlays after reporting; QEMU_KEEP=1 retains them for inspection.
-  Live input copy consistency remains unverified;
-  full `holypkg test PLAN` integration and the Holy hardware gate remain open.
+  A copied boot input is now measured on both sides of the copy: the source is
+  hashed before and after, the copy is hashed, and the report records the three
+  digests with copy_consistency. An unchanged source matching the copy is
+  verified, a source that changed between the two readings is
+  input-changed-during-copy, and a copy that differs from the unchanged source
+  is copy-mismatch. Either state names the inputs in inconsistent_inputs and
+  fails the run as inconsistent-input-copy. The measurement reports a race
+  that happened and cannot rule out one that did not, so a live volume still
+  needs a stopped image or a stable snapshot for a precise trial.
+  `holypkg test PLAN` now verifies a saved update plan against a target root
+  without changing it: it reports the plan, mode, source, catalog generation and
+  the bound image, then eight checks over the plan inputs, each a fact about a
+  bound record. A source id is the digest of its definition, so a registry
+  record naming another id, definition or alias does not bind the plan; a
+  catalog serving another index generation is not the generation the plan
+  fixed; a new artifact that does not verify or does not fill the planned slot
+  is not the prepared artifact. A root test binds its trial base as the
+  installed generation with a digest of the installed artifact set, since a
+  live rootfs has no stable whole-tree digest. The report counts pass, fail,
+  skip and unknown with coverage plan-inputs, lists runtime probes as
+  unexecuted until a test asks for them, and returns 4 for a failed check and
+  6 for an unknown one. --json uses holy-test-report-1. A fixture covers the
+  bound report, a VM mode that names the missing runner, and a deleted new
+  archive, deleted old archive, drifted payload, removed slot, changed catalog
+  generation, changed source id and lost alias. Running a command in a trial
+  with --shell or -- COMMAND, the VM trial itself and the Holy hardware gate
+  remain open.
 - [ ] Boot both target architectures in QEMU and prove PID 1, shell, package
   install/removal and recovery after removing either or both dynamic libc runtimes.
 - [ ] Run compiler/SDK, language, GUI, graphics, gaming, workstation and foreign
