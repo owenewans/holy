@@ -869,7 +869,18 @@
   environment names and command-chain entries are recorded and counted rather than
   emulated. The import returns decision-required and the report names the base
   requirement and everything the conversion drops.
-  Nix, Flatpak, Scoop and WinGet remain open.
+  The Flatpak manifest converter reads a JSON manifest, carries the id, version,
+  summary, url, command, branch and machine, turns the sdk into a build
+  requirement and the runtime into a runtime requirement because they are two
+  different ids, and gives each module one step in module order. The make,
+  autotools, autogen, cmake and meson templates are replaced by the shell that
+  runs the same tools, a patch applies with -p1 before its module builds, an
+  inline source becomes a file beside the recipe, a local archive is copied next
+  to it and a remote one keeps its declared sha256, a /app path becomes $DESTDIR
+  and a module prefix becomes /usr. finish-args permissions, cleanup steps and
+  build extensions are dropped and counted, and a buildsystem with no Holy phase
+  is a helper the report names.
+  Nix, Scoop and WinGet remain open.
 - [ ] Implement `holypkg run`, context-specific provider paths, grouped `up --prepare`,
   isolated root/VM trials and full `check` reports.
   The existing run launcher now derives private PATH directories from the

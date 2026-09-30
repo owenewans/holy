@@ -12,13 +12,13 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg import INPUT --source NAME
 .B "     --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|pkgbuild|void|aports"
-.B "     |slackbuild|rpmspec|debian|gentoo|pacstall"
+.B "     |slackbuild|rpmspec|debian|gentoo|pacstall|flatpak"
 .br
 .B "     --output NEW_DIRECTORY [--public-key FILE (apk only)]"
 .br
 .B holypkg build RECIPE --output NEW_DIRECTORY [--environment host|clean|vm] [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
 .br
-.B holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|debian|NAME.ebuild|NAME.pacscript|TEMPLATE --source NAME --output NEW_DIRECTORY
+.B holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|debian|NAME.ebuild|NAME.pacscript|NAME.json|TEMPLATE --source NAME --output NEW_DIRECTORY
 .br
 .B holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY
 .br
@@ -2635,9 +2635,10 @@ named APKBUILD reaches the Aports converter, and a name ending in .SlackBuild
 reaches the SlackBuild converter, a name ending in .spec reaches the RPM
 spec converter, a directory named debian reaches the Debian converter and a
 name ending in .ebuild reaches the Gentoo converter and a name ending in
-.pacscript reaches the Pacstall converter through the same command,
+.pacscript reaches the Pacstall converter and a name ending in .json, .yml or
+.yaml reaches the Flatpak converter through the same command,
 while any other name reaches the pacman converter, and
-import INPUT --source NAME --format pkgbuild|void|aports|slackbuild|rpmspec|debian|gentoo|pacstall
+import INPUT --source NAME --format pkgbuild|void|aports|slackbuild|rpmspec|debian|gentoo|pacstall|flatpak
 --output NEW_DIRECTORY names the family explicitly. None of these commands installs a
 package, builds one, or grants NAME a registered source identity; the report
 records it as provenance.
@@ -2790,6 +2791,25 @@ Pacstall environment a body reads is reported, and pre_install, pre_upgrade,
 post_install and post_upgrade become one install hook while pre_remove and
 post_remove become one remove hook, each written beside the recipe and
 installed into the payload.
+.PP
+The Flatpak converter reads a JSON manifest. The name is the last dotted component
+of its application id, and an id that names a machine and a branch after a slash
+keeps that reflex in x-app-id while the branch supplies the machine. The version,
+summary, url, command, branch and machine are carried; a manifest that states no
+version records zero and the report says so. The sdk becomes a build requirement
+and the runtime a runtime requirement, because the SDK that builds the modules and
+the runtime the program runs on are two different ids. A module becomes one step in
+module order: its build-options export env, the flag variables and append-path, its
+commands keep their shell, and the make, autotools, autogen, cmake and meson
+templates are replaced by the shell that runs the same tools, which the report
+names. A patch applies with -p1 before its module builds, an inline source becomes
+a file beside the recipe, a local archive is copied next to the recipe and a remote
+one keeps its declared sha256. A /app path inside a command becomes $DESTDIR and
+the prefix of a module becomes /usr, so a converted build writes into the payload.
+finish-args permissions, cleanup steps, build extensions and a buildsystem with no
+Holy phase are reported as dropped or unresolved, and a manifest with several
+modules is reported, because a Flatpak build shares one prefix across its modules
+while each step here installs into the payload.
 .PP
 All of these reports name every carried, preserved, helper, unknown and changed item
 with its source file and line range, and their status is native or
