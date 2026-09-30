@@ -63,12 +63,14 @@ static int add_local(int argc, char **argv)
 {
     const char **inputs = NULL, **digests = NULL;
     const char **accepted_arch = NULL, **accepted_privileged = NULL, **skipped_hooks = NULL;
+    const char **accepted_service = NULL;
     const char **associations = NULL, **bindings = NULL;
     char (*hashes)[65] = NULL;
     const char *root = "/", *choice = NULL, *association = NULL;
     char (*binding_storage)[130] = NULL;
     char plan[65], answer[16], source_id[65];
     size_t count = 0, arch_count = 0, privileged_count = 0, skipped_count = 0;
+    size_t service_count = 0;
     size_t association_count = 0, binding_count = 0, i, j;
     int yes = 0, noninteractive = 0, root_seen = 0, result = 2;
     if (argc < 3 || strncmp(argv[2], "local:", 6) || !argv[2][6]) goto done;
@@ -77,12 +79,13 @@ static int add_local(int argc, char **argv)
     accepted_arch = calloc((size_t)argc, sizeof *accepted_arch);
     accepted_privileged = calloc((size_t)argc, sizeof *accepted_privileged);
     skipped_hooks = calloc((size_t)argc, sizeof *skipped_hooks);
+    accepted_service = calloc((size_t)argc, sizeof *accepted_service);
     associations = calloc((size_t)argc, sizeof *associations);
     bindings = calloc((size_t)argc, sizeof *bindings);
     binding_storage = calloc((size_t)argc, sizeof *binding_storage);
     hashes = calloc((size_t)argc, sizeof *hashes);
     if (!inputs || !digests || !accepted_arch || !accepted_privileged || !skipped_hooks ||
-        !associations || !bindings || !binding_storage || !hashes) {
+        !accepted_service || !associations || !bindings || !binding_storage || !hashes) {
         result = 1; goto done;
     }
     inputs[count++] = argv[2] + 6;
@@ -112,6 +115,9 @@ static int add_local(int argc, char **argv)
         } else if (!strcmp(argv[i], "--skip-hooks") && i + 1 < (size_t)argc &&
                    argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) {
             skipped_hooks[skipped_count++] = argv[++i];
+        } else if (!strcmp(argv[i], "--accept-service") && i + 1 < (size_t)argc &&
+                   argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) {
+            accepted_service[service_count++] = argv[++i];
         } else if (!strcmp(argv[i], "--yes") && !yes) yes = 1;
         else if (!strcmp(argv[i], "--noninteractive") && !noninteractive) noninteractive = 1;
         else goto done;
@@ -150,7 +156,8 @@ static int add_local(int argc, char **argv)
                             bindings, binding_count,
                             accepted_arch, arch_count,
                             accepted_privileged, privileged_count,
-                            skipped_hooks, skipped_count, plan);
+                            skipped_hooks, skipped_count,
+                            accepted_service, service_count, plan);
     if (result) goto done;
     if (!yes) {
         if (noninteractive || !isatty(STDIN_FILENO)) {
@@ -169,12 +176,13 @@ static int add_local(int argc, char **argv)
                             bindings, binding_count,
                             accepted_arch, arch_count,
                             accepted_privileged, privileged_count,
-                            skipped_hooks, skipped_count, NULL);
+                            skipped_hooks, skipped_count,
+                            accepted_service, service_count, NULL);
 done:
     if (result == 2)
-        fputs("usage: holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--associate SHA256=ALIAS ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
+        fputs("usage: holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--associate SHA256=ALIAS ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
     free(hashes); free(digests); free(inputs);
-    free(skipped_hooks);
+    free(skipped_hooks); free(accepted_service);
     free(accepted_arch); free(accepted_privileged);
     free(associations); free(bindings); free(binding_storage);
     return result;
@@ -781,7 +789,7 @@ static int add_source(int argc, char **argv)
 {
     const char *separator = strchr(argv[2], ':');
     const char *root = "/", *catalog = NULL, *choice = NULL, *answers_path = NULL;
-    const char **accepted_arch = NULL, **accepted_privileged = NULL;
+    const char **accepted_arch = NULL, **accepted_privileged = NULL, **accepted_service = NULL;
     const char **digests = NULL, **bindings = NULL, **skipped = NULL;
     struct source_candidate *extras = NULL;
     struct source_local_candidate *locals = NULL;
@@ -789,7 +797,8 @@ static int add_source(int argc, char **argv)
     struct holy_repo_set staged = {0}, next = {0};
     char source_id[65], next_id[65], plan[65], answer[16], *alias = NULL;
     char *bound_catalog = NULL, *next_catalog = NULL;
-    size_t arch_count = 0, privileged_count = 0, extra_count = 0, local_count = 0;
+    size_t arch_count = 0, privileged_count = 0, service_count = 0;
+    size_t extra_count = 0, local_count = 0;
     size_t answer_count = 0;
     size_t digest_count = 0, binding_count = 0, skip_count = 0, i, j, k;
     int unavailable_seen = 0;
@@ -799,14 +808,17 @@ static int add_source(int argc, char **argv)
     alias = malloc((size_t)(separator - argv[2]) + 1);
     accepted_arch = calloc((size_t)argc, sizeof *accepted_arch);
     accepted_privileged = calloc((size_t)argc, sizeof *accepted_privileged);
+    accepted_service = calloc((size_t)argc, sizeof *accepted_service);
     if (argc > 10000) goto done;
     extras = calloc(10000, sizeof *extras);
     locals = calloc((size_t)argc, sizeof *locals);
     digests = calloc(10000, sizeof *digests);
     bindings = calloc(10000, sizeof *bindings);
     skipped = calloc(10000, sizeof *skipped);
-    if (!alias || !accepted_arch || !accepted_privileged || !extras || !locals ||
-        !digests || !bindings || !skipped) { result = 1; goto done; }
+    if (!alias || !accepted_arch || !accepted_privileged || !accepted_service ||
+        !extras || !locals || !digests || !bindings || !skipped) {
+        result = 1; goto done;
+    }
     memcpy(alias, argv[2], (size_t)(separator - argv[2]));
     alias[separator - argv[2]] = 0;
     if (!strcmp(alias, "local")) goto done;
@@ -879,6 +891,9 @@ static int add_source(int argc, char **argv)
         else if (!strcmp(argv[i], "--accept-privileged") && i + 1 < (size_t)argc &&
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2))
             accepted_privileged[privileged_count++] = argv[++i];
+        else if (!strcmp(argv[i], "--accept-service") && i + 1 < (size_t)argc &&
+                 argv[i + 1][0] && strncmp(argv[i + 1], "--", 2))
+            accepted_service[service_count++] = argv[++i];
         else if (!strcmp(argv[i], "--yes") && !yes) yes = 1;
         else if (!strcmp(argv[i], "--prepare") && !prepare) prepare = 1;
         else if (!strcmp(argv[i], "--noninteractive") && !noninteractive) noninteractive = 1;
@@ -961,7 +976,8 @@ static int add_source(int argc, char **argv)
         int progressed = 0, unavailable = 0, answered = 0;
         result = holy_state_probe_source_bindings(digests, digest_count,
                    source_id, staged.index, bindings, binding_count, choice, root,
-                   accepted_arch, arch_count, accepted_privileged, privileged_count);
+                   accepted_arch, arch_count, accepted_privileged, privileged_count,
+                   accepted_service, service_count);
         if (!result) break;
         if (result != 3 && result != 4) goto done;
         missing_status = missing_from_cache(digests, digest_count, root,
@@ -1195,7 +1211,8 @@ next_alias:
                                             source_id, staged.index, bindings,
                                             binding_count, choice, NULL, root,
                                             accepted_arch, arch_count,
-                                            accepted_privileged, privileged_count, plan);
+                                            accepted_privileged, privileged_count,
+                                            accepted_service, service_count, plan);
     if (result) goto done;
     if (prepare) goto done;
     if (!yes) {
@@ -1253,10 +1270,11 @@ next_alias:
                                             source_id, staged.index, bindings,
                                             binding_count, choice, plan, root,
                                             accepted_arch, arch_count,
-                                            accepted_privileged, privileged_count, NULL);
+                                            accepted_privileged, privileged_count,
+                                            accepted_service, service_count, NULL);
 done:
     if (result == 2)
-        fputs("usage: holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--candidate-local SOURCE=FILE.holy ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--prepare | --yes] [--noninteractive]\n", stderr);
+        fputs("usage: holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--candidate-local SOURCE=FILE.holy ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--accept-service UNIT ...] [--root DIRECTORY] [--prepare | --yes] [--noninteractive]\n", stderr);
     for (i = 0; i < binding_count; ++i) free((void *)bindings[i]);
     for (i = 0; i < skip_count; ++i) free((void *)skipped[i]);
     for (i = 0; extras && i <= extra_count && i < 10000; ++i) {
@@ -1272,7 +1290,7 @@ done:
     free(extras); free(digests); free(bindings); free(skipped);
     holy_repo_set_free(&staged); holy_repo_set_free(&next);
     free(alias); free(bound_catalog); free(next_catalog);
-    free(accepted_arch); free(accepted_privileged);
+    free(accepted_arch); free(accepted_privileged); free(accepted_service);
     free_source_answers(answers, answer_count);
     return result;
 }
@@ -2671,7 +2689,9 @@ rollback_usage:
         int end = argc - 2;
         const char *choice = NULL;
         const char **digests, **bindings, **accepted_arch, **accepted_privileged, **skipped_hooks;
+        const char **accepted_service;
         size_t count = 0, binding_count = 0, accepted_count = 0, privileged_count = 0, skipped_count = 0;
+        size_t service_count = 0;
         int i, result = 2;
         if (strcmp(argv[argc - 2], "--root")) return 2;
         digests = calloc((size_t)argc, sizeof *digests);
@@ -2679,8 +2699,11 @@ rollback_usage:
         accepted_arch = calloc((size_t)argc, sizeof *accepted_arch);
         accepted_privileged = calloc((size_t)argc, sizeof *accepted_privileged);
         skipped_hooks = calloc((size_t)argc, sizeof *skipped_hooks);
-        if (!digests || !bindings || !accepted_arch || !accepted_privileged || !skipped_hooks) {
-            free(digests); free(bindings); free(accepted_arch); free(accepted_privileged); free(skipped_hooks); return 1;
+        accepted_service = calloc((size_t)argc, sizeof *accepted_service);
+        if (!digests || !bindings || !accepted_arch || !accepted_privileged || !skipped_hooks ||
+            !accepted_service) {
+            free(digests); free(bindings); free(accepted_arch); free(accepted_privileged);
+            free(skipped_hooks); free(accepted_service); return 1;
         }
         for (i = start; i < end; ++i) {
             if (!strcmp(argv[i], "--choose")) {
@@ -2698,6 +2721,9 @@ rollback_usage:
             } else if (!strcmp(argv[i], "--skip-hooks")) {
                 if (++i >= end) goto set_done;
                 skipped_hooks[skipped_count++] = argv[i];
+            } else if (!strcmp(argv[i], "--accept-service")) {
+                if (++i >= end) goto set_done;
+                accepted_service[service_count++] = argv[i];
             } else if (argv[i][0] == '-') goto set_done;
             else digests[count++] = argv[i];
         }
@@ -2705,9 +2731,11 @@ rollback_usage:
                                           start == 4 ? argv[3] : NULL, argv[argc - 1],
                                           bindings, binding_count, accepted_arch, accepted_count,
                                           accepted_privileged, privileged_count,
-                                          skipped_hooks, skipped_count, NULL);
+                                          skipped_hooks, skipped_count,
+                                          accepted_service, service_count, NULL);
 set_done:
-        free(digests); free(bindings); free(accepted_arch); free(accepted_privileged); free(skipped_hooks);
+        free(digests); free(bindings); free(accepted_arch); free(accepted_privileged);
+        free(skipped_hooks); free(accepted_service);
         return result;
     }
     if (argc == 6 && !strcmp(argv[1], "db") &&

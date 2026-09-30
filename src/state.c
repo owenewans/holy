@@ -3296,6 +3296,8 @@ struct set_journal {
     size_t privileged_count;
     char **skipped_hooks;
     size_t skipped_count;
+    char **accepted_service;
+    size_t service_count;
 };
 
 static void free_set(struct install_set *set)
@@ -3404,6 +3406,26 @@ static int service_scan(const char *snapshot, struct install_set *set, const cha
 {
     struct service_scan scan = {set, artifact, 0};
     return holy_verify_visit(snapshot, service_entry, &scan) && !scan.failed;
+}
+
+/* placing a unit in the services directory is both enabling and starting it, so a unit
+   the selection ships needs its own consent before anything is staged */
+static int set_service_consent(const struct install_set *set,
+                               const char *const *consented, size_t count)
+{
+    size_t i, j;
+    for (i = 0; i < set->service_count; ++i) {
+        const char *unit = set->services[i].path + sizeof service_directory - 1;
+        for (j = 0; j < count; ++j)
+            if (!strcmp(unit, consented[j])) break;
+        if (j == count) {
+            fprintf(stderr, "holypkg: %s ships the service unit /%s; a set that starts"
+                            " a service needs --accept-service %s\n",
+                    set->services[i].artifact, set->services[i].path, unit);
+            return 0;
+        }
+    }
+    return 1;
 }
 
 static void print_set_services(const struct install_set *set)
@@ -4578,7 +4600,25 @@ static void free_set_journal(struct set_journal *journal)
     free(journal->accepted_privileged);
     for (i = 0; i < journal->skipped_count; ++i) free(journal->skipped_hooks[i]);
     free(journal->skipped_hooks);
+    for (i = 0; i < journal->service_count; ++i) free(journal->accepted_service[i]);
+    free(journal->accepted_service);
     memset(journal, 0, sizeof *journal);
+}
+
+/* a consented unit is named, not a path: the consent names what dinit would start */
+static int service_name_valid(const char *name)
+{
+    size_t i, length;
+    if (!name || !*name) return 0;
+    length = strlen(name);
+    if (length > 255 || !strcmp(name, ".") || !strcmp(name, "..")) return 0;
+    for (i = 0; i < length; ++i)
+        if (!((name[i] >= 'a' && name[i] <= 'z') ||
+              (name[i] >= 'A' && name[i] <= 'Z') ||
+              (name[i] >= '0' && name[i] <= '9') ||
+              name[i] == '-' || name[i] == '_' || name[i] == '.' || name[i] == '@'))
+            return 0;
+    return 1;
 }
 
 static int set_choice_valid(const char *choice)
@@ -4642,7 +4682,8 @@ static int read_set_journal(int dir, struct set_journal *journal)
             memchr(line, 0, (size_t)got)) goto done;
         line[got - 1] = 0;
         if (number == 0) {
-            if (!strcmp(line, "format holy-set-journal-6")) version = 6;
+            if (!strcmp(line, "format holy-set-journal-7")) version = 7;
+            else if (!strcmp(line, "format holy-set-journal-6")) version = 6;
             else if (!strcmp(line, "format holy-set-journal-5")) version = 5;
             else if (!strcmp(line, "format holy-set-journal-4")) version = 4;
             else if (!strcmp(line, "format holy-set-journal-3")) version = 3;
@@ -4670,7 +4711,7 @@ static int read_set_journal(int dir, struct set_journal *journal)
             snprintf(architecture, sizeof architecture, "%s x86", line + 5);
             if (!architecture_valid(architecture)) goto done;
             strcpy(journal->host, line + 5);
-        } else if ((version == 5 || version == 6) && number == 6 &&
+        } else if (version >= 5 && number == 6 &&
                    !strncmp(line, "catalog-index ", 14)) {
             if (strncmp(line, "catalog-index ", 14) ||
                 !valid_digest(line + 14)) goto done;
@@ -4720,10 +4761,26 @@ static int read_set_journal(int dir, struct set_journal *journal)
             next[journal->skipped_count] = strdup(line + 11);
             if (!next[journal->skipped_count]) goto done;
             ++journal->skipped_count;
+        } else if (version == 7 && !strncmp(line, "service ", 8)) {
+            char **next;
+            size_t i;
+            if (journal->accepted_count || journal->privileged_count || journal->skipped_count ||
+                !service_name_valid(line + 8) || journal->service_count >= journal->count)
+                goto done;
+            for (i = 0; i < journal->service_count; ++i)
+                if (!strcmp(line + 8, journal->accepted_service[i])) goto done;
+            next = realloc(journal->accepted_service,
+                           (journal->service_count + 1) * sizeof *next);
+            if (!next) goto done;
+            journal->accepted_service = next;
+            next[journal->service_count] = strdup(line + 8);
+            if (!next[journal->service_count]) goto done;
+            ++journal->service_count;
         } else if (version >= 2 && !strncmp(line, "binding ", 8)) {
             char **next;
             size_t i;
             if (journal->accepted_count || journal->privileged_count || journal->skipped_count ||
+                journal->service_count ||
                 !binding_valid(line + 8) || journal->binding_count >= journal->count) goto done;
             for (i = 0; i < journal->count; ++i)
                 if (!strncmp(line + 8, journal->digests[i], 64)) break;
@@ -4739,7 +4796,7 @@ static int read_set_journal(int dir, struct set_journal *journal)
         } else {
             char **next;
             if (journal->binding_count || journal->accepted_count || journal->privileged_count ||
-                journal->skipped_count ||
+                journal->skipped_count || journal->service_count || journal->service_count ||
                 strncmp(line, "artifact ", 9) || !valid_digest(line + 9) ||
                 journal->count >= 10000 ||
                 (journal->count && strcmp(journal->digests[journal->count - 1], line + 9) >= 0))
@@ -4759,7 +4816,8 @@ static int read_set_journal(int dir, struct set_journal *journal)
          (version == 3 && journal->accepted_count) ||
          (version == 4 && journal->privileged_count) ||
          (version == 5 && journal->catalog_index[0] && journal->binding_count) ||
-         (version == 6 && journal->skipped_count))) result = 1;
+         (version == 6 && journal->skipped_count) ||
+         (version == 7 && journal->service_count))) result = 1;
 done:
     free(line);
     if (stream) fclose(stream);
@@ -4784,7 +4842,8 @@ static int write_set_journal(int transactions, unsigned long long generation,
                              const struct install_set *set, const char *choice,
                              const char *const *accepted_arch, size_t accepted_count,
                              const char *const *accepted_privileged, size_t privileged_count,
-                             const char *const *skipped_hooks, size_t skipped_count)
+                             const char *const *skipped_hooks, size_t skipped_count,
+                             const char *const *accepted_service, size_t service_count)
 {
     char *record = NULL;
     size_t length = 0, i;
@@ -4792,10 +4851,11 @@ static int write_set_journal(int transactions, unsigned long long generation,
     int ok = 1;
     if (!stream) return 0;
     if (fprintf(stream, "format holy-set-journal-%d\ngeneration %llu\nplan %s\nroot %s\nchoice %s\n",
-                skipped_count ? 6 : set->catalog_index[0] ? 5 : privileged_count ? 4 :
-                accepted_count ? 3 : set->binding_count ? 2 : 1,
+                service_count ? 7 : skipped_count ? 6 : set->catalog_index[0] ? 5 :
+                privileged_count ? 4 : accepted_count ? 3 : set->binding_count ? 2 : 1,
                 generation, set->hash, set->resolution.root, choice ? choice : "-") < 0) ok = 0;
-    if ((accepted_count || privileged_count || skipped_count || set->catalog_index[0]) &&
+    if ((accepted_count || privileged_count || skipped_count || service_count ||
+         set->catalog_index[0]) &&
         fprintf(stream, "host %s\n", set->host) < 0) ok = 0;
     if (set->catalog_index[0] &&
         fprintf(stream, "catalog-index %s\n", set->catalog_index) < 0) ok = 0;
@@ -4809,6 +4869,8 @@ static int write_set_journal(int transactions, unsigned long long generation,
         if (fprintf(stream, "accept-privileged %s\n", accepted_privileged[i]) < 0) ok = 0;
     for (i = 0; i < skipped_count && ok; ++i)
         if (fprintf(stream, "skip-hooks %s\n", skipped_hooks[i]) < 0) ok = 0;
+    for (i = 0; i < service_count && ok; ++i)
+        if (fprintf(stream, "service %s\n", accepted_service[i]) < 0) ok = 0;
     if (fclose(stream)) ok = 0;
     if (ok) ok = record_file(transactions, "set-journal", record, length);
     free(record);
@@ -4890,6 +4952,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
                      const char *const *accepted_arch, size_t accepted_count,
                      const char *const *accepted_privileged, size_t privileged_count,
                      const char *const *skipped_hooks, size_t skipped_count,
+                     const char *const *accepted_service, size_t service_count,
                      char plan_hash[65], int quiet)
 {
     struct install_set set = {0};
@@ -4900,6 +4963,13 @@ static int state_set(const char *const *digests, size_t count, const char *choic
     size_t i;
     if (plan_hash) plan_hash[0] = 0;
     if ((approved && !valid_digest(approved)) || (choice && !set_choice_valid(choice))) return 2;
+    if (service_count > 10000) return 2;
+    for (i = 0; i < service_count; ++i) {
+        size_t j;
+        if (!service_name_valid(accepted_service[i])) return 2;
+        for (j = 0; j < i; ++j)
+            if (!strcmp(accepted_service[i], accepted_service[j])) return 2;
+    }
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     dir = root < 0 ? -1 : state_dir_at(root, 0);
     /* the override store is read before the database lock, since the plan binds what
@@ -4919,6 +4989,9 @@ static int state_set(const char *const *digests, size_t count, const char *choic
                        accepted_arch, accepted_count, accepted_privileged, privileged_count,
                        skipped_hooks, skipped_count, override_records,
                        override_record_count, &set);
+    if (result) goto done;
+    if (!quiet && !set_service_consent(&set, accepted_service, service_count))
+        result = 3;
     if (result) goto done;
     if (!approved) {
         if (plan_hash) memcpy(plan_hash, set.hash, 65);
@@ -4962,7 +5035,8 @@ static int state_set(const char *const *digests, size_t count, const char *choic
     if (!write_set_journal(transactions, generation, &set, choice,
                            accepted_arch, accepted_count,
                            accepted_privileged, privileged_count,
-                           skipped_hooks, skipped_count)) {
+                           skipped_hooks, skipped_count,
+                           accepted_service, service_count)) {
         struct stat st;
         result = fstatat(transactions, "set-journal", &st, AT_SYMLINK_NOFOLLOW) ? 1 : 5;
         goto done;
@@ -5003,11 +5077,13 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
                    const char *const *accepted_arch, size_t accepted_count,
                    const char *const *accepted_privileged, size_t privileged_count,
                    const char *const *skipped_hooks, size_t skipped_count,
+                   const char *const *accepted_service, size_t service_count,
                    char plan_hash[65])
 {
     return state_set(digests, count, choice, approved, root_path, bindings,
                      binding_count, NULL, NULL, accepted_arch, accepted_count,
-                     accepted_privileged, privileged_count, skipped_hooks, skipped_count, plan_hash, 0);
+                     accepted_privileged, privileged_count, skipped_hooks, skipped_count,
+                     accepted_service, service_count, plan_hash, 0);
 }
 
 int holy_state_set_source(const char *const *digests, size_t count,
@@ -5016,12 +5092,14 @@ int holy_state_set_source(const char *const *digests, size_t count,
                           const char *approved, const char *root_path,
                           const char *const *accepted_arch, size_t accepted_count,
                           const char *const *accepted_privileged, size_t privileged_count,
+                          const char *const *accepted_service, size_t service_count,
                           char plan_hash[65])
 {
     if (!source_id || !catalog_index) return 2;
     return state_set(digests, count, choice, approved, root_path, NULL, 0,
                      source_id, catalog_index, accepted_arch, accepted_count,
-                     accepted_privileged, privileged_count, NULL, 0, plan_hash, 0);
+                     accepted_privileged, privileged_count, NULL, 0,
+                     accepted_service, service_count, plan_hash, 0);
 }
 
 int holy_state_set_source_bindings(const char *const *digests, size_t count,
@@ -5031,13 +5109,15 @@ int holy_state_set_source_bindings(const char *const *digests, size_t count,
                                   const char *root_path,
                                   const char *const *accepted_arch, size_t accepted_count,
                                   const char *const *accepted_privileged, size_t privileged_count,
+                                  const char *const *accepted_service, size_t service_count,
                                   char plan_hash[65])
 {
     if (!source_id || !catalog_index) return 2;
     return state_set(digests, count, choice, approved, root_path,
                      bindings, binding_count, source_id, catalog_index,
                      accepted_arch, accepted_count,
-                     accepted_privileged, privileged_count, NULL, 0, plan_hash, 0);
+                     accepted_privileged, privileged_count, NULL, 0,
+                     accepted_service, service_count, plan_hash, 0);
 }
 
 int holy_state_probe_source_bindings(const char *const *digests, size_t count,
@@ -5046,13 +5126,16 @@ int holy_state_probe_source_bindings(const char *const *digests, size_t count,
                                     const char *choice, const char *root_path,
                                     const char *const *accepted_arch, size_t accepted_count,
                                     const char *const *accepted_privileged,
-                                    size_t privileged_count)
+                                    size_t privileged_count,
+                                    const char *const *accepted_service,
+                                    size_t service_count)
 {
     if (!source_id || !catalog_index) return 2;
     return state_set(digests, count, choice, NULL, root_path,
                      bindings, binding_count, source_id, catalog_index,
                      accepted_arch, accepted_count,
-                     accepted_privileged, privileged_count, NULL, 0, NULL, 1);
+                     accepted_privileged, privileged_count, NULL, 0,
+                     accepted_service, service_count, NULL, 1);
 }
 
 static int instance_matches_snapshot(int item, const char *snapshot)
@@ -5172,6 +5255,13 @@ static int recover_set(const char *root_path, int resume)
                   (const char *const *)journal.skipped_hooks, journal.skipped_count,
                   override_records, override_record_count, &set) ||
         set.count != journal.count || strcmp(set.hash, journal.hash)) goto done;
+    /* a journal names the consent it was reviewed with; a set that starts a service
+       without one is refused here too, so a hand edited journal places no unit */
+    if (!set_service_consent(&set, (const char *const *)journal.accepted_service,
+                             journal.service_count)) {
+        result = 3;
+        goto done;
+    }
     installed = child_dir(dir, "installed", 0);
     transactions = child_dir(dir, "transactions", 0);
     if (installed < 0 || transactions < 0) goto done;

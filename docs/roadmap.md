@@ -433,9 +433,18 @@
   since dinit starts every unit in that directory and placing one there is
   both enabling and starting it. a unit an artifact keeps outside that
   directory is not started by placing it and the plan does not state it.
-  The separate consent a set needs before it starts a service is still
-  open, as are re-applying a record on a later version, general rollback
-  and per-phase recovery.
+  A set that ships a unit is refused with status 3 until the user names
+  it with --accept-service UNIT, since dinit starts every unit in that
+  directory and placing one there is both enabling and starting it. the
+  consent names a unit rather than a path, it covers the placement that
+  makes dinit start the unit at the next boot, and this manager never
+  starts a service in a running system, so no other service action has a
+  consent to gate here. the set journal carries it as
+  holy-set-journal-7, so an interrupted set finishes the placement it was
+  reviewed for and recovery refuses a journal that names no consent for a
+  unit the set ships. A replacement that ships a unit still installs it
+  without that consent, as do re-applying a record on a later version,
+  general rollback and per-phase recovery.
 - [x] Carry config/mutable flags through verified manifests and installed checks;
   import Debian conffiles as config files, reject invalid declarations, and
   report changed-config.

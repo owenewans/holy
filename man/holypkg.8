@@ -2,9 +2,9 @@
 .SH NAME
 holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
-.B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--associate SHA256=ALIAS ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--root DIRECTORY] [--yes] [--noninteractive]
+.B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--associate SHA256=ALIAS ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
-.B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--candidate-local SOURCE=FILE.holy ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--root DIRECTORY] [--prepare | --yes] [--noninteractive]
+.B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--candidate-local SOURCE=FILE.holy ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--accept-service UNIT ...] [--root DIRECTORY] [--prepare | --yes] [--noninteractive]
 .br
 .B holypkg up SOURCE:PACKAGE [--prepare] [--output NEW_FILE] [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
@@ -238,9 +238,9 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db apply --root DIRECTORY
 .br
-.B holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] --root DIRECTORY
+.B holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] --root DIRECTORY
 .br
-.B holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] --root DIRECTORY
+.B holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] --root DIRECTORY
 .br
 .B holypkg db recover --finish-set|--continue-set --root DIRECTORY
 .br
@@ -2664,11 +2664,20 @@ asked, so a set plan states every one its artifacts ship:
 service ARTIFACT NAME path /etc/dinit.d/NAME state starts-at-next-boot
 
 A unit the artifact keeps outside that directory, for instance under
-/usr/lib, is not started by placing it and the plan does not state it. Placing
-a unit in the services directory is both enabling and starting it, which the
-specification says takes a consent of its own; a separate consent that a set
-needs for it is not implemented yet, so the plan states what would start and
-the decision is the review of that plan.
+/usr/lib, is not started by placing it and the plan does not state it.
+.PP
+Placing a unit in the services directory is both enabling and starting it, so a set
+that ships one is refused with status 3 until the user names the unit:
+--accept-service UNIT. A consent names a unit, not a path, and it covers the
+placement that makes dinit start the unit at the next boot. This manager never
+starts a service in a running system, so no other service action has a consent
+to gate here. The consent travels with the journal, so an interrupted set that
+carried one finishes the placement it was reviewed for, and recovery refuses a
+set whose journal names no consent for a unit the set ships.
+.PP
+A unit name is what the consent accepts: letters, digits, dot, dash,
+underscore and at, up to 255 characters. A repeated name, a name with a path
+separator and an empty name are argument errors.
 
 .PP
 The requested set is the plan inputs, and each one is a fact about a bound record

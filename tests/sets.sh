@@ -331,17 +331,38 @@ rm "$root/var/cache/holypkg/objects/sha256/$unused.holy"
 expect 0 "$bin" db rm "$app" --root "$root"
 expect 0 "$bin" db plan-set "$app" --root "$root"
 grep -qx "selected $lib lib installed" "$tmp/out"
-# a unit below the boot services directory is a service dinit starts on its own, so the
-# plan names it, and a unit kept outside that directory is not one
+# a unit below the boot services directory is a service dinit starts on its own, so a set
+# that ships one needs a consent naming it, and a unit kept outside that directory is
+# not one and needs nothing
 service_package service-fixture
 service=$(sha256sum "$tmp/service-fixture.holy" | cut -d ' ' -f 1)
-expect 0 "$bin" db plan-set "$service" --root "$root"
+expect 3 "$bin" db plan-set "$service" --root "$root"
+grep -qx "holypkg: $service ships the service unit /etc/dinit.d/service-fixture; a set that starts a service needs --accept-service service-fixture" "$tmp/err"
+test ! -e "$root/etc/dinit.d/service-fixture"
+expect 2 "$bin" db plan-set "$service" --accept-service ../escape --root "$root"
+expect 2 "$bin" db plan-set "$service" --accept-service "" --root "$root"
+expect 2 "$bin" db plan-set "$service" --accept-service service-fixture --accept-service service-fixture --root "$root"
+expect 0 "$bin" db plan-set "$service" --accept-service service-fixture --root "$root"
 grep -qx "service $service service-fixture path /etc/dinit.d/service-fixture state starts-at-next-boot" "$tmp/out"
 test "$(grep -c '^service ' "$tmp/out")" -eq 1
 service_plan=$(plan_hash)
-expect 0 "$bin" db apply-set "$service_plan" "$service" --root "$root"
+expect 3 "$bin" db apply-set "$service_plan" "$service" --root "$root"
+expect 0 "$bin" db apply-set "$service_plan" "$service" --accept-service service-fixture --root "$root"
 test -f "$root/etc/dinit.d/service-fixture"
 expect 0 "$bin" db check --all --root "$root"
 expect 0 "$bin" db rm "$service" --root "$root"
 test ! -e "$root/etc/dinit.d/service-fixture"
+# the consent is a journal decision, so an interrupted set carries it into recovery
+expect 0 "$bin" db plan-set "$service" --accept-service service-fixture --root "$root"
+fault_plan=$(plan_hash)
+expect 5 env LD_PRELOAD="$tmp/fault.so" HOLY_FAIL_PATH=service-fixture \
+    "$bin" db apply-set "$fault_plan" "$service" --accept-service service-fixture --root "$root"
+test -f "$db/transactions/set-journal"
+grep -qx 'service service-fixture' "$db/transactions/set-journal"
+expect 5 "$bin" db status --root "$root"
+expect 0 "$bin" db recover --continue-set --root "$root"
+test -f "$root/etc/dinit.d/service-fixture"
+test ! -e "$db/transactions/set-journal"
+expect 0 "$bin" db check --all --root "$root"
+expect 0 "$bin" db rm "$service" --root "$root"
 printf 'package set fixtures passed\n'
