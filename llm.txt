@@ -1212,7 +1212,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=2574aca207d0a59403f701b589d9fae792b97b8c2b2592cd574a981f62a0dea3
+holypkg.8 source=holy version=development sha256=ce0fd748b7bdecd52e24afaac30814225463aecfd1a5942913b93111524630df
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1230,7 +1230,8 @@ SYNOPSIS
      [--root DIRECTORY] [--prepare | --yes] [--noninteractive]
      holypkg up SOURCE:PACKAGE [--prepare] [--output NEW_FILE]	[--catalog  MIR-
      ROR]  [--choose  SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256]
-     [--accept-privileged SHA256] [--root DIRECTORY] [--yes] [--noninteractive]
+     [--accept-privileged SHA256] [--accept-service UNIT ...] [--root DIRECTORY]
+     [--yes] [--noninteractive]
      holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
      holypkg import INPUT  --source  NAME	 --format  pacman|rpm|deb|slack-
      ware|apk|xbps|appimage|snap|scoop|winget|nix|eopkg|pkgbuild
