@@ -3,6 +3,7 @@
 #include "elf.h"
 #include "package.h"
 #include "verify.h"
+#include "install.h"
 #include "stage.h"
 #include "script.h"
 
@@ -390,6 +391,53 @@ done:
     for (i = 0; i < links.count; ++i) { free(links.items[i].path); free(links.items[i].target); }
     free(links.items);
     return ok;
+}
+
+/* the installed payload gives the same ELF and script facts as the archive it was
+   installed from, read through the target root, so an installed artifact whose cached
+   object is gone is still describable. a hardlink alias is a second name for bytes
+   the manifest already owns, and a symlink alias names a file the loader resolves
+   through, so neither adds a fact here. */
+struct payload_scan {
+    const char *arch, *libc;
+    struct holy_scan_result *collected;
+    size_t edges;
+};
+
+static int payload_file(void *opaque, const char *path, int fd)
+{
+    struct payload_scan *state = opaque;
+    struct stat st;
+    unsigned char buffer[4];
+    char name[4096];
+    ssize_t got;
+    int elf, script;
+    if (fstat(fd, &st) || st.st_size < 0) return 0;
+    got = pread(fd, buffer, sizeof buffer, 0);
+    if (got < 0) return 0;
+    if (strlen(path) + 6 > sizeof name) return 0;
+    strcpy(name, "DATA/");
+    strcpy(name + 5, path);
+    elf = got == 4 && !memcmp(buffer, "\177ELF", 4);
+    script = (st.st_mode & 0111) && got >= 2 && buffer[0] == '#' && buffer[1] == '!';
+    if (!elf && !script) return 1;
+    if (elf) return inspect_elf(fd, name, (unsigned int)st.st_mode, state->arch,
+                                state->libc, 0, &state->edges, state->collected);
+    return inspect_script(fd, name, (unsigned int)st.st_mode, st.st_size, 0,
+                          state->collected);
+}
+
+int holy_scan_installed(int files_fd, int root, const char *arch, const char *libc,
+                        struct holy_scan_result *result)
+{
+    struct payload_scan state;
+    if (!arch || !libc || !arch[0] || !libc[0] || !files_fd || !root) return 0;
+    memset(&state, 0, sizeof state);
+    state.arch = arch;
+    state.libc = libc;
+    state.collected = result;
+    memset(result, 0, sizeof *result);
+    return holy_install_visit_regular(files_fd, root, NULL, payload_file, &state) == 1;
 }
 
 int holy_scan_local_with_output(const char *path, int emit)

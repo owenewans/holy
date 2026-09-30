@@ -453,14 +453,53 @@ cp "$tmp/library.so" "$tree/DATA/usr/lib/libholyfixture.so.1"
 patchelf --replace-needed libc.so.6 "$libc" "$tree/DATA/usr/lib/libholyfixture.so.1"
 pack misplaced
 expect 4 "$bin" db plan-set "$probe" "$(hash misplaced)" "$runtime_hash" --root "$root"
-# named search remains a decision until its launch context is modeled.
-new named
+# a consumer with no runpath is searched in the loader default, so a provider that
+# keeps the name in /usr/lib64 resolves without one.
+new default-provider
+mkdir -p "$tree/DATA/usr/lib64"
+cp "$tmp/library.so" "$tree/DATA/usr/lib64/libholyfixture.so.1"
+patchelf --replace-needed libc.so.6 "$libc" "$tree/DATA/usr/lib64/libholyfixture.so.1"
+pack default-provider
+new default-consumer
 mkdir -p "$tree/DATA/usr/bin"
-cp "$tmp/probe" "$tree/DATA/usr/bin/named"
-patchelf --set-interpreter "$loader" "$tree/DATA/usr/bin/named"
-pack named
-expect 3 "$bin" db plan-set "$(hash named)" "$provider" "$runtime_hash" --root "$root"
-grep -q unknown-loader-search "$tmp/err"
+cp "$tmp/probe" "$tree/DATA/usr/bin/default-consumer"
+patchelf --set-interpreter "$loader" --remove-rpath \
+    --replace-needed libc.so.6 "$libc" "$tree/DATA/usr/bin/default-consumer"
+pack default-consumer
+default_provider=$(hash default-provider) default_consumer=$(hash default-consumer)
+expect 0 "$bin" db plan-set "$default_consumer" "$default_provider" "$runtime_hash" --root "$root"
+default_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+expect 0 "$bin" db apply-set "$default_plan" "$default_consumer" "$default_provider" \
+    "$runtime_hash" --root "$root"
+expect 0 "$bin" db check --all --root "$root"
+expect 0 "$bin" db rm "$default_consumer" --root "$root"
+# a provider is discovered in the payload it still owns when its cached archive is
+# gone, and the plan then names the cache requirement instead of failing inside it
+mv "$root/var/cache/holypkg/objects/sha256/$default_provider.holy" "$tmp/provider-cache"
+new default-consumer-next
+sed -i 's/^version 1$/version 2/' "$tree/HOLY/meta"
+mkdir -p "$tree/DATA/usr/bin"
+cp "$tmp/probe" "$tree/DATA/usr/bin/default-consumer"
+patchelf --set-interpreter "$loader" --remove-rpath \
+    --replace-needed libc.so.6 "$libc" "$tree/DATA/usr/bin/default-consumer"
+pack default-consumer-next
+expect 6 "$bin" db plan-set "$(hash default-consumer-next)" --root "$root"
+grep -qx "holypkg: installed artifact needs its cached archive: $default_provider" "$tmp/err"
+mv "$tmp/provider-cache" "$root/var/cache/holypkg/objects/sha256/$default_provider.holy"
+cp -p "$root/usr/lib64/libholyfixture.so.1" "$tmp/fixture-installed.so"
+expect 0 "$bin" db plan-set "$default_consumer" "$default_provider" "$runtime_hash" --root "$root"
+consumer_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+expect 0 "$bin" db apply-set "$consumer_plan" "$default_consumer" "$default_provider" \
+    "$runtime_hash" --root "$root"
+expect 0 "$bin" db rm "$default_consumer" --root "$root"
+# a changed payload is not the evidence the manifest recorded, so the plan names the
+# file that drifted instead of treating the installed provider as a provider
+printf damaged > "$root/usr/lib64/libholyfixture.so.1"
+expect 4 "$bin" db plan-set "$default_consumer" --root "$root"
+grep -qx 'holypkg: changed-file usr/lib64/libholyfixture.so.1' "$tmp/err"
+cp -p "$tmp/fixture-installed.so" "$root/usr/lib64/libholyfixture.so.1"
+expect 0 "$bin" db plan-set "$default_consumer" --root "$root"
+expect 0 "$bin" db rm "$default_provider" --root "$root"
 if test "${HOLY_TEST_STATIC_RECOVERY:-0}" = 1; then
     printf 'static libc-free recovery fixture passed\n'
 fi

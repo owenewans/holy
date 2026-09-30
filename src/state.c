@@ -1153,6 +1153,46 @@ done:
     return result;
 }
 
+/* the instance meta is the package meta the instance was installed from, so its arch
+   and libc records are the ones the payload was proven against */
+static int installed_field(int item, const char *key, char *out, size_t size)
+{
+    struct stat st;
+    char *line = NULL;
+    size_t capacity = 0, number = 0;
+    ssize_t length;
+    int fd = openat(item, "meta", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    int found = 0;
+    FILE *input;
+    if (fd < 0) return 0;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+        st.st_size > 16 * 1024 * 1024) { close(fd); return 0; }
+    input = fdopen(fd, "r");
+    if (!input) { close(fd); return 0; }
+    while (!found && (length = getline(&line, &capacity, input)) >= 0) {
+        char **v = NULL, *error = NULL;
+        size_t count = 0;
+        ++number;
+        if (memchr(line, '\0', (size_t)length) ||
+            !holy_lex(line, (size_t)length, &v, &count, "installed/meta", number, &error)) {
+            free(error);
+            goto done;
+        }
+        free(error);
+        if (count == 2 && !strcmp(v[0], key)) {
+            if (strlen(v[1]) + 1 > size) { holy_tokens_free(v, count); goto done; }
+            strcpy(out, v[1]);
+            found = 1;
+        }
+        holy_tokens_free(v, count);
+    }
+    if (ferror(input)) found = 0;
+done:
+    free(line);
+    fclose(input);
+    return found;
+}
+
 static int installed_name(int item, const char *name)
 {
     const char *keys[] = {"name"}, *values[] = {name};
@@ -2290,8 +2330,11 @@ struct graph_soname {
     int found, arch, versions, path_ok;
 };
 
-static int graph_alias_match(int root, int files, const char *directory,
-                              const char *name, int regular)
+/* the alias names the provider file when the opened path through the root is that
+   file, which is a device and inode fact rather than a manifest path, so a searched
+   directory reached through a merged-/usr link still matches its own file */
+static int graph_alias_match(int root, const char *directory, const char *name,
+                             int regular)
 {
     struct open_how how = {0};
     struct stat source, target;
@@ -2304,7 +2347,6 @@ static int graph_alias_match(int root, int files, const char *directory,
     memcpy(path, directory + 1, prefix);
     path[prefix] = '/';
     memcpy(path + prefix + 1, name, n + 1);
-    if (holy_install_check_path(files, root, path) != 1) goto done;
     how.flags = O_PATH | O_CLOEXEC;
     how.resolve = RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS;
     alias = (int)syscall(SYS_openat2, root, path, &how, sizeof how);
@@ -2373,8 +2415,8 @@ static int graph_provider_elf(void *context, const char *path, int fd)
                 if (opened < 0) continue;
                 close(opened);
                 if (loader_file_match(directories[directory], path, match->name) ||
-                    graph_alias_match(match->root, match->files,
-                                      directories[directory], match->name, fd))
+                    graph_alias_match(match->root, directories[directory],
+                                      match->name, fd))
                     match->path_ok = 1;
                 break;
             }
@@ -3465,6 +3507,29 @@ static int explicit_elf_paths(const char *snapshot)
     return result;
 }
 
+/* an alias path is the provider's own file when the opened path through the root is
+   that file, which a merged-/usr directory link does not change. a path the provider
+   has not placed yet cannot be its own file. */
+static int alias_is_provider(int root, const char *alias, const char *own)
+{
+    struct open_how how = {0};
+    struct stat alias_state, own_state;
+    int alias_fd, own_fd, ok = 0;
+    how.flags = O_PATH | O_CLOEXEC;
+    how.resolve = RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS;
+    alias_fd = (int)syscall(SYS_openat2, root, alias, &how, sizeof how);
+    if (alias_fd < 0) return 0;
+    own_fd = (int)syscall(SYS_openat2, root, own, &how, sizeof how);
+    if (own_fd >= 0) {
+        ok = !fstat(alias_fd, &alias_state) && !fstat(own_fd, &own_state) &&
+             S_ISREG(alias_state.st_mode) && alias_state.st_dev == own_state.st_dev &&
+             alias_state.st_ino == own_state.st_ino;
+        close(own_fd);
+    }
+    close(alias_fd);
+    return ok;
+}
+
 static int selected_soname_paths(const struct holy_resolution *resolution,
                                   const char *const *digests,
                                   const char *const *snapshots, size_t count, int root,
@@ -3476,6 +3541,7 @@ static int selected_soname_paths(const struct holy_resolution *resolution,
         struct holy_scan_result consumer = {0}, provider = {0};
         const struct holy_scanned_file *file = NULL;
         char **directories = NULL;
+        const char *own = NULL;
         size_t directory_count = 0, d;
         int found = 0, ok = 0;
         char search[1024] = "none";
@@ -3509,9 +3575,11 @@ static int selected_soname_paths(const struct holy_resolution *resolution,
                     candidate->elf.soname && !strcmp(candidate->elf.soname, edge->target) &&
                     candidate->elf.elf_class == file->elf.elf_class &&
                     candidate->elf.machine == file->elf.machine &&
-                    !strcmp(candidate->runtime, file->runtime) &&
-                    scan_loader_alias(&provider, directories[d], edge->target,
-                                      candidate->path)) { found = 1; break; }
+                    !strcmp(candidate->runtime, file->runtime)) {
+                    if (!own) own = candidate->path;
+                    if (scan_loader_alias(&provider, directories[d], edge->target,
+                                          candidate->path)) { found = 1; break; }
+                }
             }
             if (found) { free(alias); break; }
             {
@@ -3524,8 +3592,10 @@ static int selected_soname_paths(const struct holy_resolution *resolution,
             how.resolve = RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS;
             if (!occupied) {
                 opened = (int)syscall(SYS_openat2, root, alias, &how, sizeof how);
-                if (opened >= 0) { occupied = 1; close(opened); }
-                else if (errno != ENOENT) occupied = 1;
+                if (opened >= 0) {
+                    occupied = !own || !alias_is_provider(root, alias, own);
+                    close(opened);
+                } else if (errno != ENOENT) occupied = 1;
             }
             free(alias);
             if (occupied) break;
@@ -3639,6 +3709,7 @@ done:
 
 struct installed_candidates {
     int installed;
+    int root_fd;
     char **digests;
     size_t count;
     const char *root;
@@ -3702,6 +3773,66 @@ static int installed_command_claim(int item, const char *name)
     return result;
 }
 
+/* one matching file is a provider: a shared object that is not a PIE, with the exact
+   DT_SONAME and the arch and runtime the consumer needs. the same match runs over a
+   cached archive and over the installed payload, so both give the same answer. */
+static int scan_soname_claim(const struct holy_scan_result *scan, const char *name,
+                             const char *arch, const char *libc)
+{
+    size_t i;
+    for (i = 0; i < scan->count; ++i) {
+        const struct holy_scanned_file *file = &scan->files[i];
+        if (file->elf.type == ET_DYN && !(file->elf.flags1 & DF_1_PIE) &&
+            file->elf.soname && !strcmp(file->elf.soname, name) &&
+            (!strcmp(arch, "any") || !strcmp(arch, holy_elf_machine(&file->elf))) &&
+            (!strcmp(libc, "any") || !strcmp(libc, file->runtime)))
+            return 1;
+    }
+    return 0;
+}
+
+/* the installed payload is the same evidence the archive gave, read through the target
+   root, so a deleted cache object does not hide a provider. only an intact regular
+   file counts, since a changed one is not the payload the manifest recorded. */
+static int installed_payload_scan(int catalog_root, int item, struct holy_scan_result *scan)
+{
+    char arch[96], libc[96];
+    int files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    int result;
+    if (files < 0) return 0;
+    result = installed_field(item, "arch", arch, sizeof arch) &&
+             installed_field(item, "libc", libc, sizeof libc);
+    if (result) result = holy_scan_installed(files, catalog_root, arch, libc, scan);
+    close(files);
+    return result;
+}
+
+/* the requirement record the instance was installed with, read from the instance
+   directory, which is what the closure walk needs when no cached object remains */
+static int instance_requirements(int item, holy_requirement_visit visitor, void *opaque)
+{
+    struct stat st;
+    char *data = NULL;
+    size_t used = 0;
+    ssize_t got;
+    int fd = openat(item, "deps", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    int ok = 0;
+    if (fd < 0) return 0;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || (st.st_mode & 0022) || st.st_size < 0 ||
+        st.st_size > 16 * 1024 * 1024 || !(data = malloc((size_t)st.st_size + 1))) goto done;
+    while (used < (size_t)st.st_size) {
+        got = read(fd, data + used, (size_t)st.st_size - used);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) goto done;
+        used += (size_t)got;
+    }
+    ok = used == (size_t)st.st_size && holy_deps_buffer_visit(data, used, visitor, opaque);
+done:
+    free(data);
+    close(fd);
+    return ok;
+}
+
 static int installed_soname_claim(struct installed_candidates *catalog,
                                   int item, const char *digest, const char *name,
                                   const char *arch, const char *libc)
@@ -3709,28 +3840,24 @@ static int installed_soname_claim(struct installed_candidates *catalog,
     struct holy_scan_result scan = {0};
     const char *keys[] = {"arch", "libc"}, *values[] = {arch, libc};
     char *snapshot;
-    size_t i, fields = 0;
+    size_t fields = 0;
     int result = -1;
     if (strcmp(arch, "any")) { keys[fields] = "arch"; values[fields++] = arch; }
     if (strcmp(libc, "any")) { keys[fields] = "libc"; values[fields++] = libc; }
     if (fields && (result = installed_fields(item, keys, values, fields)) <= 0) return result;
     snapshot = holy_cache_snapshot(digest, catalog->root);
-    if (!snapshot) return -1;
-    if (!holy_scan_collect(snapshot, &scan)) goto done;
-    result = 0;
-    for (i = 0; i < scan.count; ++i) {
-        const struct holy_scanned_file *file = &scan.files[i];
-        if (file->elf.type == ET_DYN && !(file->elf.flags1 & DF_1_PIE) &&
-            file->elf.soname && !strcmp(file->elf.soname, name) &&
-            (!strcmp(arch, "any") || !strcmp(arch, holy_elf_machine(&file->elf))) &&
-            (!strcmp(libc, "any") || !strcmp(libc, file->runtime))) {
-            result = 1;
-            break;
-        }
+    if (snapshot) {
+        int collected = holy_scan_collect(snapshot, &scan);
+        unlink(snapshot);
+        free(snapshot);
+        if (!collected) goto done;
+        result = scan_soname_claim(&scan, name, arch, libc);
+        goto done;
     }
+    if (!installed_payload_scan(catalog->root_fd, item, &scan)) goto done;
+    result = scan_soname_claim(&scan, name, arch, libc);
 done:
     holy_scan_free(&scan);
-    unlink(snapshot); free(snapshot);
     return result;
 }
 
@@ -3927,7 +4054,7 @@ done:
 static int discover_installed(const char *root_path, int dir,
                               const char *const *digests, size_t *count, char ***output)
 {
-    struct installed_candidates catalog = {-1, NULL, 0, root_path};
+    struct installed_candidates catalog = {-1, -1, NULL, 0, root_path};
     struct holy_scan_result *initial = NULL;
     size_t i, j, k, initial_count = *count;
     int root = -1, result = 1;
@@ -3937,6 +4064,7 @@ static int discover_installed(const char *root_path, int dir,
     if (catalog.installed < 0) goto done;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0) goto done;
+    catalog.root_fd = root;
     initial = calloc(initial_count, sizeof *initial);
     if (!initial) goto done;
     for (i = 0; i < *count; ++i) {
@@ -3954,10 +4082,21 @@ static int discover_installed(const char *root_path, int dir,
         struct holy_scan_result extra = {0};
         struct holy_scan_result *scan = i < initial_count ? &initial[i] : &extra;
         char *snapshot = holy_cache_snapshot(catalog.digests[i], root_path);
-        int ok;
-        if (!snapshot) { result = 6; goto done; }
-        ok = holy_deps_visit(snapshot, installed_requirement, &catalog) &&
-             (i < initial_count || holy_scan_collect(snapshot, scan));
+        int item = -1, ok = 0;
+        if (!snapshot && i < initial_count) { result = 6; goto done; }
+        if (i >= initial_count)
+            item = child_dir(catalog.installed, catalog.digests[i], 0);
+        if (snapshot) {
+            ok = holy_deps_visit(snapshot, installed_requirement, &catalog) &&
+                 (i < initial_count || holy_scan_collect(snapshot, scan));
+        } else {
+            /* a discovered provider whose cached object is gone is described from the
+               records it was installed with and the payload it still owns */
+            ok = item >= 0 &&
+                 instance_requirements(item, installed_requirement, &catalog) &&
+                 installed_payload_scan(root, item, scan);
+        }
+        if (item >= 0) close(item);
         unlink(snapshot);
         free(snapshot);
         for (j = 0; ok && j < scan->count; ++j) {
@@ -4073,7 +4212,20 @@ static int build_set(const char *root_path, int root, int dir,
     strcpy(set->host, host.machine);
     for (i = 0; i < count; ++i) {
         snapshots[i] = holy_cache_snapshot(digests[i], root_path);
-        if (!snapshots[i]) { result = 6; goto done; }
+        if (!snapshots[i]) {
+            /* a set resolves and hashes the archive it stages, so an installed
+               artifact whose cached object is gone is a cache requirement, not a
+               discovery result. the name is the actionable part. */
+            int installed = child_dir(dir, "installed", 0), instance = -1;
+            if (installed >= 0) instance = child_dir(installed, digests[i], 0);
+            if (instance >= 0)
+                fprintf(stderr, "holypkg: installed artifact needs its cached archive: %s\n",
+                        digests[i]);
+            if (instance >= 0) close(instance);
+            if (installed >= 0) close(installed);
+            result = 6;
+            goto done;
+        }
     }
     result = holy_resolve_collect((const char *const *)snapshots, count, choice,
                                   &set->resolution);

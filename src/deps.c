@@ -274,3 +274,28 @@ int holy_deps_visit(const char *package, holy_requirement_visit visitor,
 {
     return visitor && inspect_local(package, 0, NULL, visitor, opaque);
 }
+
+int holy_deps_buffer_visit(const void *data, size_t length,
+                           holy_requirement_visit visitor, void *opaque)
+{
+    struct requirement *items = NULL;
+    size_t count = 0, i;
+    char *copy;
+    int ok = 0;
+    if (!visitor || !data || length > DEPS_LIMIT) return 0;
+    if (!(copy = malloc(length + 1))) return 0;
+    memcpy(copy, data, length);
+    copy[length] = 0;
+    if (!parse(copy, length, &items, &count)) goto done;
+    ok = 1;
+    for (i = 0; i < count && ok; ++i) {
+        char **v = items[i].fields;
+        ok = visitor(opaque, v[1], v[2], v[3], v[4], v[5], v[6],
+                     v[7], v[8], v[9], v[10]);
+    }
+done:
+    for (i = 0; i < count; ++i) holy_tokens_free(items[i].fields, 11);
+    free(items);
+    free(copy);
+    return ok;
+}

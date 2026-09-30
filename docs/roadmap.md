@@ -371,7 +371,11 @@
   is named. A provider-owned symlink chain to a versioned library is accepted. Cached
   replacements revalidate every selected SONAME edge. Installed check reads
   verified target-root ELF files and reports provider, alias or earlier-path
-  shadowing drift, resolving the loader default the same way. Other loader tokens,
+  shadowing drift, resolving the loader default the same way. A searched directory
+  that already holds the name is shadowing unless the opened path is the
+  provider's own file, which a merged-/usr directory link such as /lib64 to
+  usr/lib64 leaves unchanged, so the planner and installed check compare the
+  opened inode rather than a manifest path. Other loader tokens,
   cross-package aliases and plugins remain open.
 - [x] Resolve direct absolute shebangs in native package sets against exact
   executable ELF paths. Save the selected provider edge, reject unresolved

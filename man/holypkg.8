@@ -1174,9 +1174,22 @@ dependencies. For a HOLY/deps SONAME requirement it filters installed packages
 by recorded arch/libc, then scans their cached archives and compares actual
 DT_SONAME, ELF type and ABI scope;
 the name of a package or an unverified claim is insufficient. Other discovery
-uses installed names and manifests. Installed candidates currently require
-their cached archives for ELF scanning.
-A missing archive returns unavailable instead of guessing ABI facts. Reuse
+uses installed names and manifests.
+.PP
+An installed candidate whose cached archive is gone is described from what it
+still owns instead. Its requirement record is read from the instance directory,
+and its ELF and script facts come from the intact installed payload read through
+the target root with the arch and libc the instance recorded, which is the same
+evidence the archive gave. A payload file that changed is not the payload the
+manifest recorded, so it is not evidence, and the candidate then offers no
+provider for that name. A hardlink alias and a symlink alias add no fact here:
+the first is a second name for owned bytes, and the second names a file the
+loader resolves through.
+.PP
+Discovery therefore needs no cache object, while reuse does. A set resolves and
+hashes the archive it stages, so selecting an installed artifact whose cached
+archive is missing returns 6 and names it as installed artifact needs its cached
+archive. Reuse
 requires the version-2 or version-3 installed graph format. Multiple viable providers still
 require --choose; automatic installed/source preference ranking remains open.
 .PP
@@ -1190,7 +1203,11 @@ no runpath is searched in the loader default for its machine: /lib64, /usr/lib64
 Multiarch triplet directories are absent, because a payload records no triplet.
 The
 selected provider must own a matching ELF file at the first existing
-DIRECTORY/SONAME, or own its symlink chain. The planner checks architecture,
+DIRECTORY/SONAME, or own its symlink chain. A searched directory that already
+holds the name is shadowing, unless the opened path is the provider's own file,
+which is a device and inode fact and is what a merged-/usr directory link such
+as /lib64 to usr/lib64 leaves unchanged. Installed check applies the same fact to
+an alias it opens. The planner checks architecture,
 runtime, symbols and version needs, and rejects unknown tokens or empty path entries.
 It rejects a later provider when an earlier directory contains a file at the
 same SONAME. A provider that owns the name outside every searched directory is

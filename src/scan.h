@@ -30,6 +30,10 @@ struct holy_scan_result {
 
 /* collects owned facts from a verified snapshot; free after any result. */
 int holy_scan_collect(const char *path, struct holy_scan_result *result);
+/* the same ELF and script facts from an intact installed payload, read through the
+   target root with the package tags the instance recorded. */
+int holy_scan_installed(int files_fd, int root, const char *arch, const char *libc,
+                        struct holy_scan_result *result);
 void holy_scan_free(struct holy_scan_result *result);
 
 /* reports ELF facts for regular payload files without executing them. */
