@@ -591,6 +591,25 @@
   provides from classified ELF payloads, so a selected archive can supply
   separate file-level evidence. Complex patterns remain review-required. Key enrollment,
   automatic provider selection and a file index remain open.
+  A Homebrew formula converter now reads a formula as Ruby text and never evaluates
+  it. The class name, description, homepage, license, url, sha256 and revision are
+  carried, a formula that states no version records the version its source url
+  carries, a depends_on becomes a runtime requirement and a :build dependency a build
+  requirement, and a recommended or optional dependency is reported. A resource or a
+  patch block with a pinned url and digest becomes a fetched source. A system call
+  inside def install or on_linux becomes a build step that runs the same command in
+  the source root, with #{prefix}, HOMEBREW_PREFIX, #{libexec}, #{etc}, #{var} and
+  #{buildpath} rewritten onto the build root; an interpolation the reader does not
+  model keeps its text and is named. Every other statement of an install body stays
+  Ruby, so the formula is copied beside the recipe as homebrew-install.rb, the build
+  declares a ruby build requirement, and the report names the file and line of each
+  statement. A fixture converts a mechanical formula, builds the recipe it produced
+  into a real package, installs it beside a provider that closes the requirement the
+  depends_on created, and converts a formula full of Ruby, platform blocks, a bottle
+  and a test block, checking every named refusal. The build also keeps the mode a
+  declared directory had, since a package built here used to claim /usr with the mode
+  of the manager's own staging tree and could not be installed beside any other
+  package that claims it.
   A Solus eopkg importer now reads the ZIP artifact, carries the metadata as text and
   walks the install tar with libarchive. The metadata is read in its own context, so a
   packager identity is not a package name and a build dependency is not a runtime
@@ -599,11 +618,11 @@
   dependency becomes one exact package requirement whose original field is the
   releaseFrom value the metadata states. The install tar travels whole under a private
   path, since a Solus layout is recorded rather than claimed, and an install script, a
-  COMAR object, a delta and a signature are dropped rather than run or trusted. Homebrew
-  and Guix remain open.
+  COMAR object, a delta and a signature are dropped rather than run or trusted. Guix
+  remains open.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
-  Gentoo and Pacstall recipe conversion with helper environments and split
-  outputs.
+  Gentoo, Pacstall, Homebrew and Guix recipe conversion with helper environments
+  and split outputs.
   The native side of that work now exists: `holypkg build` parses a
   holy-recipe(5) manifest, fetches pinned sources, unpacks them, runs reviewed
   phase steps with absolute HOLY_* paths, and packs one .holy per declared

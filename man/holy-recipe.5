@@ -541,6 +541,46 @@ are dropped and counted, since a Flatpak sandbox decision has no Holy equivalent
 A manifest with more than one module is reported, because a Flatpak build shares
 one prefix across its modules while each step here installs into the payload, so a
 later module cannot read an earlier install.
+
+.SS Homebrew formula
+A formula is recognized by its .rb suffix, or named with
+.BR "import \-\-format homebrew" .
+It is Ruby, and it is read as text and never evaluated. The class name becomes the
+package name, and a class that inherits from a cask is reported, since a cask
+installs an application bundle rather than building a source tree. The
+description, homepage and license are carried, the url and its sha256 become one
+pinned source, the revision becomes the release, and a formula that states no
+version records the version its source url carries before its archive suffix, or
+zero, which is reported.
+
+.PP
+A depends_on becomes depend and a :build dependency becomes build-depend, while a
+:recommended or :optional dependency is reported, since a build cannot promise a
+feature it did not ask for. A resource or a patch block that pins a url and a digest
+becomes a fetched source, and a patch applies with -p1 in a prepare step. A block
+that prepares its content with a Ruby expression is a helper the report names.
+
+.PP
+A system call inside def install or on_linux becomes a build step that runs the same
+command in the source root, because a Homebrew build runs there and a Holy build step
+starts in the build directory. The Homebrew prefix is rewritten onto the build root:
+#{prefix} and HOMEBREW_PREFIX become $HOLY_DEST, #{libexec} becomes
+$HOLY_DEST/libexec, #{etc} and #{var} become $HOLY_DEST/etc and $HOLY_DEST/var,
+and #{buildpath} becomes $HOLY_BUILD. An interpolation this reader does not model
+keeps its text and is reported. An engine lift puts the extracted source root where
+a Homebrew build runs, since the engine extracts an archive under its own name and a
+distribution tarball keeps one top directory inside it.
+
+.PP
+Every other statement of an install body is Ruby, so it is not translated. The
+formula is copied beside the recipe as homebrew-install.rb, the build declares a
+ruby build requirement, and the report names the file and line of each such
+statement, since a shell step that pretended to run Ruby would be a lie. A head, a
+mirror, a uses_from_macos framework, an on_macos, on_arm or on_intel block, a bottle
+block, a service block, a test block and a def other than install are reported: a
+bottle is a prebuilt foreign binary, a launchd job has no Linux counterpart, a
+Homebrew test harness does not exist here and a development checkout is not the
+pinned source.
 .SH CONVERSION REPORTThe report lists every carried, preserved, helper, unknown and changed item with
 its source file and line range, and its status is native or review-required. A
 review-required conversion returns 3 with the recipe written, since review is a

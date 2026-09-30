@@ -12,13 +12,13 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg import INPUT --source NAME
 .B "     --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|scoop|winget|nix|eopkg|pkgbuild"
-.B "     |void|aports|slackbuild|rpmspec|debian|gentoo|pacstall|flatpak"
+.B "     |void|aports|slackbuild|rpmspec|debian|gentoo|pacstall|flatpak|homebrew"
 .br
 .B "     --output NEW_DIRECTORY [--public-key FILE (apk only)]"
 .br
 .B holypkg build RECIPE --output NEW_DIRECTORY [--environment host|clean|vm] [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
 .br
-.B holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|debian|NAME.ebuild|NAME.pacscript|NAME.json|TEMPLATE --source NAME --output NEW_DIRECTORY
+.B holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|debian|NAME.ebuild|NAME.pacscript|NAME.rb|NAME.json|TEMPLATE --source NAME --output NEW_DIRECTORY
 .br
 .B holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY
 .br
@@ -2896,10 +2896,11 @@ named APKBUILD reaches the Aports converter, and a name ending in .SlackBuild
 reaches the SlackBuild converter, a name ending in .spec reaches the RPM
 spec converter, a directory named debian reaches the Debian converter and a
 name ending in .ebuild reaches the Gentoo converter and a name ending in
-.pacscript reaches the Pacstall converter and a name ending in .json, .yml or
-.yaml reaches the Flatpak converter through the same command,
+.pacscript reaches the Pacstall converter, a name ending in .rb reaches the Homebrew
+converter and a name ending in .json, .yml or .yaml reaches the Flatpak converter
+through the same command,
 while any other name reaches the pacman converter, and
-import INPUT --source NAME --format pkgbuild|void|aports|slackbuild|rpmspec|debian|gentoo|pacstall|flatpak
+import INPUT --source NAME --format pkgbuild|void|aports|slackbuild|rpmspec|debian|gentoo|pacstall|flatpak|homebrew
 --output NEW_DIRECTORY names the family explicitly. None of these commands installs a
 package, builds one, or grants NAME a registered source identity; the report
 records it as provenance.
@@ -3071,6 +3072,31 @@ finish-args permissions, cleanup steps, build extensions and a buildsystem with 
 Holy phase are reported as dropped or unresolved, and a manifest with several
 modules is reported, because a Flatpak build shares one prefix across its modules
 while each step here installs into the payload.
+.PP
+The Homebrew converter reads a formula as Ruby text and never evaluates it. The
+class name becomes the package name, the description, homepage and license are
+carried, the url and its sha256 become one pinned source, the revision becomes the
+release, and a formula that states no version records the version its source url
+carries or zero, with the report naming which. A depends_on becomes a runtime
+requirement and a :build dependency a build requirement; a :recommended or
+:optional dependency is reported, since a build cannot promise a feature it did not
+ask for. A resource or a patch block that pins a url and a digest becomes a fetched
+source, and a patch applies with -p1 in the prepare phase.
+.PP
+A system call inside def install or on_linux becomes a build step that runs the
+same command in the source root, and the Homebrew prefix is rewritten onto the build
+root: #{prefix} and HOMEBREW_PREFIX become $HOLY_DEST, #{libexec} becomes
+$HOLY_DEST/libexec, #{etc} and #{var} become $HOLY_DEST/etc and $HOLY_DEST/var,
+and #{buildpath} becomes $HOLY_BUILD. An interpolation this reader does not model
+keeps its text and is reported. Every other statement of that body is Ruby, so the
+formula is copied beside the recipe as homebrew-install.rb, the build declares a
+ruby build requirement, and the report names the file and line of each statement: a
+shell step that pretended to run Ruby would be a lie. An engine lift puts the
+extracted source root where a Homebrew build runs, since the engine extracts an
+archive under its own name. A head, a mirror, a uses_from_macos framework, an
+on_macos, on_arm or on_intel block, a bottle block, a service block and a test block
+are reported, because a bottle is a prebuilt foreign binary, a launchd job has no
+Linux counterpart and a Homebrew test harness does not exist here.
 .PP
 All of these reports name every carried, preserved, helper, unknown and changed item
 with its source file and line range, and their status is native or

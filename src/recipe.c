@@ -1132,7 +1132,7 @@ static int copy_into(const char *dest_tree, const char *source_root,
             if (index < length && parent[index] != '/') continue;
             saved = parent[index];
             parent[index] = 0;
-            if (mkdir(parent, 0700) && errno != EEXIST) {
+            if (mkdir(parent, 0755) && errno != EEXIST) {
                 fprintf(stderr, "holypkg: build directory unavailable: %s\n", parent);
                 parent[index] = saved;
                 result = 0;
@@ -1404,6 +1404,23 @@ static int emit_output(struct recipe *recipe, const char *group, const char *out
     {
         char *data = joined(tree, "DATA");
         if (!data) goto done;
+        /* a declared directory keeps the mode the build gave it, since a package that
+           shares /usr with another one has to declare the same mode for it */
+        for (i = 0; i < payload->count; ++i) {
+            const struct payload_entry *entry = &payload->items[i];
+            char *path;
+            if (!entry->directory || !entry_output(recipe, entry) ||
+                strcmp(entry_output(recipe, entry), output_name)) continue;
+            if (entry->group && strcmp(entry->group, group)) continue;
+            path = joined(data, entry->path);
+            if (!path) { free(data); goto done; }
+            if (!make_parents(path) || (mkdir(path, 0700) && errno != EEXIST) ||
+                chmod(path, (mode_t)(entry->mode & 07777))) {
+                fprintf(stderr, "holypkg: build directory unavailable: %s\n", path);
+                free(path); free(data); goto done;
+            }
+            free(path);
+        }
         for (i = 0; i < payload->count; ++i) {
             const struct payload_entry *entry = &payload->items[i];
             const char *target;
