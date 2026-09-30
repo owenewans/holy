@@ -217,11 +217,85 @@ grep -qx "override i-extra.override state review scope artifact $artifact path /
 grep -qx "override-owner i-extra.override $second override-fixture-two 1 noarch" "$tmp/out"
 grep -qx 'override-detail i-extra.override scope or conditions name another artifact' "$tmp/out"
 grep -qx "override-summary records 3 applied 1 pending 1 not-installed 0 review 1 invalid 0 whole-file 1 diff 2 read-only" "$tmp/out"
+# the plan for one whole-file record says what applying it would write, and refuses
+# every record that is not one this manager applies or no longer applies in place
+printf 'the patched configuration line\n' > "$tmp/patched"
+patched=$(tree_digest "$tmp/patched")
+cat > "$store/whole.override" <<EOF
+format holy-override-1
+scope artifact
+digest $artifact
+path /etc/foo.conf
+sha256 $foo
+patch $patched
+result $patched
+EOF
+cat "$tmp/patched" >> "$store/whole.override"
+expect 0 "$bin" override plan whole.override --root "$root"
+grep -qx "override-plan whole.override path /etc/foo.conf owner $artifact override-fixture 1 source $foo result $patched patch $patched form whole-file" "$tmp/out"
+plan=$(sed -n 's/^override-plan-sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+test "${#plan}" -eq 64
+expect 0 "$bin" override plan whole.override --root "$root"
+test "$(sed -n 's/^override-plan-sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")" = "$plan"
+expect 0 "$bin" override plan whole.override --root "$root" --json
+grep -qx "{\"schema\":\"holy-override-plan-1\",\"type\":\"plan\",\"name\":\"whole.override\",\"path\":\"/etc/foo.conf\",\"owner\":\"$artifact\",\"owner_name\":\"override-fixture\",\"owner_version\":\"1\",\"source_sha256\":\"$foo\",\"result_sha256\":\"$patched\",\"patch_sha256\":\"$patched\",\"form\":\"whole-file\",\"generation\":$(cat "$root/var/lib/holypkg/generation"),\"sha256\":\"$plan\"}" "$tmp/out"
+# a diff record is a decision this manager does not take
+expect 3 "$bin" override plan a-applied.override --root "$root"
+grep -q 'is a diff record' "$tmp/err"
+expect 3 "$bin" override plan b-pending.override --root "$root"
+# a file that is not what the record applies to is a decision, not a plan
+cat > "$store/elsewhere.override" <<EOF
+format holy-override-1
+scope artifact
+digest $artifact
+path /etc/foo.conf
+sha256 $other
+patch $patched
+result $patched
+EOF
+cat "$tmp/patched" >> "$store/elsewhere.override"
+expect 3 "$bin" override plan elsewhere.override --root "$root"
+grep -qx 'holypkg: override elsewhere.override does not apply to the file in place' "$tmp/err"
+# a record whose result is already in place has nothing to write
+cat > "$store/applied.override" <<EOF
+format holy-override-1
+scope artifact
+digest $artifact
+path /etc/foo.conf
+sha256 $other
+patch $foo
+result $foo
+EOF
+cat "$tmp/foo.conf" >> "$store/applied.override"
+expect 3 "$bin" override plan applied.override --root "$root"
+grep -qx 'holypkg: override applied.override is already applied' "$tmp/err"
+rm "$store/applied.override"
+# a payload that drifted is not a plan, and a file no artifact owns has none either
+printf 'patched by hand\n' > "$root/etc/foo.conf"
+expect 3 "$bin" override plan whole.override --root "$root"
+grep -qx 'holypkg: the installed payload file /etc/foo.conf drifted' "$tmp/err"
+cp "$tmp/foo.conf" "$root/etc/foo.conf"
+sed 's|^path /etc/foo.conf$|path /etc/absent.conf|' "$store/whole.override" \
+    > "$store/unowned.override"
+expect 3 "$bin" override plan unowned.override --root "$root"
+grep -qx 'holypkg: no installed artifact owns /etc/absent.conf' "$tmp/err"
+rm "$store/unowned.override"
+expect 2 "$bin" override plan ../escape.override --root "$root"
+expect 2 "$bin" override plan short --root "$root"
+expect 2 "$bin" override plan missing.override --root "$root"
+grep -qx 'holypkg: override missing.override is not a readable record' "$tmp/err"
+# a store entry that is not a readable record has no plan, and a name that is not a
+# record name is a usage error
+ln -s "$tmp/foo.conf" "$store/unreadable.override"
+expect 2 "$bin" override plan unreadable.override --root "$root"
+grep -qx 'holypkg: override unreadable.override is not a readable record' "$tmp/err"
+rm "$store/unreadable.override" "$store/elsewhere.override" "$store/whole.override"
 # a root without a database cannot answer which artifact owns a path
 mkdir "$tmp/empty"
 expect 6 "$bin" override list --root "$tmp/empty"
 grep -qx 'holypkg: installed set unavailable' "$tmp/err"
 expect 2 "$bin" override list
 expect 2 "$bin" override show --root "$root"
+expect 2 "$bin" override plan whole.override
 expect 2 "$bin" override list --root "$root" --json --json
 printf 'override report fixtures passed\n'

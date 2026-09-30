@@ -268,6 +268,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg override list --root DIRECTORY [--json]
 .br
+.B holypkg override plan NAME --root DIRECTORY [--json]
+.br
 .B holypkg db check SHA256 --root DIRECTORY
 .br
 .B holypkg db check --all --root DIRECTORY
@@ -2732,8 +2734,19 @@ one review is 3 and one invalid record is 2. The summary line counts every state
 --json uses the holy-override-report-1 schema, with a form field on every record and
 whole-file and diff counts in the summary.
 .PP
-Applying a record, and the conditions under which a set re-applies one, are not part
-of this command: it reports what a store says about the installed set.
+override plan is the preparation step for one record. It resolves the artifact that
+owns the path, refuses a record whose installed payload file drifted, refuses a record
+whose result is already in place, and refuses a file that is not what the record
+applies to, because each of those is a decision rather than a plan. What is left
+states what applying it would write and the SHA-256 that says so:
+override-plan NAME path PATH owner OWNER NAME VERSION source SHA256 result SHA256 patch SHA256 form whole-file
+followed by override-plan-sha256 SHA256 read-only. The hash covers the record, the
+owner, both digests and the identity of the target root with its installed
+generation, so a plan that names a different artifact, a different file or a
+different database is a different plan. --json uses the holy-override-plan-1 schema.
+.PP
+Applying a record is not part of this command: it reports what a store says about the
+installed set, and prepares the one plan an apply would need.
 .PP
 A set plan states the records it would write over and binds them, so a store that
 changed between the plan and the apply moves the plan hash and the apply is a

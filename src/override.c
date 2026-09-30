@@ -59,6 +59,7 @@ struct override_owner {
     char arch[96];
     char libc[96];
     int found;
+    int intact;              /* the installed payload file still matches its manifest */
 };
 
 struct override_store {
@@ -154,6 +155,7 @@ static int owner_visit(void *context, int root, int instance, const char *digest
     int owns;
     if (files < 0) return 0;
     owns = holy_install_manifest_owns(files, owner->relative) == 1;
+    if (owns) owner->intact = holy_install_check_path(files, root, owner->relative);
     close(files);
     if (!owns) return 0;
     (void)root;
@@ -716,5 +718,166 @@ done:
     if (root >= 0) close(root);
     store_free(&store);
     if (status) holy_override_records_free(found, count);
+    return status;
+}
+
+static int plan_name_valid(const char *name)
+{
+    size_t length;
+    if (!name || !*name) return 0;
+    length = strlen(name);
+    if (length < 10 || length > 255 || strcmp(name + length - 9, ".override")) return 0;
+    if (strchr(name, '/')) return 0;
+    return 1;
+}
+
+/* the plan for one record: what applying it would write, and the hash that says so. a
+   record this manager would not apply, a path no artifact owns, a payload that drifted
+   and a file that is not what the record applies to are all decisions, so they are
+   refused with the fact that refuses them. */
+int holy_override_plan(const char *name, const char *root_path, int json)
+{
+    struct override_store store = {0};
+    struct override_record *record = NULL;
+    struct override_owner owner;
+    unsigned long long generation = 0;
+    struct stat root_state;
+    unsigned char digest[32];
+    unsigned int length;
+    EVP_MD_CTX *hash = NULL;
+    char actual[65], current[65], plan[65];
+    unsigned char *data = NULL;
+    size_t size = 0, invalid = 0;
+    int root = -1, listing = -1, status = 1, visit, i;
+
+    memset(&owner, 0, sizeof owner);
+    if (!plan_name_valid(name)) return 2;
+    root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0 || fstat(root, &root_state)) {
+        fputs("holypkg: target root unavailable\n", stderr);
+        return 6;
+    }
+    listing = openat(root, overrides_path,
+                     O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (listing < 0) {
+        fprintf(stderr, "holypkg: no override record %s in the store\n", name);
+        status = 6;
+        goto done;
+    }
+    if (!record_read(listing, name, &data, &size)) {
+        fprintf(stderr, "holypkg: override %s is not a readable record\n", name);
+        status = 2;
+        goto done;
+    }
+    {
+        struct override_record parsed;
+        char *message = NULL;
+        if (!record_parse(name, (const char *)data, size, &parsed, &message)) {
+            fprintf(stderr, "holypkg: override %s: %s\n", name,
+                    message ? message : "not a valid record");
+            free(message);
+            status = 2;
+            goto done;
+        }
+        if (!record_push(&store, &parsed)) { status = 1; goto done; }
+    }
+    record = &store.records[0];
+    if (!record->whole_file) {
+        fprintf(stderr, "holypkg: override %s is a diff record; this manager does not"
+                        " apply a diff it does not describe\n", name);
+        status = 3;
+        goto done;
+    }
+    owner.path = record->path;
+    owner.relative = record->path + 1;
+    visit = holy_state_visit(root_path, owner_visit, &owner, &generation);
+    if (visit) {
+        fprintf(stderr, "holypkg: installed set unavailable\n");
+        status = visit == 5 ? 5 : 6;
+        goto done;
+    }
+    if (!owner.found) {
+        fprintf(stderr, "holypkg: no installed artifact owns %s\n", record->path);
+        status = 3;
+        goto done;
+    }
+    if (owner.intact != 1) {
+        fprintf(stderr, "holypkg: the installed payload file %s drifted\n", record->path);
+        status = 3;
+        goto done;
+    }
+    if (!root_digest(root, record->path, current)) {
+        fprintf(stderr, "holypkg: %s is not readable through the target root\n", record->path);
+        status = 6;
+        goto done;
+    }
+    if (!strcmp(current, record->result_digest)) {
+        fprintf(stderr, "holypkg: override %s is already applied\n", name);
+        status = 3;
+        goto done;
+    }
+    if (strcmp(current, record->source_digest)) {
+        fprintf(stderr, "holypkg: override %s does not apply to the file in place\n", name);
+        status = 3;
+        goto done;
+    }
+    if (!(hash = EVP_MD_CTX_new()) ||
+        EVP_DigestInit_ex(hash, EVP_sha256(), NULL) != 1) { status = 1; goto done; }
+    {
+        char line[1024];
+        int used = snprintf(line, sizeof line,
+                            "format holy-override-plan-1\nname %s\npath %s\n"
+                            "owner %s\nsource %s\nresult %s\npatch %s\nroot %ju %ju\n"
+                            "generation %llu\n",
+                            record->name, record->path, owner.digest,
+                            record->source_digest, record->result_digest,
+                            record->patch_digest, (uintmax_t)root_state.st_dev,
+                            (uintmax_t)root_state.st_ino, generation);
+        if (used < 0 || (size_t)used >= sizeof line ||
+            EVP_DigestUpdate(hash, line, (size_t)used) != 1) { status = 1; goto done; }
+    }
+    if (EVP_DigestFinal_ex(hash, digest, &length) != 1 || length != 32) {
+        status = 1;
+        goto done;
+    }
+    for (i = 0; i < 32; ++i) snprintf(plan + 2 * i, 3, "%02x", digest[i]);
+    plan[64] = 0;
+    if (json)
+        printf("{\"schema\":\"holy-override-plan-1\",\"type\":\"plan\",\"name\":");
+    else
+        printf("override-plan %s path %s owner %s %s %s source %s result %s patch %s form whole-file\n",
+               record->name, record->path, owner.digest, owner.name, owner.version,
+               record->source_digest, record->result_digest, record->patch_digest);
+    if (json) {
+        print_string(record->name);
+        printf(",\"path\":");
+        print_string(record->path);
+        printf(",\"owner\":");
+        print_string(owner.digest);
+        printf(",\"owner_name\":");
+        print_string(owner.name);
+        printf(",\"owner_version\":");
+        print_string(owner.version);
+        printf(",\"source_sha256\":");
+        print_string(record->source_digest);
+        printf(",\"result_sha256\":");
+        print_string(record->result_digest);
+        printf(",\"patch_sha256\":");
+        print_string(record->patch_digest);
+        printf(",\"form\":\"whole-file\",\"generation\":%llu,\"sha256\":",
+                generation);
+        print_string(plan);
+        printf("}\n");
+    } else
+        printf("override-plan-sha256 %s read-only\n", plan);
+    (void)actual;
+    status = ferror(stdout) ? 1 : 0;
+done:
+    if (hash) EVP_MD_CTX_free(hash);
+    free(data);
+    if (listing >= 0) close(listing);
+    if (root >= 0) close(root);
+    store_free(&store);
+    (void)invalid;
     return status;
 }

@@ -412,9 +412,14 @@
   record: a body that is the whole replacement file carries one digest for
   patch and result and is a whole-file record, while two different digests
   make it diff shaped, which this format does not describe and this manager
-  will not guess at. Applying a record and re-applying one on a later version
-  are still open, as do service consent, general rollback and per-phase
-  recovery.
+  will not guess at. `holypkg override plan NAME` prepares one record: it
+  resolves the artifact that owns the path, refuses a record whose installed
+  payload file drifted, a record whose result is already in place and a file
+  that is not what the record applies to, then states what applying it would
+  write with a SHA-256 over the record, the owner, both digests and the
+  identity of the target root with its installed generation. Applying that
+  plan and re-applying a record on a later version are still open, as do
+  service consent, general rollback and per-phase recovery.
 - [x] Carry config/mutable flags through verified manifests and installed checks;
   import Debian conffiles as config files, reject invalid declarations, and
   report changed-config.

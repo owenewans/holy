@@ -1563,6 +1563,184 @@ int main(int argc, char **argv)
     if (argc > 1 && !strcmp(argv[1], "apply")) return holy_apply_command(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "test")) return holy_test_command(argc - 2, argv + 2);
     if (argc > 2 && !strcmp(argv[1], "override")) {
+        if (argc == 5 && !strcmp(argv[2], "list") && !strcmp(argv[3], "--root"))
+            return holy_override_list(argv[4], 0);
+        if (argc == 6 && !strcmp(argv[2], "list") && !strcmp(argv[3], "--root") &&
+            !strcmp(argv[5], "--json")) return holy_override_list(argv[4], 1);
+
+        if (argc == 6 && !strcmp(argv[2], "plan") && !strcmp(argv[4], "--root"))
+            return holy_override_plan(argv[3], argv[5], 0);
+        if (argc == 7 && !strcmp(argv[2], "plan") && !strcmp(argv[4], "--root") &&
+            !strcmp(argv[6], "--json")) return holy_override_plan(argv[3], argv[5], 1);
+        fputs("usage: holypkg override list --root DIRECTORY [--json]"
+              " | holypkg override plan NAME --root DIRECTORY [--json]\n", stderr);
+        return 2;
+    }
+    if (argc > 1 && !strcmp(argv[1], "up")) return holy_up_command(argc, argv);
+    if (argc > 1 && !strcmp(argv[1], "run")) return holy_run(argc, argv);
+    if (argc > 2 && !strcmp(argv[1], "rpm")) {
+        if (argc == 13 && !strcmp(argv[2], "index") &&
+            !strcmp(argv[5], "--sha256") && !strcmp(argv[7], "--source") &&
+            !strcmp(argv[9], "--base") && !strcmp(argv[11], "--output"))
+            return holy_rpm_md_index(argv[3], argv[4], argv[6], argv[8], argv[10], argv[12], NULL);
+        if ((argc == 10 || argc == 12) && !strcmp(argv[2], "sync") &&
+            !strcmp(argv[4], "--sha256") && !strcmp(argv[6], "--source") &&
+            !strcmp(argv[8], "--output") &&
+            (argc == 10 || !strcmp(argv[10], "--ca-file")))
+            return holy_rpm_md_sync(argv[3], argv[5], argv[7], argv[9],
+                                    argc == 12 ? argv[11] : NULL, NULL);
+        if (argc == 6 && (!strcmp(argv[2], "search") || !strcmp(argv[2], "info")) &&
+            !strcmp(argv[4], "--catalog"))
+            return holy_rpm_md_query(argv[5], argv[3], !strcmp(argv[2], "info"));
+        if (argc == 6 && !strcmp(argv[2], "providers") && !strcmp(argv[4], "--catalog"))
+            return holy_rpm_md_providers(argv[5], argv[3]);
+        if (argc == 8 && !strcmp(argv[2], "providers") &&
+            !strcmp(argv[4], "--source") && !strcmp(argv[6], "--root")) {
+            char *catalog = NULL;
+            int result = holy_rpm_md_catalog_path(argv[7], argv[5], &catalog);
+            if (!result) result = holy_rpm_md_providers(catalog, argv[3]);
+            free(catalog);
+            return result;
+        }
+        if (argc >= 10 && argc <= 13 && !strcmp(argv[2], "fetch") &&
+            !strcmp(argv[6], "--catalog") && !strcmp(argv[8], "--output")) {
+            const char *ca_file = NULL;
+            int imported = 0, i;
+            for (i = 10; i < argc;) {
+                if (!strcmp(argv[i], "--import") && !imported) { imported = 1; ++i; }
+                else if (i + 1 < argc && !strcmp(argv[i], "--ca-file") && !ca_file) {
+                    ca_file = argv[i + 1]; i += 2;
+                } else break;
+            }
+            if (i == argc) return holy_rpm_md_fetch(argv[7], argv[3], argv[4], argv[5],
+                                                      argv[9], ca_file, imported);
+        }
+        fputs("usage: holypkg rpm index REPOMD PRIMARY --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY | rpm sync HTTPS_BASE/ --sha256 HASH --source NAME --output NEW_DIRECTORY [--ca-file FILE] | rpm search|info QUERY --catalog DIRECTORY | rpm providers CAPABILITY --catalog DIRECTORY | rpm providers CAPABILITY --source ALIAS --root DIRECTORY | rpm fetch NAME EVR ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--import]\n", stderr);
+        return 2;
+    }
+    if (argc > 2 && !strcmp(argv[1], "apt")) {
+        if (argc >= 13 && argc <= 17 && !strcmp(argv[2], "sync-source") &&
+            !strcmp(argv[7], "--root") && !strcmp(argv[9], "--keyring") &&
+            !strcmp(argv[11], "--output")) {
+            const char *ca_file = NULL;
+            int inrelease = 0, files = 0, i;
+            for (i = 13; i < argc; ++i) {
+                if (!strcmp(argv[i], "--inrelease") && !inrelease) inrelease = 1;
+                else if (!strcmp(argv[i], "--files") && !files) files = 1;
+                else if (!strcmp(argv[i], "--ca-file") && !ca_file && i + 1 < argc)
+                    ca_file = argv[++i];
+                else return 2;
+            }
+            int result = holy_apt_release_sync_source(argv[8], argv[3], argv[4], argv[5],
+                                                      argv[6], argv[10], argv[12],
+                                                      ca_file, inrelease, files);
+            if (!result) result = holy_apt_bind(argv[8], argv[3], argv[4], argv[5],
+                                                argv[6], argv[12]);
+            return result;
+        }
+        if (argc == 10 && !strcmp(argv[2], "bind") && !strcmp(argv[8], "--root"))
+            return holy_apt_bind(argv[9], argv[3], argv[4], argv[5], argv[6], argv[7]);
+        if (argc >= 13 && argc <= 17 && !strcmp(argv[2], "sync-signed") &&
+            !strcmp(argv[7], "--source") && !strcmp(argv[9], "--keyring") &&
+            !strcmp(argv[11], "--output")) {
+            const char *ca_file = NULL;
+            int inrelease = 0, files = 0, i;
+            for (i = 13; i < argc; ++i) {
+                if (!strcmp(argv[i], "--inrelease") && !inrelease) inrelease = 1;
+                else if (!strcmp(argv[i], "--files") && !files) files = 1;
+                else if (!strcmp(argv[i], "--ca-file") && !ca_file && i + 1 < argc)
+                    ca_file = argv[++i];
+                else return 2;
+            }
+            return holy_apt_release_sync(argv[3], argv[4], argv[5], argv[6],
+                                         argv[8], argv[10], argv[12],
+                                         ca_file, inrelease, files);
+        }
+        if ((argc == 12 || argc == 14) && !strcmp(argv[2], "sync") &&
+            !strcmp(argv[4], "--sha256") && !strcmp(argv[6], "--source") &&
+            !strcmp(argv[8], "--base") && !strcmp(argv[10], "--output") &&
+            (argc == 12 || !strcmp(argv[12], "--ca-file")))
+            return holy_apt_sync(argv[3], argv[5], argv[7], argv[9], argv[11],
+                                 argc == 14 ? argv[13] : NULL);
+        if (argc == 12 && !strcmp(argv[2], "index") &&
+            !strcmp(argv[4], "--sha256") && !strcmp(argv[6], "--source") &&
+            !strcmp(argv[8], "--base") && !strcmp(argv[10], "--output"))
+            return holy_apt_index(argv[3], argv[5], argv[7], argv[9], argv[11]);
+        if (argc >= 4 && (!strcmp(argv[2], "search") || !strcmp(argv[2], "info"))) {
+            const char *catalog = NULL, *source = NULL, *root = NULL;
+            const char *suite = NULL, *component = NULL, *index_arch = NULL;
+            char *bound = NULL;
+            int i, result, file_search = 0;
+            for (i = 4; i < argc;) {
+                if (!strcmp(argv[i], "--file") && !file_search &&
+                    !strcmp(argv[2], "search")) { file_search = 1; ++i; continue; }
+                if (i + 1 >= argc) break;
+                if (!strcmp(argv[i], "--catalog") && !catalog) catalog = argv[i + 1];
+                else if (!strcmp(argv[i], "--source") && !source) source = argv[i + 1];
+                else if (!strcmp(argv[i], "--root") && !root) root = argv[i + 1];
+                else if (!strcmp(argv[i], "--suite") && !suite) suite = argv[i + 1];
+                else if (!strcmp(argv[i], "--component") && !component) component = argv[i + 1];
+                else if (!strcmp(argv[i], "--index-arch") && !index_arch) index_arch = argv[i + 1];
+                else break;
+                i += 2;
+            }
+            if (i == argc && (!!source == !!root) &&
+                ((catalog && !suite && !component && !index_arch) ||
+                 (!catalog && source && suite && component && index_arch))) {
+                if (!catalog) {
+                    result = holy_apt_catalog_path(root, source, suite, component,
+                                                   index_arch, &bound);
+                    if (result) return result;
+                    catalog = bound;
+                }
+                result = holy_apt_query(catalog, argv[3], !strcmp(argv[2], "info"),
+                                        file_search, root, source);
+                free(bound);
+                return result;
+            }
+        }
+        if (argc >= 8 && !strcmp(argv[2], "fetch")) {
+            const char *catalog = NULL, *output = NULL, *ca_file = NULL;
+            const char *required_file = NULL;
+            const char *source = NULL, *root = NULL;
+            const char *suite = NULL, *component = NULL, *index_arch = NULL;
+            char *bound = NULL;
+            int imported = 0, i, result;
+            for (i = 6; i < argc; ++i) {
+                if (!strcmp(argv[i], "--catalog") && !catalog && i + 1 < argc) catalog = argv[++i];
+                else if (!strcmp(argv[i], "--output") && !output && i + 1 < argc) output = argv[++i];
+                else if (!strcmp(argv[i], "--ca-file") && !ca_file && i + 1 < argc) ca_file = argv[++i];
+                else if (!strcmp(argv[i], "--require-file") && !required_file && i + 1 < argc)
+                    required_file = argv[++i];
+                else if (!strcmp(argv[i], "--source") && !source && i + 1 < argc) source = argv[++i];
+                else if (!strcmp(argv[i], "--root") && !root && i + 1 < argc) root = argv[++i];
+                else if (!strcmp(argv[i], "--suite") && !suite && i + 1 < argc) suite = argv[++i];
+                else if (!strcmp(argv[i], "--component") && !component && i + 1 < argc) component = argv[++i];
+                else if (!strcmp(argv[i], "--index-arch") && !index_arch && i + 1 < argc) index_arch = argv[++i];
+                else if (!strcmp(argv[i], "--import") && !imported) imported = 1;
+                else break;
+            }
+            if (i == argc && output && (!!source == !!root) &&
+                ((catalog && !suite && !component && !index_arch) ||
+                 (!catalog && source && suite && component && index_arch))) {
+                if (!catalog) {
+                    result = holy_apt_catalog_path(root, source, suite, component,
+                                                   index_arch, &bound);
+                    if (result) return result;
+                    catalog = bound;
+                }
+                result = holy_apt_fetch(catalog, argv[3], argv[4], argv[5], output,
+                                        ca_file, imported, required_file, root, source);
+                free(bound);
+                return result;
+            }
+        }
+        fputs("usage: holypkg apt index FILE --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY | apt sync URL --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--ca-file FILE] | apt sync-signed HTTPS_BASE/ SUITE COMPONENT ARCH --source NAME --keyring FILE --output NEW_DIRECTORY [--inrelease] [--files] [--ca-file FILE] | apt sync-source ALIAS SUITE COMPONENT ARCH --root DIRECTORY --keyring FILE --output NEW_DIRECTORY [--inrelease] [--files] [--ca-file FILE] | apt bind ALIAS SUITE COMPONENT INDEX_ARCH CATALOG --root ROOT | apt search|info NAME [--file] --catalog DIRECTORY [--source ALIAS --root ROOT] | apt search|info NAME [--file] --source ALIAS --suite SUITE --component COMPONENT --index-arch ARCH --root ROOT | apt fetch NAME VERSION ARCH [--catalog DIRECTORY | --source ALIAS --suite SUITE --component COMPONENT --index-arch ARCH --root ROOT] --output NEW_DIRECTORY [--ca-file FILE] [--import] [--require-file /PATH]\n", stderr);
+        return 2;
+    }
+    if (argc > 1 && !strcmp(argv[1], "apply")) return holy_apply_command(argc, argv);
+    if (argc > 1 && !strcmp(argv[1], "test")) return holy_test_command(argc - 2, argv + 2);
+    if (argc > 2 && !strcmp(argv[1], "override")) {
         const char *override_root = NULL;
         int override_json = 0, listed = 0, valid = 1, i;
         for (i = 3; i < argc; ++i) {
@@ -1578,7 +1756,13 @@ int main(int argc, char **argv)
             listed = 1;
             return holy_override_list(override_root, override_json);
         }
-        fputs("usage: holypkg override list --root DIRECTORY [--json]\n", stderr);
+        if (valid && argc == 6 && !strcmp(argv[2], "plan") && !strcmp(argv[4], "--root") &&
+            !listed) {
+            listed = 1;
+            return holy_override_plan(argv[3], argv[5], override_json);
+        }
+        fputs("usage: holypkg override list --root DIRECTORY [--json]"
+              " | holypkg override plan NAME --root DIRECTORY [--json]\n", stderr);
         return 2;
     }
     if (argc > 2 && !strcmp(argv[1], "xbps")) {

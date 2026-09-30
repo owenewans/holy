@@ -11,6 +11,12 @@
    6 the root has no usable database. */
 int holy_override_list(const char *root_path, int json);
 
+/* the reviewed plan for one whole-file record: what applying it would write, and the
+   hash that says so. 0 prepared, 2 the name or record is not usable, 3 the record is
+   not one this manager applies or no longer applies to the file in place,
+   5 an unfinished transaction, 6 the record or the target root is unavailable. */
+int holy_override_plan(const char *name, const char *root_path, int json);
+
 /* one valid record with what the file it names holds in the target root. the caller
    owns the vector. */
 struct holy_override_record_info {

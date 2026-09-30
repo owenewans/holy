@@ -1212,7 +1212,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=ba717c45eb5691201bae9bcdd764bb255c32e09c42f03f98cb2503ce40a7cd45
+holypkg.8 source=holy version=development sha256=717438c7c7091c5c4ecbce08bdbee6f5cc77fba079156a32467bff2c9ef81d91
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1440,6 +1440,7 @@ SYNOPSIS
      holypkg  test  PLAN  [--sha256 PLAN_SHA256] [--mode root|vm] [--root DIREC-
      TORY] [--json] [--shell | -- COMMAND [ARGS...]]
      holypkg override list --root DIRECTORY [--json]
+     holypkg override plan NAME --root DIRECTORY [--json]
      holypkg db check SHA256 --root DIRECTORY
      holypkg db check --all --root DIRECTORY
      holypkg db check SHA256|--all --root DIRECTORY --json
@@ -3958,9 +3959,21 @@ USER OVERRIDES
      counts every state.  --json uses the holy-override-report-1 schema, with  a
      form field on every record and whole-file and diff counts in the summary.
 
-     Applying a record, and the conditions under which a set re-applies one, are
-     not  part of this command: it reports what a store says about the installed
-     set.
+     override plan is the preparation step for one record. It resolves the arti-
+     fact  that	 owns  the  path,  refuses a record whose installed payload file
+     drifted, refuses a record whose result is already in place, and  refuses  a
+     file that is not what the record applies to, because each of those is a de-
+     cision rather than a plan. What is left states what applying it would write
+     and the SHA-256 that says so: override-plan NAME path PATH owner OWNER NAME
+     VERSION  source  SHA256 result SHA256 patch SHA256 form whole-file followed
+     by override-plan-sha256 SHA256 read-only. The hash covers the  record,  the
+     owner,  both digests and the identity of the target root with its installed
+     generation, so a plan that names a different artifact, a different file  or
+     a	different  database  is a different plan. --json uses the holy-override-
+     plan-1 schema.
+
+     Applying a record is not part of this command: it reports what a store says
+     about the installed set, and prepares the one plan an apply would need.
 
      A set plan states the records it would write over	and  binds  them,  so  a
      store  that  changed between the plan and the apply moves the plan hash and
