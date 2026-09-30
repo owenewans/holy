@@ -902,6 +902,9 @@
   package requirements, every nested block that is not one is skipped and counted, and
   the installer, Windows and catalog keys are dropped with a count. Nothing runs the
   artifact, so the import returns decision-required.
+  `make check-cc` now compiles the core with tcc, gcc and clang in turn, packs a
+  package with each result and verifies it, and returns 6 when a toolchain is
+  absent, so the three named host compilers are checked rather than assumed.
   Nix closure import remains open.
 - [ ] Implement `holypkg run`, context-specific provider paths, grouped `up --prepare`,
   isolated root/VM trials and full `check` reports.

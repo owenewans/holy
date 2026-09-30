@@ -208,6 +208,11 @@ check-scoop: holypkg
 check-closure: holypkg
 	python3 tests/closure.py ./holypkg
 
+.PHONY: check-cc
+check-cc:
+	@for cc in tcc gcc clang; do command -v $$cc >/dev/null || { echo "$$cc required for the compiler fixture" >&2; exit 6; }; done
+	sh tests/compilers.sh
+
 .PHONY: check-winget
 check-winget: holypkg
 	python3 tests/winget.py ./holypkg
@@ -280,7 +285,7 @@ check-init: holy-init
 check-hooks: holypkg
 	CC="$(CC)" sh tests/hooks.sh ./holypkg
 
-check: check-pacman check-deb check-apt check-slackware check-apk check-xbps-import check-xbps-version check-xbps-index check-appimage check-snap check-run check-recipe check-pkgbuild check-void check-aports check-slackbuild check-rpmspec check-debsrc check-gentoo check-pacstall check-flatpak check-scoop check-winget check-closure check-hooks check-apk-version check-apk-index check-apk-fetch check-native-version $(if $(RPM_LIBS),check-rpm) holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
+check: check-pacman check-deb check-apt check-slackware check-apk check-xbps-import check-xbps-version check-xbps-index check-appimage check-snap check-run check-recipe check-pkgbuild check-void check-aports check-slackbuild check-rpmspec check-debsrc check-gentoo check-pacstall check-flatpak check-scoop check-winget check-closure check-cc check-hooks check-apk-version check-apk-index check-apk-fetch check-native-version $(if $(RPM_LIBS),check-rpm) holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg

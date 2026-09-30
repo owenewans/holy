@@ -851,6 +851,15 @@ fixture approves non-native placement by exact artifact hash. For x86 packages
 it also requires qemu-i386 and runs the shell with its pentium2 CPU model. This
 tests the static shell; host holypkg still runs outside the chroot. Boot,
 static holypkg and full libc recovery require separate acceptance tests.
+.SS Host build
+The core, the package manager and the installer are C99, and the build is make with
+the ordinary CC, CPPFLAGS, CFLAGS, LDFLAGS and LDLIBS. make CC=tcc, make CC=gcc and
+make CC=clang each compile it, and make check-cc proves it: the target compiles the
+core with tcc, gcc and clang in turn, packs a package with the result, verifies it and
+lists its payload, then restores the default build. A missing toolchain returns 6
+instead of a green run, and a toolchain that breaks the C99 build fails the target
+with its own compiler output.
+.PP
 .SS Static core build
 make bootstrap-mdevd ARCH=i686|x86_64 INPUTS=DIRECTORY OUTPUT=DIRECTORY builds a
 musl-static mdevd 0.1.8.2 package with skalibs 2.15.1.0. The default is x86_64.
