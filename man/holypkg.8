@@ -11,7 +11,7 @@ holypkg \- Holy local package tooling prototype
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
 .B holypkg import INPUT --source NAME
-.B "     --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|scoop|pkgbuild|void|aports"
+.B "     --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|scoop|winget|pkgbuild|void|aports"
 .B "     |slackbuild|rpmspec|debian|gentoo|pacstall|flatpak"
 .br
 .B "     --output NEW_DIRECTORY [--public-key FILE (apk only)]"
@@ -2662,6 +2662,26 @@ for another operating system. The report names the artifact and its digest, the
 directory and program the manifest states, the dropped installer and integration
 keys, the requirements a bucket dependency became and any archive member the
 payload refused. NAME does not grant a registered source identity.
+.SS WinGet artifacts
+import INPUT --source NAME --format winget --output NEW_DIRECTORY reads one
+winget-pkgs manifest as YAML text and writes the same conversion directory a Scoop
+manifest produces: the original manifest, one native package and a package report.
+PackageIdentifier is the package name and PackageVersion the version; a name the
+package format cannot record is refused with status 2 rather than rewritten, as is a
+manifest with no literal version, no InstallerUrl or no InstallerSha256. A WinGet
+digest is written in upper case and is compared in lower case, so both forms verify.
+.PP
+The artifact, the extract_dir and the counted keys are the shared artifact rules the
+Scoop section states, so a WinGet package carries the verified artifact under
+/usr/lib/holy/private/NAME/ as well. A manifest that declares no program path
+records none, and the report says so rather than guessing one from the archive.
+.PP
+A PackageDependencies entry is the only nested block this converter reads, because it
+names the packages the manifest requires; every other nested block is skipped and its
+key counted. The installer keys, the Windows integration keys and the catalog keys are
+dropped and counted the way the Scoop report counts them, and the catalog is named as
+a WinGet catalog rather than a bucket. Nothing in the artifact is executed and no Wine
+requirement is recorded, so import returns status 3 after writing the output.
 .SS Recipe conversion
 holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY reads one
 PKGBUILD as text and writes a conversion directory containing the original

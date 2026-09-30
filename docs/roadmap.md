@@ -895,7 +895,14 @@
   needs it, accepting the broken dependents removes it and the check report names
   the provider that is gone, and restoring the object makes the surviving
   application whole again.
-  Nix closure import and WinGet remain open.
+  The WinGet importer reads a winget-pkgs manifest as YAML, takes its
+  PackageIdentifier, PackageVersion, InstallerUrl and InstallerSha256, verifies an
+  upper-case digest against the artifact beside the manifest, and carries it through
+  the same writer the Scoop package uses. A PackageDependencies block becomes
+  package requirements, every nested block that is not one is skipped and counted, and
+  the installer, Windows and catalog keys are dropped with a count. Nothing runs the
+  artifact, so the import returns decision-required.
+  Nix closure import remains open.
 - [ ] Implement `holypkg run`, context-specific provider paths, grouped `up --prepare`,
   isolated root/VM trials and full `check` reports.
   The existing run launcher now derives private PATH directories from the

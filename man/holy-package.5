@@ -160,6 +160,11 @@ the package. HOLY/transform records the private path, the extract_dir, the progr
 the manifest names and that the installer was dropped without a Wine requirement.
 Each dependency of the manifest becomes one package requirement on the app name, and
 HOLY/hooks stays empty because nothing runs at install.
+.PP
+The WinGet importer records family winget with the converter holy-winget-1 through the
+same writer, so its payload, its private path, its transform record and its empty
+HOLY/hooks match the Scoop package: only the manifest fields, the requirement ids and
+the report wording name the catalog instead of the bucket.
 .SH INSTALLED GRAPH
 New local installations use holy-instance-4 state, or holy-instance-5 when an
 explicit non-native architecture placement decision was accepted. Version 5 adds

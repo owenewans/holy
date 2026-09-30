@@ -227,15 +227,19 @@ static size_t dependencies(const char *list, char names[][256], size_t limit)
 {
     size_t count = 0, at = 0;
     while (list[at] && count < limit) {
-        size_t used = 0, cut, length = 0;
+        size_t used = 0, cut, length = 0, index;
         char name[256];
         while (list[at] == ' ' || list[at] == '\t' || list[at] == ',' || list[at] == '\n') ++at;
         while (list[at + used] && list[at + used] != ' ' && list[at + used] != '\t' &&
                list[at + used] != ',' && list[at + used] != '\n') ++used;
-        /* a bucket writes name/version or name@version, and a version is not a
+        /* a catalog writes name/version or name@version, and a version is not a
            package name */
         cut = used;
-        while (cut && list[at + cut - 1] != '/' && list[at + cut - 1] != '@') --cut;
+        for (index = used; index > 0; --index)
+            if (list[at + index - 1] == '/' || list[at + index - 1] == '@') {
+                cut = index - 1;
+                break;
+            }
         while (length < cut && length + 1 < sizeof name) {
             char c = list[at + length];
             if (!isalnum((unsigned char)c) && c != '.' && c != '_' && c != '-' && c != '+')
