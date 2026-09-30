@@ -941,7 +941,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holy-package.5 source=holy version=development sha256=6e9543e75e5727f379f133a965a1f6f4275dc1fd8573e8fe0124a76ea21da1fa
+holy-package.5 source=holy version=development sha256=91e47375f757f55e0627ce80c105220cae96458a68fedb42fed1b6e3a4f6fc5b
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -1099,6 +1099,17 @@ FOREIGN IMPORT RECORDS
      version,  arch  and  libc are read from the manifest and the payload rather
      than assumed.
 
+     The Scoop importer records family scoop with  the	converter  holy-scoop-1,
+     the  manifest  digest,  the  artifact  URL, its digest and mode artifact in
+     HOLY/origin.  Its	payload	 carries  the  verified	 artifact  whole   under
+     /usr/lib/holy/private/NAME/,  with	 the  directory the manifest declares as
+     extract_dir replacing the first component of every archive member path, and
+     the manifest  copy	 sits  in  the	output	directory  beside  the	package.
+     HOLY/transform  records  the private path, the extract_dir, the program the
+     manifest names and that the installer was dropped without a  Wine	require-
+     ment.   Each  dependency of the manifest becomes one package requirement on
+     the app name, and HOLY/hooks stays empty because nothing runs at install.
+
 INSTALLED GRAPH
      New local installations use holy-instance-4 state, or holy-instance-5  when
      an	 explicit  non-native architecture placement decision was accepted. Ver-
@@ -1151,7 +1162,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=b2dd7e3b259991cd17bbfa53d683dd89d75982c9a9aee896f40cc9c52cb8225d
+holypkg.8 source=holy version=development sha256=fad2cb2d6e6a267c0caa71949b87db7c03e20eff2ee087cb059c2aaf1f4c9110
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1172,8 +1183,8 @@ SYNOPSIS
      [--accept-privileged SHA256] [--root DIRECTORY] [--yes] [--noninteractive]
      holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
      holypkg import INPUT  --source  NAME	 --format  pacman|rpm|deb|slack-
-     ware|apk|xbps|appimage|snap|pkgbuild|void|aports		|slackbuild|rpm-
-     spec|debian|gentoo|pacstall|flatpak
+     ware|apk|xbps|appimage|snap|scoop|pkgbuild|void|aports		 |slack-
+     build|rpmspec|debian|gentoo|pacstall|flatpak
 	  --output NEW_DIRECTORY [--public-key FILE (apk only)]
      holypkg build RECIPE --output NEW_DIRECTORY  [--environment  host|clean|vm]
      [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
@@ -3788,6 +3799,42 @@ RUN INSTALLED COMMAND
      finement and interfaces, the recorded hooks, the command-chain and environ-
      ment records, the path views a link needs and the scripts that carry an in-
      terpreter. NAME does not grant a registered source identity.
+
+   Scoop artifacts
+     import  INPUT --source NAME --format scoop --output NEW_DIRECTORY reads one
+     Scoop manifest as JSON text and writes a conversion directory  holding  the
+     original  manifest,  one  native package and a package report. The manifest
+     file name is the package name, as a bucket names an app,  and  a  name  the
+     package  format  cannot record is refused with status 2 rather than rewrit-
+     ten, as is a manifest with no  literal  version,  no  artifact  URL  or  no
+     SHA-256 digest.
+
+     The  artifact  has	 to sit beside the manifest, since nothing runs to fetch
+     and unpack it, and its SHA-256 must be the digest the manifest pins; a dif-
+     ferent digest or an absent file returns 6. An artifact libarchive reads has
+     its members placed under /usr/lib/holy/private/NAME/, and the directory the
+     manifest declares as extract_dir replaces the first component of every mem-
+     ber path. Any other artifact travels as one file. A member with an absolute
+     or escaping path, or of a kind a payload does  not	 carry,	 is  refused  or
+     counted  and  reported.  The program the manifest names is looked up inside
+     the payload and recorded as x-scoop-program when it is there.
+
+     A Scoop dependency names an app of the same bucket, so each one  becomes  a
+     package  requirement  the	target has to satisfy from a source that has it.
+     The  installer,  pre_install,  post_install,   uninstaller,   env_add_path,
+     env_set,  persist,	 shortcuts,  psmodule  and  suggest keys are dropped and
+     counted, because a PowerShell step and a Windows integration  belong  to  a
+     Windows  installation;  checkver  and  autoupdate	are counted too, since a
+     bucket owns its own index. Nothing in the artifact is executed, and no Wine
+     requirement is recorded, because a package cannot promise	a  runtime  this
+     manager does not provide.
+
+     import  returns status 3 after writing the output, because the payload is a
+     program for another operating system. The report names the artifact and its
+     digest, the directory and program the  manifest  states,  the  dropped  in-
+     staller  and  integration keys, the requirements a bucket dependency became
+     and any archive member the payload refused. NAME does not	grant  a  regis-
+     tered source identity.
 
    Recipe conversion
      holypkg  convert  PKGBUILD	 --source  NAME --output NEW_DIRECTORY reads one

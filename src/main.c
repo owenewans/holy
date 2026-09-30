@@ -22,6 +22,7 @@
 #include "import.h"
 #include "appimage.h"
 #include "snap.h"
+#include "scoop.h"
 #include "up.h"
 #include "run.h"
 #include "../backends/apk.h"
@@ -1813,6 +1814,7 @@ int main(int argc, char **argv)
             if (!strcmp(argv[6], "xbps")) return holy_import_xbps(argv[2], argv[4], argv[8]);
             if (!strcmp(argv[6], "appimage")) return holy_import_appimage(argv[2], argv[4], argv[8]);
             if (!strcmp(argv[6], "snap")) return holy_import_snap(argv[2], argv[4], argv[8]);
+            if (!strcmp(argv[6], "scoop")) return holy_import_scoop(argv[2], argv[4], argv[8]);
             if (!strcmp(argv[6], "pkgbuild")) return holy_convert_pkgbuild(argv[2], argv[4], argv[8]);
             if (!strcmp(argv[6], "void")) return holy_convert_voidsrc(argv[2], argv[4], argv[8]);
             if (!strcmp(argv[6], "aports")) return holy_convert_aports(argv[2], argv[4], argv[8]);
@@ -1839,7 +1841,7 @@ int main(int argc, char **argv)
             !strcmp(argv[6], "apk") && !strcmp(argv[7], "--output") &&
             !strcmp(argv[9], "--public-key"))
             return holy_import_apk(argv[2], argv[4], argv[8], argv[10]);
-        fputs("usage: holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|pkgbuild|void|aports|slackbuild|rpmspec|debian|gentoo|pacstall|flatpak --output DIRECTORY [--public-key FILE (apk only)]\n", stderr);
+        fputs("usage: holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|scoop|pkgbuild|void|aports|slackbuild|rpmspec|debian|gentoo|pacstall|flatpak --output DIRECTORY [--public-key FILE (apk only)]\n", stderr);
         return 2;
     }
 

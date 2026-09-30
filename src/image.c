@@ -267,8 +267,7 @@ done:
 }
 
 static int spool_bytes(struct holy_payload *out, const void *data, size_t size,
-                       long long *offset)
-{
+                       long long *offset){
     const unsigned char *at = data;
     *offset = out->written;
     while (size) {
@@ -279,6 +278,60 @@ static int spool_bytes(struct holy_payload *out, const void *data, size_t size,
         size -= (size_t)written;
         out->written += written;
     }
+    return 1;
+}
+
+int holy_spool_open(struct holy_payload *out, struct holy_spool_writer *writer)
+{
+    EVP_MD_CTX *context = EVP_MD_CTX_new();
+    if (!context) return 0;
+    if (EVP_DigestInit_ex(context, EVP_sha256(), NULL) != 1) {
+        EVP_MD_CTX_free(context);
+        return 0;
+    }
+    writer->context = context;
+    writer->offset = out->written;
+    writer->size = 0;
+    return 1;
+}
+
+int holy_spool_append(struct holy_payload *out, struct holy_spool_writer *writer,
+                      const void *data, size_t length)
+{
+    if (!writer->context) return 0;
+    if (length && EVP_DigestUpdate(writer->context, data, length) != 1) return 0;
+    if (!spool_bytes(out, data, length, &writer->offset)) return 0;
+    writer->size += (long long)length;
+    return 1;
+}
+
+int holy_spool_close(struct holy_payload *out, struct holy_spool_writer *writer,
+                     unsigned char digest[32])
+{
+    unsigned char whole[32];
+    unsigned length = 0;
+    int ok = 0;
+    (void)out;
+    if (!writer->context) return 0;
+    if (EVP_DigestFinal_ex(writer->context, whole, &length) != 1 || length != sizeof whole)
+        goto done;
+    memcpy(digest, whole, sizeof whole);
+    ok = 1;
+done:
+    EVP_MD_CTX_free(writer->context);
+    writer->context = NULL;
+    return ok;
+}
+
+int holy_payload_spool_bytes(struct holy_payload *out, const void *data, size_t length,
+                             long long *offset, long long *size, unsigned char digest[32])
+{
+    struct holy_spool_writer writer;
+    if (!holy_spool_open(out, &writer)) return 0;
+    if (!holy_spool_append(out, &writer, data, length)) return 0;
+    if (!holy_spool_close(out, &writer, digest)) return 0;
+    *offset = writer.offset;
+    *size = writer.size;
     return 1;
 }
 

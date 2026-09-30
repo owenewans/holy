@@ -11,7 +11,7 @@ holypkg \- Holy local package tooling prototype
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
 .B holypkg import INPUT --source NAME
-.B "     --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|pkgbuild|void|aports"
+.B "     --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|scoop|pkgbuild|void|aports"
 .B "     |slackbuild|rpmspec|debian|gentoo|pacstall|flatpak"
 .br
 .B "     --output NEW_DIRECTORY [--public-key FILE (apk only)]"
@@ -2626,6 +2626,37 @@ directory names the base requirement, the dropped confinement and interfaces, th
 recorded hooks, the command-chain and environment records, the path views a link
 needs and the scripts that carry an interpreter. NAME does not grant a registered
 source identity.
+.SS Scoop artifacts
+import INPUT --source NAME --format scoop --output NEW_DIRECTORY reads one Scoop
+manifest as JSON text and writes a conversion directory holding the original
+manifest, one native package and a package report. The manifest file name is the
+package name, as a bucket names an app, and a name the package format cannot
+record is refused with status 2 rather than rewritten, as is a manifest with no
+literal version, no artifact URL or no SHA-256 digest.
+.PP
+The artifact has to sit beside the manifest, since nothing runs to fetch and unpack
+it, and its SHA-256 must be the digest the manifest pins; a different digest or an
+absent file returns 6. An artifact libarchive reads has its members placed under
+/usr/lib/holy/private/NAME/, and the directory the manifest declares as extract_dir
+replaces the first component of every member path. Any other artifact travels as
+one file. A member with an absolute or escaping path, or of a kind a payload does
+not carry, is refused or counted and reported. The program the manifest names is
+looked up inside the payload and recorded as x-scoop-program when it is there.
+.PP
+A Scoop dependency names an app of the same bucket, so each one becomes a package
+requirement the target has to satisfy from a source that has it. The installer,
+pre_install, post_install, uninstaller, env_add_path, env_set, persist, shortcuts,
+psmodule and suggest keys are dropped and counted, because a PowerShell step and a
+Windows integration belong to a Windows installation; checkver and autoupdate are
+counted too, since a bucket owns its own index. Nothing in the artifact is
+executed, and no Wine requirement is recorded, because a package cannot promise a
+runtime this manager does not provide.
+.PP
+import returns status 3 after writing the output, because the payload is a program
+for another operating system. The report names the artifact and its digest, the
+directory and program the manifest states, the dropped installer and integration
+keys, the requirements a bucket dependency became and any archive member the
+payload refused. NAME does not grant a registered source identity.
 .SS Recipe conversion
 holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY reads one
 PKGBUILD as text and writes a conversion directory containing the original

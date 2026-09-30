@@ -66,6 +66,22 @@ int holy_payload_add_text(struct holy_payload *payload, struct holy_text *body,
 /* copies one host file into the spool, hashing what it wrote */
 int holy_payload_spool_file(struct holy_payload *payload, int input, long long *offset,
                             long long *size, unsigned char digest[32]);
+/* copies bytes already in memory into the spool, hashing what it wrote */
+int holy_payload_spool_bytes(struct holy_payload *payload, const void *data, size_t length,
+                             long long *offset, long long *size, unsigned char digest[32]);
+
+/* one file written into the spool in pieces, which is how an archive member
+   becomes a payload entry without being held in memory */
+struct holy_spool_writer {
+    void *context;
+    long long offset, size;
+};
+
+int holy_spool_open(struct holy_payload *payload, struct holy_spool_writer *writer);
+int holy_spool_append(struct holy_payload *payload, struct holy_spool_writer *writer,
+                      const void *data, size_t length);
+int holy_spool_close(struct holy_payload *payload, struct holy_spool_writer *writer,
+                     unsigned char digest[32]);
 /* walks one directory of the image into the payload, never following a link */
 int holy_payload_walk(struct holy_payload *payload, int parent, const char *prefix,
                       const char *payload_prefix, unsigned depth);

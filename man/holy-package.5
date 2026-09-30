@@ -150,6 +150,16 @@ names becomes a package requirement on that name, because the runtime a snap sto
 mounts has to come from a source on this system; a superblock states no runtime, so
 that requirement names no libc. The name, version, arch and libc are read from the
 manifest and the payload rather than assumed.
+.PP
+The Scoop importer records family scoop with the converter holy-scoop-1, the
+manifest digest, the artifact URL, its digest and mode artifact in HOLY/origin. Its
+payload carries the verified artifact whole under /usr/lib/holy/private/NAME/, with
+the directory the manifest declares as extract_dir replacing the first component of
+every archive member path, and the manifest copy sits in the output directory beside
+the package. HOLY/transform records the private path, the extract_dir, the program
+the manifest names and that the installer was dropped without a Wine requirement.
+Each dependency of the manifest becomes one package requirement on the app name, and
+HOLY/hooks stays empty because nothing runs at install.
 .SH INSTALLED GRAPH
 New local installations use holy-instance-4 state, or holy-instance-5 when an
 explicit non-native architecture placement decision was accepted. Version 5 adds

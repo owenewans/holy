@@ -880,7 +880,15 @@
   and a module prefix becomes /usr. finish-args permissions, cleanup steps and
   build extensions are dropped and counted, and a buildsystem with no Holy phase
   is a helper the report names.
-  Nix, Scoop and WinGet remain open.
+  The Scoop importer reads a manifest as JSON, verifies the artifact beside it
+  against the digest the manifest pins, and carries it whole under a private
+  path, with the declared extract_dir replacing the first component of every
+  archive member and the declared program looked up inside the payload. A
+  bucket dependency becomes a package requirement, while the PowerShell
+  installer, the Windows integration keys and the bucket update keys are
+  dropped and counted. Nothing runs the artifact and no Wine requirement is
+  invented, so the import returns decision-required.
+  Nix and WinGet remain open.
 - [ ] Implement `holypkg run`, context-specific provider paths, grouped `up --prepare`,
   isolated root/VM trials and full `check` reports.
   The existing run launcher now derives private PATH directories from the
