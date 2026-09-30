@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "appimage.h"
 #include "elf.h"
+#include "image.h"
 #include "pack.h"
 #include "stage.h"
 #include "verify.h"
@@ -148,28 +149,6 @@ struct scan_state {
     size_t files, elfs, scripts, unknown, links, needed, path_views;
 };
 
-static void quoted(FILE *out, const char *value)
-{
-    const unsigned char *p = (const unsigned char *)value;
-    fputc('"', out);
-    for (; *p; ++p) {
-        if (*p == '"' || *p == '\\') fprintf(out, "\\%c", *p);
-        else if (*p < 32 || *p >= 127) fprintf(out, "\\x%02x", *p);
-        else fputc(*p, out);
-    }
-    fputc('"', out);
-}
-
-static char *child_path(const char *parent, const char *name)
-{
-    size_t a = strlen(parent), b = strlen(name);
-    char *path;
-    if (a > SIZE_MAX - b - 2) return NULL;
-    path = malloc(a + b + 2);
-    if (path) sprintf(path, "%s%s%s", parent, a ? "/" : "", name);
-    return path;
-}
-
 static int classify_file(int parent, const char *name, const char *path, struct scan_state *scan)
 {
     struct holy_elf_info elf;
@@ -184,54 +163,54 @@ static int classify_file(int parent, const char *name, const char *path, struct 
     if (!parsed) {
         const char *arch = holy_elf_machine(&elf), *libc = holy_elf_runtime(&elf);
         size_t i;
-        fputs("elf ", scan->report); quoted(scan->report, path);
+        fputs("elf ", scan->report); holy_quoted(scan->report, path);
         fprintf(scan->report, " %s %s %s\n", arch, libc, holy_elf_isa(&elf));
         if (elf.interpreter) {
-            fputs("interpreter ", scan->report); quoted(scan->report, path);
-            fputc(' ', scan->report); quoted(scan->report, elf.interpreter); fputc('\n', scan->report);
+            fputs("interpreter ", scan->report); holy_quoted(scan->report, path);
+            fputc(' ', scan->report); holy_quoted(scan->report, elf.interpreter); fputc('\n', scan->report);
         }
         if (elf.soname) {
-            fputs("soname ", scan->report); quoted(scan->report, path);
-            fputc(' ', scan->report); quoted(scan->report, elf.soname); fputc('\n', scan->report);
+            fputs("soname ", scan->report); holy_quoted(scan->report, path);
+            fputc(' ', scan->report); holy_quoted(scan->report, elf.soname); fputc('\n', scan->report);
         }
         if (elf.rpath) {
-            fputs("rpath ", scan->report); quoted(scan->report, path);
-            fputc(' ', scan->report); quoted(scan->report, elf.rpath); fputc('\n', scan->report);
+            fputs("rpath ", scan->report); holy_quoted(scan->report, path);
+            fputc(' ', scan->report); holy_quoted(scan->report, elf.rpath); fputc('\n', scan->report);
         }
         if (elf.runpath) {
-            fputs("runpath ", scan->report); quoted(scan->report, path);
-            fputc(' ', scan->report); quoted(scan->report, elf.runpath); fputc('\n', scan->report);
+            fputs("runpath ", scan->report); holy_quoted(scan->report, path);
+            fputc(' ', scan->report); holy_quoted(scan->report, elf.runpath); fputc('\n', scan->report);
         }
         for (i = 0; i < elf.needed_count; ++i) {
-            fputs("needed ", scan->report); quoted(scan->report, path);
-            fputc(' ', scan->report); quoted(scan->report, elf.needed[i]); fputc('\n', scan->report);
+            fputs("needed ", scan->report); holy_quoted(scan->report, path);
+            fputc(' ', scan->report); holy_quoted(scan->report, elf.needed[i]); fputc('\n', scan->report);
             ++scan->needed;
         }
         for (i = 0; i < elf.version_count; ++i) {
             if (elf.versions[i].weak) continue;
-            fputs("version-required ", scan->report); quoted(scan->report, path);
-            fputc(' ', scan->report); quoted(scan->report, elf.versions[i].provider);
-            fputc(' ', scan->report); quoted(scan->report, elf.versions[i].name); fputc('\n', scan->report);
+            fputs("version-required ", scan->report); holy_quoted(scan->report, path);
+            fputc(' ', scan->report); holy_quoted(scan->report, elf.versions[i].provider);
+            fputc(' ', scan->report); holy_quoted(scan->report, elf.versions[i].name); fputc('\n', scan->report);
         }
         ++scan->elfs;
         if (!strcmp(arch, "unknown") || !strcmp(libc, "unknown")) ++scan->unknown;
     } else if (parsed == 2 || (got >= 8 && !memcmp(head, "!<arch>\n", 8)) ||
                (got >= 2 && head[0] == 'M' && head[1] == 'Z')) {
-        fputs("unknown ", scan->report); quoted(scan->report, path); fputc('\n', scan->report);
+        fputs("unknown ", scan->report); holy_quoted(scan->report, path); fputc('\n', scan->report);
         ++scan->unknown;
     } else if (got >= 2 && head[0] == '#' && head[1] == '!') {
         size_t len = 2;
         char interpreter[256];
         while (len < (size_t)got && head[len] != '\n' && head[len] != '\r') ++len;
         memcpy(interpreter, head + 2, len - 2); interpreter[len - 2] = 0;
-        fputs("script ", scan->report); quoted(scan->report, path);
-        fputc(' ', scan->report); quoted(scan->report, interpreter); fputc('\n', scan->report);
+        fputs("script ", scan->report); holy_quoted(scan->report, path);
+        fputc(' ', scan->report); holy_quoted(scan->report, interpreter); fputc('\n', scan->report);
         ++scan->scripts;
     } else {
         struct stat st;
         if (fstat(fd, &st)) { holy_elf_free(&elf); close(fd); return 0; }
         if (st.st_mode & 0111) {
-            fputs("unknown-executable ", scan->report); quoted(scan->report, path); fputc('\n', scan->report);
+            fputs("unknown-executable ", scan->report); holy_quoted(scan->report, path); fputc('\n', scan->report);
             ++scan->unknown;
         }
     }
@@ -241,20 +220,13 @@ static int classify_file(int parent, const char *name, const char *path, struct 
     return !ferror(scan->report);
 }
 
-/* a walk gets its own open file description. a duplicated descriptor shares the
-   directory offset with the copy, so a second walk would start at the end. */
-static int directory_copy(int parent)
-{
-    return openat(parent, ".", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-}
-
 static int classify_tree(int parent, const char *prefix, struct scan_state *scan, unsigned depth)
 {
     DIR *dir;
     struct dirent *entry;
     int copy, ok = 1;
     if (depth > 64 || scan->files + scan->links > 100000) return 0;
-    copy = directory_copy(parent);
+    copy = holy_image_directory(parent);
     if (copy < 0) return 0;
     dir = fdopendir(copy);
     if (!dir) { close(copy); return 0; }
@@ -263,7 +235,7 @@ static int classify_tree(int parent, const char *prefix, struct scan_state *scan
         struct stat st;
         char *path;
         if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-        path = child_path(prefix, entry->d_name);
+        path = holy_image_path(prefix, entry->d_name);
         if (!path || fstatat(parent, entry->d_name, &st, AT_SYMLINK_NOFOLLOW)) { free(path); ok = 0; break; }
         if (S_ISDIR(st.st_mode)) {
             int child = openat(parent, entry->d_name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
@@ -287,14 +259,14 @@ static int classify_tree(int parent, const char *prefix, struct scan_state *scan
             if (ok) {
                 int path_view = target[0] == '/' || !holy_safe_link(path, target);
                 fputs(path_view ? "path-view-required " : "symlink ", scan->report);
-                quoted(scan->report, path); fputc(' ', scan->report);
-                quoted(scan->report, target); fputc('\n', scan->report);
+                holy_quoted(scan->report, path); fputc(' ', scan->report);
+                holy_quoted(scan->report, target); fputc('\n', scan->report);
                 ++scan->links;
                 scan->path_views += path_view;
             }
             free(target);
         } else {
-            fputs("unsupported-node ", scan->report); quoted(scan->report, path); fputc('\n', scan->report);
+            fputs("unsupported-node ", scan->report); holy_quoted(scan->report, path); fputc('\n', scan->report);
             ++scan->unknown;
         }
         free(path);
@@ -388,7 +360,7 @@ static int extract_image(const char *input, const char *output, const char *sour
         file = fdopen(receipt, "w");
         if (!file) { close(receipt); goto done; }
         fprintf(file, "format holy-appimage-extract-1\nconverter holy-appimage-1\noriginal-sha256 %s\narch %s\nsquashfs-offset %lld\nmode extract\nverification unverified\n", hash, arch, (long long)offset);
-        if (source) { fputs("source-name ", file); quoted(file, source); fputc('\n', file); }
+        if (source) { fputs("source-name ", file); holy_quoted(file, source); fputc('\n', file); }
         fputs("state extracted-unclassified\n", file);
         if (fflush(file) || fsync(fileno(file))) { fclose(file); goto done; }
         if (fclose(file) || fsync(dir)) goto done;
@@ -407,278 +379,6 @@ done:
 int holy_appimage_extract(const char *input, const char *output)
 {
     return extract_image(input, output, NULL);
-}
-
-/* the payload of one import. every byte is spooled into a single file, so the
-   packer never opens a host path it was handed, and each entry keeps the digest
-   the manifest records. */
-struct payload {
-    struct holy_stream_entry *entries;
-    unsigned char (*digests)[32];
-    size_t count, capacity;
-    int spool;
-    off_t written;
-    /* a payload is installed as the installing user, so every entry this
-       converter writes is attributed to that user rather than to whichever
-       ids the extraction happened to produce */
-    long long uid, gid;
-    /* the directories the payload already declares; an installer places a file
-       only under a directory the same manifest records */
-    char **directories;
-    size_t directory_count, directory_capacity;
-};
-
-struct name_set {
-    char **items;
-    size_t count, capacity;
-};
-
-/* what the payload needs and what it provides, plus the facts static inspection
-   could not close */
-struct closure {
-    struct name_set needed, provided, absolute;
-    size_t elfs, scripts, unknown, path_views, links, files;
-    char arch[16], libc[16];
-    int mixed, has_app;
-};
-
-/* a text buffer for the scripts and reports this converter writes itself */
-struct text {
-    char *data;
-    size_t used, capacity;
-};
-
-static void free_entries(struct payload *out)
-{
-    size_t i;
-    for (i = 0; i < out->count; ++i) {
-        free((char *)out->entries[i].path);
-        free((char *)out->entries[i].link);
-    }
-    for (i = 0; i < out->directory_count; ++i) free(out->directories[i]);
-    free(out->directories);
-    free(out->entries);
-    free(out->digests);
-    memset(out, 0, sizeof *out);
-}
-
-static void free_set(struct name_set *set)
-{
-    size_t i;
-    for (i = 0; i < set->count; ++i) free(set->items[i]);
-    free(set->items);
-    memset(set, 0, sizeof *set);
-}
-
-static int set_add(struct name_set *set, const char *name)
-{
-    char **grown, *copy;
-    size_t i;
-    for (i = 0; i < set->count; ++i) if (!strcmp(set->items[i], name)) return 1;
-    if (set->count == set->capacity) {
-        size_t next = set->capacity ? set->capacity * 2 : 16;
-        if (next > SIZE_MAX / sizeof *grown) return 0;
-        grown = realloc(set->items, next * sizeof *grown);
-        if (!grown) return 0;
-        set->items = grown;
-        set->capacity = next;
-    }
-    copy = strdup(name);
-    if (!copy) return 0;
-    set->items[set->count++] = copy;
-    return 1;
-}
-
-static int set_has(const struct name_set *set, const char *name)
-{
-    size_t i;
-    for (i = 0; i < set->count; ++i) if (!strcmp(set->items[i], name)) return 1;
-    return 0;
-}
-
-static int entry_push(struct payload *out, const char *path, const char *link, unsigned mode,
-                     long long offset, long long size, int directory)
-{
-    struct holy_stream_entry *grown, *slot;
-    unsigned char (*digests)[32];
-    if (out->count == out->capacity) {
-        size_t next = out->capacity ? out->capacity * 2 : 64;
-        if (next > SIZE_MAX / sizeof *grown) return 0;
-        grown = realloc(out->entries, next * sizeof *grown);
-        if (!grown) return 0;
-        out->entries = grown;
-        digests = realloc(out->digests, next * sizeof *digests);
-        if (!digests) return 0;
-        out->digests = digests;
-        out->capacity = next;
-    }
-    slot = &out->entries[out->count];
-    memset(slot, 0, sizeof *slot);
-    memset(out->digests[out->count], 0, sizeof out->digests[0]);
-    slot->path = strdup(path);
-    if (!slot->path) return 0;
-    if (link) {
-        slot->link = strdup(link);
-        if (!slot->link) return 0;
-    }
-    slot->mode = mode;
-    slot->uid = out->uid;
-    slot->gid = out->gid;
-    slot->offset = offset;
-    slot->size = size;
-    slot->directory = directory;
-    ++out->count;
-    return 1;
-}
-
-static int entry_directory(struct payload *out, const char *path)
-{
-    char **grown;
-    char *copy;
-    if (out->directory_count == out->directory_capacity) {
-        size_t next = out->directory_capacity ? out->directory_capacity * 2 : 32;
-        if (next > SIZE_MAX / sizeof *grown) return 0;
-        grown = realloc(out->directories, next * sizeof *grown);
-        if (!grown) return 0;
-        out->directories = grown;
-        out->directory_capacity = next;
-    }
-    copy = strdup(path);
-    if (!copy) return 0;
-    out->directories[out->directory_count++] = copy;
-    return entry_push(out, path, NULL, 0755, 0, 0, 1);
-}
-
-/* every directory an entry sits under is declared by the same manifest, because
-   the installer refuses a file whose parents it did not place itself */
-static int entry_parents(struct payload *out, const char *path)
-{
-    char built[1024];
-    size_t at;
-    for (at = 5; path[at]; ++at) {
-        size_t i;
-        if (path[at] != '/' || at >= sizeof built) continue;
-        memcpy(built, path, at);
-        built[at] = 0;
-        for (i = 0; i < out->directory_count; ++i)
-            if (!strcmp(out->directories[i], built)) break;
-        if (i < out->directory_count) continue;
-        if (!entry_directory(out, built)) return 0;
-    }
-    return 1;
-}
-
-static int entry_add(struct payload *out, const char *path, const char *link, unsigned mode,
-                     long long offset, long long size, int directory)
-{
-    if (strncmp(path, "DATA/", 5)) return entry_push(out, path, link, mode, offset, size, directory);
-    if (!entry_parents(out, path)) return 0;
-    if (directory) {
-        size_t i;
-        for (i = 0; i < out->directory_count; ++i)
-            if (!strcmp(out->directories[i], path)) return 1;
-        return entry_directory(out, path);
-    }
-    return entry_push(out, path, link, mode, offset, size, directory);
-}
-
-static int text_reserve(struct text *out, size_t extra)
-{
-    if (out->used + extra + 1 > out->capacity) {
-        size_t next = out->capacity ? out->capacity : 256;
-        char *grown;
-        while (next < out->used + extra + 1) {
-            if (next > SIZE_MAX / 2) return 0;
-            next *= 2;
-        }
-        grown = realloc(out->data, next);
-        if (!grown) return 0;
-        out->data = grown;
-        out->capacity = next;
-    }
-    return 1;
-}
-
-static int text_add(struct text *out, const char *value)
-{
-    size_t length = strlen(value);
-    if (!text_reserve(out, length)) return 0;
-    memcpy(out->data + out->used, value, length + 1);
-    out->used += length;
-    return 1;
-}
-
-/* appends bytes to the spool file and reports where they landed */
-static int spool_bytes(struct payload *out, const void *data, size_t size, long long *offset)
-{
-    const unsigned char *at = data;
-    *offset = out->written;
-    while (size) {
-        ssize_t written = write(out->spool, at, size);
-        if (written < 0 && errno == EINTR) continue;
-        if (written <= 0) return 0;
-        at += (size_t)written;
-        size -= (size_t)written;
-        out->written += written;
-    }
-    return 1;
-}
-
-static int digest_value(const void *data, size_t size, unsigned char digest[32])
-{
-    unsigned length = 0;
-    if (EVP_Digest(data, size, digest, &length, EVP_sha256(), NULL) != 1 || length != 32) return 0;
-    return 1;
-}
-
-/* copies one host file into the spool, hashing what it wrote */
-static int spool_file(struct payload *out, int input, long long *offset, long long *size,
-                      unsigned char digest[32])
-{
-    unsigned char buffer[65536], whole[32];
-    EVP_MD_CTX *context;
-    unsigned length = 0;
-    off_t start = out->written;
-    int ok = 0;
-    context = EVP_MD_CTX_new();
-    if (!context || EVP_DigestInit_ex(context, EVP_sha256(), NULL) != 1) goto done;
-    for (;;) {
-        ssize_t got = read(input, buffer, sizeof buffer);
-        const unsigned char *at = buffer;
-        size_t left;
-        if (got < 0 && errno == EINTR) continue;
-        if (got < 0) goto done;
-        if (!got) break;
-        if (EVP_DigestUpdate(context, buffer, (size_t)got) != 1) goto done;
-        left = (size_t)got;
-        while (left) {
-            ssize_t written = write(out->spool, at, left);
-            if (written < 0 && errno == EINTR) continue;
-            if (written <= 0) goto done;
-            at += (size_t)written;
-            left -= (size_t)written;
-            out->written += written;
-        }
-    }
-    if (EVP_DigestFinal_ex(context, whole, &length) != 1 || length != sizeof whole) goto done;
-    memcpy(digest, whole, sizeof whole);
-    *offset = start;
-    *size = (long long)(out->written - start);
-    ok = 1;
-done:
-    EVP_MD_CTX_free(context);
-    return ok;
-}
-
-static int spool_text(struct payload *out, struct text *body, const char *path, unsigned mode)
-{
-    unsigned char digest[32];
-    long long offset;
-    if (!digest_value(body->data, body->used, digest)) return 0;
-    if (!spool_bytes(out, body->data, body->used, &offset)) return 0;
-    if (!entry_add(out, path, NULL, mode, offset, (long long)body->used, 0)) return 0;
-    memcpy(out->digests[out->count - 1], digest, sizeof digest);
-    return 1;
 }
 
 /* the package name a converted image carries. a name the manifest cannot record
@@ -703,9 +403,9 @@ static int image_name(const char *input, char *name, size_t size)
 
 /* the desktop entry the image ships, and the version it states. the version is
    read from the payload only; one the payload does not state is zero. */
-static int read_desktop(int appdir, struct text *content, char *version, size_t size)
+static int read_desktop(int appdir, struct holy_text *content, char *version, size_t size)
 {
-    int copy = directory_copy(appdir);
+    int copy = holy_image_directory(appdir);
     DIR *dir = copy < 0 ? NULL : fdopendir(copy);
     struct dirent *entry;
     int found = 0;
@@ -742,220 +442,44 @@ static int read_desktop(int appdir, struct text *content, char *version, size_t 
                 break;
             }
         }
-        if (!text_add(content, buffer)) { closedir(dir); return 0; }
+        if (!holy_text_add(content, buffer)) { closedir(dir); return 0; }
     }
     closedir(dir);
     return found;
-}
-
-/* the absolute path a link would name, with the components resolved. the link
-   itself cannot travel in the payload, so this is the requirement it leaves. */
-static char *link_target_path(const char *path, const char *target)
-{
-    struct text out = {0};
-    size_t length = strlen(path) + strlen(target) + 2;
-    char *joined = malloc(length);
-    const char *p;
-    size_t ends[256], count = 0;
-    if (!joined) return NULL;
-    if (target[0] == '/') snprintf(joined, length, "%s", target);
-    else snprintf(joined, length, "%s/%s", path, target);
-    for (p = joined; *p;) {
-        const char *end = strchr(p, '/');
-        size_t part = end ? (size_t)(end - p) : strlen(p);
-        char piece[4096];
-        if (part == 1 && p[0] == '.') {
-            /* an empty component changes nothing */
-        } else if (part == 2 && p[0] == '.' && p[1] == '.') {
-            if (count) out.used = ends[--count];
-        } else if (part) {
-            if (part >= sizeof piece || count == sizeof ends / sizeof *ends ||
-                !text_add(&out, "/")) {
-                free(joined);
-                free(out.data);
-                return NULL;
-            }
-            memcpy(piece, p, part);
-            piece[part] = 0;
-            if (!text_add(&out, piece)) {
-                free(joined);
-                free(out.data);
-                return NULL;
-            }
-            ends[count++] = out.used;
-        }
-        if (!end) break;
-        p = end + 1;
-    }
-    free(joined);
-    if (!out.used && !text_add(&out, "/")) { free(out.data); return NULL; }
-    return out.data;
-}
-
-/* one file of the AppDir: its bytes, its ELF facts and what they require. the
-   walk never follows a link, so an image cannot reach outside its own tree. */
-static int collect_file(int parent, const char *name, const char *path,
-                        struct payload *out, struct closure *closure)
-{
-    struct holy_elf_info elf;
-    struct stat st;
-    char link[4096];
-    unsigned char digest[32];
-    long long offset, size;
-    int fd, parsed;
-    /* the node is read through the directory, so a link in the image is carried
-       as a link and never opened */
-    if (fstatat(parent, name, &st, AT_SYMLINK_NOFOLLOW)) return 0;
-    if (S_ISLNK(st.st_mode)) {
-        ssize_t target = readlinkat(parent, name, link, sizeof link - 1);
-        char *absolute;
-        if (target < 0) return 0;
-        link[target] = 0;
-        ++closure->links;
-        if (link[0] != '/' && holy_safe_link(path + 5, link))
-            return entry_add(out, path, link, 0777, 0, 0, 0);
-        /* a payload carries no absolute or escaping link, because neither the
-           extractor nor the installer accepts one. the path the link named is
-           recorded as a requirement, so nothing is dropped without a trace. */
-        absolute = link_target_path(path + 5, link);
-        ++closure->path_views;
-        if (!absolute || !set_add(&closure->absolute, absolute)) {
-            free(absolute);
-            return 0;
-        }
-        free(absolute);
-        return 1;
-    }
-    if (!S_ISREG(st.st_mode)) {
-        ++closure->unknown;
-        return entry_add(out, path, NULL, 0000, 0, 0, 0);
-    }
-    fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-    if (fd < 0) return 0;
-    if (fstat(fd, &st)) { close(fd); return 0; }
-    if (!spool_file(out, fd, &offset, &size, digest)) { close(fd); return 0; }
-    if (!entry_add(out, path, NULL, st.st_mode & 07777, offset, size, 0)) {
-        close(fd);
-        return 0;
-    }
-    memcpy(out->digests[out->count - 1], digest, sizeof digest);
-    ++closure->files;
-    parsed = holy_elf_read_fd(fd, &elf);
-    if (!parsed) {
-        const char *machine = holy_elf_machine(&elf), *runtime = holy_elf_runtime(&elf);
-        size_t i;
-        if (!strcmp(machine, "unknown") || !strcmp(runtime, "unknown")) {
-            ++closure->unknown;
-        } else {
-            const char *known_arch = !strcmp(machine, "x86") ? "x86" : "x86_64";
-            const char *known_libc = !strcmp(runtime, "glibc") || !strcmp(runtime, "musl") ?
-                                     runtime : "nolibc";
-            if (!closure->arch[0]) {
-                snprintf(closure->arch, sizeof closure->arch, "%s", known_arch);
-                snprintf(closure->libc, sizeof closure->libc, "%s", known_libc);
-            } else if (strcmp(closure->arch, known_arch) || strcmp(closure->libc, known_libc)) {
-                closure->mixed = 1;
-            }
-        }
-        for (i = 0; i < elf.needed_count; ++i)
-            if (elf.needed[i][0] && !strchr(elf.needed[i], '/') &&
-                !set_add(&closure->needed, elf.needed[i])) {
-                holy_elf_free(&elf);
-                close(fd);
-                return 0;
-            }
-        if (elf.soname && !set_add(&closure->provided, elf.soname)) {
-            holy_elf_free(&elf);
-            close(fd);
-            return 0;
-        }
-        ++closure->elfs;
-        holy_elf_free(&elf);
-    } else {
-        unsigned char head[2] = {0, 0};
-        if (pread(fd, head, sizeof head, 0) == (ssize_t)sizeof head &&
-            head[0] == '#' && head[1] == '!') ++closure->scripts;
-        else if (st.st_mode & 0111 || parsed == 2) ++closure->unknown;
-    }
-    close(fd);
-    return 1;
-}
-
-static int collect_tree(int parent, const char *prefix, const char *payload_prefix,
-                        struct payload *out, struct closure *closure, unsigned depth)
-{
-    DIR *dir;
-    struct dirent *entry;
-    int copy, ok = 1;
-    if (depth > 64 || closure->files + closure->links > 100000) return 0;
-    copy = directory_copy(parent);
-    if (copy < 0) return 0;
-    dir = fdopendir(copy);
-    if (!dir) { close(copy); return 0; }
-    errno = 0;
-    while ((entry = readdir(dir))) {
-        struct stat st;
-        char *path, *placed;
-        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-        path = child_path(prefix, entry->d_name);
-        placed = path ? child_path(payload_prefix, entry->d_name) : NULL;
-        if (!path || !placed || fstatat(parent, entry->d_name, &st, AT_SYMLINK_NOFOLLOW)) {
-            free(path); free(placed); ok = 0; break;
-        }
-        if (S_ISDIR(st.st_mode)) {
-            int child = openat(parent, entry->d_name,
-                               O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-            if (child < 0 || !entry_add(out, placed, NULL, 0755, 0, 0, 1) ||
-                !collect_tree(child, path, placed, out, closure, depth + 1)) ok = 0;
-            if (child >= 0) close(child);
-        } else if (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) {
-            if (!collect_file(parent, entry->d_name, placed, out, closure)) ok = 0;
-        } else {
-            /* a device, a socket or a fifo has no place in a package payload */
-            ++closure->unknown;
-        }
-        free(path);
-        free(placed);
-        if (!ok || closure->files + closure->links > 100000) { ok = 0; break; }
-        errno = 0;
-    }
-    if (errno) ok = 0;
-    closedir(dir);
-    return ok;
 }
 
 /* the launcher starts the recorded payload in the run context the package owns,
    so the absolute paths the image expects come from that context. a path view
    is written only for a tree the image actually ships, because the context maps
    a private tree over a public path rather than merging the two. */
-static int launcher_script(struct text *out, const char *name, const char *source,
+static int launcher_script(struct holy_text *out, const char *name, const char *source,
                            const char *private, int has_app)
 {
-    return text_add(out, "#!/bin/sh\n"
+    return holy_text_add(out, "#!/bin/sh\n"
                         "# a converted AppImage carries no sandbox of its own. this launcher starts\n"
                         "# the recorded payload in the run context the package owns, so the absolute\n"
                         "# paths the image expects come from that context instead of the host.\n"
                         "set -e\n"
                         "if [ \"$(id -u)\" = 0 ]; then\n"
                         "  echo '") &&
-           text_add(out, name) &&
-           text_add(out, ": the converted payload is not a sandbox; run it as your own user"
+           holy_text_add(out, name) &&
+           holy_text_add(out, ": the converted payload is not a sandbox; run it as your own user"
                          "' >&2\n  exit 1\nfi\n") &&
-           (has_app ? text_add(out, "views=\nif [ -d /app ]; then\n  views='--view /app=/") &&
-                      text_add(out, private) &&
-                      text_add(out, "/appdir/app'\nfi\n") : text_add(out, "views=\n")) &&
-           text_add(out, "exec holypkg run ") &&
-           text_add(out, source) && text_add(out, ":") && text_add(out, name) &&
-           text_add(out, " $views -- /") &&
-           text_add(out, private) &&
-           text_add(out, "/usr/bin/") &&
-           text_add(out, name) && text_add(out, ".appimage \"$@\"\n");
+           (has_app ? holy_text_add(out, "views=\nif [ -d /app ]; then\n  views='--view /app=/") &&
+                      holy_text_add(out, private) &&
+                      holy_text_add(out, "/appdir/app'\nfi\n") : holy_text_add(out, "views=\n")) &&
+           holy_text_add(out, "exec holypkg run ") &&
+           holy_text_add(out, source) && holy_text_add(out, ":") && holy_text_add(out, name) &&
+           holy_text_add(out, " $views -- /") &&
+           holy_text_add(out, private) &&
+           holy_text_add(out, "/usr/bin/") &&
+           holy_text_add(out, name) && holy_text_add(out, ".appimage \"$@\"\n");
 }
 
 /* the desktop entry the image ships, with Exec and TryExecup naming the launcher.
    only the first group is carried, because a desktop file the package owns
    cannot serve the actions its later groups declare. */
-static int desktop_script(struct text *out, const char *content, const char *launcher)
+static int desktop_script(struct holy_text *out, const char *content, const char *launcher)
 {
     const char *cursor = content;
     int group = 0, copied = 0;
@@ -967,19 +491,19 @@ static int desktop_script(struct text *out, const char *content, const char *lau
         if (header) {
             if (strncmp(cursor, "[Desktop Entry]", 15)) break;
             ++group;
-            if (!text_add(out, "[Desktop Entry]\n")) return 0;
+            if (!holy_text_add(out, "[Desktop Entry]\n")) return 0;
             copied = 1;
         } else if (group && (!strncmp(cursor, "Exec=", 5) ||
                             !strncmp(cursor, "TryExecup=", 10))) {
-            if (!text_add(out, cursor[0] == 'E' ? "Exec=" : "TryExecup=") ||
-                !text_add(out, launcher) ||
-                !text_add(out, cursor[0] == 'E' ? " %F\n" : "\n")) return 0;
+            if (!holy_text_add(out, cursor[0] == 'E' ? "Exec=" : "TryExecup=") ||
+                !holy_text_add(out, launcher) ||
+                !holy_text_add(out, cursor[0] == 'E' ? " %F\n" : "\n")) return 0;
         } else {
             char line[4096];
             if (length + 2 > sizeof line) return 0;
             memcpy(line, cursor, length);
             line[length] = 0;
-            if (!text_add(out, line) || !text_add(out, "\n")) return 0;
+            if (!holy_text_add(out, line) || !holy_text_add(out, "\n")) return 0;
             if (group) copied = 1;
         }
         if (!line_end) break;
@@ -988,77 +512,23 @@ static int desktop_script(struct text *out, const char *content, const char *lau
     return copied;
 }
 
-static void hex_digest(FILE *out, const unsigned char digest[32])
-{
-    size_t i;
-    for (i = 0; i < 32; ++i) fprintf(out, "%02x", (unsigned)digest[i]);
-}
-
-/* one manifest record per payload entry, in the form the packer writes */
-static int write_manifest(FILE *manifest, const struct payload *out, size_t first)
-{
-    size_t i;
-    for (i = first; i < out->count; ++i) {
-        const struct holy_stream_entry *e = &out->entries[i];
-        if (strncmp(e->path, "DATA/", 5)) continue;
-        fputs(e->directory ? "dir " : e->link ? "symlink " : "file ", manifest);
-        quoted(manifest, e->path + 5);
-        fprintf(manifest, " %o - - %lld %lld %lld ", e->mode, e->uid, e->gid,
-                e->directory || e->link ? 0LL : e->size);
-        if (e->directory || e->link) fputc('-', manifest);
-        else hex_digest(manifest, out->digests[i]);
-        /* kind, hardlink group and link group; only a link carries a target */
-        fputs(" none - -", manifest);
-        if (e->link) { fputc(' ', manifest); quoted(manifest, e->link); }
-        fputc('\n', manifest);
-    }
-    return !ferror(manifest);
-}
-
-/* reads a bounded report file the extraction left behind */
-static int read_file(int dir, const char *name, struct text *out, size_t limit)
-{
-    char buffer[65536];
-    int file = openat(dir, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-    if (file < 0) return 0;
-    for (;;) {
-        ssize_t got = read(file, buffer, sizeof buffer);
-        if (got < 0 && errno == EINTR) continue;
-        if (got < 0) { close(file); return 0; }
-        if (!got) break;
-        if (out->used + (size_t)got > limit || !text_reserve(out, (size_t)got)) {
-            close(file);
-            return 0;
-        }
-        memcpy(out->data + out->used, buffer, (size_t)got);
-        out->used += (size_t)got;
-        out->data[out->used] = 0;
-    }
-    close(file);
-    return 1;
-}
-
 /* the native package of one extracted image: the AppDir travels whole under a
    private path, the entry point and the launcher reach a public path, and every
    path the image hardcodes becomes a run context rather than a host fact. */
 static int package_image(const char *input, const char *source, const char *output)
 {
-    static const char *const names[] = {
-        "HOLY/meta", "HOLY/files", "HOLY/deps", "HOLY/provides", "HOLY/hooks",
-        "HOLY/origin", "HOLY/transform"
-    };
     static const char *const carried[] = { "classification", "conversion", NULL };
-    struct payload out = {0};
-    struct closure closure = {0};
-    struct text launcher = {0}, desktop = {0};
-    char *text[sizeof names / sizeof *names] = {0};
-    size_t sizes[sizeof names / sizeof *names] = {0}, i, data_first;
-    FILE *files[sizeof names / sizeof *names] = {0}, *log = NULL;
+    struct holy_payload out = {0};
+    struct holy_text launcher = {0}, desktop = {0};
+    char *text[7] = {0};
+    size_t sizes[7] = {0}, i, data_first;
+    FILE *files[7] = {0}, *log = NULL;
     char name[256], version[64] = "0", private[600], launcher_path[600];
     char digest[65], spool_name[43], artifact[700], path[900];
     const char *arch = "noarch", *libc = "nolibc";
     int dir = -1, appdir = -1, spool = -1, log_fd = -1, result = 1;
     int desktop_found, read_version, version_stated, order = 0, original = -1, published = 0;
+    int has_app;
 
     if (!image_name(input, name, sizeof name)) {
         fputs("holypkg: the image file name is not a package name\n", stderr);
@@ -1078,20 +548,20 @@ static int package_image(const char *input, const char *source, const char *outp
     }
     original = openat(dir, "original", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (original < 0 || !digest_fd(original, digest)) goto done;
-    for (i = 0; i < sizeof names / sizeof *names; ++i)
+    for (i = 0; i < 7; ++i)
         if (!(files[i] = open_memstream(&text[i], &sizes[i]))) goto done;
     spool = holy_spool_at(dir, spool_name);
     if (spool < 0) goto done;
     out.spool = spool;
     out.uid = (long long)geteuid();
     out.gid = (long long)getegid();
-    if (!entry_add(&out, "HOLY", NULL, 0755, 0, 0, 1) ||
-        !entry_add(&out, "DATA", NULL, 0755, 0, 0, 1)) goto done;
+    if (!holy_payload_add(&out, "HOLY", NULL, 0755, 0, 0, 1) ||
+        !holy_payload_add(&out, "DATA", NULL, 0755, 0, 0, 1)) goto done;
     data_first = out.count;
     snprintf(private, sizeof private, "usr/lib/holy/private/%s", name);
     snprintf(path, sizeof path, "DATA/%s/appdir", private);
-    if (!entry_add(&out, path, NULL, 0755, 0, 0, 1) ||
-        !collect_tree(appdir, "", path, &out, &closure, 0)) goto done;
+    if (!holy_payload_add(&out, path, NULL, 0755, 0, 0, 1) ||
+        !holy_payload_walk(&out, appdir, "", path, 0)) goto done;
     {
         /* the entry point has to be reachable under a bin directory, because that
            is the only place the run launcher can name a file the package owns */
@@ -1113,97 +583,97 @@ static int package_image(const char *input, const char *source, const char *outp
             goto done;
         }
         snprintf(path, sizeof path, "DATA/%s/usr/bin", private);
-        if (!entry_add(&out, path, NULL, 0755, 0, 0, 1)) goto done;
+        if (!holy_payload_add(&out, path, NULL, 0755, 0, 0, 1)) goto done;
         snprintf(path, sizeof path, "DATA/%s/usr/bin/%s.appimage", private, name);
-        if (!entry_add(&out, path, "../../appdir/AppRun", 0777, 0, 0, 0)) goto done;
+        if (!holy_payload_add(&out, path, "../../appdir/AppRun", 0777, 0, 0, 0)) goto done;
     }
-    closure.has_app = !fstatat(appdir, "app", &(struct stat){0}, AT_SYMLINK_NOFOLLOW);
+    has_app = !fstatat(appdir, "app", &(struct stat){0}, AT_SYMLINK_NOFOLLOW);
     snprintf(launcher_path, sizeof launcher_path, "/usr/bin/%s", name);
-    if (!launcher_script(&launcher, name, source, private, closure.has_app)) goto done;
+    if (!launcher_script(&launcher, name, source, private, has_app)) goto done;
     snprintf(path, sizeof path, "DATA/usr/bin/%s", name);
-    if (!spool_text(&out, &launcher, path, 0755)) goto done;
+    if (!holy_payload_add_text(&out, &launcher, path, 0755)) goto done;
     if (desktop_found) {
-        struct text fixed = {0};
+        struct holy_text fixed = {0};
         if (!desktop_script(&fixed, desktop.data, launcher_path)) { free(fixed.data); goto done; }
         snprintf(path, sizeof path, "DATA/usr/share/applications/%s.desktop", name);
-        if (!spool_text(&out, &fixed, path, 0644)) { free(fixed.data); goto done; }
+        if (!holy_payload_add_text(&out, &fixed, path, 0644)) { free(fixed.data); goto done; }
         free(fixed.data);
     }
     {
         /* the extraction reports travel with the package, so an installed copy
            can still be compared with the image it came from */
         for (i = 0; carried[i]; ++i) {
-            struct text body = {0};
-            int kept = read_file(dir, carried[i], &body, 1024 * 1024);
+            struct holy_text body = {0};
+            int kept = holy_text_read(dir, carried[i], &body, 1024 * 1024);
             if (kept && body.used) {
                 snprintf(path, sizeof path, "DATA/usr/share/holy/%s/%s", name, carried[i]);
-                kept = spool_text(&out, &body, path, 0644);
+                kept = holy_payload_add_text(&out, &body, path, 0644);
             }
             free(body.data);
             if (!kept) goto done;
         }
     }
-    if (closure.mixed) {
+    if (out.mixed) {
         fputs("holypkg: the payload carries more than one architecture or runtime, and one\n"
               "       .holy records one, so the conversion stops here\n", stderr);
         result = 3;
         goto done;
     }
-    if (closure.arch[0]) {
-        arch = closure.arch;
-        libc = closure.libc;
+    if (out.arch[0]) {
+        arch = out.arch;
+        libc = out.libc;
     }
-    fputs("format holy-package-1\nname ", files[0]); quoted(files[0], name);
-    fputs("\nversion ", files[0]); quoted(files[0], version);
-    fputs("\nrelease \"1\"\nos linux\narch ", files[0]); quoted(files[0], arch);
-    fputs("\nlibc ", files[0]); quoted(files[0], libc);
+    fputs("format holy-package-1\nname ", files[0]); holy_quoted(files[0], name);
+    fputs("\nversion ", files[0]); holy_quoted(files[0], version);
+    fputs("\nrelease \"1\"\nos linux\narch ", files[0]); holy_quoted(files[0], arch);
+    fputs("\nlibc ", files[0]); holy_quoted(files[0], libc);
     fputs("\nx-version-family appimage\nx-source-family appimage\nx-converter holy-appimage-1\n"
           "x-source-arch ", files[0]);
-    quoted(files[0], arch);
+    holy_quoted(files[0], arch);
     fputs("\nx-appimage-mode extract\nx-appimage-entrypoint AppRun\n", files[0]);
-    if (!write_manifest(files[1], &out, data_first)) goto done;
-    for (i = 0; i < closure.needed.count; ++i) {
+    if (!holy_payload_manifest(files[1], &out, data_first)) goto done;
+    for (i = 0; i < out.needed.count; ++i) {
         char id[128];
         /* a library the payload carries is satisfied privately and names no
            requirement; the rest is what the target system has to provide */
-        if (set_has(&closure.provided, closure.needed.items[i])) continue;
+        if (holy_names_has(&out.provided, holy_names_get(&out.needed, i))) continue;
         snprintf(id, sizeof id, "appimage-needed-%zu", i);
-        fputs("require ", files[2]); quoted(files[2], id);
-        fputc(' ', files[2]); quoted(files[2], name);
-        fputs(" soname ", files[2]); quoted(files[2], closure.needed.items[i]);
+        fputs("require ", files[2]); holy_quoted(files[2], id);
+        fputc(' ', files[2]); holy_quoted(files[2], name);
+        fputs(" soname ", files[2]); holy_quoted(files[2], holy_names_get(&out.needed, i));
         fprintf(files[2], " %s %s any - ", arch, libc);
-        quoted(files[2], "dt_needed");
-        fputc(' ', files[2]); quoted(files[2], "appimage-payload");
+        holy_quoted(files[2], "dt_needed");
+        fputc(' ', files[2]); holy_quoted(files[2], "appimage-payload");
         fputc('\n', files[2]);
     }
-    for (i = 0; i < closure.absolute.count; ++i) {
+    for (i = 0; i < out.absolute.count; ++i) {
         char id[128];
         /* a path an image link named that the payload cannot carry stays a
            requirement, so the installer reports it instead of losing it */
         snprintf(id, sizeof id, "appimage-link-%zu", i);
-        fputs("require ", files[2]); quoted(files[2], id);
-        fputc(' ', files[2]); quoted(files[2], name);
-        fputs(" file ", files[2]); quoted(files[2], closure.absolute.items[i]);
+        fputs("require ", files[2]); holy_quoted(files[2], id);
+        fputc(' ', files[2]); holy_quoted(files[2], name);
+        fputs(" file ", files[2]); holy_quoted(files[2], holy_names_get(&out.absolute, i));
         fputs(" any any any - ", files[2]);
-        quoted(files[2], "symlink_target");
-        fputc(' ', files[2]); quoted(files[2], "appimage-payload");
+        holy_quoted(files[2], "symlink_target");
+        fputc(' ', files[2]); holy_quoted(files[2], "appimage-payload");
         fputc('\n', files[2]);
     }
-    fputs("provide package ", files[3]); quoted(files[3], name);
+    fputs("provide package ", files[3]); holy_quoted(files[3], name);
     fprintf(files[3], " %s %s - ", arch, libc);
-    quoted(files[3], "appimage-payload");
+    holy_quoted(files[3], "appimage-payload");
     fputc('\n', files[3]);
-    for (i = 0; i < closure.provided.count; ++i) {
-        fputs("provide soname ", files[3]); quoted(files[3], closure.provided.items[i]);
+    for (i = 0; i < out.provided.count; ++i) {
+        fputs("provide soname ", files[3]); holy_quoted(files[3], holy_names_get(&out.provided, i));
         fprintf(files[3], " %s %s - ", arch, libc);
-        quoted(files[3], "appimage-payload");
+        holy_quoted(files[3], "appimage-payload");
         fputc('\n', files[3]);
     }
     fputs("format holy-import-origin-1\nfamily appimage\nsource-name ", files[5]);
-    quoted(files[5], source);
-    fputs("\noriginal-sha256 ", files[5]); quoted(files[5], digest);
+    holy_quoted(files[5], source);
+    fputs("\noriginal-sha256 ", files[5]); holy_quoted(files[5], digest);
     fputs("\nverification unverified\nconverter holy-appimage-1\noriginal-version ", files[5]);
-    quoted(files[5], version);
+    holy_quoted(files[5], version);
     fputs("\nentrypoint AppRun\nmode extract\n", files[5]);
     /* this record describes changes already made to the payload; the installer
        never executes it */
@@ -1211,7 +681,7 @@ static int package_image(const char *input, const char *source, const char *outp
     fprintf(files[6], "launcher /usr/bin/%s starts the payload in the package run context\n", name);
     fprintf(files[6], "entry-point /usr/lib/holy/private/%s/usr/bin/%s.appimage -> "
                       "../../appdir/AppRun\n", name, name);
-    if (closure.has_app)
+    if (has_app)
         fprintf(files[6], "path-view /app from /usr/lib/holy/private/%s/appdir/app when the "
                           "target has /app\n", name);
     if (desktop_found)
@@ -1220,27 +690,7 @@ static int package_image(const char *input, const char *source, const char *outp
     fputs("desktop-database no hook; the distribution owns the cache\n", files[6]);
     if (ferror(files[0]) || ferror(files[2]) || ferror(files[3]) || ferror(files[5]) ||
         ferror(files[6])) goto done;
-    for (i = 0; i < sizeof names / sizeof *names; ++i) {
-        const char *body;
-        size_t left;
-        if (fflush(files[i])) goto done;
-        if (!entry_add(&out, names[i], NULL, 0644, (long long)out.written,
-                       (long long)sizes[i], 0)) goto done;
-        body = text[i];
-        left = sizes[i];
-        while (left) {
-            ssize_t written = write(spool, body, left);
-            if (written < 0 && errno == EINTR) continue;
-            if (written <= 0) goto done;
-            body += (size_t)written;
-            left -= (size_t)written;
-            out.written += written;
-        }
-    }
-    for (i = 0; i < sizeof names / sizeof *names; ++i) {
-        if (fclose(files[i])) { files[i] = NULL; goto done; }
-        files[i] = NULL;
-    }
+    if (!holy_payload_records(&out, files, text, sizes)) goto done;
     /* the report names every fact this conversion could not close */
     log_fd = openat(dir, "package", O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (log_fd < 0) goto done;
@@ -1262,23 +712,23 @@ static int package_image(const char *input, const char *source, const char *outp
     else if (!read_version)
         fputs("version the payload states one this manifest cannot record, so the package\n"
               "records zero\n", log);
-    if (closure.path_views)
+    if (out.path_views)
         fprintf(log, "path-view-required %zu links name an absolute or escaping target; a payload\n"
                      "carries neither, so each path it named is a recorded file requirement and the\n"
                      "run context or a private placement still has to resolve it\n",
-                closure.path_views);
-    if (closure.scripts)
+                out.path_views);
+    if (out.scripts)
         fprintf(log, "scripts %zu files carry an interpreter; nothing runs them at install\n",
-                closure.scripts);
-    if (closure.unknown)
+                out.scripts);
+    if (out.unknown)
         fprintf(log, "unknown %zu files are not an ELF this reader recognizes; they are carried\n"
-                     "as payload and no requirement is derived from them\n", closure.unknown);
+                     "as payload and no requirement is derived from them\n", out.unknown);
     if (desktop_found)
         fprintf(log, "desktop-entry rewritten to %s; the icon is not installed by this package\n",
                 launcher_path);
     fprintf(log, "payload files %zu elf %zu links %zu provided %zu required %zu\n",
-            closure.files, closure.elfs, closure.links, closure.provided.count,
-            closure.needed.count);
+            out.files, out.elfs, out.links, out.provided.count,
+            out.needed.count);
     if (fflush(log) || fsync(fileno(log)) || fclose(log)) { log = NULL; goto done; }
     log = NULL;
     snprintf(artifact, sizeof artifact, "%s--%s--%s.holy", name, arch, libc);
@@ -1293,18 +743,15 @@ static int package_image(const char *input, const char *source, const char *outp
         close(packed);
     }
     printf("imported %s original ", artifact);
-    quoted(stdout, digest);
+    holy_quoted(stdout, digest);
     printf(" arch %s libc %s mode extract\n", arch, libc);
     result = 0;
 done:
     if (log) fclose(log);
     if (log_fd >= 0) close(log_fd);
-    for (i = 0; i < sizeof names / sizeof *names; ++i) if (files[i]) fclose(files[i]);
-    for (i = 0; i < sizeof names / sizeof *names; ++i) free(text[i]);
-    free_entries(&out);
-    free_set(&closure.needed);
-    free_set(&closure.provided);
-    free_set(&closure.absolute);
+    for (i = 0; i < 7; ++i) if (files[i]) fclose(files[i]);
+    for (i = 0; i < 7; ++i) free(text[i]);
+    holy_payload_free(&out);
     free(launcher.data);
     free(desktop.data);
     if (spool >= 0) {
