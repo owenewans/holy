@@ -1645,7 +1645,17 @@ config and PATH.holy-new. check and owner use that manifest; a later package
 update carries it forward. Changing the preserved file after the plan was
 reviewed invalidates apply. Package removal leaves config files on disk and
 removes PATH.holy-new. Missing-only repair maps archived config bytes to
-PATH.holy-new and checks the installed manifest after extraction. It cannot
+PATH.holy-new and checks the installed manifest after extraction. A repair brings
+the packaged bytes back, so a missing file a user override record covers is stated
+in the repair plan:
+
+repair-override NAME path PATH state packaged-bytes-restored
+
+and each statement enters the plan hash as holy-repair-missing-3, so an approved
+plan cannot restore the bytes of a path a later record covers. After the repair
+the report reads the record against the restored bytes: applied when they are the
+recorded result, pending when they are the recorded source and review with the
+reason otherwise. It cannot
 recreate a missing preserved public config from the archive and rejects that
 case before journaling. A repair plan binds the installed manifest hash.
 .PP

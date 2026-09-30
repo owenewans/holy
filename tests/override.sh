@@ -317,6 +317,39 @@ expect 4 "$bin" db check --all --root "$root"
 grep -qx 'holypkg: changed-file etc/foo.conf' "$tmp/err"
 expect 2 "$bin" override apply whole.override --sha256 not-a-digest --root "$root"
 rm "$store/whole.override"
+# a repair brings the packaged bytes back, so a path an override record covered is
+# stated in the plan and the statement moves the plan hash
+cp "$tmp/foo.conf" "$root/etc/foo.conf"
+rm "$root/etc/foo.conf"
+expect 0 "$bin" db repair-plan "$artifact" --root "$root"
+grep -qx 'repair-override a-applied.override path /etc/foo.conf state packaged-bytes-restored' "$tmp/out"
+test "$(grep -c '^repair-override ' "$tmp/out")" -eq 1
+plain_repair=$(sed -n 's/^repair-plan .* sha256 \([0-9a-f]*\) missing-only read-only$/\1/p' "$tmp/out")
+test "${#plain_repair}" -eq 64
+cat > "$store/repaired.override" <<EOF
+format holy-override-1
+scope artifact
+digest $artifact
+path /etc/foo.conf
+sha256 $other
+patch $foo
+result $patched
+EOF
+cat "$tmp/foo.conf" >> "$store/repaired.override"
+expect 0 "$bin" db repair-plan "$artifact" --root "$root"
+grep -qx 'repair-override repaired.override path /etc/foo.conf state packaged-bytes-restored' "$tmp/out"
+repair=$(sed -n 's/^repair-plan .* sha256 \([0-9a-f]*\) missing-only read-only$/\1/p' "$tmp/out")
+test "$repair" != "$plain_repair"
+expect 0 "$bin" db repair "$artifact" --plan "$repair" --root "$root"
+grep -qx 'packaged line' "$root/etc/foo.conf"
+expect 0 "$bin" db check --all --root "$root"
+# the file carries the packaged bytes again: the record that patched those bytes reads
+# applied, and the record written against other bytes reads review and says why
+expect 3 "$bin" override list --root "$root"
+grep -qx "override a-applied.override state applied scope artifact $artifact path /etc/foo.conf arch any libc any" "$tmp/out"
+grep -qx "override repaired.override state review scope artifact $artifact path /etc/foo.conf arch any libc any" "$tmp/out"
+grep -qx 'override-detail repaired.override the file is neither the recorded source nor its result' "$tmp/out"
+rm "$store/repaired.override"
 # a root without a database cannot answer which artifact owns a path
 mkdir "$tmp/empty"
 expect 6 "$bin" override list --root "$tmp/empty"

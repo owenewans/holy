@@ -455,7 +455,13 @@
   update-rc.d, insserv, sv or runsv, comments are not scanned, sixteen names
   per hook are printed and the count is the whole number. The review reports
   what the body spells out and leaves the decision to the reader, because an
-  allowed hook keeps the powers of a root shell.
+  allowed hook keeps the powers of a root shell. A repair brings the
+  packaged bytes back, so `db repair-plan` states every record whose
+  path it restores as repair-override NAME path PATH state
+  packaged-bytes-restored, and each statement enters the plan hash as
+  holy-repair-missing-3, so an approved plan cannot restore the bytes of
+  a path a later record covers. After the repair the report reads each
+  record against the restored bytes.
 - [x] Carry config/mutable flags through verified manifests and installed checks;
   import Debian conffiles as config files, reject invalid declarations, and
   report changed-config.

@@ -5363,19 +5363,87 @@ int holy_state_continue_set(const char *root_path)
     return recover_set(root_path, 1);
 }
 
+/* a missing file an override record covers: a repair brings the packaged bytes back, so
+   the record is stated in the plan and the statement is part of what the approval
+   covers. the record path is absolute and the manifest path is not. */
+struct repair_override {
+    char *name;
+    char *path;
+};
+
+struct repair_overrides {
+    struct repair_override *statements;
+    size_t count;
+    const struct holy_override_record_info *records;
+    size_t record_count;
+};
+
+static void repair_overrides_free(struct repair_overrides *wanted)
+{
+    size_t i;
+    for (i = 0; i < wanted->count; ++i) {
+        free(wanted->statements[i].name);
+        free(wanted->statements[i].path);
+    }
+    free(wanted->statements);
+    wanted->statements = NULL;
+    wanted->count = 0;
+}
+
+static int repair_statement(struct repair_overrides *wanted, const char *name,
+                            const char *path)
+{
+    struct repair_override *statements;
+    size_t i;
+    for (i = 0; i < wanted->count; ++i)
+        if (!strcmp(wanted->statements[i].path, path) &&
+            !strcmp(wanted->statements[i].name, name)) return 1;
+    if (wanted->count >= 65536) return 0;
+    statements = realloc(wanted->statements,
+                         (wanted->count + 1) * sizeof *statements);
+    if (!statements) return 0;
+    wanted->statements = statements;
+    statements[wanted->count].name = strdup(name);
+    statements[wanted->count].path = strdup(path);
+    if (!statements[wanted->count].name || !statements[wanted->count].path) return 0;
+    ++wanted->count;
+    return 1;
+}
+
+static int repair_override_finding(void *context, const char *path, const char *code,
+                                   const char *target)
+{
+    struct repair_overrides *wanted = context;
+    size_t i;
+    (void)target;
+    if (strcmp(code, "missing-file")) return 1;
+    for (i = 0; i < wanted->record_count; ++i)
+        if (wanted->records[i].path[0] == '/' && !strcmp(wanted->records[i].path + 1, path))
+            if (!repair_statement(wanted, wanted->records[i].name,
+                                  wanted->records[i].path)) return 0;
+    return 1;
+}
+
 static int repair_hash(int root, unsigned long long generation, const char *digest,
-                        const char *graph, const char *manifest, char output[65])
+                       const char *graph, const char *manifest,
+                       const struct repair_overrides *wanted, char output[65])
 {
     struct stat st;
-    char identity[128];
+    char identity[128], line[1024];
     unsigned char hash[32];
     unsigned int length;
     size_t i;
+    int used;
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
     int ok = 0;
     if (!ctx || fstat(root, &st) || EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
-        !hash_text(ctx, "holy-repair-missing-2") || !hash_text(ctx, digest) ||
+        !hash_text(ctx, "holy-repair-missing-3") || !hash_text(ctx, digest) ||
         !hash_text(ctx, graph) || !hash_text(ctx, manifest)) goto done;
+    for (i = 0; i < wanted->count; ++i) {
+        used = snprintf(line, sizeof line, "override %s %s\n",
+                        wanted->statements[i].name, wanted->statements[i].path);
+        if (used < 0 || (size_t)used >= sizeof line || !hash_text(ctx, line)) goto done;
+    }
     snprintf(identity, sizeof identity, "%ju:%ju:%llu", (uintmax_t)st.st_dev,
              (uintmax_t)st.st_ino, generation);
     if (!hash_text(ctx, identity) || EVP_DigestFinal_ex(ctx, hash, &length) != 1 || length != 32) goto done;
@@ -5394,9 +5462,20 @@ int holy_state_repair(const char *digest, const char *approved, const char *root
     char *snapshot = NULL;
     unsigned long long generation, recorded;
     struct stat root_st;
-    size_t length;
+    size_t length, i;
+    struct repair_overrides wanted = {0};
+    struct holy_override_record_info *records = NULL;
+    size_t record_count = 0;
     if (!resume && (!valid_digest(digest) || (approved && !valid_digest(approved)))) return 2;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    /* the override store is read before the database lock, since the store walk takes
+       no lock of its own and the plan states what it says */
+    if (root >= 0 && holy_override_records(root_path, &records, &record_count)) {
+        result = 1;
+        goto done;
+    }
+    wanted.records = records;
+    wanted.record_count = record_count;
     dir = root < 0 ? -1 : state_dir_at(root, 0);
     if (dir < 0 || fstat(root, &root_st) || flock(dir, approved || resume ? LOCK_EX : LOCK_SH) ||
         !state_layout(dir, 0) || !empty_child(dir, "index") ||
@@ -5443,8 +5522,12 @@ int holy_state_repair(const char *digest, const char *approved, const char *root
     snapshot = holy_cache_snapshot(digest, root_path);
     if (!snapshot) { result = 6; goto done; }
     if (files < 0 || !instance_matches_snapshot(item, snapshot) ||
-        !graph_digest(item, graph) || !instance_record_digest(item, "files", manifest) ||
-        !repair_hash(root, recorded, digest, graph, manifest, actual)) goto done;
+        !graph_digest(item, graph) || !instance_record_digest(item, "files", manifest)) goto done;
+    /* 0 is the repair case: a file is missing or changed. -1 is an unreadable manifest */
+    if (record_count &&
+        holy_install_check_report(files, root, repair_override_finding, &wanted) == -1)
+        goto done;
+    if (!repair_hash(root, recorded, digest, graph, manifest, &wanted, actual)) goto done;
     {
         struct plan_hash claims = {0};
         int valid;
@@ -5465,7 +5548,10 @@ int holy_state_repair(const char *digest, const char *approved, const char *root
     if (!approved) {
         printf("repair-plan generation %llu artifact %s sha256 %s missing-only read-only\n",
                generation, digest, actual);
-        result = 0;
+        for (i = 0; i < wanted.count; ++i)
+            printf("repair-override %s path %s state packaged-bytes-restored\n",
+                   wanted.statements[i].name, wanted.statements[i].path);
+        result = ferror(stdout) ? 1 : 0;
         goto done;
     }
     transactions = child_dir(dir, "transactions", 0);
@@ -5488,6 +5574,8 @@ int holy_state_repair(const char *digest, const char *approved, const char *root
 done:
     if (result) fprintf(stderr, "holypkg: missing-file repair failed (status %d)%s\n", result,
                         journaled ? "; repair journal retained" : "");
+    repair_overrides_free(&wanted);
+    holy_override_records_free(records, record_count);
     if (snapshot) { unlink(snapshot); free(snapshot); }
     if (files >= 0) close(files);
     if (item >= 0) close(item);
