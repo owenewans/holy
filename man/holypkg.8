@@ -2789,9 +2789,13 @@ one review is 3 and one invalid record is 2. The summary line counts every state
 whole-file and diff counts in the summary.
 .PP
 override plan is the preparation step for one record. It resolves the artifact that
-owns the path, refuses a record whose installed payload file drifted, refuses a record
-whose result is already in place, and refuses a file that is not what the record
-applies to, because each of those is a decision rather than a plan. What is left
+owns the path, refuses a record whose scope or conditions name another artifact,
+version or package, refuses a record whose installed payload file drifted, refuses a
+record whose result is already in place, and refuses a file that is not what the
+record applies to, because each of those is a decision rather than a plan. A record
+scoped to one version therefore never writes over the file of another, which is the
+form a re-application on a later version needs: scope package, which the plan applies
+to whatever version owns the path. What is left
 states what applying it would write and the SHA-256 that says so:
 override-plan NAME path PATH owner OWNER NAME VERSION source SHA256 result SHA256 patch SHA256 form whole-file
 followed by override-plan-sha256 SHA256 read-only. The hash covers the record, the

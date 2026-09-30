@@ -822,6 +822,17 @@ static int plan_derive(const char *name, const char *root_path, struct override_
         status = 3;
         goto done;
     }
+    /* the report calls a record whose scope names another artifact a review, and the
+       plan holds to the same fact: a record scoped to one version does not write over
+       the file of another, while one scoped to the package reaches every version it
+       does not name */
+    if (!scope_matches(&plan->record, &plan->owner)) {
+        fprintf(stderr, "holypkg: override %s is scoped to %s %s; the artifact owning"
+                        " %s is %s %s\n", name, plan->record.scope, plan->record.subject,
+                plan->record.path, plan->owner.name, plan->owner.version);
+        status = 3;
+        goto done;
+    }
     if (plan->owner.intact != 1) {
         fprintf(stderr, "holypkg: the installed payload file %s drifted\n", plan->record.path);
         status = 3;

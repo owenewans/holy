@@ -243,6 +243,36 @@ grep -qx "{\"schema\":\"holy-override-plan-1\",\"type\":\"plan\",\"name\":\"whol
 expect 3 "$bin" override plan a-applied.override --root "$root"
 grep -q 'is a diff record' "$tmp/err"
 expect 3 "$bin" override plan b-pending.override --root "$root"
+# a record scoped to a version the owner does not have is a review for the report and a
+# refusal for the plan, while one scoped to the package reaches the version it omits
+cat > "$store/other-version.override" <<EOF
+format holy-override-1
+scope version
+name override-fixture
+version 9
+path /etc/foo.conf
+sha256 $foo
+patch $patched
+result $patched
+EOF
+cat "$tmp/patched" >> "$store/other-version.override"
+expect 3 "$bin" override plan other-version.override --root "$root"
+grep -qx 'holypkg: override other-version.override is scoped to version override-fixture@9; the artifact owning /etc/foo.conf is override-fixture 1' "$tmp/err"
+cat > "$store/package-scope.override" <<EOF
+format holy-override-1
+scope package
+package override-fixture
+path /etc/foo.conf
+sha256 $foo
+patch $patched
+result $patched
+EOF
+cat "$tmp/patched" >> "$store/package-scope.override"
+expect 0 "$bin" override plan package-scope.override --root "$root"
+grep -qx "override-plan package-scope.override path /etc/foo.conf owner $artifact override-fixture 1 source $foo result $patched patch $patched form whole-file" "$tmp/out"
+expect 3 "$bin" override apply other-version.override --sha256 "$(printf '%064d' 0)" --root "$root"
+grep -qx 'holypkg: override other-version.override is scoped to version override-fixture@9; the artifact owning /etc/foo.conf is override-fixture 1' "$tmp/err"
+rm "$store/other-version.override" "$store/package-scope.override"
 # a file that is not what the record applies to is a decision, not a plan
 cat > "$store/elsewhere.override" <<EOF
 format holy-override-1

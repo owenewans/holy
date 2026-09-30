@@ -461,7 +461,14 @@
   packaged-bytes-restored, and each statement enters the plan hash as
   holy-repair-missing-3, so an approved plan cannot restore the bytes of
   a path a later record covers. After the repair the report reads each
-  record against the restored bytes.
+  record against the restored bytes. The plan holds to the same scope the
+  report reads: a record whose scope or conditions name another artifact,
+  version or package is refused as 3 before anything is staged, so a
+  record scoped to one version never writes over the file of another.
+  Re-applying a record on a later version is therefore a matter of the
+  scope the user writes: scope package reaches every version that owns the
+  path, and the source digest still decides whether the file in place is
+  what the record applies to.
 - [x] Carry config/mutable flags through verified manifests and installed checks;
   import Debian conffiles as config files, reject invalid declarations, and
   report changed-config.
