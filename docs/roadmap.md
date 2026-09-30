@@ -403,9 +403,14 @@
   A set plan states the records it would write over and binds them into the plan
   hash, so a store that changed between the plan and the apply is status 3 instead
   of a silent overwrite; the read takes no database lock, so a plan and its apply
-  compare the same store. Applying a record and re-applying one on a later version
-  are still open, and an update plan does not bind records yet, as do service
-  consent, general rollback and per-phase recovery.
+  compare the same store. An update plan states the records its own file plan writes
+  in an [overrides] section the plan digest covers, so a store that changed between
+  plan-update and apply-update is status 3 instead of a silent overwrite of a patched
+  file; the update fixture checks the section, that the plan is stable while the
+  store is, that a record added in between is refused, and that the plan without the
+  store is the plan the fixture recorded. Applying a record and re-applying one on a
+  later version are still open, as do service consent, general rollback and
+  per-phase recovery.
 - [x] Carry config/mutable flags through verified manifests and installed checks;
   import Debian conffiles as config files, reject invalid declarations, and
   report changed-config.

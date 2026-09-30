@@ -84,6 +84,46 @@ assert {r[1] for r in rows if r[0] == 'artifact'} == {new, app, extra}
 assert ['edge', app, 'dep-1', new, '-', 'package', 'base'] in rows
 assert any(r[0] == 'change' and r[2] == 'replace' for r in rows)
 PY
+# an update plan states the override records whose path it writes and binds them, so a
+# store that changed between the plan and the apply is a decision
+printf 'the patched line\n' > "$tmp/body"
+body=$(sha256sum "$tmp/body" | cut -d ' ' -f 1)
+payload=$(sha256sum "$root/usr/share/payload" | cut -d ' ' -f 1)
+other=$(printf '%064d' 1)
+mkdir -p "$root/etc/holy/overrides"
+cat > "$root/etc/holy/overrides/payload.override" <<EOF
+format holy-override-1
+scope artifact
+digest $old
+path /usr/share/payload
+sha256 $other
+patch $body
+result $payload
+EOF
+cat "$tmp/body" >> "$root/etc/holy/overrides/payload.override"
+expect 0 "$bin" db plan-update "$old" "$new" --root "$root"
+grep -qx "override payload.override /usr/share/payload applied $body" "$tmp/out"
+override_plan=$(sed -n 's/^plan-update sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+test -n "$override_plan"
+expect 0 "$bin" db plan-update "$old" "$new" --root "$root"
+test "$(sed -n 's/^plan-update sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")" = "$override_plan"
+cat > "$root/etc/holy/overrides/second.override" <<EOF
+format holy-override-1
+scope artifact
+digest $old
+path /usr/share/payload
+sha256 $payload
+patch $body
+result $payload
+EOF
+cat "$tmp/body" >> "$root/etc/holy/overrides/second.override"
+expect 3 "$bin" db apply-update "$override_plan" "$old" "$new" --root "$root"
+grep -qx base1 "$root/usr/share/payload"
+test ! -e "$root/var/lib/holypkg/transactions/update"
+rm -rf "$root/etc/holy"
+# without the store the same plan is the plan the fixture recorded
+expect 0 "$bin" db plan-update "$old" "$new" --root "$root"
+cmp "$tmp/plan" "$tmp/out"
 grep -qx base1 "$root/usr/share/payload"
 expect 0 "$bin" db check --all --root "$root"
 expect 4 "$bin" db plan-update "$old" "$(hash missing)" --root "$root"

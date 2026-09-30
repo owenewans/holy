@@ -5848,12 +5848,15 @@ static int state_update(const char *old_digest, const char *new_digest,
     char *old_snapshot = NULL, *new_snapshot = NULL, *source_record = NULL;
     char *file_record = NULL, *graph_record = NULL, *record = NULL;
     size_t count = 0, i, old_index = 0, file_size = 0, graph_size = 0, record_size = 0, failed;
+    int record_failed = 0;
     unsigned long long generation, recorded, current_generation;
     struct stat root_st, db_st;
     struct holy_package_identity old = {0}, next = {0};
     struct holy_file_plan changes = {0};
     struct holy_resolution resolution = {0};
     struct install_set claims = {0};
+    struct holy_override_record_info *override_records = NULL;
+    size_t override_record_count = 0;
     struct plan_hash validation = {0};
     DIR *list = NULL;
     struct dirent *entry;
@@ -5870,6 +5873,10 @@ static int state_update(const char *old_digest, const char *new_digest,
                                              strcmp(accepted_privileged, new_digest))))) return 2;
     if (!resume && !strcmp(old_digest, new_digest)) return 3;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    /* the override store is read before the lock, since the plan binds what it says and
+       the read must not wait for a lock this call takes */
+    if (root >= 0 && holy_override_records(root_path, &override_records,
+                                           &override_record_count)) goto done;
     if (root < 0 || fstat(root, &root_st) || (dir = state_dir_at(root, 0)) < 0 ||
         flock(dir, expected || resume ? LOCK_EX : LOCK_SH) || fstat(dir, &db_st) || !state_layout(dir, 0) ||
         !read_generation(dir, &generation)) goto done;
@@ -6067,7 +6074,17 @@ static int state_update(const char *old_digest, const char *new_digest,
     fwrite(file_record, 1, file_size, out);
     fputs("[graph]\n", out);
     fwrite(graph_record, 1, graph_size, out);
-    pending = ferror(out);
+    fputs("[overrides]\n", out);
+    for (i = 0; i < override_record_count; ++i) {
+        struct set_claim key = {0};
+        key.path = override_records[i].path + 1;
+        if (!bsearch(&key, claims.claims, claims.claim_count, sizeof *claims.claims,
+                     claim_order)) continue;
+        if (fprintf(out, "override %s %s %s %s\n", override_records[i].name,
+                    override_records[i].path, override_records[i].file,
+                    override_records[i].patch) < 0) { record_failed = 1; break; }
+    }
+    pending = ferror(out) || record_failed;
     if (fclose(out)) pending = 1;
     out = NULL;
     if (pending || !same_root(root_path, &root_st) ||
@@ -6145,6 +6162,7 @@ done:
     }
     free(names); free(snapshots); free(states); free(source_record);
     free(file_record); free(graph_record); free(record);
+    holy_override_records_free(override_records, override_record_count);
     holy_package_identity_free(&old); holy_package_identity_free(&next);
     holy_file_plan_free(&changes); holy_resolution_free(&resolution); free_set(&claims);
     EVP_MD_CTX_free(validation.hash);
