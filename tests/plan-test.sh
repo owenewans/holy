@@ -108,6 +108,39 @@ grep -qx "test-image vm none reason no-vm-runner" "$tmp/out"
 grep -qx "test-check vm-trial unknown detail no-vm-runner" "$tmp/out"
 grep -qx "test-unexecuted vm-trial reason no-vm-runner" "$tmp/out"
 grep -qx "test-report pass 8 fail 0 skip 1 unknown 1 coverage plan-inputs" "$tmp/out"
+# the probe options are decisions about the trial, and they are checked before any
+# plan is read
+expect 2 "$bin" test "$tmp/plan" --root "$root" --shell -- /bin/true
+expect 2 "$bin" test "$tmp/plan" --mode vm --root "$root" -- /bin/true
+expect 2 "$bin" test "$tmp/plan" --root "$root" --
+# with --trial the fixture also proves the private root trial itself, which needs a host
+# that allows device nodes inside a user namespace
+if test "${2:-}" = --trial; then
+    # private propagation, own proc, run, tmp and home, pid, ipc and uts namespaces, a
+    # user namespace and a controlled /dev. argv is passed through, and the running
+    # root keeps every file the command made.
+    rc=0
+    "$bin" test "$tmp/plan" --root "$root" -- /bin/sh -c '
+        printf trial > /tmp/marker
+        test -z "$(ls -A /run)" || exit 11
+        test "$(ls -A /tmp | wc -l)" -eq 1 || exit 12
+        test -c /dev/null && test -c /dev/urandom || exit 13
+        test -z "$(ls -A /home)" || exit 15
+        test "$(cut -d" " -f1 < /proc/self/stat)" = 1 || exit 14
+        printf trial-ok' > "$tmp/out" 2> "$tmp/err" || rc=$?
+    if test "$rc" = 6; then
+        cat "$tmp/err" >&2
+        printf 'root trial unavailable: %s\n' "$(sed -n 1p "$tmp/err")"
+        exit 6
+    fi
+    test "$rc" -eq 0 || { cat "$tmp/out" "$tmp/err"; exit 1; }
+    grep -qx trial-ok "$tmp/out"
+    test ! -e /tmp/marker
+    expect 7 "$bin" test "$tmp/plan" --root "$root" -- /bin/sh -c 'exit 7'
+    expect 127 "$bin" test "$tmp/plan" --root "$root" -- /nonexistent-trial-probe
+    grep -q 'holypkg: trial: /nonexistent-trial-probe' "$tmp/err"
+    expect 0 env SHELL=/bin/true "$bin" test "$tmp/plan" --root "$root" --shell
+fi
 # each bound input has one honest outcome when it is not what the plan recorded.
 cp -a "$root" "$tmp/root-new-gone"
 rm "$tmp/root-new-gone/var/cache/holypkg/objects/sha256/$next.holy"
@@ -124,6 +157,9 @@ printf 'drift\n' > "$tmp/root-drift/usr/share/update-fixture"
 expect 4 "$bin" test "$tmp/plan" --root "$tmp/root-drift"
 grep -qx "test-check installed-slot pass" "$tmp/out"
 grep -qx "test-check installed-payload fail detail changed-payload" "$tmp/out"
+# a requested set that did not complete runs no probe
+expect 4 "$bin" test "$tmp/plan" --root "$tmp/root-drift" -- /bin/sh -c 'touch /tmp/trial-refused'
+test ! -e /tmp/trial-refused
 cp -a "$root" "$tmp/root-removed"
 expect 0 "$bin" db rm "$old" --root "$tmp/root-removed"
 expect 4 "$bin" test "$tmp/plan" --root "$tmp/root-removed"

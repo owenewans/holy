@@ -1331,8 +1331,20 @@
   bound report, a VM mode that names the missing runner, and a deleted new
   archive, deleted old archive, drifted payload, removed slot, changed catalog
   generation, changed source id and lost alias. Running a command in a trial
-  with --shell or -- COMMAND, the VM trial itself and the Holy hardware gate
-  remain open.
+  with --shell or -- COMMAND and the VM trial itself remain open, as does the
+  Holy hardware gate. `-- COMMAND ARGS` now runs one command in a private root
+  trial after a set that completed, and --shell runs $SHELL or /bin/sh. the trial
+  makes private mount propagation, its own /proc, /run, /tmp and /home, PID, IPC
+  and UTS namespaces, a user namespace where the host allows one and a controlled
+  /dev with the standard character nodes and stream links, so no host socket,
+  block device, home directory, D-Bus service or credential is passed on. the
+  command runs as PID 1 of its own pid namespace with its argv unchanged and its
+  status as the status, and a host that refuses the namespaces or the device nodes
+  is 6 with the reason. the plan is verified against --root and is not applied, so
+  a trial that applies a prepared plan still needs an isolated copy of the
+  filesystem, which is open. check-root-trial carries the isolation properties and
+  returns 6 on a host that refuses device nodes in a user namespace, as this one
+  does, while check-plan-test proves the plan inputs.
 - [ ] Boot both target architectures in QEMU and prove PID 1, shell, package
   install/removal and recovery after removing either or both dynamic libc runtimes.
 - [ ] Run compiler/SDK, language, GUI, graphics, gaming, workstation and foreign

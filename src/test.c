@@ -6,6 +6,7 @@
 #include "repo.h"
 #include "source.h"
 #include "state.h"
+#include "trial.h"
 #include "up.h"
 
 #include <errno.h>
@@ -212,18 +213,23 @@ int holy_test_command(int argc, char **argv)
     char index[65], source_id[65], slot[65], binding[65];
     unsigned long long generation = 0;
     char *old_snapshot = NULL;
-    int dir = -1, status = 0, i, read;
+    int dir = -1, status = 0, i, read, command = -1, shell = 0;
 
     for (i = 0; i < argc; ++i) {
         const char *option = argv[i];
-        if (!plan_path && option[0] != '-') { plan_path = option; continue; }
+        if (command < 0 && !strcmp(option, "--")) { command = i + 1; break; }
+        if (command < 0 && !plan_path && option[0] != '-') { plan_path = option; continue; }
         if (!strcmp(option, "--sha256") && i + 1 < argc && !approved) { approved = argv[++i]; continue; }
         if (!strcmp(option, "--root") && i + 1 < argc) { root = argv[++i]; continue; }
         if (!strcmp(option, "--mode") && i + 1 < argc) { mode = argv[++i]; continue; }
         if (!strcmp(option, "--json")) { run.json = 1; continue; }
+        if (!strcmp(option, "--shell") && !shell && !command) { shell = 1; continue; }
         status = 2;
         goto usage;
     }
+    if (shell && command >= 0) { status = 2; goto usage; }
+    if (command >= 0 && !command) { status = 2; goto usage; }
+    if ((command >= 0 || shell) && strcmp(mode, "root")) { status = 2; goto usage; }
     if (!plan_path || !*root || (strcmp(mode, "root") && strcmp(mode, "vm"))) {
         status = 2;
         goto usage;
@@ -375,6 +381,21 @@ int holy_test_command(int argc, char **argv)
        this command does not have, and a skip that was not requested fails nothing. */
     status = run.unknown ? 6 : run.fail ? 4 : 0;
     if (ferror(stdout)) status = 1;
+    /* a probe runs only against a requested set that completed, and a vm trial has no
+       place to run a command of the running root. */
+    if (!status && (command >= 0 || shell)) {
+        char *fallback[] = {(char *)"/bin/sh", NULL};
+        char **selected = fallback;
+        const char *named = shell ? getenv("SHELL") : NULL;
+        if (shell && named && *named) {
+            fallback[0] = (char *)named;
+        } else if (command >= 0) {
+            selected = &argv[command];
+        } else {
+            status = 2;
+        }
+        if (!status) status = holy_trial_command(selected);
+    }
 done:
     if (status == 2) goto usage;
     if (old_snapshot) { unlink(old_snapshot); free(old_snapshot); }
@@ -384,6 +405,6 @@ done:
     holy_up_plan_free(&plan);
     return status;
 usage:
-    fputs("usage: holypkg test PLAN [--sha256 PLAN_SHA256] [--mode root|vm] [--root DIRECTORY] [--json]\n", stderr);
+    fputs("usage: holypkg test PLAN [--sha256 PLAN_SHA256] [--mode root|vm] [--root DIRECTORY] [--json] [--shell | -- COMMAND [ARGS...]]\n", stderr);
     return status ? status : 2;
 }
