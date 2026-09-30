@@ -408,9 +408,13 @@
   plan-update and apply-update is status 3 instead of a silent overwrite of a patched
   file; the update fixture checks the section, that the plan is stable while the
   store is, that a record added in between is refused, and that the plan without the
-  store is the plan the fixture recorded. Applying a record and re-applying one on a
-  later version are still open, as do service consent, general rollback and
-  per-phase recovery.
+  store is the plan the fixture recorded. The report states the form of each
+  record: a body that is the whole replacement file carries one digest for
+  patch and result and is a whole-file record, while two different digests
+  make it diff shaped, which this format does not describe and this manager
+  will not guess at. Applying a record and re-applying one on a later version
+  are still open, as do service consent, general rollback and per-phase
+  recovery.
 - [x] Carry config/mutable flags through verified manifests and installed checks;
   import Debian conffiles as config files, reject invalid declarations, and
   report changed-config.

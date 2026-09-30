@@ -46,6 +46,7 @@ struct override_record {
     char *state;
     char *file;
     char *detail;
+    int whole_file;      /* the body is the replacement content, not a diff */
 };
 
 /* the artifact that owns one path, as the installed records state it. */
@@ -205,7 +206,7 @@ static int record_parse(const char *name, const char *data, size_t size,
     char *cursor, *scope = NULL, *value = NULL, *arch = NULL, *libc = NULL;
     char *path = NULL, *source = NULL, *patch = NULL, *result = NULL, *copy;
     char computed[65];
-    int ok = 0;
+    int whole_file = 0, ok = 0;
     *message = NULL;
     memset(record, 0, sizeof *record);
     if (!(copy = malloc(size + 1))) return 0;
@@ -258,6 +259,11 @@ static int record_parse(const char *name, const char *data, size_t size,
         *message = strdup("override patch body does not match its digest");
         goto done;
     }
+    /* a body that is the whole replacement file carries one digest for itself and one
+       for the result, so this manager knows what it would write. a record that states
+       two digests is diff shaped, and a diff this format does not describe is not
+       something to guess at. */
+    whole_file = !strcmp(patch, result);
     record->name = strdup(name);
     record->scope = scope;
     record->subject = value;
@@ -267,6 +273,7 @@ static int record_parse(const char *name, const char *data, size_t size,
     record->source_digest = source;
     record->patch_digest = patch;
     record->result_digest = result;
+    record->whole_file = whole_file;
     scope = value = path = arch = libc = source = patch = result = NULL;
     if (!record->name || !record->scope || !record->subject || !record->path ||
         !record->arch || !record->libc) goto done;
@@ -425,6 +432,9 @@ static void record_print(const struct override_record *record, int json)
         }
         printf(",\"state\":");
         print_string(record->state);
+        printf(",\"form\":");
+        print_string(record->patch_digest ? (record->whole_file ? "whole-file" : "diff") :
+                    "none");
         if (record->detail) {
             printf(",\"detail\":");
             print_string(record->detail);
@@ -441,6 +451,9 @@ static void record_print(const struct override_record *record, int json)
     if (record->owner)
         printf("override-owner %s %s %s %s %s\n", record->name, record->owner,
                record->owner_name, record->owner_version, record->owner_arch);
+    if (record->patch_digest)
+        printf("override-form %s %s\n", record->name,
+               record->whole_file ? "whole-file" : "diff");
     if (record->detail) printf("override-detail %s %s\n", record->name, record->detail);
 }
 
@@ -474,14 +487,16 @@ static int names_order(const void *left, const void *right)
 }
 
 static void summary(size_t records, size_t applied, size_t pending, size_t absent,
-                    size_t review, size_t invalid, int json)
+                    size_t review, size_t invalid, size_t whole_file, int json)
 {
     if (json)
-        printf("{\"schema\":\"holy-override-report-1\",\"type\":\"summary\",\"records\":%zu,\"applied\":%zu,\"pending\":%zu,\"not-installed\":%zu,\"review\":%zu,\"invalid\":%zu}\n",
-               records, applied, pending, absent, review, invalid);
+        printf("{\"schema\":\"holy-override-report-1\",\"type\":\"summary\",\"records\":%zu,\"applied\":%zu,\"pending\":%zu,\"not-installed\":%zu,\"review\":%zu,\"invalid\":%zu,\"whole-file\":%zu,\"diff\":%zu}\n",
+               records, applied, pending, absent, review, invalid, whole_file,
+               records - invalid - whole_file);
     else
-        printf("override-summary records %zu applied %zu pending %zu not-installed %zu review %zu invalid %zu read-only\n",
-               records, applied, pending, absent, review, invalid);
+        printf("override-summary records %zu applied %zu pending %zu not-installed %zu review %zu invalid %zu whole-file %zu diff %zu read-only\n",
+               records, applied, pending, absent, review, invalid, whole_file,
+               records - invalid - whole_file);
 }
 
 /* loads every record of the store in name order. a record that is not one is kept with
@@ -571,7 +586,7 @@ int holy_override_list(const char *root_path, int json)
 {
     struct override_store store = {0};
     unsigned long long generation = 0;
-    size_t i, applied = 0, pending = 0, absent = 0, review = 0, invalid = 0;
+    size_t i, applied = 0, pending = 0, absent = 0, review = 0, invalid = 0, whole_file = 0;
     int status = 1, root = -1, listing = -1, visit = 0;
 
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
@@ -592,7 +607,7 @@ int holy_override_list(const char *root_path, int json)
                      O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (listing < 0) {
         if (errno == ENOENT) {
-            summary(0, 0, 0, 0, 0, 0, json);
+            summary(0, 0, 0, 0, 0, 0, 0, json);
             status = ferror(stdout) ? 1 : 0;
             goto done;
         }
@@ -608,12 +623,13 @@ int holy_override_list(const char *root_path, int json)
     for (i = 0; i < store.count; ++i) {
         struct override_record *record = &store.records[i];
         record_print(record, json);
+        if (record->whole_file) ++whole_file;
         if (!strcmp(record->state, "applied")) ++applied;
         else if (!strcmp(record->state, "pending")) ++pending;
         else if (!strcmp(record->state, "not-installed")) ++absent;
         else if (needs_review(record->state)) ++review;
     }
-    summary(store.count, applied, pending, absent, review, invalid, json);
+    summary(store.count, applied, pending, absent, review, invalid, whole_file, json);
     if (ferror(stdout)) status = 1;
     else if (invalid) status = 2;
     else if (review) status = 3;

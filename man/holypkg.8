@@ -2712,7 +2712,11 @@ scope package with a package field is that package and its later versions. The
 sha256 field is the digest of the packaged file the patch applies to, patch is the
 digest of the body in the same file, and result is the digest the patched file has
 to carry. A path is absolute and has no empty, dot or dot-dot component; a missing
-arch or libc means any.
+arch or libc means any. The report also states the form of each record: a
+body that is the whole replacement file carries the same digest for patch and
+result, and that is a whole-file record, while a record stating two different
+digests is diff shaped. This manager does not apply either one, and it will not
+guess how a diff this format does not describe should be read.
 .PP
 The owner of the path comes from the installed manifests, so a record never claims an
 artifact by its own word, and the file is read through the root so the digests are
@@ -2725,7 +2729,8 @@ the root or the installed set; and invalid, when the record is not a valid
 holy-override-1 record or the store entry is not a readable regular file. A record
 that needs a review and a new package version is what the record cannot decide, so
 one review is 3 and one invalid record is 2. The summary line counts every state.
---json uses the holy-override-report-1 schema.
+--json uses the holy-override-report-1 schema, with a form field on every record and
+whole-file and diff counts in the summary.
 .PP
 Applying a record, and the conditions under which a set re-applies one, are not part
 of this command: it reports what a store says about the installed set.

@@ -43,7 +43,7 @@ bar=$(tree_digest "$root/etc/bar.conf")
 other=$(printf '%064d' 1)
 # a store with no records is an empty report, and needs no database
 expect 0 "$bin" override list --root "$root"
-grep -qx 'override-summary records 0 applied 0 pending 0 not-installed 0 review 0 invalid 0 read-only' "$tmp/out"
+grep -qx 'override-summary records 0 applied 0 pending 0 not-installed 0 review 0 invalid 0 whole-file 0 diff 0 read-only' "$tmp/out"
 mkdir -p "$store"
 printf 'the replacement line\n' > "$tmp/body"
 body=$(tree_digest "$tmp/body")
@@ -125,12 +125,17 @@ grep -qx 'override-detail d-drift.override the file is neither the recorded sour
 grep -qx 'override-detail e-absent.override no installed artifact owns this path' "$tmp/out"
 grep -qx 'override-detail f-invalid.override override patch body does not match its digest' "$tmp/out"
 grep -qx 'override-detail g-plain.override unsupported override format' "$tmp/out"
-grep -qx "override-summary records 7 applied 1 pending 1 not-installed 1 review 2 invalid 2 read-only" "$tmp/out"
-test "$(wc -l < "$tmp/out")" -eq 17
+grep -qx "override-form a-applied.override diff" "$tmp/out"
+grep -qx 'override-form b-pending.override diff' "$tmp/out"
+grep -qx 'override-form c-scope.override diff' "$tmp/out"
+grep -qx 'override-form d-drift.override diff' "$tmp/out"
+grep -qx 'override-form e-absent.override diff' "$tmp/out"
+grep -qx "override-summary records 7 applied 1 pending 1 not-installed 1 review 2 invalid 2 whole-file 0 diff 5 read-only" "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 22
 # the machine-readable report carries the same facts under a stable schema
 expect 2 "$bin" override list --root "$root" --json
-grep -qx "{\"schema\":\"holy-override-report-1\",\"type\":\"override\",\"name\":\"a-applied.override\",\"scope\":\"artifact\",\"subject\":\"$artifact\",\"path\":\"/etc/foo.conf\",\"arch\":\"any\",\"libc\":\"any\",\"source_sha256\":\"$other\",\"result_sha256\":\"$foo\",\"owner\":\"$artifact\",\"owner_name\":\"override-fixture\",\"owner_version\":\"1\",\"state\":\"applied\"}" "$tmp/out"
-grep -qx '{"schema":"holy-override-report-1","type":"summary","records":7,"applied":1,"pending":1,"not-installed":1,"review":2,"invalid":2}' "$tmp/out"
+grep -qx "{\"schema\":\"holy-override-report-1\",\"type\":\"override\",\"name\":\"a-applied.override\",\"scope\":\"artifact\",\"subject\":\"$artifact\",\"path\":\"/etc/foo.conf\",\"arch\":\"any\",\"libc\":\"any\",\"source_sha256\":\"$other\",\"result_sha256\":\"$foo\",\"owner\":\"$artifact\",\"owner_name\":\"override-fixture\",\"owner_version\":\"1\",\"state\":\"applied\",\"form\":\"diff\"}" "$tmp/out"
+grep -qx '{"schema":"holy-override-report-1","type":"summary","records":7,"applied":1,"pending":1,"not-installed":1,"review":2,"invalid":2,"whole-file":0,"diff":5}' "$tmp/out"
 # a store entry that is not a readable regular file is invalid, and named
 rm "$store/f-invalid.override"
 ln -s "$tmp/foo.conf" "$store/f-invalid.override"
@@ -139,7 +144,7 @@ grep -qx 'override-detail f-invalid.override override file is not a readable reg
 rm "$store/f-invalid.override" "$store/g-plain.override"
 # a record that needs review is status 3, the decision the record cannot make
 expect 3 "$bin" override list --root "$root"
-grep -qx "override-summary records 5 applied 1 pending 1 not-installed 1 review 2 invalid 0 read-only" "$tmp/out"
+grep -qx "override-summary records 5 applied 1 pending 1 not-installed 1 review 2 invalid 0 whole-file 0 diff 5 read-only" "$tmp/out"
 rm "$store/c-scope.override" "$store/d-drift.override"
 # a record whose file cannot be read through the root is a review, not a guess
 rm "$root/etc/foo.conf"
@@ -150,22 +155,23 @@ rmdir "$root/etc/foo.conf"
 cp "$tmp/foo.conf" "$root/etc/foo.conf"
 rm "$store/e-absent.override"
 expect 0 "$bin" override list --root "$root"
-grep -qx "override-summary records 2 applied 1 pending 1 not-installed 0 review 0 invalid 0 read-only" "$tmp/out"
+grep -qx "override-summary records 2 applied 1 pending 1 not-installed 0 review 0 invalid 0 whole-file 0 diff 2 read-only" "$tmp/out"
 # a set states the records it would write over and binds them into its plan, so a
 # store that changed between the plan and the apply moves the plan hash
 # a record the store keeps for a file no installed artifact owns yet
 printf 'extra packaged line\n' > "$tmp/extra.conf"
 extra=$(tree_digest "$tmp/extra.conf")
+cp "$tmp/extra.conf" "$tmp/extra-body"
 cat > "$store/i-extra.override" <<EOF
 format holy-override-1
 scope artifact
 digest $artifact
 path /etc/extra.conf
 sha256 $other
-patch $body
+patch $extra
 result $extra
 EOF
-cat "$tmp/body" >> "$store/i-extra.override"
+cat "$tmp/extra-body" >> "$store/i-extra.override"
 rm -rf "$tree"
 mkdir -p "$tree/HOLY" "$tree/DATA/etc"
 printf 'format holy-package-1\nname override-fixture-two\nversion 1\nrelease 1\nos linux\narch noarch\nlibc nolibc\n' > "$tree/HOLY/meta"
@@ -177,7 +183,7 @@ expect 0 "$bin" pack "$tree" --output "$tmp/override-fixture-two.holy"
 expect 0 "$bin" cache stage "local:$tmp/override-fixture-two.holy" --root "$root"
 second=$(tree_digest "$tmp/override-fixture-two.holy")
 expect 0 "$bin" db plan-set "$second" --root "$root"
-grep -qx "override i-extra.override path /etc/extra.conf file absent patch $body" "$tmp/out"
+grep -qx "override i-extra.override path /etc/extra.conf file absent patch $extra" "$tmp/out"
 test "$(grep -c '^override ' "$tmp/out")" -eq 1
 set_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
 test -n "$set_plan"
@@ -195,10 +201,10 @@ scope artifact
 digest $artifact
 path /etc/extra.conf
 sha256 $other
-patch $body
+patch $extra
 result $extra
 EOF
-cat "$tmp/body" >> "$store/h-added.override"
+cat "$tmp/extra-body" >> "$store/h-added.override"
 expect 3 "$bin" db apply-set "$set_plan" "$second" --root "$root"
 test ! -e "$root/etc/extra.conf"
 rm "$store/h-added.override"
@@ -210,7 +216,7 @@ expect 3 "$bin" override list --root "$root"
 grep -qx "override i-extra.override state review scope artifact $artifact path /etc/extra.conf arch any libc any" "$tmp/out"
 grep -qx "override-owner i-extra.override $second override-fixture-two 1 noarch" "$tmp/out"
 grep -qx 'override-detail i-extra.override scope or conditions name another artifact' "$tmp/out"
-grep -qx "override-summary records 3 applied 1 pending 1 not-installed 0 review 1 invalid 0 read-only" "$tmp/out"
+grep -qx "override-summary records 3 applied 1 pending 1 not-installed 0 review 1 invalid 0 whole-file 1 diff 2 read-only" "$tmp/out"
 # a root without a database cannot answer which artifact owns a path
 mkdir "$tmp/empty"
 expect 6 "$bin" override list --root "$tmp/empty"
