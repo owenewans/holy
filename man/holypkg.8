@@ -2573,9 +2573,12 @@ file must be a regular file of at most 1 MiB with no NUL byte, holding a PEM
 public key, a DER public key or an ASCII armored block, since the apk, apt and
 xbps families read keyrings the OpenSSL PEM and DER readers do not parse.
 Enrollment writes the key bytes and the SHA-256 recorded at enrollment through
-temporary files and a rename, holding the database write lock. var/lib/holypkg is
-reserved from payload ownership, so no installed package can place a file beside
-an enrolled key.
+temporary files and a rename, holding the database write lock. A mutating
+database command recreates a missing layout directory, so a root created before
+the keys directory existed gains it at the first exclusive operation. A read-only
+lock does not create it, and a read-only command reports no-enrolled-keys until
+then. var/lib/holypkg is reserved from payload ownership, so no installed
+package can place a file beside an enrolled key.
 .PP
 Enrolling the same key under a name again is accepted and reports the same
 digest. A different key under an enrolled name is decision-required status 3 and

@@ -823,7 +823,7 @@ int holy_state_reserve(const char *digest, const char *root_path)
     }
     dir = state_dir(root_path, 0);
     if (!holy_cache_object(digest, root_path)) { result = 6; goto done; }
-    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 1) ||
         !installed_valid(dir) || !empty_child(dir, "index") ||
         !read_generation(dir, &generation)) goto done;
     result = update_pending(dir);
@@ -860,7 +860,7 @@ int holy_state_cancel(const char *root_path)
     unsigned long long generation;
     char digest[65], approved[65];
     int dir = state_dir(root_path, 0), transactions = -1, result = 1;
-    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 1) ||
         !installed_valid(dir) || !empty_child(dir, "index") ||
         !read_generation(dir, &generation)) goto done;
     result = update_pending(dir);
@@ -899,7 +899,7 @@ int holy_state_recover(const char *root_path)
     struct dirent *entry;
     int dir = state_dir(root_path, 0), transactions = -1;
     int has_pending = 0, result = 1;
-    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 1) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation)) goto done;
     result = transaction_pending(dir, generation);
     if (result < 0) { result = 1; goto done; }
@@ -1524,7 +1524,7 @@ int holy_state_configure(const char *digest, const char *approved,
         if (dir < 0) goto done;
     } else {
         dir = state_dir_at(root, 0);
-        if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+        if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 1) ||
             !read_generation(dir, &generation) || !installed_valid(dir)) goto done;
     }
     result = 1;
@@ -1789,7 +1789,7 @@ int holy_state_approve(const char *hash, const char *root_path)
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0) goto done;
     dir = state_dir_at(root, 0);
-    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 1) ||
         !installed_valid(dir) || !empty_child(dir, "index") ||
         !read_generation(dir, &generation)) goto done;
     result = update_pending(dir);
@@ -2056,7 +2056,7 @@ int holy_state_apply(const char *root_path)
     int root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     int dir = root < 0 ? -1 : state_dir_at(root, 0);
     int transactions = -1, installed = -1, temp = -1, journaled = 0, result = 1;
-    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 1) ||
         !installed_valid(dir) || !empty_child(dir, "index") ||
         !read_generation(dir, &generation) || generation == ULLONG_MAX) goto done;
     result = update_pending(dir);
@@ -2123,7 +2123,7 @@ int holy_state_abort_empty(const char *root_path)
     int root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     int dir = root < 0 ? -1 : state_dir_at(root, 0);
     int transactions = -1, installed = -1, result = 1, removing = 0;
-    if (dir < 0 || fstat(root, &root_st) || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+    if (dir < 0 || fstat(root, &root_st) || flock(dir, LOCK_EX) || !state_layout(dir, 1) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation)) goto done;
     result = journal_valid(dir, generation, &recorded, digest, plan, &removing);
     if (result < 0) { result = 1; goto done; }
@@ -2901,7 +2901,7 @@ int holy_state_remove(const char *digest, const char *root_path, int accept_brok
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0) goto done;
     dir = state_dir_at(root, 0);
-    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 1) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation) ||
         generation == ULLONG_MAX) goto done;
     pending = transaction_pending(dir, generation);
@@ -2965,7 +2965,7 @@ int holy_state_continue_remove(const char *root_path)
     int installed = -1, item = -1, transactions = -1, files = -1;
     int result = 5, removing = 0, found, retired = 0, work = -1;
     struct stat removed_st;
-    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 1) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation) ||
         generation == ULLONG_MAX) { result = 1; goto done; }
     found = journal_valid(dir, generation, &recorded, digest, plan, &removing);
@@ -3025,7 +3025,7 @@ int holy_state_finish_apply(const char *root_path)
     int dir = root < 0 ? -1 : state_dir_at(root, 0);
     int transactions = -1, installed = -1, item = -1, files = -1;
     int result = 5, removing = 0, found;
-    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 1) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation)) {
         result = 1;
         goto done;
@@ -4825,7 +4825,7 @@ static int recover_set(const char *root_path, int resume)
     int root = -1, dir = -1, installed = -1, transactions = -1, result = 5;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     dir = root < 0 ? -1 : state_dir_at(root, 0);
-    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 0) ||
+    if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 1) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation)) { result = 1; goto done; }
     if (read_set_journal(dir, &journal) != 1 ||
         (generation != journal.generation && generation != journal.generation + 1) ||

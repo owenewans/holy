@@ -1200,7 +1200,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=cf6f275012c771ece4758df97beb7d77e6a4b54627ea1a3165ad129c1781db3f
+holypkg.8 source=holy version=development sha256=f7dc1505b2583c942870b9064ba92f0f4545b1e2e9603dfec464550169223e59
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -3778,8 +3778,12 @@ ENROLLED KEYS
      block, since the apk, apt and xbps families read keyrings the  OpenSSL  PEM
      and  DER  readers	do  not	 parse.	 Enrollment writes the key bytes and the
      SHA-256 recorded at enrollment through temporary files and a rename,  hold-
-     ing  the database write lock. var/lib/holypkg is reserved from payload own-
-     ership, so no installed package can place a file beside an enrolled key.
+     ing  the database write lock. A mutating database command recreates a miss-
+     ing layout directory, so a root created before the keys  directory	 existed
+     gains it at the first exclusive operation. A read-only lock does not create
+     it,   and	 a   read-only	command	 reports  no-enrolled-keys  until  then.
+     var/lib/holypkg is reserved from payload ownership, so no installed package
+     can place a file beside an enrolled key.
 
      Enrolling the same key under a name again is accepted and reports the  same
      digest.  A different key under an enrolled name is decision-required status
