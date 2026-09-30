@@ -1212,7 +1212,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=ce0fd748b7bdecd52e24afaac30814225463aecfd1a5942913b93111524630df
+holypkg.8 source=holy version=development sha256=54c75442bb4e72f4ef09087c0b19518d5aacef250ff6bfbc80b91e3510b73197
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -2284,13 +2284,31 @@ DESCRIPTION
      The interpreter is an absolute target-root path. The script  is  a	 regular
      file owned by the installed package and its digest must match.  The command
      shows  each script body, interpreter, root and UID, then prints a plan hash
-     without running code. The hash also binds the interpreter file bytes.  For-
-     eign-script records and other phases remain unsupported by this command. db
-     configure-apply requires that hash and root privileges; it	 runs  each  re-
-     viewed  script through its interpreter inside a chroot of the selected root
-     with PATH=/usr/bin:/bin, HOME=/ and LANG=C. Hooks may change files	 outside
-     their  package  manifest.	 The manager does not claim isolation from arbi-
-     trary root code.
+     without running code. The hash also binds the interpreter file bytes.
+
+     A service action has to be visible before a hook runs, so the review  names
+     the service tools a body spells out:
+
+     hook INDEX service-command line LINE tool TOOL
+
+     and closes with
+
+     script-review  generation	GENERATION  artifact SHA256 hooks COUNT service-
+     commands COUNT read-only
+
+     A tool is any token whose basename is dinitctl, systemctl, service, rc-ser-
+     vice, rc-update, initctl, chkconfig, update-rc.d,	insserv,  sv  or  runsv.
+     Comments  are not scanned, since a comment names nothing a shell would run.
+     The review reports what the body spells out and does not  decide  what  the
+     body does with it: an allowed hook keeps the powers of a root shell, so the
+     reader  reviews  the body next to the names. At most sixteen names per hook
+     are printed and the closing count	is  the	 whole	number.	  Foreign-script
+     records  and other phases remain unsupported by this command. db configure-
+     apply requires that hash and root privileges; it runs each reviewed  script
+     through  its  interpreter	inside	a  chroot  of  the  selected  root  with
+     PATH=/usr/bin:/bin, HOME=/ and LANG=C. Hooks may change files outside their
+     package manifest.	The manager does not claim isolation from arbitrary root
+     code.
 
      Before each hook, configure-apply synchronizes a running record in transac-
      tions/hook-journal. A successful hook advances the record. A failed hook or
@@ -2299,8 +2317,10 @@ DESCRIPTION
      After  all	 hooks	succeed,  hooks-state becomes completed and the database
      generation advances. A pending hook journal  blocks  other	 package  opera-
      tions.   The current command handles native postinstall hooks after instal-
-     lation; preinstall, editing, service consent and automatic configure during
-     add remain open.
+     lation; preinstall, editing and automatic configure during add remain open.
+     The consent a placed service unit needs is a set decision and is not one  a
+     hook  body gains: the review names the tools, and a hook that starts a ser-
+     vice does it with the review read.
 
      Repeated --accept-privileged SHA256 confirms installation of  regular  exe-
      cutable  files  with  setuid  in  that exact selected artifact. Without it,

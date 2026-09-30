@@ -48,6 +48,65 @@ unknown:
     return *interpreter ? kind : -1;
 }
 
+/* the tools that control a service in a dinit, systemd, OpenRC, SysV, upstart or runit
+   profile. a body that names one of them is visible before the review approves it, and
+   the body stays the authority on what it does with it. */
+static const char *const service_tools[] = {
+    "dinitctl", "systemctl", "service", "rc-service", "rc-update", "initctl",
+    "chkconfig", "update-rc.d", "insserv", "sv", "runsv", NULL
+};
+
+/* the bytes a token cannot hold: shell metacharacters, both quotes and whitespace */
+static int token_break(unsigned char byte)
+{
+    return byte <= ' ' || byte == ';' || byte == '|' || byte == '&' || byte == '(' ||
+           byte == ')' || byte == '<' || byte == '>' || byte == '`' || byte == '"' ||
+           byte == '$' || byte == '\\' || byte == '\'';
+}
+
+void holy_script_service_commands(const char *body, size_t length,
+                                  struct holy_script_command *out, size_t limit,
+                                  size_t *total)
+{
+    size_t i = 0, line = 1;
+    int line_start = 1;
+    *total = 0;
+    while (i < length) {
+        size_t start, end, base, name;
+        while (i < length && (body[i] == ' ' || body[i] == '\t' || body[i] == '\r')) ++i;
+        if (i >= length) break;
+        /* a comment names nothing a shell would run, and a hook body is mostly comments */
+        if (line_start && body[i] == '#') {
+            while (i < length && body[i] != '\n') ++i;
+            continue;
+        }
+        line_start = 0;
+        start = i;
+        while (i < length && !token_break((unsigned char)body[i])) ++i;
+        end = i;
+        base = start;
+        for (name = start; name < end; ++name)
+            if (body[name] == '/') base = name + 1;
+        while (i < length && token_break((unsigned char)body[i])) {
+            if (body[i] == '\n') { ++line; line_start = 1; }
+            if (body[i] == ';') line_start = 1;
+            ++i;
+        }
+        if (base == end) continue;
+        for (size_t tool = 0; service_tools[tool]; ++tool)
+            if (strlen(service_tools[tool]) == name - base &&
+                !memcmp(body + base, service_tools[tool], name - base)) {
+                ++*total;
+                if (out && *total <= limit && name - base < sizeof out[0].tool) {
+                    out[*total - 1].line = line;
+                    memcpy(out[*total - 1].tool, body + base, name - base);
+                    out[*total - 1].tool[name - base] = 0;
+                }
+                break;
+            }
+    }
+}
+
 int holy_script_target_status(int root, const char *interpreter)
 {
     struct open_how how = {0};

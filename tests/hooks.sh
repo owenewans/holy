@@ -27,7 +27,7 @@ int main(int argc, char **argv)
     if (marker >= 0) {
         write(marker, "ran\n", 4);
         close(marker);
-        return n == 10 && !memcmp(text, "fail-once\n", 10) ? 1 : 0;
+        return n >= 10 && !memcmp(text, "fail-once\n", 10) ? 1 : 0;
     }
     return errno == EEXIST ? 0 : 4;
 }
@@ -43,9 +43,10 @@ arch noarch
 libc nolibc
 EOF
 for name in deps provides origin transform; do : > "$tmp/payload/HOLY/$name"; done
-printf 'fail-once\n' > "$tmp/payload/DATA/usr/share/holy/hook.txt"
+printf 'fail-once\n# the service tools below are named so the review can report them\ndinitctl start sshd\n/bin/service sshd restart\nsystemctl --quiet enable sshd\n' > "$tmp/payload/DATA/usr/share/holy/hook.txt"
 hash=$(sha256sum "$tmp/payload/DATA/usr/share/holy/hook.txt")
 hash=${hash%% *}
+size=$(stat -c %s "$tmp/payload/DATA/usr/share/holy/hook.txt")
 printf 'hook postinstall /bin/holy-hook-runner usr/share/holy/hook.txt sha256 %s\n' "$hash" > "$tmp/payload/HOLY/hooks"
 uid=$(id -u)
 gid=$(id -g)
@@ -54,7 +55,7 @@ for path in usr usr/share usr/share/holy; do
     mode=$(stat -c %a "$tmp/payload/DATA/$path")
     printf 'dir %s %s root root %s %s 0 - none - -\n' "$path" "$mode" "$uid" "$gid" >> "$tmp/payload/HOLY/files"
 done
-printf 'file usr/share/holy/hook.txt 644 root root %s %s 10 %s none - -\n' "$uid" "$gid" "$hash" >> "$tmp/payload/HOLY/files"
+printf 'file usr/share/holy/hook.txt 644 root root %s %s %s %s none - -\n' "$uid" "$gid" "$size" "$hash" >> "$tmp/payload/HOLY/files"
 tar -cf "$tmp/package.tar" -C "$tmp/payload" HOLY DATA
 lz4 -q "$tmp/package.tar" "$tmp/package.holy"
 artifact=$(sha256sum "$tmp/package.holy")
@@ -63,6 +64,13 @@ artifact=${artifact%% *}
 "$bin" add "local:$tmp/package.holy" --skip-hooks "$artifact" --root "$tmp/root" --yes > "$tmp/out"
 "$bin" db configure-plan "$artifact" --root "$tmp/root" > "$tmp/out"
 grep -Fqx 'fail-once' "$tmp/out"
+# a service action has to be visible before a hook runs, so the review names the tools
+# the body spells out and leaves the body as the authority on what they do
+grep -qx 'hook 0 service-command line 3 tool dinitctl' "$tmp/out"
+grep -qx 'hook 0 service-command line 4 tool service' "$tmp/out"
+grep -qx 'hook 0 service-command line 5 tool systemctl' "$tmp/out"
+grep -qx "script-review generation 1 artifact $artifact hooks 1 service-commands 3 read-only" "$tmp/out"
+test "$(grep -c 'service-command line' "$tmp/out")" -eq 3
 plan=$(sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out" | head -1)
 test "${#plan}" -eq 64
 printf 'tampered\n' > "$tmp/root/usr/share/holy/hook.txt"

@@ -444,7 +444,18 @@
   reviewed for and recovery refuses a journal that names no consent for a
   unit the set ships. A replacement that ships a unit still installs it
   without that consent, as do re-applying a record on a later version,
-  general rollback and per-phase recovery.
+  general rollback and per-phase recovery. A hook that starts a service is
+  a different path from a placed unit, and the specification says the
+  behaviour has to be visible before the hook runs rather than that the
+  manager stops it: `db configure-plan` names every service tool the body
+  spells out, as hook INDEX service-command line LINE tool TOOL, and closes
+  the review with script-review generation GENERATION artifact SHA256 hooks
+  COUNT service-commands COUNT read-only. A tool is any token whose basename
+  is dinitctl, systemctl, service, rc-service, rc-update, initctl, chkconfig,
+  update-rc.d, insserv, sv or runsv, comments are not scanned, sixteen names
+  per hook are printed and the count is the whole number. The review reports
+  what the body spells out and leaves the decision to the reader, because an
+  allowed hook keeps the powers of a root shell.
 - [x] Carry config/mutable flags through verified manifests and installed checks;
   import Debian conffiles as config files, reject invalid declarations, and
   report changed-config.

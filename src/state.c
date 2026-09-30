@@ -15,6 +15,7 @@
 #include "scan.h"
 #include "deps.h"
 #include "provides.h"
+#include "script.h"
 #include "source.h"
 #include "change.h"
 
@@ -1606,14 +1607,28 @@ int holy_state_configure(const char *digest, const char *approved,
     if (retry) {
         if (strcmp(saved_plan, plan.hash) || next > plan.count) { result = 5; goto done; }
     } else if (!approved) {
+        /* the specification says a service action has to be visible before a hook runs,
+           and an allowed hook keeps the powers of a root shell, so the review names the
+           service tools the body spells out instead of deciding what they do */
+        struct holy_script_command commands[16];
+        size_t service_commands = 0;
         printf("configure-plan generation %llu artifact %s hooks %zu sha256 %s read-only\n",
                generation, digest, plan.count, plan.hash);
         for (i = 0; i < plan.count; ++i) {
+            size_t found = 0, j;
             printf("hook %zu postinstall interpreter %s script /%s uid 0 root %s\n",
                    i, plan.steps[i].interpreter, plan.steps[i].path, root_path);
             fwrite(plan.steps[i].body, 1, plan.steps[i].length, stdout);
             if (!plan.steps[i].length || plan.steps[i].body[plan.steps[i].length - 1] != '\n') putchar('\n');
+            holy_script_service_commands(plan.steps[i].body, plan.steps[i].length,
+                                         commands, 16, &found);
+            for (j = 0; j < found && j < 16; ++j)
+                printf("hook %zu service-command line %zu tool %s\n",
+                       i, commands[j].line, commands[j].tool);
+            service_commands += found;
         }
+        printf("script-review generation %llu artifact %s hooks %zu service-commands %zu read-only\n",
+               generation, digest, plan.count, service_commands);
         result = ferror(stdout) ? 1 : 0;
         goto done;
     } else if (strcmp(approved, plan.hash)) { result = 3; goto done; }
