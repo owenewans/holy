@@ -124,6 +124,18 @@ The archive digest and local installed manifest digest remain distinct.
 HOLY/transform records
 changes already applied to the normalized payload; installation never executes
 that record. Archive verification does not authorize hook execution.
+.PP
+The AppImage converter records family appimage with the converter
+holy-appimage-1, the original image hash, the entry point and mode extract in
+HOLY/origin. Its payload keeps the whole extracted AppDir under
+/usr/lib/holy/private/NAME/appdir/, a link to it at
+/usr/lib/holy/private/NAME/usr/bin/NAME.appimage and a generated launcher at
+/usr/bin/NAME; the launcher is a script, so the package names an interpreter
+requirement like any other script. HOLY/transform records the private layout,
+the launcher, the rewritten desktop entry, the path view a link needs, the
+dropped image-level sandbox and the absence of a desktop database hook. The
+version, arch and libc are read from the payload rather than assumed, and a
+converted package therefore carries the requirements that payload implies.
 .SH INSTALLED GRAPH
 New local installations use holy-instance-4 state, or holy-instance-5 when an
 explicit non-native architecture placement decision was accepted. Version 5 adds

@@ -270,11 +270,12 @@ done:
 static int select_path(void *context, int root, int instance, const char *digest)
 {
     static const char *const dirs[] = {"usr/bin/", "bin/", "usr/sbin/", "sbin/"};
+    static const char prefix[] = "usr/lib/holy/private/";
     struct run_choice *choice = context;
     const char *name = choice->command;
     char *private_base = NULL, *public_path = NULL;
     size_t i, count = sizeof dirs / sizeof dirs[0];
-    int files = -1, status = 0;
+    int files = -1, status = 0, owned = 0;
     if (strcmp(digest, choice->digest)) return 0;
     files = openat(instance, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (files < 0) return 1;
@@ -286,18 +287,31 @@ static int select_path(void *context, int root, int instance, const char *digest
     if (!private_base) { status = 1; goto done; }
     if (name[0] == '/') {
         const char *relative = name + 1;
-        for (i = 0; i < count; ++i)
-            if (!strncmp(relative, dirs[i], strlen(dirs[i])) &&
-                valid_name(relative + strlen(dirs[i]))) break;
-        if (i == count) { status = 2; goto done; }
+        /* an absolute command may name a private file the manifest owns, which
+           is how a package with a private tree starts its own entry point */
+        if (!strncmp(relative, prefix, sizeof prefix - 1)) {
+            const char *inside = relative + sizeof prefix - 1;
+            const char *slash = strchr(inside, '/');
+            if (!slash || slash == inside) { status = 2; goto done; }
+            for (i = 0; i < count; ++i)
+                if (!strncmp(slash + 1, dirs[i], strlen(dirs[i])) &&
+                    valid_name(slash + 1 + strlen(dirs[i]))) break;
+            if (i == count) { status = 2; goto done; }
+            owned = 1;
+        } else {
+            for (i = 0; i < count; ++i)
+                if (!strncmp(relative, dirs[i], strlen(dirs[i])) &&
+                    valid_name(relative + strlen(dirs[i]))) break;
+            if (i == count) { status = 2; goto done; }
+        }
         public_path = strdup(relative);
     } else {
         if (!valid_name(name)) { status = 2; goto done; }
     }
     if (name[0] == '/' && !public_path) { status = 1; goto done; }
-    for (i = 0; i < (public_path ? 2 : count * 2); ++i) {
+    for (i = 0; i < (public_path ? (owned ? 1 : 2) : count * 2); ++i) {
         char *candidate, *base;
-        int private_candidate = public_path ? i == 0 : i < count;
+        int private_candidate = public_path ? i == 0 && !owned : i < count;
         const char *suffix = public_path ? public_path : dirs[i % count];
         base = private_candidate ? private_base : "";
         candidate = join(base, suffix);

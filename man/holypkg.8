@@ -2469,8 +2469,11 @@ run selects one installed slot by source alias and package name. Use --arch and
 --libc when several installed slots share that name. The local alias selects a
 package installed without a registered source. A registered alias can still
 select its installed package after the source is removed from active config.
-The command after -- must be a bare name in a standard bin directory or an
-absolute path in /usr/bin, /bin, /usr/sbin or /sbin. run checks the installed
+The command after -- must be a bare name in a standard bin directory, an
+absolute path in /usr/bin, /bin, /usr/sbin or /sbin, or an absolute path the
+installed manifest owns under /usr/lib/holy/private/ARTIFACT-ID/ with a bin
+directory and a plain file name after it. The last form is how a package whose
+payload is private names its own entry point. run checks the installed
 manifest, including the executable bit and current payload, before exec.
 .PP
 When the installed manifest owns a matching path under
@@ -2527,15 +2530,45 @@ The report lists ELF arch/libc/ISA, interpreter, DT_NEEDED, loader search paths,
 strong symbol versions, shebang scripts, links that need a path view and unknown
 executables without following symlinks. It reports the AppRun entrypoint and
 runtime probes that static inspection cannot close. No .holy is produced and
-no package is installed. The extracted AppDir still needs ELF, dependency,
-path and launcher classification before native import. This operation does not
-claim that the extracted program can run.
+no package is installed. This operation does not claim that the extracted
+program can run.
 .PP
 import INPUT --source NAME --format appimage --output NEW_DIRECTORY uses
-the same extraction and records NAME as unverified provenance. It returns
-status 3 after writing the reviewable output because no native .holy can be
-issued until dependency and path decisions are complete. NAME does not grant
-a registered source identity.
+the same extraction, records NAME as unverified provenance and then emits one
+native package beside the review bundle. The package name is the image file name
+without its .AppImage suffix, and a name the manifest cannot record is refused
+with status 2 rather than rewritten. The version is read from the desktop entry
+the image ships, X-AppImage-Version or Version; a payload that states none
+records version 0 and the report says so. The arch and libc come from the
+payload's own ELF files, and a payload that mixes architectures or runtimes is
+refused with status 3, because one .holy records one of each.
+.PP
+The whole AppDir travels under
+/usr/lib/holy/private/NAME/appdir/, so no public path is claimed for the image's
+own files. The entry point is reachable as
+/usr/lib/holy/private/NAME/usr/bin/NAME.appimage, a link to ../../appdir/AppRun,
+and /usr/bin/NAME is a launcher that starts that file in the package run context
+with holypkg run SOURCE:NAME. When the image ships an app tree the launcher adds
+a path view from /app, and only when the target has /app. The launcher refuses to
+run as root because the converted payload is no sandbox. The desktop entry is
+carried to /usr/share/applications/NAME.desktop with Exec and TryExec rewritten to
+the launcher, and the classification and conversion reports travel with the
+package as /usr/share/holy/NAME/. Icons are not installed by this package and no
+desktop database hook is declared; the distribution owns the cache.
+.PP
+Dependencies are derived from the payload. A DT_NEEDED the payload itself carries
+through its own SONAME is satisfied privately and names no requirement; every
+other name becomes one soname requirement. A link with an absolute or escaping
+target cannot travel in a package payload, so the path it named becomes one file
+requirement and the report counts it. Every entry is attributed to the installing
+user, and each directory an entry sits under is declared by the same manifest.
+.PP
+import returns status 3 after writing the output, because the package changes the
+launch conditions and carries no image-level sandbox. The report in the output
+directory names the changed conditions, the dropped sandbox, the runtime probes
+static inspection cannot close, the path views a link needs, the scripts that
+carry an interpreter and the version decision. NAME does not grant a registered
+source identity.
 .SS Recipe conversion
 holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY reads one
 PKGBUILD as text and writes a conversion directory containing the original

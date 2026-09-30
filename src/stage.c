@@ -12,7 +12,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-int holy_temporary_at(int dir, char name[43])
+static int temporary_at(int dir, char name[43], int access)
 {
     unsigned char random_bytes[16];
     size_t attempt, done, i;
@@ -29,13 +29,23 @@ int holy_temporary_at(int dir, char name[43])
             snprintf(name + 10 + i * 2, 3, "%02x", random_bytes[i]);
         name[42] = '\0';
         {
-            int fd = openat(dir, name, O_WRONLY | O_CREAT | O_EXCL |
+            int fd = openat(dir, name, access | O_CREAT | O_EXCL |
                             O_NOFOLLOW | O_CLOEXEC, 0600);
             if (fd >= 0 || errno != EEXIST) return fd;
         }
     }
     errno = EEXIST;
     return -1;
+}
+
+int holy_temporary_at(int dir, char name[43])
+{
+    return temporary_at(dir, name, O_WRONLY);
+}
+
+int holy_spool_at(int dir, char name[43])
+{
+    return temporary_at(dir, name, O_RDWR);
 }
 
 char *holy_stage_fd(int input, const char *prefix)

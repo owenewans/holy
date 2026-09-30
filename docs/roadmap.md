@@ -842,9 +842,21 @@
   AppImage type 2 inspect/extract now snapshots the original, checks ELF and
   SquashFS structure, extracts with unsquashfs without running the image, and
   records an unclassified AppDir plus per-file ELF, loader, script and link facts.
-  `import --format appimage` preserves a source-attributed review bundle and
-  returns decision-required without claiming a native package.
-  Dependency closure, a launcher and .holy emission remain open.
+  `import --format appimage` now also emits one native package beside the review
+  bundle: the AppDir travels whole under a private path, the entry point becomes a
+  link under a private bin directory, /usr/bin/NAME is a launcher that starts it
+  in the package run context, the desktop entry is rewritten onto the launcher,
+  and the classification and conversion reports travel with the package.
+  Dependencies are the payload's own: a DT_NEEDED the payload carries through its
+  SONAME is satisfied privately, every other name becomes a soname requirement,
+  and a link whose absolute or escaping target cannot travel in a payload
+  becomes a recorded file requirement. The arch, libc and version come from the
+  payload itself, a mixed-ABI payload is refused, and every entry is attributed to
+  the installing user with each parent directory declared by the same manifest.
+  The import returns decision-required and the package report names the changed
+  launch conditions, the dropped image-level sandbox, the runtime probes static
+  inspection cannot close, the path views a link needs and the version decision.
+  Nix, Flatpak, Snap, Scoop and WinGet remain open.
 - [ ] Implement `holypkg run`, context-specific provider paths, grouped `up --prepare`,
   isolated root/VM trials and full `check` reports.
   The existing run launcher now derives private PATH directories from the
@@ -853,7 +865,10 @@
   trees over existing /usr/lib or /app mountpoints in the child namespace.
   An explicit --auto-view now binds package-owned private regular files over
   existing matching public paths in the child namespace and refuses ambiguous
-  mappings. Automatic conflict detection during installation remains open.
+  mappings. The command after -- may now name a manifest-owned private file
+  under /usr/lib/holy/private/ARTIFACT-ID/ with a bin directory and a plain file
+  name after it, which is how a package whose payload is private starts its own
+  entry point. Automatic conflict detection during installation remains open.
 
 ## Base system and images
 
