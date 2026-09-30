@@ -929,6 +929,18 @@
   payload with a program, a versioned object, a plugin, an archive, headers, pkg-config,
   documentation and a license, and checks the proposal, the rules that settle it, the
   contradictions and the refusals.
+  `holypkg split --debug` now adds a NAME-debug output whose files are cut from the
+  runtime ELFs with objcopy, and the ELF reader reports the GNU build-id note so a
+  stripped artifact and its debug file are matched by an identity instead of a name.
+  Each debug record names the runtime path and that note, an ELF without a note is a
+  decision because nothing would tie the pair together, and the proposal names the
+  tool rather than inventing a per-file command. `elf FILE --build-id` reads the note
+  section, so a separate debug file, which keeps the note and loses the loadable
+  segments, is still checked. A fixture cuts a real pair with objcopy, keeps the note
+  in both files, confirms the stripped file lost its debug sections and names its
+  debug file, and drives GDB to the recorded source line and stack trace through the
+  pair; the same artifact without its debug file resolves no line, which is what
+  makes the debug output load-bearing.
   `make check-cc` now compiles the core with tcc, gcc and clang in turn, packs a
   package with each result and verifies it, and returns 6 when a toolchain is
   absent, so the three named host compilers are checked rather than assumed.

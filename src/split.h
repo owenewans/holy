@@ -5,7 +5,9 @@
 
 /* proposes the split outputs of a prepared package tree. every non-directory path
    receives one output, an explicit rule outranks a heuristic, and a path the rules
-   cannot settle is reported as a decision rather than guessed. */
-int holy_split_propose(const char *tree, const char *output, char *const *rule, size_t rules);
+   cannot settle is reported as a decision rather than guessed. debug adds a debug
+   output whose files are tied to the runtime files by their build-id. */
+int holy_split_propose(const char *tree, const char *output, char *const *rule, size_t rules,
+                       int debug);
 
 #endif

@@ -32,6 +32,9 @@ struct holy_elf_info {
     int has_dynamic;
     uint64_t flags1;
     char *interpreter;
+    /* the GNU build-id note as lowercase hex, or NULL when the file states none; it
+       is what ties a stripped runtime file to a separate debug file */
+    char *build_id;
     char **needed;
     size_t needed_count;
     char *soname;
@@ -53,6 +56,11 @@ struct holy_elf_info {
 int holy_elf_read_fd(int fd, struct holy_elf_info *info);
 int holy_elf_read(const char *path, struct holy_elf_info *info);
 void holy_elf_free(struct holy_elf_info *info);
+/* writes the GNU build-id note of one regular file as lowercase hex, or returns 0
+   when the file is not an ELF or states no note. this reads only the notes, so it
+   also answers for a separate debug file whose other sections a strict reader would
+   refuse. the caller owns a 65-byte buffer on success. */
+int holy_elf_build_id(const char *path, char *hex);
 const char *holy_elf_machine(const struct holy_elf_info *info);
 const char *holy_elf_runtime(const struct holy_elf_info *info);
 const char *holy_elf_isa(const struct holy_elf_info *info);

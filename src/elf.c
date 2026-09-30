@@ -104,9 +104,82 @@ static int read_notes(Elf *elf, const GElf_Phdr *phdr, uint64_t file_size,
             !memcmp(bytes + name_offset, "GNU\0", 4) &&
             !read_property_note(bytes + desc_offset, note.n_descsz,
                                 elf_class, little_endian, info)) return 0;
+        /* a build-id note states the identity a debug file keeps after the runtime
+           file is stripped, so the first one wins and a second is refused */
+        if (note.n_type == NT_GNU_BUILD_ID && note.n_namesz == 4 &&
+            !memcmp(bytes + name_offset, "GNU\0", 4)) {
+            size_t length = note.n_descsz, at;
+            const unsigned char *desc = bytes + desc_offset;
+            char *hex;
+            /* an empty or oversized note states no identity, and a second one is a
+               file this reader cannot describe */
+            if (info->build_id) return 0;
+            if (!length || length > 32) { cursor = next; continue; }
+            hex = malloc(length * 2 + 1);
+            if (!hex) return 0;
+            for (at = 0; at < length; ++at) snprintf(hex + at * 2, 3, "%02x", desc[at]);
+            hex[length * 2] = 0;
+            info->build_id = hex;
+        }
         cursor = next;
     }
     return 1;
+}
+
+int holy_elf_build_id(const char *path, char *hex)
+{
+    struct stat st;
+    Elf *elf = NULL;
+    Elf_Scn *section = NULL;
+    GElf_Ehdr ehdr;
+    off_t original;
+    int fd = open(path, O_RDONLY | O_CLOEXEC), found = 0;
+    if (fd < 0) return 0;
+    original = lseek(fd, 0, SEEK_CUR);
+    if (original < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode)) goto done;
+    if (elf_version(EV_CURRENT) == EV_NONE) goto done;
+    elf = elf_begin(fd, ELF_C_READ, NULL);
+    if (!elf) goto done;
+    if (elf_kind(elf) != ELF_K_ELF || !gelf_getehdr(elf, &ehdr)) goto done;
+    /* a separate debug file keeps the note section and loses the segments a loadable
+       artifact needs, so the section is read where the loader would not look */
+    while (!found && (section = elf_nextscn(elf, section)) != NULL) {
+        GElf_Shdr header;
+        Elf_Data *data;
+        size_t cursor = 0;
+        if (!gelf_getshdr(section, &header) || header.sh_type != SHT_NOTE ||
+            !header.sh_size || header.sh_size > 64 * 1024 ||
+            header.sh_offset > (uint64_t)st.st_size ||
+            header.sh_size > (uint64_t)st.st_size - header.sh_offset) continue;
+        data = elf_getdata_rawchunk(elf, (off_t)header.sh_offset, (size_t)header.sh_size,
+                                    gelf_getclass(elf) == ELFCLASS64 && header.sh_addralign >= 8 ?
+                                    ELF_T_NHDR8 : ELF_T_NHDR);
+        if (!data) continue;
+        while (cursor < data->d_size) {
+            GElf_Nhdr note;
+            size_t name_offset, desc_offset, at;
+            size_t next = gelf_getnote(data, cursor, &note, &name_offset, &desc_offset);
+            const unsigned char *bytes = data->d_buf;
+            if (!next || next <= cursor || next > data->d_size ||
+                name_offset > data->d_size || note.n_namesz > data->d_size - name_offset ||
+                desc_offset > data->d_size || note.n_descsz > data->d_size - desc_offset)
+                break;
+            if (note.n_type == NT_GNU_BUILD_ID && note.n_namesz == 4 &&
+                !memcmp(bytes + name_offset, "GNU\0", 4) && note.n_descsz &&
+                note.n_descsz <= 32) {
+                for (at = 0; at < note.n_descsz; ++at)
+                    snprintf(hex + at * 2, 3, "%02x", bytes[desc_offset + at]);
+                hex[note.n_descsz * 2] = 0;
+                found = 1;
+                break;
+            }
+            cursor = next;
+        }
+    }
+done:
+    if (elf) elf_end(elf);
+    close(fd);
+    return found;
 }
 
 static char *dynamic_string(const char *table, size_t length, uint64_t offset,
@@ -703,7 +776,8 @@ void holy_elf_free(struct holy_elf_info *info)
     free(info->soname);
     free(info->rpath);
     free(info->runpath);
-    info->soname = info->rpath = info->runpath = NULL;
+    free(info->build_id);
+    info->soname = info->rpath = info->runpath = info->build_id = NULL;
     {
         size_t i;
         for (i = 0; i < info->version_count; ++i) {

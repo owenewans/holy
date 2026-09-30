@@ -160,7 +160,9 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg manifest generate DIRECTORY --output FILE
 .br
-.B holypkg split TREE --output NEW_FILE [--split OUTPUT GLOB ...]
+.B holypkg split TREE --output NEW_FILE [--split OUTPUT GLOB ...] [--debug]
+.br
+.B holypkg elf FILE [--build-id]
 .br
 .B holypkg check local:FILE --root DIRECTORY
 .br
@@ -2075,6 +2077,12 @@ SONAME supplies a musl hint for ET_DYN. Other files without a recognized
 interpreter report unknown. It does not model symbol lookup order or plugin loading;
 its output is not a dependency resolution or package ABI verdict.
 .PP
+A PT_NOTE GNU build-id note is reported as build-id in lowercase hex when the file
+states one, and omitted otherwise. A second note of the same kind, an empty note and
+a note longer than 32 bytes are not identities this reader states, so a file carrying
+one of them is rejected. elf FILE --build-id reads the note section instead of the
+loadable segments, which is how a separate debug file is checked after a split.
+.PP
 The local scan command stages a regular .holy input in a private file, verifies
 that copy, then copies ELF payload files to unnamed temporary files. It reports
 each file's class, machine, runtime hint and ISA using the same reader. It does
@@ -2779,6 +2787,22 @@ path, and returns status 3 when any path is a decision. A tree without HOLY/meta
 without a name the output names may be derived from is refused with status 2, and a
 tree that is not there returns 6. A device, socket or fifo is refused, because a
 payload carries none of them.
+.PP
+--debug adds a NAME-debug output whose files are cut from the runtime files with
+objcopy. Each debug record names the runtime path and the build-id note both files
+keep, so a stripped artifact and its debug file are matched by an identity rather
+than by a name, and a debug record states the tool that cuts the pair:
+objcopy --only-keep-debug on the runtime file, then objcopy --strip-debug
+--add-gnu-debuglink on the artifact that installs. An ELF that states no build-id is a
+decision rather than an untraceable debug entry, because nothing then ties a debug
+file to the artifact it was cut from. A file this reader cannot parse as an ELF is
+refused, since --debug reads only the ELF payloads of a tree.
+.PP
+holypkg elf FILE --build-id prints the GNU build-id note of one file in lowercase
+hex, reading the note section rather than the loadable segments. A separate debug
+file keeps the note and loses the segments a loadable artifact needs, so the strict
+elf reader refuses it and this form still answers. A file that states no note, or is
+not an ELF, returns 2.
 .SS Recipe conversion
 holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY reads one
 PKGBUILD as text and writes a conversion directory containing the original

@@ -64,6 +64,12 @@ decision rather than assigning it from the file extension. An explicit rule in t
 proposal outranks the heuristic, so a settled tree yields a manifest an operator can
 paste and build.
 .PP
+With --debug the proposal also declares a NAME-debug output and one debug record per
+runtime ELF, naming the build-id both the stripped artifact and its debug file keep.
+The arch, libc, dependencies, provides, files and hashes of every output are computed
+from that output's own files, so a documentation output and an ABI library never
+inherit one another's metadata.
+.PP
 split-step OUTPUT fills a private staging tree for that output. It runs after
 the package phase with HOLY_SPLIT_DEST set to that tree, and every path it
 creates belongs to OUTPUT. No split pattern may redirect those paths, and a

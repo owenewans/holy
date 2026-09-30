@@ -9,6 +9,7 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DEFAULT_SOURCE 1
 #include "split.h"
+#include "elf.h"
 
 #include <ctype.h>
 #include <dirent.h>
@@ -23,7 +24,7 @@
 #include <unistd.h>
 
 #define SPLIT_PATHS 100000
-#define SPLIT_DECISIONS 4096
+#define SPLIT_DEBUG 4096
 
 /* one explicit rule, as the caller wrote it on the command line */
 struct split_rule {
@@ -46,13 +47,20 @@ struct split_tree {
     size_t count, capacity;
 };
 
+/* one file a debug output would carry, tied to the runtime file it was cut from */
+struct split_debug {
+    char *path;
+    char *build_id;
+};
+
 /* a decision kind names what could not be settled from the tree itself */
 enum {
     SPLIT_UNASSIGNED = 0,
     SPLIT_REPEATED,
     SPLIT_UNVERSIONED_OBJECT,
     SPLIT_STATIC_ARCHIVE,
-    SPLIT_ESCAPING_LINK
+    SPLIT_ESCAPING_LINK,
+    SPLIT_NO_BUILD_ID
 };
 
 static const char *decision_name(int kind)
@@ -62,6 +70,7 @@ static const char *decision_name(int kind)
     case SPLIT_UNVERSIONED_OBJECT: return "unversioned-object";
     case SPLIT_STATIC_ARCHIVE: return "static-archive";
     case SPLIT_ESCAPING_LINK: return "escaping-link";
+    case SPLIT_NO_BUILD_ID: return "no-build-id";
     default: return "unassigned";
     }
 }
@@ -302,9 +311,48 @@ static const char *explicit_output(const char *path, const struct split_rule *ru
     return found;
 }
 
+static int debug_add(struct split_debug *debugs, size_t *count, size_t capacity,
+                     const char *path, const char *build_id)
+{
+    if (*count >= capacity) return 0;
+    debugs[*count].path = strdup(path);
+    debugs[*count].build_id = strdup(build_id);
+    if (!debugs[*count].path || !debugs[*count].build_id) {
+        free(debugs[*count].path);
+        free(debugs[*count].build_id);
+        return 0;
+    }
+    ++*count;
+    return 1;
+}
+
+/* the build-id of one ELF, recorded for the debug output. returns 2 when the file
+   states one, 1 when it is an ELF without a note to tie a debug file to, and 0 when
+   it is not an ELF this reader understands */
+static int elf_identity(int parent, const char *name, const char *path,
+                        struct split_debug *debugs, size_t capacity, size_t *debug_count)
+{
+    struct holy_elf_info info;
+    int fd = openat(parent, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    int parsed, recorded;
+    if (fd < 0) return 0;
+    parsed = holy_elf_read_fd(fd, &info);
+    close(fd);
+    if (parsed) {
+        holy_elf_free(&info);
+        return 0;
+    }
+    recorded = info.build_id ? 2 : 1;
+    if (recorded == 2 && !debug_add(debugs, debug_count, capacity, path, info.build_id))
+        recorded = 0;
+    holy_elf_free(&info);
+    return recorded;
+}
+
 static int walk(struct split_tree *tree, int parent, const char *prefix, unsigned depth,
                 const struct split_rule *rules, size_t rule_count, const char *devel,
-                const char *docs, const char *runtime)
+                const char *docs, const char *runtime, struct split_debug *debugs,
+                size_t debug_capacity, size_t *debug_count, int debug)
 {
     DIR *list;
     struct dirent *entry;
@@ -319,7 +367,7 @@ static int walk(struct split_tree *tree, int parent, const char *prefix, unsigne
         struct stat st;
         char *path = NULL;
         const char *output;
-        int matched = 0, kind = 0, is_regular = 0, executable = 0;
+        int matched = 0, kind = 0, is_regular = 0, executable = 0, elf = 0;
         const char *reason = NULL;
         if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
         if (!safe_component(entry->d_name)) {
@@ -341,7 +389,7 @@ static int walk(struct split_tree *tree, int parent, const char *prefix, unsigne
             int child = openat(parent, entry->d_name,
                                O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
             if (child < 0 || !walk(tree, child, path, depth + 1, rules, rule_count, devel,
-                                   docs, runtime))
+                                   docs, runtime, debugs, debug_capacity, debug_count, debug))
                 ok = 0;
             if (child >= 0) close(child);
             free(path);
@@ -382,6 +430,14 @@ static int walk(struct split_tree *tree, int parent, const char *prefix, unsigne
             if (!tree_add(tree, path, output, 1, 0, 0, NULL, "explicit rule")) ok = 0;
         } else if (matched) {
             if (!tree_add(tree, path, NULL, 0, 1, SPLIT_REPEATED, NULL, NULL)) ok = 0;
+        } else if (debug && (elf = elf_identity(parent, entry->d_name, path, debugs,
+                                                debug_capacity, debug_count))) {
+            /* an ELF with a build-id is a runtime file the debug output is cut from,
+               and one without states nothing that would tie the two together */
+            if (!tree_add(tree, path, elf == 1 ? NULL : runtime, 0, elf == 1,
+                          elf == 1 ? SPLIT_NO_BUILD_ID : 0, elf == 1 ? runtime : NULL,
+                          elf == 1 ? "no build-id note ties a debug file to this artifact" :
+                          "runtime artifact for a debug file")) ok = 0;
         } else {
             const char *guess = heuristic(path, is_regular, executable, &reason, &kind, devel,
                                           docs, runtime);
@@ -447,19 +503,22 @@ static void quoted(FILE *out, const char *value)
     fputc('"', out);
 }
 
-int holy_split_propose(const char *tree, const char *output, char *const *rule, size_t rules)
+int holy_split_propose(const char *tree, const char *output, char *const *rule, size_t rules,
+                       int debug)
 {
     struct split_tree paths = {0};
+    struct split_debug *debugs = NULL;
     struct split_rule declared[64];
-    size_t i, decisions = 0, runtime_files = 0;
+    size_t i, decisions = 0, runtime_files = 0, debug_count = 0;
     size_t devel_files = 0, doc_files = 0, rule_count = 0;
     int devel_declared = 0, docs_declared = 0, devel_pending = 0;
-    char name[256], devel[288], docs[288], runtime[288];
+    char name[256], devel[288], docs[288], runtime[288], debugname[288];
     int root = -1, holy = -1, data = -1, result = 1;
     FILE *out = NULL;
 
     if (!tree || !*tree || !output || !*output) {
-        fputs("usage: holypkg split TREE --output NEW_FILE [--split OUTPUT GLOB ...]\n", stderr);
+        fputs("usage: holypkg split TREE --output NEW_FILE [--split OUTPUT GLOB ...] "
+              "[--debug]\n", stderr);
         return 2;
     }
     if (rules % 2) {
@@ -499,9 +558,16 @@ int holy_split_propose(const char *tree, const char *output, char *const *rule, 
     snprintf(runtime, sizeof runtime, "%s", name);
     snprintf(devel, sizeof devel, "%s-devel", name);
     snprintf(docs, sizeof docs, "%s-doc", name);
+    snprintf(debugname, sizeof debugname, "%s-debug", name);
+    if (debug) {
+        /* a debug output is cut from the runtime files, so it is declared when the
+           caller asked for it and its own emptiness is the operator's to see */
+        debugs = calloc(SPLIT_DEBUG, sizeof *debugs);
+        if (!debugs) goto done;
+    }
     for (i = 0; i < rule_count; ++i) {
         if (strcmp(declared[i].output, runtime) && strcmp(declared[i].output, devel) &&
-            strcmp(declared[i].output, docs)) {
+            strcmp(declared[i].output, docs) && strcmp(declared[i].output, debugname)) {
             /* a rule may only name one of the outputs this proposal declares, or the
                proposal would describe a set the tree does not name */
             fprintf(stderr, "holypkg: a split rule names the undeclared output %s\n",
@@ -510,7 +576,8 @@ int holy_split_propose(const char *tree, const char *output, char *const *rule, 
             goto done;
         }
     }
-    if (!walk(&paths, data, "", 0, declared, rule_count, devel, docs, runtime)) goto done;
+    if (!walk(&paths, data, "", 0, declared, rule_count, devel, docs, runtime, debugs,
+              debug ? SPLIT_DEBUG : 0, &debug_count, debug)) goto done;
     /* an output is declared only when at least one path is assigned to it, because a
        declared output that receives nothing fails the build it is proposed for */
     for (i = 0; i < paths.count; ++i) {
@@ -540,6 +607,9 @@ int holy_split_propose(const char *tree, const char *output, char *const *rule, 
     if (docs_declared) {
         fputs("output ", out); quoted(out, docs); fputs(" docs\n", out);
     }
+    if (debug) {
+        fputs("output ", out); quoted(out, debugname); fputs(" debug\n", out);
+    }
     for (i = 0; i < rule_count; ++i) {
         fputs("split ", out); quoted(out, declared[i].output); fputc(' ', out);
         quoted(out, declared[i].pattern);
@@ -568,17 +638,29 @@ int holy_split_propose(const char *tree, const char *output, char *const *rule, 
         }
         fputc('\n', out);
     }
+    /* a debug file is cut from the runtime file it names, so the pair travels together
+       and the build-id is what a stripped artifact is matched against */
+    for (i = 0; i < debug_count; ++i) {
+        fputs("debug ", out); quoted(out, debugs[i].path); fputc(' ', out);
+        quoted(out, debugs[i].build_id);
+        fputc('\n', out);
+    }
+    if (debug) fputs("debug-tool objcopy --only-keep-debug on the runtime file, then "
+                     "objcopy --strip-debug --add-gnu-debuglink on the artifact that "
+                     "installs\n", out);
     fputs("count paths ", out);
-    fprintf(out, "%zu runtime %zu devel %zu docs %zu decisions %zu rules %zu\n",
-            paths.count, runtime_files, devel_files, doc_files, decisions, rule_count);
+    fprintf(out, "%zu runtime %zu devel %zu docs %zu debug %zu decisions %zu rules %zu\n",
+            paths.count, runtime_files, devel_files, doc_files, debug_count, decisions,
+            rule_count);
     if (ferror(out) || fclose(out)) {
         out = NULL;
         fputs("holypkg: the split proposal was not written completely\n", stderr);
         goto done;
     }
     out = NULL;
-    printf("split %s paths %zu runtime %zu devel %zu docs %zu decisions %zu\n", output,
-           paths.count, runtime_files, devel_files, doc_files, decisions);
+    printf("split %s paths %zu runtime %zu devel %zu docs %zu debug %zu decisions %zu\n",
+           output, paths.count, runtime_files, devel_files, doc_files, debug_count,
+           decisions);
     for (i = 0; i < paths.count; ++i)
         if (paths.items[i].decision)
             printf("decision %s %s\n", paths.items[i].path,
@@ -586,6 +668,11 @@ int holy_split_propose(const char *tree, const char *output, char *const *rule, 
     result = decisions ? 3 : 0;
 done:
     if (out) fclose(out);
+    for (i = 0; i < debug_count; ++i) {
+        free(debugs[i].path);
+        free(debugs[i].build_id);
+    }
+    free(debugs);
     tree_free(&paths);
     if (data >= 0) close(data);
     if (holy >= 0) close(holy);

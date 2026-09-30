@@ -2083,9 +2083,22 @@ rollback_usage:
         return 2;
     }
 
-    if (argc == 3 && !strcmp(argv[1], "elf")) {
+    if ((argc == 3 || (argc == 4 && !strcmp(argv[3], "--build-id"))) &&
+        !strcmp(argv[1], "elf")) {
         struct holy_elf_info info;
-        int rc = holy_elf_read(argv[2], &info);
+        int rc;
+        if (argc == 4) {
+            /* a separate debug file keeps its note and loses the segments a loadable
+               artifact needs, so only the note is read */
+            char hex[65];
+            if (!holy_elf_build_id(argv[2], hex)) {
+                fputs("holypkg: the file states no GNU build-id note\n", stderr);
+                return 2;
+            }
+            printf("build-id %s\n", hex);
+            return 0;
+        }
+        rc = holy_elf_read(argv[2], &info);
         if (!rc)
             printf("class ELF%d\ne_machine %u\ne_type %u\nmachine %s\nisa %s\nruntime %s\ninterpreter %s\n",
                    info.elf_class == 1 ? 32 : 64,
@@ -2105,6 +2118,7 @@ rollback_usage:
             for (i = 0; i < info.defined_version_count; ++i)
                 printf("version-def %s\n", info.defined_versions[i].name);
             if (info.has_dynamic) printf("flags1 0x%llx\n", (unsigned long long)info.flags1);
+            if (info.build_id) printf("build-id %s\n", info.build_id);
             for (i = 0; i < info.symbol_count; ++i) {
                 const struct holy_elf_symbol *s = &info.symbols[i];
                 if (!s->name[0]) continue;
@@ -2133,11 +2147,16 @@ rollback_usage:
         char *rule[64];
         size_t rules = 0;
         const char *file = NULL;
-        int i, ok = 1;
+        int i, ok = 1, debug = 0;
         for (i = 3; i < argc;) {
             if (!strcmp(argv[i], "--output") && i + 1 < argc && !file) {
                 file = argv[i + 1];
                 i += 2;
+                continue;
+            }
+            if (!strcmp(argv[i], "--debug") && !debug) {
+                debug = 1;
+                ++i;
                 continue;
             }
             if (!strcmp(argv[i], "--split") && i + 2 < argc &&
@@ -2152,10 +2171,10 @@ rollback_usage:
         }
         if (!ok || !file || i != argc) {
             fputs("usage: holypkg split TREE --output NEW_FILE "
-                  "[--split OUTPUT GLOB ...]\n", stderr);
+                  "[--split OUTPUT GLOB ...] [--debug]\n", stderr);
             return 2;
         }
-        return holy_split_propose(argv[2], file, rule, rules);
+        return holy_split_propose(argv[2], file, rule, rules, debug);
     }
     if (argc == 3 && !strcmp(argv[1], "manifest") &&
         !strncmp(argv[2], "local:", 6) && argv[2][6])

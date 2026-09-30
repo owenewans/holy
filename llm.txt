@@ -1184,7 +1184,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=cfc99ea21279e71b792ad194e2dcfa8e00be06fd74d28a270c5dc4f1bc5c3de9
+holypkg.8 source=holy version=development sha256=04fb20ebd2b4d39e2df0b7513344ae97784cdc98b6b3a12ad98e08d676933699
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1343,7 +1343,8 @@ SYNOPSIS
      FILE]
      holypkg pack DIRECTORY --output FILE.holy
      holypkg manifest generate DIRECTORY --output FILE
-     holypkg split TREE --output NEW_FILE [--split OUTPUT GLOB ...]
+     holypkg split TREE --output NEW_FILE [--split OUTPUT GLOB ...] [--debug]
+     holypkg elf FILE [--build-id]
      holypkg check local:FILE --root DIRECTORY
      holypkg check local:FILE --root DIRECTORY --json
      holypkg  check  [SOURCE:PACKAGE]  [--root	DIRECTORY] [--arch ARCH] [--libc
@@ -3257,6 +3258,13 @@ DESCRIPTION
      known.  It does not model symbol lookup order or plugin loading; its output
      is not a dependency resolution or package ABI verdict.
 
+     A PT_NOTE GNU build-id note is reported as build-id in lowercase  hex  when
+     the file states one, and omitted otherwise. A second note of the same kind,
+     an	 empty	note  and  a  note  longer than 32 bytes are not identities this
+     reader states, so a file  carrying	 one  of  them	is  rejected.  elf  FILE
+     --build-id	 reads	the note section instead of the loadable segments, which
+     is how a separate debug file is checked after a split.
+
      The local scan command stages a regular .holy input in a private file, ver-
      ifies that copy, then copies ELF payload files to unnamed temporary  files.
      It	 reports each file's class, machine, runtime hint and ISA using the same
@@ -3994,6 +4002,23 @@ RUN INSTALLED COMMAND
      refused with status 2, and a tree that is not there returns  6.  A	 device,
      socket or fifo is refused, because a payload carries none of them.
 
+     --debug adds a NAME-debug output whose files are cut from the runtime files
+     with  objcopy.  Each  debug  record names the runtime path and the build-id
+     note both files keep, so a stripped artifact and its debug file are matched
+     by an identity rather than by a name, and a debug record  states  the  tool
+     that cuts the pair: objcopy --only-keep-debug on the runtime file, then ob-
+     jcopy  --strip-debug  --add-gnu-debuglink on the artifact that installs. An
+     ELF that states no build-id is a decision rather than an untraceable  debug
+     entry,  because  nothing  then ties a debug file to the artifact it was cut
+     from. A file this reader cannot parse as an ELF is refused,  since	 --debug
+     reads only the ELF payloads of a tree.
+
+     holypkg  elf  FILE	 --build-id  prints the GNU build-id note of one file in
+     lowercase hex, reading the note section rather than the loadable  segments.
+     A	separate debug file keeps the note and loses the segments a loadable ar-
+     tifact needs, so the strict elf reader refuses it and this form  still  an-
+     swers. A file that states no note, or is not an ELF, returns 2.
+
    Recipe conversion
      holypkg  convert  PKGBUILD	 --source  NAME --output NEW_DIRECTORY reads one
      PKGBUILD as text and writes a conversion directory containing the	original
@@ -4210,7 +4235,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-recipe.5 source=holy version=development sha256=b371ee7a0170233fc7691d6b95785b8c626a3a411b407ea856cc7b558756b086
+holy-recipe.5 source=holy version=development sha256=6c34427479c85064bde6bed30064b8da93a63bed5ef3368db545aa3d002b8849
 HOLY-RECIPE(5)		       Holy package format		  HOLY-RECIPE(5)
 
 NAME
@@ -4278,326 +4303,332 @@ OUTPUTS
      extension. An explicit rule in the proposal outranks the  heuristic,  so  a
      settled tree yields a manifest an operator can paste and build.
 
+     With  --debug  the proposal also declares a NAME-debug output and one debug
+     record per runtime ELF, naming the build-id both the stripped artifact  and
+     its  debug	 file  keep.   The arch, libc, dependencies, provides, files and
+     hashes of every output are computed from that output's own files, so a doc-
+     umentation output and an ABI library never inherit one another's metadata.
+
      split-step OUTPUT fills a private staging tree for that output. It runs af-
      ter the package phase with HOLY_SPLIT_DEST set to that tree, and every path
-     it	 creates  belongs  to OUTPUT. No split pattern may redirect those paths,
+     it creates belongs to OUTPUT. No split pattern may	 redirect  those  paths,
      and a split step whose staging tree stays empty fails the build. A require-
-     ment found in a file, and a hook whose script sits in a tree, are	recorded
+     ment  found in a file, and a hook whose script sits in a tree, are recorded
      only in the output that carries that file.
 
-     Each  output  is  grouped	by the ABI facts of the files it receives. Files
-     without a recognized ELF class land in  the  noarch-nolibc	 group;	 an  ELF
-     whose  machine  or	 runtime cannot be classified fails the build. A payload
-     mixing   several	ABIs   produces	  one	artifact   per	 group,	   named
-     NAME--ARCH--LIBC.holy.  A	symlink	 or a data file in a multi-ABI output is
-     assigned to the first group of that output and  reported  as  ambiguous.  A
+     Each output is grouped by the ABI facts of the  files  it	receives.  Files
+     without  a	 recognized  ELF  class	 land in the noarch-nolibc group; an ELF
+     whose machine or runtime cannot be classified fails the  build.  A	 payload
+     mixing    several	 ABIs	produces   one	 artifact   per	  group,   named
+     NAME--ARCH--LIBC.holy. A symlink or a data file in a  multi-ABI  output  is
+     assigned  to  the	first  group of that output and reported as ambiguous. A
      metapackage output carries no payload and depends on the produced ABI vari-
      ants of the same build.
 
 CONFIG FLAGS AND HOOKS
      config PATH marks a payload file as config; config PATH mutable marks it as
-     config,mutable.  The packer writes flag none, so build applies the declared
-     flags to the generated manifest. A path outside the payload  is  an  error.
-     hook-install  and	hook-remove record runtime hooks with an absolute inter-
+     config,mutable. The packer writes flag none, so build applies the	declared
+     flags  to	the  generated manifest. A path outside the payload is an error.
+     hook-install and hook-remove record runtime hooks with an	absolute  inter-
      preter and a script path relative to the target root. The script must exist
-     in the built payload: its SHA-256 is recorded in HOLY/hooks,  and	the  in-
+     in	 the  built  payload: its SHA-256 is recorded in HOLY/hooks, and the in-
      staller reads the body from the installed manifest. No hook runs during the
      build.
 
 PHASES
-     Normalized	 phases	 run  in  this order: fetch, unpack, prepare, configure,
-     build, check, package, split. A phase without a  step  is	skipped,  except
-     that  the	manager	 always	 fetches  and  extracts. Each step is a separate
-     process with its own working directory: build,  check,  package  and  split
-     start  in HOLY_BUILD, the other phases in HOLY_WORK. A split step names its
+     Normalized phases run in this order:  fetch,  unpack,  prepare,  configure,
+     build,  check,  package,  split.  A phase without a step is skipped, except
+     that the manager always fetches and  extracts.  Each  step	 is  a	separate
+     process  with  its	 own  working directory: build, check, package and split
+     start in HOLY_BUILD, the other phases in HOLY_WORK. A split step names  its
      output instead of a phase and always runs after the package phase, whatever
      the order of its line.
 
-     The manager sets  HOLY_WORK,  HOLY_SRC,  HOLY_BUILD,  HOLY_DEST,  HOLY_OUT,
-     HOLY_ARCH,	 HOLY_LIBC,  HOLY_JOBS,	 HOLY_BUILD_TARGET, HOLY_HOST_TARGET and
+     The  manager  sets	 HOLY_WORK,  HOLY_SRC,	HOLY_BUILD, HOLY_DEST, HOLY_OUT,
+     HOLY_ARCH, HOLY_LIBC, HOLY_JOBS,  HOLY_BUILD_TARGET,  HOLY_HOST_TARGET  and
      HOLY_TARGET to absolute paths in the selected build root. A split step also
-     receives HOLY_SPLIT_DEST. Fetched sources	live  in  HOLY_WORK/sources.  An
-     archive  source  is  extracted  into  HOLY_SRC/NAME; a plain file is placed
+     receives  HOLY_SPLIT_DEST.	 Fetched  sources  live in HOLY_WORK/sources. An
+     archive source is extracted into HOLY_SRC/NAME;  a	 plain	file  is  placed
      there unchanged.  An unpack step runs after the manager has extracted every
      source, so it may move or reshape that content.
 
 BUILD
-     holypkg build RECIPE --output NEW_DIRECTORY  [--environment  host|clean|vm]
+     holypkg  build  RECIPE --output NEW_DIRECTORY [--environment host|clean|vm]
      [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
 
      --work selects an existing empty build root; without it a private directory
-     under  /tmp is created and removed after a successful build. --keep retains
-     a root the manager created and prints its path; with --work  the  root  al-
+     under /tmp is created and removed after a successful build. --keep	 retains
+     a	root  the  manager created and prints its path; with --work the root al-
      ready belongs to the caller and is never removed, so the printed line names
-     the  caller  instead.  --jobs  sets HOLY_JOBS. A recipe phase step is shown
-     with its interpreter, argv, working directory, uid and full body before  it
-     runs;  on	a  terminal the operator answers per step, where a accepts every
-     remaining step.  Without a terminal and without --yes the build stops  with
-     decision-required	(3).   --noninteractive always requires --yes. A failing
-     step aborts the build and reports its phase; an interpreter that cannot  be
+     the caller instead. --jobs sets HOLY_JOBS. A recipe  phase	 step  is  shown
+     with  its interpreter, argv, working directory, uid and full body before it
+     runs; on a terminal the operator answers per step, where  a  accepts  every
+     remaining	step.  Without a terminal and without --yes the build stops with
+     decision-required (3).  --noninteractive always requires --yes.  A	 failing
+     step  aborts the build and reports its phase; an interpreter that cannot be
      executed returns 6.
 
      --environment host runs the steps in the current environment. --environment
-     clean  creates  a separate build root with a fixed PATH and no HOME, and is
-     not isolation from the host kernel. --environment vm needs	 a  booted  Holy
+     clean creates a separate build root with a fixed PATH and no HOME,	 and  is
+     not  isolation  from  the host kernel. --environment vm needs a booted Holy
      image and qemu-system; when neither is available it returns 6 and names the
      missing capability. Git sources, converter evaluation and cross build roots
      are not implemented and are rejected.
 
 CONVERSION
-     holypkg  convert PKGBUILD --source NAME --output NEW_DIRECTORY holypkg con-
-     vert TEMPLATE --source NAME --output NEW_DIRECTORY holypkg import	PKGBUILD
-     --source  NAME --format pkgbuild --output NEW_DIRECTORY holypkg import TEM-
+     holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY holypkg  con-
+     vert  TEMPLATE --source NAME --output NEW_DIRECTORY holypkg import PKGBUILD
+     --source NAME --format pkgbuild --output NEW_DIRECTORY holypkg import  TEM-
      PLATE --source NAME --format void --output NEW_DIRECTORY
 
-     A file named template reaches the	Void  converter	 and  every  other  name
-     reaches  the  pacman  converter.  Each reads its input as text and writes a
-     conversion directory holding the original	file,  a  copy	of  every  local
-     source  and  directory  it names, a holy-recipe-1 manifest and a conversion
-     report. NAME is a source alias without a colon and is  recorded  as  prove-
-     nance;  it	 grants	 no installed source id. The original file is never exe-
+     A	file  named  template  reaches	the  Void converter and every other name
+     reaches the pacman converter. Each reads its input as  text  and  writes  a
+     conversion	 directory  holding  the  original  file,  a copy of every local
+     source and directory it names, a holy-recipe-1 manifest  and  a  conversion
+     report.  NAME  is	a source alias without a colon and is recorded as prove-
+     nance; it grants no installed source id. The original file	 is  never  exe-
      cuted.
 
    PKGBUILD
-     pkgbase, pkgver, pkgrel,  pkgdesc,	 url,  license,	 arch,	epoch,	depends,
-     makedepends,  checkdepends,  optdepends  and  backup are carried. A list is
-     read the way a shell reads one: whitespace separates elements, so	a  comma
-     belongs  to  the  element	that holds it. A comparison operator becomes the
+     pkgbase,  pkgver,	pkgrel,	 pkgdesc,  url,	 license,  arch, epoch, depends,
+     makedepends, checkdepends, optdepends and backup are  carried.  A	list  is
+     read  the	way a shell reads one: whitespace separates elements, so a comma
+     belongs to the element that holds it. A  comparison  operator  becomes  the
      matching relation: >= ge, <= le, > gt, < lt, = eq. arch maps x86_64, x86 to
-     i686, and noarch or any unchanged; any other list needs  review.  A  source
-     entry   has  $pkgbase,  $pkgname,	$pkgver	 and  $pkgrel  expanded,  and  a
-     sha256sums entry becomes source-sha256. A local source is	copied	next  to
+     i686,  and	 noarch	 or any unchanged; any other list needs review. A source
+     entry  has	 $pkgbase,  $pkgname,  $pkgver	and  $pkgrel  expanded,	 and   a
+     sha256sums	 entry	becomes	 source-sha256. A local source is copied next to
      the recipe and its original PKGBUILD line is recorded. A function body ends
-     at	 the first closing brace that is not quoted and not part of a command or
+     at the first closing brace that is not quoted and not part of a command  or
      parameter substitution.
 
-     prepare, build, check and package keep their bodies in Bash, preceded by  a
-     prologue  that rebuilds the makepkg variables from the exported Holy paths:
+     prepare,  build, check and package keep their bodies in Bash, preceded by a
+     prologue that rebuilds the makepkg variables from the exported Holy  paths:
      $pkgdir  becomes  $HOLY_DEST,  $srcdir  becomes  $HOLY_SRC,  $startdir  and
-     $builddir	become	$HOLY_BUILD,  and  a $pkgdir inside a split step becomes
-     $HOLY_SPLIT_DEST.	$srcdest, $pkgdest, CFLAGS, CXXFLAGS, CPPFLAGS,	 LDFLAGS
-     and  MAKEFLAGS are redefined only when the environment leaves them empty. A
-     single source is lifted out of its own name directory so that  HOLY_SRC  is
-     the  makepkg  $srcdir.  A	package_NAME function becomes split-step for the
-     output NAME, and install= fragments  are  copied  into  the  payload  under
-     /usr/share/holy  and  recorded  as	 a  postinstall hook, so pre_install and
+     $builddir become $HOLY_BUILD, and a $pkgdir inside	 a  split  step	 becomes
+     $HOLY_SPLIT_DEST.	 $srcdest, $pkgdest, CFLAGS, CXXFLAGS, CPPFLAGS, LDFLAGS
+     and MAKEFLAGS are redefined only when the environment leaves them empty.  A
+     single  source  is lifted out of its own name directory so that HOLY_SRC is
+     the makepkg $srcdir. A package_NAME function  becomes  split-step	for  the
+     output  NAME,  and	 install=  fragments  are  copied into the payload under
+     /usr/share/holy and recorded as a	postinstall  hook,  so	pre_install  and
      post_install arrive as one hook.
 
-     provides, conflicts and replaces, epoch, groups,  noextract,  validpgpkeys,
-     options,  non-SHA-256  checksums and architecture-specific source lists are
+     provides,	conflicts  and replaces, epoch, groups, noextract, validpgpkeys,
+     options, non-SHA-256 checksums and architecture-specific source  lists  are
      preserved as x- records or reported as unknown.
 
    Void template
-     pkgname, version, revision, short_desc, homepage, license,	 maintainer  and
-     changelog	are carried. distfiles is read as a list and $pkgname, $pkgbase,
-     $version, $revision, $sourcepkg and $pkgver are expanded; a checksum  entry
-     becomes  source-sha256, a leading @ contents digest is reported as unknown,
+     pkgname,  version,	 revision, short_desc, homepage, license, maintainer and
+     changelog are carried. distfiles is read as a list and $pkgname,  $pkgbase,
+     $version,	$revision, $sourcepkg and $pkgver are expanded; a checksum entry
+     becomes source-sha256, a leading @ contents digest is reported as	unknown,
      and a local distfile is copied next to the recipe. hostmakedepends, makede-
      pends and checkdepends become build-depend, and depends becomes depend with
      the same comparator names as the PKGBUILD converter; a virtual? requirement
-     and a build dependency that carries a  version  are  reported  as	unknown.
-     conf_files	 becomes  config and mutable_files becomes config mutable, and a
+     and  a  build  dependency	that  carries a version are reported as unknown.
+     conf_files becomes config and mutable_files becomes config mutable,  and  a
      path with a wildcard needs review.
 
-     pre_fetch, do_fetch, post_fetch,  the  extract,  patch,  configure,  build,
-     check  and	 install  families  keep their Bash and become the matching Holy
+     pre_fetch,	 do_fetch,  post_fetch,	 the  extract,	patch, configure, build,
+     check and install families keep their Bash and  become  the  matching  Holy
      phase, each behind a prologue that rebuilds the xbps-src variables from the
-     exported paths: $wrksrc and $build_wrksrc become $HOLY_SRC, $masterdir  be-
-     comes  $HOLY_WORK,	 $XBPS_BUILDDIR	 becomes $HOLY_BUILD, $XBPS_MAKEJOBS be-
-     comes $HOLY_JOBS, and $DESTDIR  becomes  $HOLY_DEST  with	$PKGDESTDIR  the
-     same,  or	$HOLY_SPLIT_DEST  in a split step. The step changes into $wrksrc
-     first because xbps-src runs a phase there. A  distfile  is	 extracted  into
-     HOLY_SRC,	which  therefore  takes the place of the xbps-src $wrksrc direc-
+     exported  paths: $wrksrc and $build_wrksrc become $HOLY_SRC, $masterdir be-
+     comes $HOLY_WORK, $XBPS_BUILDDIR becomes  $HOLY_BUILD,  $XBPS_MAKEJOBS  be-
+     comes  $HOLY_JOBS,	 and  $DESTDIR	becomes	 $HOLY_DEST with $PKGDESTDIR the
+     same, or $HOLY_SPLIT_DEST in a split step. The step  changes  into	 $wrksrc
+     first  because  xbps-src  runs  a phase there. A distfile is extracted into
+     HOLY_SRC, which therefore takes the place of the  xbps-src	 $wrksrc  direc-
      tory. The v* helpers a body calls are carried into the prologue; vman, vsv,
      vsed, vcompletion and vsrccopy are reported as unresolved, as is any use of
      a cross, verbose or chroot variable.
 
-     A NAME_package function becomes output NAME plus a split step carrying  its
+     A	NAME_package function becomes output NAME plus a split step carrying its
      pkg_install body, so DESTDIR stays the main tree and PKGDESTDIR becomes the
-     staging  tree.  depends, replaces, conflicts and short_desc set inside that
+     staging tree. depends, replaces, conflicts and short_desc set  inside  that
      function are reported with their lines rather than moved into the main out-
-     put, because a Holy recipe has one depend	list.  A  patches  directory  is
-     archived  next  to	 the recipe and applied in the prepare step with a .args
-     file per patch, and a files directory is archived next to it and  named  by
-     FILESDIR.	An  INSTALL or REMOVE file becomes one hook and is reported, be-
-     cause a Holy hook runs with ACTION unset and its pre and post branches  are
+     put,  because  a  Holy  recipe  has one depend list. A patches directory is
+     archived next to the recipe and applied in the prepare step  with	a  .args
+     file  per	patch, and a files directory is archived next to it and named by
+     FILESDIR. An INSTALL or REMOVE file becomes one hook and is  reported,  be-
+     cause  a Holy hook runs with ACTION unset and its pre and post branches are
      not reproduced.
 
-     build_options  are	 fixed	to  build_options_default  before they reach the
+     build_options are fixed to	 build_options_default	before	they  reach  the
      recipe, so vopt_if, vopt_with, vopt_enable, vopt_bool and vopt_feature pro-
      duce their value and a top level vopt_conflict is checked against that same
-     set. The remaining build variables, such as bootstrap,  repository,  archs,
+     set.  The	remaining build variables, such as bootstrap, repository, archs,
      shlib_provides, nostrip and skip_extraction, are preserved as x- records. A
-     phase  the	 template  leaves  out	is reported as supplied by common/build-
-     style/NAME.sh, which the converter does not run, so its result  is	 review-
-     required.	A conditional block, a case block or a vopt_conflict is reported
+     phase the template leaves out is  reported	 as  supplied  by  common/build-
+     style/NAME.sh,  which  the converter does not run, so its result is review-
+     required. A conditional block, a case block or a vopt_conflict is	reported
      with its line, since the converter evaluates none of them.
 
    Aports APKBUILD
-     pkgname, pkgver, pkgrel, pkgdesc, url, license and maintainer are	carried.
-     arch  maps	 all and noarch to noarch, x86_64 to x86_64 and x86 to i686; any
+     pkgname,  pkgver, pkgrel, pkgdesc, url, license and maintainer are carried.
+     arch maps all and noarch to noarch, x86_64 to x86_64 and x86 to  i686;  any
      other machine name and a negated architecture are reported. depends becomes
-     depend and makedepends, makedepends_build,	 makedepends_host  and	checkde-
-     pends  become  build-depend  with the same comparator names as the PKGBUILD
-     converter; a !NAME conflict becomes x-conflicts, a so: or	cmd:  prefix  is
-     reported,	and  the  per  subpackage  depends_NAME lists are preserved with
+     depend  and  makedepends,	makedepends_build, makedepends_host and checkde-
+     pends become build-depend with the same comparator names  as  the	PKGBUILD
+     converter;	 a  !NAME  conflict becomes x-conflicts, a so: or cmd: prefix is
+     reported, and the per subpackage  depends_NAME  lists  are	 preserved  with
      their lines because a Holy recipe has one depend list.
 
-     source is read as a list and $pkgname, $pkgver and	 $pkgrel  are  expanded,
+     source  is	 read  as a list and $pkgname, $pkgver and $pkgrel are expanded,
      with $pkgver giving the bare upstream version there and version-rrelease in
-     a	dependency;  a filename::url target name is preserved. A local source is
-     copied next to the recipe and hashed as SHA-256, and a mismatch  against  a
-     declared  sha256sums entry is reported. A remote source is carried with its
-     declared sha256, or reported  when	 there	is  none,  because  aports  pins
+     a dependency; a filename::url target name is preserved. A local  source  is
+     copied  next  to the recipe and hashed as SHA-256, and a mismatch against a
+     declared sha256sums entry is reported. A remote source is carried with  its
+     declared  sha256,	or  reported  when  there  is  none, because aports pins
      sha512sums, which a Holy source cannot use, and the report names every such
      source.
 
-     prepare,  build, check and package keep their shell and become the matching
-     Holy phase, each behind a prologue that rebuilds the abuild variables  from
-     the   exported   paths:   $srcdir	 becomes  $HOLY_SRC,  $startdir	 becomes
+     prepare, build, check and package keep their shell and become the	matching
+     Holy  phase, each behind a prologue that rebuilds the abuild variables from
+     the  exported  paths:  $srcdir   becomes	$HOLY_SRC,   $startdir	 becomes
      $HOLY_WORK,  DESTDIR  becomes  $HOLY_DEST	with  PKGDESTDIR  the  same,  or
-     $HOLY_SPLIT_DEST  in  a  split step, $pkgdir stays the main tree and $subp-
-     kgdir  becomes  the   staging   tree.    $JOBS,   $MAKEFLAGS,   $SAMUFLAGS,
+     $HOLY_SPLIT_DEST in a split step, $pkgdir stays the main  tree  and  $subp-
+     kgdir   becomes   the   staging   tree.	$JOBS,	$MAKEFLAGS,  $SAMUFLAGS,
      $CMAKE_BUILD_PARALLEL_LEVEL and the other abuild.conf parallel settings are
-     rebuilt  from  $HOLY_JOBS.	 The  step  changes into $builddir first because
-     abuild runs a phase there; a declared builddir is	rebased	 on  the  source
-     tree  and	an absent one is the abuild default of $srcdir/$pkgname-$pkgver,
-     which is reported. The extracted tree therefore  takes  the  place	 of  the
+     rebuilt from $HOLY_JOBS. The step	changes	 into  $builddir  first	 because
+     abuild  runs  a  phase  there; a declared builddir is rebased on the source
+     tree and an absent one is the abuild default  of  $srcdir/$pkgname-$pkgver,
+     which  is	reported.  The	extracted  tree therefore takes the place of the
      abuild $srcdir directory, and that lift replaces default_unpack.
 
-     Each  subpackages	entry  is NAME, NAME:function or NAME:function:arch, and
-     the split function is the named one or the last  dash-separated  suffix  of
-     NAME,  with  -bash-completion, -zsh-completion and -fish-completion mapping
-     to bashcomp, zshcomp and fishcomp. A split function  with	a  body	 becomes
-     output  NAME  plus a split step carrying it; one without a body is reported
-     as	 needing  the  abuild  default_dev,  default_doc,  default_static,   de-
-     fault_openrc  or  default_libs  helper, which moves files by pattern, so no
-     output is declared for it and a declared architecture is reported.	 An  in-
-     stall  entry  is post-install, pre-install, pre-upgrade, post-upgrade, pre-
+     Each subpackages entry is NAME, NAME:function  or	NAME:function:arch,  and
+     the  split	 function  is the named one or the last dash-separated suffix of
+     NAME, with -bash-completion, -zsh-completion and  -fish-completion	 mapping
+     to	 bashcomp,  zshcomp  and  fishcomp. A split function with a body becomes
+     output NAME plus a split step carrying it; one without a body  is	reported
+     as	  needing  the	abuild	default_dev,  default_doc,  default_static,  de-
+     fault_openrc or default_libs helper, which moves files by	pattern,  so  no
+     output  is	 declared for it and a declared architecture is reported. An in-
+     stall entry is post-install, pre-install, pre-upgrade,  post-upgrade,  pre-
      deinstall or post-deinstall; the first and the fourth map onto hook-install
-     and hook-remove, are copied into the payload under usr/share/holy/NAME  and
-     are  reported  as a semantic change, since a Holy hook runs with ACTION un-
+     and  hook-remove, are copied into the payload under usr/share/holy/NAME and
+     are reported as a semantic change, since a Holy hook runs with  ACTION  un-
      set, and the rest are reported as having no Holy hook stage.
 
-     options, provider_priority, replaces_priority, triggers,  install_if,  pkg-
+     options,  provider_priority,  replaces_priority, triggers, install_if, pkg-
      groups, pkgusers, giturl, pcprefix, sonameprefix, langdir, soname, provides
-     and  replaces  are preserved as x- records. A conditional block is reported
-     with its line, and so is  any  other  top	level  statement,  since  abuild
-     sources  the  file as a shell script and the converter executes none of it.
+     and replaces are preserved as x- records. A conditional block  is	reported
+     with  its	line,  and  so	is  any	 other top level statement, since abuild
+     sources the file as a shell script and the converter executes none	 of  it.
      The default_* helpers, the abuild phases the template leaves out, the cross
-     and chroot variables, $CBUILD, $CHOST, $CTARGET and $CARCH are reported  as
+     and  chroot variables, $CBUILD, $CHOST, $CTARGET and $CARCH are reported as
      unresolved or unreproduced.
 
    SlackBuild script
      PRGNAM, VERSION, BUILD, TAG and PKGTYPE are carried, whether they are writ-
-     ten  as  NAME=value or as NAME=${NAME:-value}; a computed value is reported
-     instead of guessed. A SlackBuild script is one linear shell program  rather
-     than  a  set of phase functions, so it becomes a single build step, and the
+     ten as NAME=value or as NAME=${NAME:-value}; a computed value  is	reported
+     instead  of guessed. A SlackBuild script is one linear shell program rather
+     than a set of phase functions, so it becomes a single build step,	and  the
      prologue rebuilds the variables the script reads: $ARCH becomes $HOLY_ARCH,
-     $CWD and $TMP become $HOLY_SRC, $PKG becomes $HOLY_DEST with  $DESTDIR  the
-     same,  $OUTPUT  becomes $HOLY_OUT, and $SLKCFLAGS, $CFLAGS, $CXXFLAGS, $LD-
+     $CWD  and	$TMP become $HOLY_SRC, $PKG becomes $HOLY_DEST with $DESTDIR the
+     same, $OUTPUT becomes $HOLY_OUT, and $SLKCFLAGS, $CFLAGS,	$CXXFLAGS,  $LD-
      FLAGS and $MAKEFLAGS are rebuilt from $HOLY_JOBS.
 
-     The body runs from the set -e line to the /sbin/makepkg call,  and	 the  cd
-     $PKG  before  that	 call is left out, because the engine packs the payload.
-     The engine also fetches and unpacks the recorded archive,	so  a  tar  line
+     The  body	runs  from the set -e line to the /sbin/makepkg call, and the cd
+     $PKG before that call is left out, because the engine  packs  the	payload.
+     The  engine  also	fetches	 and unpacks the recorded archive, so a tar line
      that reads $CWD is reported and left out, as is the rm -rf $PRGNAM-$VERSION
-     that  precedes  it.  The  machine	the  script  picks with uname -m becomes
-     $HOLY_ARCH and the LIBDIRSUFFIX it derives per  machine  becomes  empty  on
-     x86_64,  both  reported.  The  archive  name  comes  from the tar line with
-     $PRGNAM, $VERSION and $BUILD expanded; an archive that is	not  beside  the
+     that precedes it. The machine  the	 script	 picks	with  uname  -m	 becomes
+     $HOLY_ARCH	 and  the  LIBDIRSUFFIX	 it derives per machine becomes empty on
+     x86_64, both reported. The archive	 name  comes  from  the	 tar  line  with
+     $PRGNAM,  $VERSION	 and  $BUILD expanded; an archive that is not beside the
      script is reported, since this format pins an MD5 sum rather than a SHA-256
      digest, and a local one is copied next to the recipe and hashed as SHA-256.
-     Every  other  file	 the script reads through $CWD travels beside the recipe
+     Every other file the script reads through $CWD travels  beside  the  recipe
      and is declared as a source, so the engine stages it where $CWD points dur-
      ing a step.
 
      slack-desc beside the script carries the summary, the homepage, and the re-
-     quires and conflicts lists, which become depend and x-conflicts; the  other
-     field  keys are preserved with their lines. The info file beside the script
-     carries the upstream DOWNLOAD and its MD5SUM, which is  reported  as  unus-
-     able.  A doinst.sh the script copies into $PKG/install becomes one hook and
+     quires  and conflicts lists, which become depend and x-conflicts; the other
+     field keys are preserved with their lines. The info file beside the  script
+     carries  the  upstream  DOWNLOAD and its MD5SUM, which is reported as unus-
+     able. A doinst.sh the script copies into $PKG/install becomes one hook  and
      is copied into the payload, and the $PKG/install tree itself is reported as
-     packaging metadata that stays in the payload as ordinary files.  The  strip
-     pass,  the ownership rewrite, the user and group creation, the loader cache
-     update and the desktop, mime, icon and font cache helpers are  reported  as
+     packaging	metadata  that stays in the payload as ordinary files. The strip
+     pass, the ownership rewrite, the user and group creation, the loader  cache
+     update  and  the desktop, mime, icon and font cache helpers are reported as
      unresolved.
 
    RPM spec
-     Name,  Version, Release, Summary, License and URL are carried. A Version or
-     Release written with a macro in it keeps only its	literal	 part,	and  the
-     macro  is	reported, so the value stays what the spec says; a field with no
-     literal text at all is refused. The distribution suffix on Release is  left
+     Name, Version, Release, Summary, License and URL are carried. A Version  or
+     Release  written  with  a	macro in it keeps only its literal part, and the
+     macro is reported, so the value stays what the spec says; a field	with  no
+     literal  text at all is refused. The distribution suffix on Release is left
      out, which is reported. BuildArch noarch becomes noarch and any other value
-     becomes  any, because the payload decides the machine, and ExclusiveArch is
+     becomes any, because the payload decides the machine, and ExclusiveArch  is
      preserved.
 
-     The %global and %define records are collected, and a macro	 this  converter
-     can  resolve  is  expanded	 everywhere it appears: the identity fields, the
-     path macros such as _sourcedir, _builddir, _topdir and buildroot,	and  the
-     directory	macros	such  as  _bindir  and _libdir. A macro that resolves to
-     nothing and is optional is left out, an unresolved one stays  in  the  text
+     The  %global  and %define records are collected, and a macro this converter
+     can resolve is expanded everywhere it appears:  the  identity  fields,  the
+     path  macros  such as _sourcedir, _builddir, _topdir and buildroot, and the
+     directory macros such as _bindir and _libdir.  A  macro  that  resolves  to
+     nothing  and  is  optional is left out, an unresolved one stays in the text
      and is reported, and a value that is a pattern rather than a word stays in-
      side the body.
 
-     BuildRequires  becomes  build-depend  and Requires becomes depend, with the
-     same comparator names as the PKGBUILD converter, and the list is  read  one
+     BuildRequires becomes build-depend and Requires becomes  depend,  with  the
+     same  comparator  names as the PKGBUILD converter, and the list is read one
      record per line because an rpm requirement carries its comparison. Provides
-     becomes  x-provides, Conflicts and Obsoletes become x-conflicts, and Recom-
+     becomes x-provides, Conflicts and Obsoletes become x-conflicts, and  Recom-
      mends, Suggests and Enhances become x-suggests, since none of them is a re-
-     quirement. A requirement that names a file, a rich dependency or an  rpmlib
+     quirement.	 A requirement that names a file, a rich dependency or an rpmlib
      capability is reported rather than turned into a record.
 
-     Source  and  Patch records name the files the build needs. A local file be-
-     side the spec is copied next to the recipe and hashed as SHA-256,	and  one
-     that  is  absent  is reported, since a spec normally pins no digest at all.
-     The engine fetches and unpacks the recorded sources, so the extracted  tree
+     Source and Patch records name the files the build needs. A local  file  be-
+     side  the	spec is copied next to the recipe and hashed as SHA-256, and one
+     that is absent is reported, since a spec normally pins no	digest	at  all.
+     The  engine fetches and unpacks the recorded sources, so the extracted tree
      takes the place of _sourcedir.
 
-     The  prep,	 build,	 install  and  check sections become the prepare, build,
-     package and check phases, each behind a prologue that rebuilds  the  macros
-     the  body	reads  from the exported paths and changes into _sourcedir/NAME-
-     VERSION when the tree was unpacked under that name. %setup, %autosetup  and
-     %autopatch	 become	 a  cd into that directory followed by a patch pass over
-     the declared patches, and %make_install, %make_build and  the  __	prefixed
+     The prep, build, install and check	 sections  become  the	prepare,  build,
+     package  and  check phases, each behind a prologue that rebuilds the macros
+     the body reads from the exported paths and	 changes  into	_sourcedir/NAME-
+     VERSION  when the tree was unpacked under that name. %setup, %autosetup and
+     %autopatch become a cd into that directory followed by a  patch  pass  over
+     the  declared  patches,  and %make_install, %make_build and the __ prefixed
      helpers become the shell line they stand for.  Every other rpm section com-
-     mand  is  reported	 and left in the body, so the build fails visibly rather
-     than losing a step. An rpm	 conditional,  which  this  converter  does  not
+     mand is reported and left in the body, so the build  fails	 visibly  rather
+     than  losing  a  step.  An	 rpm  conditional, which this converter does not
      choose between, is reported with its section.
 
      A %package block becomes an output, and because an rpm subpackage is a file
-     list  rather  than	 a  body, its split step copies the paths its own %files
-     section named out of the main tree. A path that keeps a macro is  reported,
-     a	%files	option	such  as -f is reported, and a subpackage with no %files
-     list gets no payload.  The main %files list is not carried, since	it  only
+     list rather than a body, its split step copies the	 paths	its  own  %files
+     section  named out of the main tree. A path that keeps a macro is reported,
+     a %files option such as -f is reported, and a  subpackage	with  no  %files
+     list  gets	 no payload.  The main %files list is not carried, since it only
      checks what the install already placed, and that is reported. The %descrip-
      tion blocks are not carried.
 
 
    Debian source package
-     A	debian	directory  is  recognized  by its basename, or named with import
-     --format  debian.	 The  version  comes  from  the	 first	record	of   de-
-     bian/changelog,  which is the distribution version rather than the upstream
-     one. It is split at the last dash: an all-numeric tail is the Debian  revi-
-     sion  and	becomes the Holy release, and a version with no such tail is na-
-     tive, so its release is one.  Either outcome is reported, as is  an  epoch,
-     which  names a packaging revision order and is dropped. A changelog with no
-     version on its first line is malformed. The source stanza gives  the  name,
-     the  section gives the summary of the main binary package, and Homepage be-
+     A debian directory is recognized by its  basename,	 or  named  with  import
+     --format	debian.	  The  version	comes  from  the  first	 record	 of  de-
+     bian/changelog, which is the distribution version rather than the	upstream
+     one.  It is split at the last dash: an all-numeric tail is the Debian revi-
+     sion and becomes the Holy release, and a version with no such tail	 is  na-
+     tive,  so	its release is one.  Either outcome is reported, as is an epoch,
+     which names a packaging revision order and is dropped. A changelog with  no
+     version  on  its first line is malformed. The source stanza gives the name,
+     the section gives the summary of the main binary package, and Homepage  be-
      comes the homepage.
 
 
 A relationship field is a comma separated list of groups, and a group may
-     offer alternatives with a pipe. One Holy depend record names  one	package,
-     so	 the  first  alternative  of  each group is carried and the rest are re-
+     offer  alternatives  with a pipe. One Holy depend record names one package,
+     so the first alternative of each group is carried	and  the  rest	are  re-
      ported.  Build-Depends and Build-Depends-Indep become build-depend, Depends
-     and Pre-Depends become depend, with the same comparator names as  the  PKG-
+     and  Pre-Depends  become depend, with the same comparator names as the PKG-
      BUILD converter; a strict comparison becomes lt or gt, and a Debian version
-     has  the  same  epoch and revision, so the version keeps its upstream part.
-     Provides becomes x-provides, Breaks, Conflicts and Replaces  become  x-con-
-     flicts,  and  Recommends,	Suggests  and Enhances become x-suggests. A dpkg
-     substitution variable such as $ {misc:Depends} is filled in by dpkg and  is
-     reported,	and  an	 entry with an architecture qualifier is reported rather
+     has the same epoch and revision, so the version keeps  its	 upstream  part.
+     Provides  becomes	x-provides, Breaks, Conflicts and Replaces become x-con-
+     flicts, and Recommends, Suggests and Enhances  become  x-suggests.	 A  dpkg
+     substitution  variable such as $ {misc:Depends} is filled in by dpkg and is
+     reported, and an entry with an architecture qualifier  is	reported  rather
      than turned into a record. Only the source stanza and the main binary pack-
      age reach the recipe; a requirement of a subpackage is reported, since that
      package is built on its own.
@@ -4605,23 +4636,23 @@ A relationship field is a comma separated list of groups, and a group may
 
 Each binary stanza becomes an output. A binary that names a file list beside
      the control file is a subpackage, and because a debian subpackage is a file
-     list rather than a body, its split step copies the paths  that  list  names
-     out  of the main tree, which is reported. A .install line is a source and a
-     destination, and a line with no destination names the source itself,  so  a
-     directory	destination  is copied whole. A .docs, .manpages and .links list
-     names a path the same way, and a list that names no path  is  reported  in-
-     stead  of	written as a split step that would fill no tree. The binary that
-     names no file list is the main output and owns the	 whole	tree.  A  source
-     with  no  binary  stanza  still builds one output, and more than one binary
-     that names no file list is reported, since the converter cannot tell  which
+     list  rather  than	 a body, its split step copies the paths that list names
+     out of the main tree, which is reported. A .install line is a source and  a
+     destination,  and	a line with no destination names the source itself, so a
+     directory destination is copied whole. A .docs, .manpages and  .links  list
+     names  a  path  the same way, and a list that names no path is reported in-
+     stead of written as a split step that would fill no tree. The  binary  that
+     names  no	file  list  is the main output and owns the whole tree. A source
+     with no binary stanza still builds one output, and	 more  than  one  binary
+     that  names no file list is reported, since the converter cannot tell which
      one is the main tree.
 
 
 debian/rules becomes the build step, behind a prologue that sets
-     DEB_HOST_MULTIARCH	 and DEB_BUILD_OPTIONS and changes into the source tree.
-     dh is a macro framework rather than a  script,  so	 every	debhelper  call,
+     DEB_HOST_MULTIARCH and DEB_BUILD_OPTIONS and changes into the source  tree.
+     dh	 is  a	macro  framework  rather than a script, so every debhelper call,
      every debhelper override and dpkg-buildpackage are reported and left in the
-     body,  which  means  the build fails visibly rather than losing a step. The
+     body, which means the build fails visibly rather than losing  a  step.  The
      maintainer scripts, debian/copyright, debian/watch and debian/source/format
      are copied next to the recipe and reported; a lintian-overrides file is re-
      ported as well, since it suppresses a report rather than building anything.
@@ -4629,65 +4660,65 @@ debian/rules becomes the build step, behind a prologue that sets
 
 
    Gentoo ebuild
-     An ebuild is recognized by its .ebuild suffix, or named with import  --for-
-     mat  gentoo.   It	states	its  identity  in its file name, which is PN-PV-
-     rPR.ebuild, so the name is the text before the last dash  a  digit	 follows
-     and  the version is what follows it; a trailing -rN is the revision and be-
-     comes the Holy release, and a file name with no revision gets release  one.
-     An	 epoch	names a packaging revision order rather than a version, so it is
-     preserved and dropped. A file name that carries no	 version  is  malformed.
-     EAPI,  LICENSE  and SLOT are carried, DESCRIPTION is the summary, and HOME-
-     PAGE is the homepage. KEYWORDS names the machines an ebuild  is  tested  on
+     An	 ebuild is recognized by its .ebuild suffix, or named with import --for-
+     mat gentoo.  It states its identity in  its  file	name,  which  is  PN-PV-
+     rPR.ebuild,  so  the  name is the text before the last dash a digit follows
+     and the version is what follows it; a trailing -rN is the revision and  be-
+     comes  the Holy release, and a file name with no revision gets release one.
+     An epoch names a packaging revision order rather than a version, so  it  is
+     preserved	and  dropped.  A file name that carries no version is malformed.
+     EAPI, LICENSE and SLOT are carried, DESCRIPTION is the summary,  and  HOME-
+     PAGE  is  the  homepage. KEYWORDS names the machines an ebuild is tested on
      rather than the machine that builds it, so arch is any.
 
 
 The engine fetches and unpacks the recorded sources, so the extracted tree
-     takes  the	 place of WORKDIR, which is reported. A mirror:// entry names no
-     single address and is reported, and a remote archive is reported  too,  be-
-     cause  a  Gentoo  Manifest	 pins  a  BLAKE2B  and a SHA-512 rather than the
-     SHA-256 a Holy source needs. A PATCHES entry, and any other file named  be-
+     takes the place of WORKDIR, which is reported. A mirror:// entry  names  no
+     single  address  and is reported, and a remote archive is reported too, be-
+     cause a Gentoo Manifest pins a  BLAKE2B  and  a  SHA-512  rather  than  the
+     SHA-256  a Holy source needs. A PATCHES entry, and any other file named be-
      side the ebuild, is copied next to the recipe and hashed as SHA-256. An en-
-     try  behind  a  USE  flag	is a file the converter cannot reach, and is re-
+     try behind a USE flag is a file the converter  cannot  reach,  and	 is  re-
      ported.
 
 
 A dependency atom is a category, a package and an optional comparison. The
-     category is dropped and the name is what a record holds, a blocker	 becomes
+     category  is dropped and the name is what a record holds, a blocker becomes
      x-conflicts, and a version keeps its upstream part with the same comparator
-     names  as the PKGBUILD converter. A ~ atom is a range and a wildcard is not
-     a version, so both are reported; a slot, a use dependency	and  a	virtual,
-     which  names an interface rather than a package, are reported as well. RDE-
-     PEND and PDEPEND become depend and DEPEND and BDEPEND become  build-depend.
+     names as the PKGBUILD converter. A ~ atom is a range and a wildcard is  not
+     a	version,  so  both are reported; a slot, a use dependency and a virtual,
+     which names an interface rather than a package, are reported as well.  RDE-
+     PEND  and PDEPEND become depend and DEPEND and BDEPEND become build-depend.
      A USE conditional and an any-of group are reported, since a Holy recipe has
-     no	 USE  flags  and  cannot  choose between the members of a group, and the
-     atoms inside one are carried anyway so the build still  holds  them.  IUSE,
-     REQUIRED_USE,  RESTRICT and PROPERTIES are reported as package manager set-
+     no USE flags and cannot choose between the members	 of  a	group,	and  the
+     atoms  inside  one	 are carried anyway so the build still holds them. IUSE,
+     REQUIRED_USE, RESTRICT and PROPERTIES are reported as package manager  set-
      tings.
 
 
 Each standard phase function becomes the matching phase, and a phase the
-     ebuild leaves out is the one the inherited eclasses supply.  A  body  keeps
-     its  own  shell  behind  a	 prologue that rebuilds EPREFIX, ED, D, DESTDIR,
-     WORKDIR, DISTDIR, T, PN, PV, PR, PF, P, PVR,  EAPI	 and  changes  into  the
-     source  tree.  An eclass is a helper environment, so every inherited one is
-     reported, and so is every ebuild.sh helper a body calls,  which  means  the
+     ebuild  leaves  out  is the one the inherited eclasses supply. A body keeps
+     its own shell behind a prologue that  rebuilds  EPREFIX,  ED,  D,	DESTDIR,
+     WORKDIR,  DISTDIR,	 T,  PN,  PV,  PR, PF, P, PVR, EAPI and changes into the
+     source tree. An eclass is a helper environment, so every inherited	 one  is
+     reported,	and  so	 is every ebuild.sh helper a body calls, which means the
      build fails visibly rather than losing a step. A pkg_preinst, pkg_postinst,
-     pkg_prerm	or pkg_postrm function runs at install time through Portage, and
+     pkg_prerm or pkg_postrm function runs at install time through Portage,  and
      a Holy hook carries a script rather than a function, so each is reported.
 
 
    Pacstall pacscript
-     A pacscript is recognized by its .pacscript suffix, or  named  with  import
-     --format  pacstall.   It  is bash with a metadata header written as assign-
-     ments, so pkgname, pkgver, pkgrel,	 epoch,	 pkgdesc,  url,	 license,  main-
-     tainer,  repology,	 arch and gives are carried, with pkgdesc as the summary
-     and url as	 the  homepage.	 A  value  written  with  $pkgname,  ${pkgname},
-     $pkgver,  $pkgrel,	 $gives, $pkgbase or $epoch, or with a variable the same
+     A	pacscript  is  recognized by its .pacscript suffix, or named with import
+     --format pacstall.	 It is bash with a metadata header  written  as	 assign-
+     ments,  so	 pkgname,  pkgver,  pkgrel,  epoch, pkgdesc, url, license, main-
+     tainer, repology, arch and gives are carried, with pkgdesc as  the	 summary
+     and  url  as  the	homepage.  A  value  written  with $pkgname, ${pkgname},
+     $pkgver, $pkgrel, $gives, $pkgbase or $epoch, or with a variable  the  same
      file states in an assignment of its own, is written out, and one that needs
-     the shell to choose a substring is a computed identity and	 returns  2.  An
+     the  shell	 to  choose a substring is a computed identity and returns 2. An
      epoch names a packaging revision order rather than a version, so it is pre-
-     served  and  dropped.  amd64 and x86_64 become x86_64, i386 and i686 become
-     i686, any and all become any, and a machine Holy does not carry is	 written
+     served and dropped. amd64 and x86_64 become x86_64, i386  and  i686  become
+     i686,  any and all become any, and a machine Holy does not carry is written
      as it stands and reported. A list of machines is reported, because the pay-
      load decides the machine the recipe is built for.
 
@@ -4695,121 +4726,121 @@ Each standard phase function becomes the matching phase, and a phase the
 A source entry is NAME::URL, ?NAME::URL or a plain URL, and a sha256sums entry
      in the same order becomes source-sha256. The engine fetches and unpacks the
      recorded sources, so the extracted tree takes the place of srcdir, which is
-     reported.	A  file	 named beside the pacscript is copied next to the recipe
-     and hashed as SHA-256. A git address  is  reported,  since	 a  Holy  source
-     fetches  archives, and so is a remote source with no sha256sums entry and a
+     reported. A file named beside the pacscript is copied next	 to  the  recipe
+     and  hashed  as  SHA-256.	A  git	address is reported, since a Holy source
+     fetches archives, and so is a remote source with no sha256sums entry and  a
      plain http address, since a Holy source is fetched over https.
 
 
 depends, makedepends and checkdepends become depend and build-depend with the
-     comparator names the PKGBUILD converter uses, and a group	of  alternatives
-     written  with  a  pipe  is reported with the first of them carried, since a
-     Holy record cannot choose one. pacdeps become depend as well, and the  fact
-     that  they	 name  packages of the same pacstall repository is reported, be-
+     comparator	 names	the PKGBUILD converter uses, and a group of alternatives
+     written with a pipe is reported with the first of	them  carried,	since  a
+     Holy  record cannot choose one. pacdeps become depend as well, and the fact
+     that they name packages of the same pacstall repository  is  reported,  be-
      cause a Holy resolver has to find them in a source that has them. provides,
-     conflicts, breaks, replaces, enhances, recommends and suggests name no  re-
+     conflicts,	 breaks, replaces, enhances, recommends and suggests name no re-
      quirement, so they are preserved as x- records, and an optdepends entry be-
-     comes  x-optdepend	 with its description. A backup entry becomes config, an
-     r: prefix becomes config mutable and is reported,	since  a  config  record
-     only  marks  a file. A list written per machine or per distribution under a
-     suffixed name is reported, and so is every setting that steers  a	Pacstall
-     run:  priority,  external_connection, incompatible, compatible, mask, noex-
-     tract, custom_fields and ppa. A digest list other than  sha256sums	 is  re-
+     comes x-optdepend with its description. A backup entry becomes  config,  an
+     r:	 prefix	 becomes  config  mutable and is reported, since a config record
+     only marks a file. A list written per machine or per distribution	under  a
+     suffixed  name  is reported, and so is every setting that steers a Pacstall
+     run: priority, external_connection, incompatible, compatible,  mask,  noex-
+     tract,  custom_fields  and	 ppa. A digest list other than sha256sums is re-
      ported, because a Holy source needs SHA-256.
 
 
 prepare, build, check and package become the matching phase, and a body keeps
-     its  own  shell  behind  a	 prologue  that rebuilds pkgdir, pacdir, srcdir,
+     its own shell behind a  prologue  that  rebuilds  pkgdir,	pacdir,	 srcdir,
      startdir, builddir, TARCH, NCPU, pkgname, pkgbase, pkgver, pkgrel, pacname,
-     gives and epoch from the exported Holy paths and changes  into  the  source
-     tree.  Every  helper  the	Pacstall environment supplies that a body calls,
-     such as fancy_message, makepkg, parse_options or ask, is reported,	 and  so
-     is	 a  variable  of that environment a body reads: KVER, STAGEDIR, homedir,
+     gives  and	 epoch	from the exported Holy paths and changes into the source
+     tree. Every helper the Pacstall environment supplies  that	 a  body  calls,
+     such  as  fancy_message, makepkg, parse_options or ask, is reported, and so
+     is a variable of that environment a body reads:  KVER,  STAGEDIR,	homedir,
      DISTRO, DIR, full_version and pacstall_root. A list of names with a pkgbase
      is a split pkgbase: every name becomes an output and its package_NAME func-
-     tion becomes the split step that fills it, and a  package	function  beside
-     those  is reported. pre_install, pre_upgrade, post_install and post_upgrade
-     become one install hook, and pre_remove and post_remove  one  remove  hook;
-     each  hook is written beside the recipe, declared as a source and installed
-     into the payload, and a Holy hook runs with ACTION unset, so  the	pre  and
-     post  bodies  arrive  in the order Pacstall calls them. A conditional block
-     and an assignment inside one are reported, since  the  converter  evaluates
+     tion  becomes  the	 split step that fills it, and a package function beside
+     those is reported. pre_install, pre_upgrade, post_install and  post_upgrade
+     become  one  install  hook, and pre_remove and post_remove one remove hook;
+     each hook is written beside the recipe, declared as a source and  installed
+     into  the	payload,  and a Holy hook runs with ACTION unset, so the pre and
+     post bodies arrive in the order Pacstall calls them.  A  conditional  block
+     and  an  assignment  inside one are reported, since the converter evaluates
      neither.
 
 
    Flatpak manifest
-     A	manifest is recognized by its .json, .yml or .yaml suffix, or named with
-     import --format flatpak.  Only the JSON form is read; another form	 of  the
-     same  manifest  returns 2 rather than a guess. The package name is the last
-     dotted component of the application id, and an id that names a machine  and
-     a	branch after a slash keeps that reflex in x-app-id while the branch sup-
+     A manifest is recognized by its .json, .yml or .yaml suffix, or named  with
+     import  --format  flatpak.	 Only the JSON form is read; another form of the
+     same manifest returns 2 rather than a guess. The package name is  the  last
+     dotted  component of the application id, and an id that names a machine and
+     a branch after a slash keeps that reflex in x-app-id while the branch  sup-
      plies the machine. A version the manifest states is carried and one it does
-     not state records zero, which is reported.	  summary,  url,  runtime,  sdk,
-     command,  branch and the machine are carried; arch is the machine the mani-
+     not  state	 records  zero,	 which is reported.  summary, url, runtime, sdk,
+     command, branch and the machine are carried; arch is the machine the  mani-
      fest or its branch names, and any means the machine the build runs on.
 
 
-     The sdk is a build requirement and the runtime a runtime  requirement,  be-
-     cause  the	 SDK that builds the modules and the runtime the program runs on
-     are two different Flatpak ids, and the fact is reported. Each id loses  its
+     The  sdk  is a build requirement and the runtime a runtime requirement, be-
+     cause the SDK that builds the modules and the runtime the program	runs  on
+     are  two different Flatpak ids, and the fact is reported. Each id loses its
      leading components, since a record names one package. The command is a path
-     under  /app, so it is kept as x-flatpak-command, and the prefix of a module
-     becomes /usr. A /app path inside a build command  becomes	$DESTDIR,  so  a
+     under /app, so it is kept as x-flatpak-command, and the prefix of a  module
+     becomes  /usr.  A	/app  path inside a build command becomes $DESTDIR, so a
      converted build writes into the payload and nowhere else.
 
 
-     The  engine  fetches and unpacks the recorded sources, so one top directory
-     inside an extracted archive is lifted into place, which is	 what  a  module
-     builds  in,  and  the step changes into that tree. An archive with an https
-     address becomes a source with the sha256 the manifest pins, and  one  named
-     beside  the manifest is copied next to the recipe and hashed there. A file,
-     a patch and an inline source travel beside the recipe as  well,  an  inline
+     The engine fetches and unpacks the recorded sources, so one  top  directory
+     inside  an	 extracted  archive is lifted into place, which is what a module
+     builds in, and the step changes into that tree. An archive	 with  an  https
+     address  becomes  a source with the sha256 the manifest pins, and one named
+     beside the manifest is copied next to the recipe and hashed there. A  file,
+     a	patch  and  an inline source travel beside the recipe as well, an inline
      body becoming a file of its own. A patch applies with -p1 in a prepare step
-     before  its  module builds, a shell source runs inside the step of its mod-
-     ule, and a sed source, a directory, a git, svn or bzr checkout,  strip-com-
+     before its module builds, a shell source runs inside the step of  its  mod-
+     ule,  and a sed source, a directory, a git, svn or bzr checkout, strip-com-
      ponents, dest-filename and dest are reported.
 
 
      Each module becomes one step in module order. Its build-options export env,
-     cflags,  cxxflags,	 ldflags  and  cppflags and prepend append-path, and its
-     pre-commands, build-commands, post-install	 and  post-commands  keep  their
-     shell.  A simple module is exactly its commands. The make, autotools, auto-
+     cflags, cxxflags, ldflags and cppflags and	 prepend  append-path,	and  its
+     pre-commands,  build-commands,  post-install  and	post-commands keep their
+     shell. A simple module is exactly its commands. The make, autotools,  auto-
      gen, cmake and meson templates are replaced by the shell that runs the same
-     tools, which is reported, since the template that normally runs  them  does
-     not  travel  with	the recipe. The cargo template builds without an install
-     step and is reported, and a buildsystem with no Holy phase is a helper  the
+     tools,  which  is reported, since the template that normally runs them does
+     not travel with the recipe. The cargo template builds  without  an	 install
+     step  and is reported, and a buildsystem with no Holy phase is a helper the
      report names rather than a guess.
 
 
-     A	finish-args  permission,  a cleanup step, a build extension and a module
-     cleanup are dropped and counted, since a Flatpak sandbox  decision	 has  no
+     A finish-args permission, a cleanup step, a build extension  and  a  module
+     cleanup  are  dropped  and counted, since a Flatpak sandbox decision has no
      Holy equivalent.  A manifest with more than one module is reported, because
-     a	Flatpak	 build shares one prefix across its modules while each step here
-     installs into the payload, so a later module cannot  read	an  earlier  in-
+     a Flatpak build shares one prefix across its modules while each  step  here
+     installs  into  the  payload,  so a later module cannot read an earlier in-
      stall.
 
-CONVERSION  REPORTThe report lists every carried, preserved, helper, unknown and
+CONVERSION REPORTThe report lists every carried, preserved, helper, unknown  and
      changed item with
-     its source file and line range, and its  status  is  native  or  review-re-
-     quired.  A	 review-required  conversion  returns 3 with the recipe written,
-     since review is a statement about execution, not  about  whether  the  text
+     its  source  file	and  line  range, and its status is native or review-re-
+     quired. A review-required conversion returns 3  with  the	recipe	written,
+     since  review  is	a  statement about execution, not about whether the text
      could be carried. A missing identity, a computed identity or malformed text
      returns 2; an unreadable input returns 6.
 
 RESULTS
-     Each  output  artifact  is written to the output directory. Its manifest is
-     regenerated from the copied payload. HOLY/meta records format,  name,  ver-
-     sion,  release,  os,  arch, libc, x-version-family holy, x-build-target and
-     installed-size, plus any  x-  record.  HOLY/deps  carries	declared  depend
+     Each output artifact is written to the output directory.  Its  manifest  is
+     regenerated  from	the copied payload. HOLY/meta records format, name, ver-
+     sion, release, os, arch, libc, x-version-family  holy,  x-build-target  and
+     installed-size,  plus  any	 x-  record.  HOLY/deps	 carries declared depend
      records plus one soname requirement per DT_NEEDED entry, each attributed to
-     the  file	that needs it and written only into the output that carries that
-     file.  HOLY/provides records the package  name  and  the  SONAME  of  every
-     shared  object  in	 the payload. HOLY/hooks records a declared hook only in
+     the file that needs it and written only into the output that  carries  that
+     file.   HOLY/provides  records  the  package  name	 and the SONAME of every
+     shared object in the payload. HOLY/hooks records a declared  hook	only  in
      the output whose payload holds its script, and the build fails if an output
-     declares a hook it does not carry. HOLY/origin records  the  recipe  inputs
-     with  their  pinned  digests and verification built-locally. HOLY/transform
+     declares  a  hook	it does not carry. HOLY/origin records the recipe inputs
+     with their pinned digests and  verification  built-locally.  HOLY/transform
      records the build environment and the declared build dependencies. The fin-
-     ished .holy is installed by a normal transaction; the  build  itself  never
+     ished  .holy  is  installed by a normal transaction; the build itself never
      writes to the target root.
 
 EXAMPLES
@@ -4846,8 +4877,8 @@ EXAMPLES
      DOCS
 
 EXIT STATUS
-     0	the build produced every declared output. 1 an operational failure. 2 an
-     invalid recipe, argument or conversion. 3 a decision is required. 6  a  re-
+     0 the build produced every declared output. 1 an operational failure. 2  an
+     invalid  recipe,  argument or conversion. 3 a decision is required. 6 a re-
      quired artifact or system capability is unavailable.
 
 SOURCES
@@ -4856,29 +4887,29 @@ SOURCES
      https://gitlab.alpinelinux.org/alpine/abuild/-/raw/master/functions.sh.in
      abuild			 default.conf:			    https://git-
      lab.alpinelinux.org/alpine/abuild/-/raw/master/default.conf    RPM	   spec:
-     https://rpm.org/docs/latest/manual/spec.html  rpm macros: https://rpm-soft-
+     https://rpm.org/docs/latest/manual/spec.html rpm macros:  https://rpm-soft-
      ware-management.github.io/rpm/manual/macros.html	  SlackBuild	 script:
-     https://slackbuilds.org/howto/	slack-desc     format:	  https://slack-
+     https://slackbuilds.org/howto/    slack-desc     format:	  https://slack-
      builds.org/guidelines/ Void Manual: https://raw.githubusercontent.com/void-
      linux/void-packages/master/Manual.md v* helpers: https://raw.githubusercon-
      tent.com/void-linux/void-packages/master/common/environment/setup/in-
      stall.sh  build  style:  https://raw.githubusercontent.com/void-linux/void-
-     packages/master/common/build-style/gnu-makefile.sh		RPM	   spec:
+     packages/master/common/build-style/gnu-makefile.sh	       RPM	   spec:
      https://rpm.org/docs/latest/manual/spec.html      SlackBuild      template:
      https://slackbuilds.org/templates/autotools-template.SlackBuild Debian con-
      trol fields: https://www.debian.org/doc/debian-policy/ch-controlfields.html
-     Debian  package relationships: https://www.debian.org/doc/debian-policy/ch-
-     relationships.html	   Debian    packaging	   concepts:	 https://www.de-
-     bian.org/doc/debian-policy/concepts.html	debhelper:  https://manpages.de-
-     bian.org/trixie/debhelper/debhelper.1.en.html	  Gentoo	 ebuild:
-     https://wiki.gentoo.org/wiki/Ebuild	  Package	  specification:
-     https://wiki.gentoo.org/wiki/Repository_format  eclass:   https://wiki.gen-
-     too.org/wiki/Eclass     USE     flag     dependencies:    https://wiki.gen-
-     too.org/wiki/USE_atoms Pacstall: https://github.com/pacstall/pacstall  Pac-
-     stall	   manual:	  https://github.com/pacstall/pacstall/blob/mas-
+     Debian package relationships:  https://www.debian.org/doc/debian-policy/ch-
+     relationships.html	    Debian     packaging    concepts:	 https://www.de-
+     bian.org/doc/debian-policy/concepts.html  debhelper:   https://manpages.de-
+     bian.org/trixie/debhelper/debhelper.1.en.html	   Gentoo	 ebuild:
+     https://wiki.gentoo.org/wiki/Ebuild	 Package	  specification:
+     https://wiki.gentoo.org/wiki/Repository_format   eclass:  https://wiki.gen-
+     too.org/wiki/Eclass    USE	    flag     dependencies:     https://wiki.gen-
+     too.org/wiki/USE_atoms  Pacstall: https://github.com/pacstall/pacstall Pac-
+     stall	  manual:	  https://github.com/pacstall/pacstall/blob/mas-
      ter/misc/man/pacstall.8 Pacstall programs: https://github.com/pacstall/pac-
-     stall-programs Flatpak manifests:	https://docs.flatpak.org/en/latest/mani-
-     fests.html	   flatpak-builder   modules:	https://docs.flatpak.org/en/lat-
+     stall-programs  Flatpak manifests: https://docs.flatpak.org/en/latest/mani-
+     fests.html	  flatpak-builder   modules:	https://docs.flatpak.org/en/lat-
      est/flatpak-builder.html
 
 holy				      2026			  HOLY-RECIPE(5)

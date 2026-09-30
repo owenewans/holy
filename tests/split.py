@@ -108,7 +108,7 @@ def main():
         # pattern would match them
         proposal = root / "proposal"
         report = call("split", tree, "--output", proposal, status=3)
-        assert "paths 10 runtime 4 devel 2 docs 2 decisions 2" in report, report
+        assert "paths 10 runtime 4 devel 2 docs 2 debug 0 decisions 2" in report, report
         body = proposal.read_text()
         assert body.startswith('format holy-split-1\nname "fixture"\n'), body
         # the runtime output keeps the program, the versioned object, the payload link
@@ -200,11 +200,58 @@ def main():
         put(data, "usr/share/fixture/data", "runtime data\n")
         plain = root / "plain"
         report = call("split", data, "--output", plain)
-        assert "paths 1 runtime 1 devel 0 docs 0 decisions 0" in report, report
+        assert "paths 1 runtime 1 devel 0 docs 0 debug 0 decisions 0" in report, report
         body = plain.read_text()
         assert 'output "dataonly" runtime\n' in body, body
         assert 'output "dataonly-devel"' not in body, body
         assert 'output "dataonly-doc"' not in body, body
+        assert 'output "dataonly-debug"' not in body, body
+
+        # a debug output is cut from the runtime files by build-id, so a payload
+        # built with a note names the debug file and keeps the build-id the stripped
+        # artifact is matched against, and one without a note is a decision
+        program_source = sources / "program.c"
+        program_source.write_text("int main(void) { return 0; }\n")
+        debugged = build(sources, "debugged")
+        noted = compile_into(cc, ["-g", "-O0", "-Wl,--build-id", str(program_source), "-o",
+                                   str(debugged / "DATA/usr/bin/debugged")],
+                             debugged / "DATA/usr/bin/debugged")
+        noted.chmod(0o755)
+        put(debugged, "usr/include/debugged.h", "int answer(void);\n")
+        proposal = root / "debugged"
+        report = call("split", debugged, "--output", proposal, "--debug")
+        assert "debug 1 decisions 0" in report, report
+        body = proposal.read_text()
+        assert 'output "debugged-debug" debug\n' in body, body
+        assert 'debug "usr/bin/debugged" "' in body, body
+        identity = call("elf", noted).splitlines()
+        build_id = [line.split()[1] for line in identity if line.startswith("build-id ")][0]
+        assert f'debug "usr/bin/debugged" "{build_id}"\n' in body, body
+        # the note is what a stripped artifact keeps, so the tool that cuts the pair
+        # is named rather than invented per file
+        assert "objcopy --only-keep-debug" in body, body
+        assert "--add-gnu-debuglink" in body, body
+        # the header is still development material, and the program is a runtime file
+        # the debug output is cut from
+        assert 'path "usr/include/debugged.h" "debugged-devel" "header"' in body, body
+        assert 'path "usr/bin/debugged" "debugged" "runtime artifact for a debug file"' \
+            in body, body
+        assert "no-build-id" not in body, body
+
+        # a payload without a build-id note cannot be tied to a debug file, so the
+        # path is a decision rather than an untraceable debug entry
+        unnoted = build(sources, "unnoted")
+        plain_program = compile_into(cc, ["-g", "-O0", str(program_source), "-o",
+                                           str(unnoted / "DATA/usr/bin/unnoted")],
+                                     unnoted / "DATA/usr/bin/unnoted")
+        plain_program.chmod(0o755)
+        proposal = root / "unnoted"
+        report = call("split", unnoted, "--output", proposal, "--debug", status=3)
+        assert "debug 0" in report, report
+        body = proposal.read_text()
+        assert 'decision "usr/bin/unnoted" "no-build-id" suggested "unnoted"' in body, body
+        assert "no build-id note ties a debug file" in body, body
+        assert "\ndebug " not in body, body
 
     print("split proposal fixtures passed")
     return 0
