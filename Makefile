@@ -232,6 +232,10 @@ check-index: holypkg
 check-split: holypkg
 	python3 tests/split.py ./holypkg
 
+.PHONY: check-loader-search
+check-loader-search: holypkg
+	sh tests/loader-search.sh ./holypkg
+
 .PHONY: check-debug
 check-debug: holypkg
 	python3 tests/debug.py ./holypkg
@@ -317,7 +321,7 @@ check-init: holy-init
 check-hooks: holypkg
 	CC="$(CC)" sh tests/hooks.sh ./holypkg
 
-check: check-pacman check-deb check-apt check-slackware check-apk check-xbps-import check-xbps-version check-xbps-index check-appimage check-snap check-run check-recipe check-split check-debug check-pkgbuild check-void check-aports check-slackbuild check-rpmspec check-debsrc check-gentoo check-pacstall check-flatpak check-brew check-guix check-scoop check-winget check-nix check-eopkg check-conflict check-index check-closure check-cc check-hooks check-apk-version check-apk-index check-apk-fetch check-native-version $(if $(RPM_LIBS),check-rpm) holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
+check: check-pacman check-deb check-apt check-slackware check-apk check-xbps-import check-xbps-version check-xbps-index check-appimage check-snap check-run check-recipe check-split check-debug check-pkgbuild check-void check-aports check-slackbuild check-rpmspec check-debsrc check-gentoo check-pacstall check-flatpak check-brew check-guix check-scoop check-winget check-nix check-eopkg check-conflict check-index check-closure check-loader-search check-cc check-hooks check-apk-version check-apk-index check-apk-fetch check-native-version $(if $(RPM_LIBS),check-rpm) holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg

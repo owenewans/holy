@@ -55,6 +55,9 @@ static int installed_fields(int item, const char *const *keys,
 static int valid_owner_path(const char *path);
 static int loader_directories(const struct holy_elf_info *elf, const char *consumer,
                               char ***directories, size_t *count);
+static int default_loader_directories(const char *machine, char ***directories, size_t *count);
+static int search_directories(const struct holy_elf_info *elf, const char *consumer,
+                              char ***directories, size_t *count);
 static void free_loader_directories(char **directories, size_t count);
 static int loader_file_match(const char *directory, const char *path,
                              const char *name);
@@ -2349,7 +2352,7 @@ static int graph_provider_elf(void *context, const char *path, int fd)
         char **directories = NULL;
         size_t count = 0, directory;
         match->versions = 1;
-        if (loader_directories(match->consumer, match->consumer_path,
+        if (search_directories(match->consumer, match->consumer_path,
                                &directories, &count)) {
             for (directory = 0; directory < count; ++directory) {
                 struct open_how how = {0};
@@ -3358,6 +3361,42 @@ static void free_loader_directories(char **directories, size_t count)
     free(directories);
 }
 
+/* the directories a dynamic loader searches when a consumer states no runpath, in
+   the order glibc searches them for the machine. a provider has to own the soname in
+   one of them, since that is the only way the loader would find it. the multiarch
+   triplet directories are absent, because a Holy payload records no triplet. */
+static int default_loader_directories(const char *machine, char ***directories, size_t *count)
+{
+    static const char *const wide[] = { "/lib64", "/usr/lib64", "/lib", "/usr/lib", NULL };
+    static const char *const narrow[] = { "/lib", "/usr/lib", NULL };
+    const char *const *list = NULL;
+    char **built = NULL;
+    size_t i, used = 0;
+    if (machine && !strcmp(machine, "x86_64")) list = wide;
+    else list = narrow;
+    while (list[used]) ++used;
+    built = calloc(used ? used : 1, sizeof *built);
+    if (!built) return 0;
+    for (i = 0; i < used; ++i) {
+        built[i] = strdup(list[i]);
+        if (!built[i]) { free_loader_directories(built, i); return 0; }
+    }
+    *directories = built;
+    *count = used;
+    return 1;
+}
+
+/* the search list of one consumer: its own runpath when it states one, and the
+   loader default otherwise */
+static int search_directories(const struct holy_elf_info *elf, const char *consumer,
+                              char ***directories, size_t *count)
+{
+    *directories = NULL;
+    *count = 0;
+    if (loader_directories(elf, consumer, directories, count)) return 1;
+    return default_loader_directories(holy_elf_machine(elf), directories, count);
+}
+
 static int loader_file_match(const char *directory, const char *path,
                              const char *name)
 {
@@ -3396,30 +3435,21 @@ static int scan_loader_alias(const struct holy_scan_result *scan,
     return 0;
 }
 
-static int explicit_elf_paths(const char *snapshot, int allow_soname)
+/* what a payload states about itself: an interpreter the loader cannot name absolutely
+   and a script whose interpreter is not decided are refusals here. a bare DT_NEEDED is
+   not, since the loader searches its default for it. the provider has to own that name
+   in a searched directory, which only a selected set can answer, so it is checked in
+   selected_soname_paths. */
+static int explicit_elf_paths(const char *snapshot)
 {
     struct holy_scan_result scan = {0};
-    size_t i, j;
+    size_t i;
     int result = 6;
     if (!holy_scan_collect(snapshot, &scan)) return 6;
     result = 0;
     for (i = 0; i < scan.count; ++i) {
         const struct holy_scanned_file *file = &scan.files[i];
         if (file->elf.interpreter && file->elf.interpreter[0] != '/') { result = 3; break; }
-        for (j = 0; j < file->elf.needed_count; ++j) {
-            char **directories = NULL;
-            size_t directory_count = 0;
-            int known = allow_soname && loader_directories(&file->elf, file->path,
-                                                            &directories, &directory_count);
-            free_loader_directories(directories, directory_count);
-            if (file->elf.needed[j][0] != '/' && !known) {
-                fprintf(stderr, "holypkg: unknown-loader-search consumer=%s requirement=%s\n",
-                        file->path, file->elf.needed[j]);
-                result = 3;
-                break;
-            }
-        }
-        if (result) break;
     }
     for (i = 0; !result && i < scan.script_count; ++i)
         if (scan.scripts[i].kind != 1) {
@@ -3444,6 +3474,7 @@ static int selected_soname_paths(const struct holy_resolution *resolution,
         char **directories = NULL;
         size_t directory_count = 0, d;
         int found = 0, ok = 0;
+        char search[1024] = "none";
         if (strcmp(edge->kind, "soname") || !strcmp(edge->path, "-")) continue;
         for (j = 0; j < count; ++j)
             if (!strcmp(digests[j], edge->consumer)) break;
@@ -3452,7 +3483,7 @@ static int selected_soname_paths(const struct holy_resolution *resolution,
             if (!strcmp(consumer.files[k].path, edge->path)) {
                 file = &consumer.files[k]; break;
             }
-        if (!file || !loader_directories(&file->elf, file->path,
+        if (!file || !search_directories(&file->elf, file->path,
                                          &directories, &directory_count)) goto edge_done;
         for (j = 0; j < count; ++j)
             if (!strcmp(digests[j], edge->provider)) break;
@@ -3496,13 +3527,21 @@ static int selected_soname_paths(const struct holy_resolution *resolution,
             if (occupied) break;
         }
         ok = found;
+        search[0] = 0;
+        for (d = 0; d < directory_count; ++d) {
+            size_t used = strlen(search);
+            int n = snprintf(search + used, sizeof search - used, "%s%s",
+                             d ? ":" : "", directories[d]);
+            if (n < 0 || (size_t)n >= sizeof search - used) { search[0] = 0; break; }
+        }
+        if (directory_count && !search[0]) strcpy(search, "truncated");
 edge_done:
         free_loader_directories(directories, directory_count);
         holy_scan_free(&consumer);
         holy_scan_free(&provider);
         if (!ok) {
-            fprintf(stderr, "holypkg: unknown-loader-search consumer=%s requirement=%s provider=%s\n",
-                    edge->path, edge->target, edge->provider);
+            fprintf(stderr, "holypkg: unknown-loader-search consumer=%s requirement=%s "
+                    "provider=%s search=%s\n", edge->path, edge->target, edge->provider, search);
             return 0;
         }
     }
@@ -4095,7 +4134,7 @@ static int build_set(const char *root_path, int root, int dir,
              strcmp(item->identity.libc, "musl")) ||
             !recorded_transform(item->snapshot) || !instance_preflight(item->snapshot)) goto done;
         strcpy(item->source_id, "-");
-        result = explicit_elf_paths(item->snapshot, 1);
+        result = explicit_elf_paths(item->snapshot);
         if (result) goto done;
         result = reuse_instance(dir, root, item, generation, completed, set->graph, plan.hash);
         if (result < 0) { result = 4; goto done; }
@@ -5713,7 +5752,7 @@ static int state_update(const char *old_digest, const char *new_digest,
     if (pending != 1) { result = pending < 0 ? 1 : 4; goto done; }
     result = holy_preview_resolved(new_snapshot, root_path, 1, new_privileged, 0);
     if (result) goto done;
-    result = explicit_elf_paths(new_snapshot, 1);
+    result = explicit_elf_paths(new_snapshot);
     if (result) goto done;
     validation.completed = 1;
     validation.accepted_privileged = new_privileged;

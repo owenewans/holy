@@ -364,11 +364,15 @@
 - [x] Install a bare DT_NEEDED SONAME when the consumer has an ordered list of
   absolute or $ORIGIN-relative RUNPATH/RPATH directories and the chosen provider owns the
   first existing DIRECTORY/SONAME with matching ABI and required symbol versions.
-  A provider-owned symlink chain to a versioned library is accepted. Cached
+  A consumer that states no runpath is searched in the loader default for its
+  machine, /lib64, /usr/lib64, /lib and /usr/lib for x86_64 and /lib and /usr/lib
+  for every other machine, so a provider that keeps the name outside every
+  searched directory is refused with unknown-loader-search and the searched list
+  is named. A provider-owned symlink chain to a versioned library is accepted. Cached
   replacements revalidate every selected SONAME edge. Installed check reads
   verified target-root ELF files and reports provider, alias or earlier-path
-  shadowing drift. Other loader tokens and default search, cross-package aliases and
-  plugins remain open.
+  shadowing drift, resolving the loader default the same way. Other loader tokens,
+  cross-package aliases and plugins remain open.
 - [x] Resolve direct absolute shebangs in native package sets against exact
   executable ELF paths. Save the selected provider edge, reject unresolved
   env/malformed scripts, block removal of a needed interpreter, and report
