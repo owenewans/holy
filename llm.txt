@@ -941,7 +941,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holy-package.5 source=holy version=development sha256=5cd040bdec964d2fb14f6c85e2ee91e52b24b9a66facb12d7eb635fbff14117e
+holy-package.5 source=holy version=development sha256=6e9543e75e5727f379f133a965a1f6f4275dc1fd8573e8fe0124a76ea21da1fa
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -1084,59 +1084,74 @@ FOREIGN IMPORT RECORDS
      version, arch and libc are read from the payload rather than assumed, and a
      converted package therefore carries the requirements that payload implies.
 
+     The  Snap converter records family snap with the converter holy-snap-1, the
+     original image hash, the manifest version, the command and mode extract  in
+     HOLY/origin. Its payload keeps the whole snap root under /usr/lib/holy/pri-
+     vate/NAME/snap/	  with	    the	     image     at     /usr/lib/holy/pri-
+     vate/NAME/usr/bin/NAME.snap and a generated launcher at /usr/bin/NAME;  the
+     launcher  is a script, so the package names an interpreter requirement like
+     any other script. HOLY/transform records the private layout, the  launcher,
+     the  base	requirement, the dropped confinement, each dropped plug, and the
+     recorded hooks, environment names and command-chain entries. The  base  the
+     manifest names becomes a package requirement on that name, because the run-
+     time  a  snap  store mounts has to come from a source on this system; a su-
+     perblock states no runtime, so that requirement names no  libc.  The  name,
+     version,  arch  and  libc are read from the manifest and the payload rather
+     than assumed.
+
 INSTALLED GRAPH
-     New  local installations use holy-instance-4 state, or holy-instance-5 when
-     an explicit non-native architecture placement decision was	 accepted.  Ver-
-     sion  5  adds  an	architecture record with the reviewed host and unchanged
-     target. The decision is scoped to that artifact hash and does  not	 certify
-     execution.	 The  state  includes a graph SHA-256; the graph file uses holy-
-     resolution-1 with scope artifact-candidates, a root  artifact,  sorted  se-
-     lected  artifact  hashes and selected requirement edges.  Each edge records
-     consumer hash, requirement ID, provider hash, path, kind and  target  using
+     New local installations use holy-instance-4 state, or holy-instance-5  when
+     an	 explicit  non-native architecture placement decision was accepted. Ver-
+     sion 5 adds an architecture record with the  reviewed  host  and  unchanged
+     target.  The  decision is scoped to that artifact hash and does not certify
+     execution. The state includes a graph SHA-256; the graph  file  uses  holy-
+     resolution-1  with	 scope	artifact-candidates, a root artifact, sorted se-
+     lected artifact hashes and selected requirement edges.  Each  edge	 records
+     consumer  hash,  requirement ID, provider hash, path, kind and target using
      the holy.conf lexer. The plan hash includes these canonical bytes.
 
-     Database  operations reject a missing, modified, writable or symlink graph.
-     Legacy holy-instance-1 entries remain readable without a graph.  Their  ab-
-     sence  of	recorded provider choices does not establish dependency correct-
+     Database operations reject a missing, modified, writable or symlink  graph.
+     Legacy  holy-instance-1  entries remain readable without a graph. Their ab-
+     sence of recorded provider choices does not establish  dependency	correct-
      ness.
 
-     Source-associated installations also preserve the source fields  introduced
+     Source-associated	installations also preserve the source fields introduced
      in holy-instance-3. State records the registered source-id and SHA-256 of a
-     separate  source  record  containing that ID and the alias at installation.
-     The graph and reason fields retain their version-2	 semantics.  The  source
-     record  is	 manager-owned	state, not copied from the package. The database
-     rejects absent, changed, writable or symlink source records  and  disagree-
-     ment  between the record and state. Renaming or deactivating the registered
-     source does not rewrite installed origin records.	Check,	removal,  orphan
-     analysis  and  missing-only repair preserve this identity without requiring
+     separate source record containing that ID and the	alias  at  installation.
+     The  graph	 and  reason fields retain their version-2 semantics. The source
+     record is manager-owned state, not copied from the	 package.  The	database
+     rejects  absent,  changed, writable or symlink source records and disagree-
+     ment between the record and state. Renaming or deactivating the  registered
+     source  does  not	rewrite installed origin records. Check, removal, orphan
+     analysis and missing-only repair preserve this identity  without  requiring
      the source to remain active.
 
-     New records include a provides file copied from HOLY/provides and bind  its
-     SHA-256  in  state. Empty provides is valid. Missing, modified, writable or
+     New  records include a provides file copied from HOLY/provides and bind its
+     SHA-256 in state. Empty provides is valid. Missing, modified,  writable  or
      symlink provides records invalidate the database. Installed package aliases
      can be located from these records; read-only database checks do not require
-     the archive cache. Constructing an installation plan still	 requires  veri-
+     the  archive  cache. Constructing an installation plan still requires veri-
      fied cached artifacts.  Legacy holy-instance-1/2/3 records remain readable.
-     Alias  discovery  for  a  legacy record reads its verified cached artifact;
-     missing cache returns unavailable instead of silently treating unknown  ca-
+     Alias discovery for a legacy record reads	its  verified  cached  artifact;
+     missing  cache returns unavailable instead of silently treating unknown ca-
      pabilities as absent.
 
      The set installation interface supports package names and declared aliases,
-     scoped  pacman version constraints and native dynamic packages with literal
+     scoped pacman version constraints and native dynamic packages with	 literal
      absolute interpreter and DT_NEEDED provider paths.	 It records explicit/de-
-     pendency reasons. General loader search, automatic	 ELF  rewriting	 remains
-     unimplemented.  Slot  conflicts compare source-id, name, os, arch and libc;
+     pendency  reasons.	 General  loader search, automatic ELF rewriting remains
+     unimplemented. Slot conflicts compare source-id, name, os, arch  and  libc;
      distinct artifacts in different slots may coexist with compatible file own-
-     ership. Reviewed cached update plans can  replace	one  source-bound  slot;
-     registering  the same artifact in multiple slots remains unsupported. Miss-
-     ing-only cache repair preserves the installed graph and refuses changed  or
+     ership.  Reviewed	cached	update	plans can replace one source-bound slot;
+     registering the same artifact in multiple slots remains unsupported.  Miss-
+     ing-only  cache repair preserves the installed graph and refuses changed or
      partial files.
 
 SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=37dd6900c2db13c0e429907d48897afb6c805f51b6d3f25f305a75f908779655
+holypkg.8 source=holy version=development sha256=0339eb807bc0a4c55d19c7a978186f404d10834be9cf047b660c1bb0902a2b04
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1157,8 +1172,8 @@ SYNOPSIS
      [--accept-privileged SHA256] [--root DIRECTORY] [--yes] [--noninteractive]
      holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
      holypkg import INPUT  --source  NAME	 --format  pacman|rpm|deb|slack-
-     ware|apk|xbps|appimage|pkgbuild|void|aports	 |slackbuild|rpmspec|de-
-     bian|gentoo|pacstall
+     ware|apk|xbps|appimage|snap|pkgbuild|void|aports		|slackbuild|rpm-
+     spec|debian|gentoo|pacstall
 	  --output NEW_DIRECTORY [--public-key FILE (apk only)]
      holypkg build RECIPE --output NEW_DIRECTORY  [--environment  host|clean|vm]
      [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
@@ -1192,6 +1207,8 @@ SYNOPSIS
      [--ca-file FILE] [--import] [--require-file /PATH]
      holypkg appimage inspect INPUT
      holypkg appimage extract INPUT --output NEW_DIRECTORY
+     holypkg snap inspect INPUT
+     holypkg snap extract INPUT --output NEW_DIRECTORY
      holypkg  apk  index  APKINDEX.tar.gz  --source  NAME  --base  URL/ --output
      NEW_DIRECTORY
      holypkg apk verify-index FILE --public-key FILE
@@ -3714,6 +3731,63 @@ RUN INSTALLED COMMAND
      sandbox,  the runtime probes static inspection cannot close, the path views
      a link needs, the scripts that carry an interpreter and the  version  deci-
      sion. NAME does not grant a registered source identity.
+
+   Snap staging
+     snap  inspect  accepts a file whose first eight bytes state a little-endian
+     offset and a size, requires an offset of at least 8, checks that a SquashFS
+     superblock sits there and prints type, offset, compression and  SHA-256.  A
+     superblock states no machine class, so the architecture comes from the pay-
+     load's  own  ELF  files.  The command reads the image without executing its
+     runtime.
+
+     snap extract copies the exact image to a new private output  directory  and
+     invokes  unsquashfs  with	the recorded offset. It requires an unprivileged
+     user and an available unsquashfs command. The output contains original, the
+     snap tree, a classification report and a conversion receipt with state  ex-
+     tracted-unclassified.   The  report  lists	 ELF arch/libc/ISA, interpreter,
+     DT_NEEDED, loader search paths, strong symbol  versions,  shebang	scripts,
+     links  that need a path view and unknown executables without following sym-
+     links. It reports the command the manifest names and  runtime  probes  that
+     static  inspection cannot close. No .holy is produced and no package is in-
+     stalled. This operation does not claim that the extracted program can run.
+
+     import INPUT --source NAME --format snap --output	NEW_DIRECTORY  uses  the
+     same  extraction,	records NAME as unverified provenance and then emits one
+     native package beside the review bundle. The package name and  version  are
+     the  name and version the manifest declares; a name the package format can-
+     not record is refused with status 2 rather than rewritten, and  a	manifest
+     with no readable meta/snap.yaml or no command is refused with status 3. The
+     arch  and	libc  come  from the payload's own ELF files, and a payload that
+     mixes architectures or runtimes is refused with status 3, because one .holy
+     records one of each.
+
+     The whole snap tree travels under /usr/lib/holy/private/NAME/snap/,  so  no
+     public  path is claimed for the image's own files. The command the manifest
+     names has to sit inside that tree; a command that names a path  outside  it
+     is	 refused  with	status	3.  The	 entry point is the snap image itself at
+     /usr/lib/holy/private/NAME/usr/bin/NAME.snap,  and	  /usr/bin/NAME	  is   a
+     launcher  that starts that file in the package run context with holypkg run
+     SOURCE:NAME. The launcher refuses to run as root because the converted pay-
+     load is no confinement.  The classification and conversion	 reports  travel
+     with the package as /usr/share/holy/NAME/.
+
+     Snap semantics that this format cannot keep are recorded, not emulated. The
+     base  the	manifest names is a runtime snapd would mount from a snap store,
+     so it becomes one package requirement on that name and the target	needs  a
+     source that provides it; a superblock states no runtime, so the requirement
+     names  no	libc.  The  plugs, the confinement, the system usernames and the
+     layouts are dropped and counted, the hooks	 are  recorded	because	 nothing
+     runs  them at install, and the environment names, the command-chain entries
+     and the part stage-packages are kept as x- records with a report line each.
+     A link with an absolute or escaping target cannot travel in a package  pay-
+     load, so the path it named becomes one file requirement.
+
+     import  returns  status  3	 after	writing	 the output, because the package
+     changes the confinement and needs a base package no snapd provides. The re-
+     port in the output directory names the base requirement, the  dropped  con-
+     finement and interfaces, the recorded hooks, the command-chain and environ-
+     ment records, the path views a link needs and the scripts that carry an in-
+     terpreter. NAME does not grant a registered source identity.
 
    Recipe conversion
      holypkg  convert  PKGBUILD	 --source  NAME --output NEW_DIRECTORY reads one

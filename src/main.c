@@ -21,6 +21,7 @@
 #include "stage.h"
 #include "import.h"
 #include "appimage.h"
+#include "snap.h"
 #include "up.h"
 #include "run.h"
 #include "../backends/apk.h"
@@ -1810,6 +1811,7 @@ int main(int argc, char **argv)
             if (!strcmp(argv[6], "apk")) return holy_import_apk(argv[2], argv[4], argv[8], NULL);
             if (!strcmp(argv[6], "xbps")) return holy_import_xbps(argv[2], argv[4], argv[8]);
             if (!strcmp(argv[6], "appimage")) return holy_import_appimage(argv[2], argv[4], argv[8]);
+            if (!strcmp(argv[6], "snap")) return holy_import_snap(argv[2], argv[4], argv[8]);
             if (!strcmp(argv[6], "pkgbuild")) return holy_convert_pkgbuild(argv[2], argv[4], argv[8]);
             if (!strcmp(argv[6], "void")) return holy_convert_voidsrc(argv[2], argv[4], argv[8]);
             if (!strcmp(argv[6], "aports")) return holy_convert_aports(argv[2], argv[4], argv[8]);
@@ -1833,7 +1835,7 @@ int main(int argc, char **argv)
             !strcmp(argv[6], "apk") && !strcmp(argv[7], "--output") &&
             !strcmp(argv[9], "--public-key"))
             return holy_import_apk(argv[2], argv[4], argv[8], argv[10]);
-        fputs("usage: holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild|void|aports|slackbuild|rpmspec|debian|gentoo|pacstall --output DIRECTORY [--public-key FILE (apk only)]\n", stderr);
+        fputs("usage: holypkg import INPUT --source NAME --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|pkgbuild|void|aports|slackbuild|rpmspec|debian|gentoo|pacstall --output DIRECTORY [--public-key FILE (apk only)]\n", stderr);
         return 2;
     }
 
@@ -1874,6 +1876,14 @@ int main(int argc, char **argv)
         if (argc == 6 && !strcmp(argv[2], "extract") && !strcmp(argv[4], "--output"))
             return holy_appimage_extract(argv[3], argv[5]);
         fputs("usage: holypkg appimage inspect INPUT | appimage extract INPUT --output NEW_DIRECTORY\n", stderr);
+        return 2;
+    }
+
+    if (argc > 1 && !strcmp(argv[1], "snap")) {
+        if (argc == 4 && !strcmp(argv[2], "inspect")) return holy_snap_inspect(argv[3]);
+        if (argc == 6 && !strcmp(argv[2], "extract") && !strcmp(argv[4], "--output"))
+            return holy_snap_extract(argv[3], argv[5]);
+        fputs("usage: holypkg snap inspect INPUT | snap extract INPUT --output NEW_DIRECTORY\n", stderr);
         return 2;
     }
 

@@ -11,7 +11,7 @@ holypkg \- Holy local package tooling prototype
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
 .B holypkg import INPUT --source NAME
-.B "     --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild|void|aports"
+.B "     --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|pkgbuild|void|aports"
 .B "     |slackbuild|rpmspec|debian|gentoo|pacstall"
 .br
 .B "     --output NEW_DIRECTORY [--public-key FILE (apk only)]"
@@ -45,6 +45,10 @@ holypkg \- Holy local package tooling prototype
 .B holypkg appimage inspect INPUT
 .br
 .B holypkg appimage extract INPUT --output NEW_DIRECTORY
+.br
+.B holypkg snap inspect INPUT
+.br
+.B holypkg snap extract INPUT --output NEW_DIRECTORY
 .br
 .B holypkg apk index APKINDEX.tar.gz --source NAME --base URL/ --output NEW_DIRECTORY
 .br
@@ -2568,6 +2572,59 @@ launch conditions and carries no image-level sandbox. The report in the output
 directory names the changed conditions, the dropped sandbox, the runtime probes
 static inspection cannot close, the path views a link needs, the scripts that
 carry an interpreter and the version decision. NAME does not grant a registered
+source identity.
+.SS Snap staging
+snap inspect accepts a file whose first eight bytes state a little-endian offset
+and a size, requires an offset of at least 8, checks that a SquashFS superblock
+sits there and prints type, offset, compression and SHA-256. A superblock states no
+machine class, so the architecture comes from the payload's own ELF files. The
+command reads the image without executing its runtime.
+.PP
+snap extract copies the exact image to a new private output directory and invokes
+unsquashfs with the recorded offset. It requires an unprivileged user and an
+available unsquashfs command. The output contains original, the snap tree, a
+classification report and a conversion receipt with state extracted-unclassified.
+The report lists ELF arch/libc/ISA, interpreter, DT_NEEDED, loader search paths,
+strong symbol versions, shebang scripts, links that need a path view and unknown
+executables without following symlinks. It reports the command the manifest names
+and runtime probes that static inspection cannot close. No .holy is produced and
+no package is installed. This operation does not claim that the extracted program
+can run.
+.PP
+import INPUT --source NAME --format snap --output NEW_DIRECTORY uses the same
+extraction, records NAME as unverified provenance and then emits one native package
+beside the review bundle. The package name and version are the name and version the
+manifest declares; a name the package format cannot record is refused with status 2
+rather than rewritten, and a manifest with no readable meta/snap.yaml or no command
+is refused with status 3. The arch and libc come from the payload's own ELF files,
+and a payload that mixes architectures or runtimes is refused with status 3,
+because one .holy records one of each.
+.PP
+The whole snap tree travels under /usr/lib/holy/private/NAME/snap/, so no public
+path is claimed for the image's own files. The command the manifest names has to
+sit inside that tree; a command that names a path outside it is refused with status
+3. The entry point is the snap image itself at
+/usr/lib/holy/private/NAME/usr/bin/NAME.snap, and /usr/bin/NAME is a launcher that
+starts that file in the package run context with holypkg run SOURCE:NAME. The
+launcher refuses to run as root because the converted payload is no confinement.
+The classification and conversion reports travel with the package as
+/usr/share/holy/NAME/.
+.PP
+Snap semantics that this format cannot keep are recorded, not emulated. The base
+the manifest names is a runtime snapd would mount from a snap store, so it becomes
+one package requirement on that name and the target needs a source that provides
+it; a superblock states no runtime, so the requirement names no libc. The plugs,
+the confinement, the system usernames and the layouts are dropped and counted, the
+hooks are recorded because nothing runs them at install, and the environment names,
+the command-chain entries and the part stage-packages are kept as x- records with a
+report line each. A link with an absolute or escaping target cannot travel in a
+package payload, so the path it named becomes one file requirement.
+.PP
+import returns status 3 after writing the output, because the package changes the
+confinement and needs a base package no snapd provides. The report in the output
+directory names the base requirement, the dropped confinement and interfaces, the
+recorded hooks, the command-chain and environment records, the path views a link
+needs and the scripts that carry an interpreter. NAME does not grant a registered
 source identity.
 .SS Recipe conversion
 holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY reads one

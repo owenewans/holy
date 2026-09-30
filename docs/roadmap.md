@@ -856,7 +856,20 @@
   The import returns decision-required and the package report names the changed
   launch conditions, the dropped image-level sandbox, the runtime probes static
   inspection cannot close, the path views a link needs and the version decision.
-  Nix, Flatpak, Snap, Scoop and WinGet remain open.
+  `snap inspect` and `snap extract` now read the eight-byte header that states the
+  SquashFS offset and size, extract with unsquashfs without running the image, and
+  record the manifest beside per-file ELF, loader, script and link facts.
+  `import --format snap` emits one native package: the snap root travels whole under
+  a private path, the image itself is the entry point, /usr/bin/NAME is a launcher
+  that starts it in the package run context, and the classification and conversion
+  reports travel with the package. The name and version come from the manifest, the
+  arch and libc from the payload's own ELF files, a mixed-ABI payload is refused, and
+  the base the manifest names becomes a package requirement, since the runtime snapd
+  would mount has to come from a source here; plugs, confinement, hooks,
+  environment names and command-chain entries are recorded and counted rather than
+  emulated. The import returns decision-required and the report names the base
+  requirement and everything the conversion drops.
+  Nix, Flatpak, Scoop and WinGet remain open.
 - [ ] Implement `holypkg run`, context-specific provider paths, grouped `up --prepare`,
   isolated root/VM trials and full `check` reports.
   The existing run launcher now derives private PATH directories from the
