@@ -916,6 +916,19 @@
   removal of the object is refused while the other application still needs it. Nothing
   is executed, so the import returns decision-required and names the store view a Nix
   program with absolute paths would need.
+  `holypkg split TREE --output NEW_FILE` now proposes the split outputs of a prepared
+  tree before anyone writes them: every non-directory path receives one output, a path
+  line records the reason, an explicit rule outranks the heuristic, and four cases stay
+  decisions instead of assignments. A header, an include directory and pkg-config
+  metadata are proposed for -devel, a versioned shared object and a license stay in the
+  runtime output, and a man page or reference document is proposed for -doc. An
+  unversioned object is a decision because the payload may dlopen it, a static archive
+  is a decision because only the project knows, a link that leaves the tree or is
+  absolute is a decision because a payload carries neither, and two rules naming
+  different outputs for one path is a decision by definition. A fixture builds a real
+  payload with a program, a versioned object, a plugin, an archive, headers, pkg-config,
+  documentation and a license, and checks the proposal, the rules that settle it, the
+  contradictions and the refusals.
   `make check-cc` now compiles the core with tcc, gcc and clang in turn, packs a
   package with each result and verifies it, and returns 6 when a toolchain is
   absent, so the three named host compilers are checked rather than assumed.

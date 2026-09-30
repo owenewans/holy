@@ -57,6 +57,13 @@ paths belong to the first declared output. Every non-directory payload path
 belongs to exactly one output, and the build fails when a declared output
 receives nothing.
 .PP
+holypkg split(8) writes a proposal of those records from a prepared tree without
+building anything. The proposal names the runtime, NAME-devel and NAME-doc outputs,
+records the reason each path received one, and reports a path it cannot settle as a
+decision rather than assigning it from the file extension. An explicit rule in the
+proposal outranks the heuristic, so a settled tree yields a manifest an operator can
+paste and build.
+.PP
 split-step OUTPUT fills a private staging tree for that output. It runs after
 the package phase with HOLY_SPLIT_DEST set to that tree, and every path it
 creates belongs to OUTPUT. No split pattern may redirect those paths, and a

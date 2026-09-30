@@ -160,6 +160,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg manifest generate DIRECTORY --output FILE
 .br
+.B holypkg split TREE --output NEW_FILE [--split OUTPUT GLOB ...]
+.br
 .B holypkg check local:FILE --root DIRECTORY
 .br
 .B holypkg check local:FILE --root DIRECTORY --json
@@ -2736,6 +2738,47 @@ Nothing is executed. No Nix store, daemon, profile or sandbox is reproduced, and
 program that opens an absolute /nix/store path needs a store view this manager does
 not build, which the report and the transform record name. import returns status 3
 after writing the output. NAME does not grant a registered source identity.
+.SS Split proposal
+holypkg split TREE --output NEW_FILE [--split OUTPUT GLOB ...] reads one prepared
+package tree, the HOLY and DATA shape that manifest generate and pack consume, and
+writes a proposal naming the split outputs its payload needs. It changes nothing,
+executes nothing and installs nothing; the proposal is what a holy-recipe(5)
+manifest states in its output and split records.
+.PP
+Every non-directory path receives exactly one output, and the proposal names the
+three the tree may use: the package name as its runtime output, NAME-devel and
+NAME-doc. A development or documentation output is declared only when a path is
+assigned to it or a decision suggests it, because a declared output that receives
+nothing is what a build rejects. A path line records the path, its output and the
+reason, so an operator can overrule the heuristic.
+.PP
+An explicit --split rule outranks a heuristic: the first rule that matches a path
+assigns it, and two rules naming different outputs for one path leave that path a
+repeated decision rather than a guess. A rule may only name one of the three
+outputs the proposal declares, and a rule naming any other output is refused with
+status 2.
+.PP
+The heuristics are deliberately weak, because a file extension is not a sufficient
+criterion. A header, an include directory and pkg-config metadata are proposed for
+the development output. A shared object carrying a version stays in the runtime
+output, and a man page, an info page or a reference document is proposed for the
+documentation output; a license and a runtime data file are not documentation,
+however a general pattern would match them, and they stay in the runtime output.
+.PP
+Four cases are decisions rather than assignments, each reported with the output a
+heuristic would have chosen and the reason. An unversioned shared object is a
+decision: the payload may open it through dlopen at runtime, and a tree states no
+metadata or probe that settles that. A static archive is a decision: it is
+development material to a builder and a link input to nothing at run time, and only
+the project knows which. A link whose target leaves the tree or is absolute is a
+decision, since a payload carries neither, and two rules contradicting each other
+are a decision by definition.
+.PP
+The command prints the path counts per output and one decision line per unsettled
+path, and returns status 3 when any path is a decision. A tree without HOLY/meta or
+without a name the output names may be derived from is refused with status 2, and a
+tree that is not there returns 6. A device, socket or fifo is refused, because a
+payload carries none of them.
 .SS Recipe conversion
 holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY reads one
 PKGBUILD as text and writes a conversion directory containing the original

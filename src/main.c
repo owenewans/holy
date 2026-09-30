@@ -25,6 +25,7 @@
 #include "scoop.h"
 #include "winget.h"
 #include "nix.h"
+#include "split.h"
 #include "up.h"
 #include "run.h"
 #include "../backends/apk.h"
@@ -2127,6 +2128,35 @@ rollback_usage:
     if (argc == 6 && !strcmp(argv[1], "manifest") &&
         !strcmp(argv[2], "generate") && !strcmp(argv[4], "--output"))
         return holy_generate_files(argv[3], argv[5]) ? 0 : 1;
+    /* split TREE --output FILE [--split OUTPUT GLOB ...] */
+    if (argc >= 5 && !strcmp(argv[1], "split")) {
+        char *rule[64];
+        size_t rules = 0;
+        const char *file = NULL;
+        int i, ok = 1;
+        for (i = 3; i < argc;) {
+            if (!strcmp(argv[i], "--output") && i + 1 < argc && !file) {
+                file = argv[i + 1];
+                i += 2;
+                continue;
+            }
+            if (!strcmp(argv[i], "--split") && i + 2 < argc &&
+                rules + 2 <= sizeof rule / sizeof *rule) {
+                rule[rules++] = argv[i + 1];
+                rule[rules++] = argv[i + 2];
+                i += 3;
+                continue;
+            }
+            ok = 0;
+            break;
+        }
+        if (!ok || !file || i != argc) {
+            fputs("usage: holypkg split TREE --output NEW_FILE "
+                  "[--split OUTPUT GLOB ...]\n", stderr);
+            return 2;
+        }
+        return holy_split_propose(argv[2], file, rule, rules);
+    }
     if (argc == 3 && !strcmp(argv[1], "manifest") &&
         !strncmp(argv[2], "local:", 6) && argv[2][6])
         return holy_manifest_local(argv[2] + 6) ? 0 : 2;
