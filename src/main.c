@@ -30,6 +30,7 @@
 #include "nix.h"
 #include "split.h"
 #include "eopkg.h"
+#include "override.h"
 #include "test.h"
 #include "up.h"
 #include "run.h"
@@ -1561,6 +1562,25 @@ int main(int argc, char **argv)
     }
     if (argc > 1 && !strcmp(argv[1], "apply")) return holy_apply_command(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "test")) return holy_test_command(argc - 2, argv + 2);
+    if (argc > 2 && !strcmp(argv[1], "override")) {
+        const char *override_root = NULL;
+        int override_json = 0, listed = 0, valid = 1, i;
+        for (i = 3; i < argc; ++i) {
+            if (!strcmp(argv[i], "--json") && !override_json) { override_json = 1; continue; }
+            if (!strcmp(argv[i], "--root") && i + 1 < argc && !override_root) {
+                override_root = argv[++i];
+                continue;
+            }
+            valid = 0;
+            break;
+        }
+        if (valid && !strcmp(argv[2], "list") && !listed && override_root) {
+            listed = 1;
+            return holy_override_list(override_root, override_json);
+        }
+        fputs("usage: holypkg override list --root DIRECTORY [--json]\n", stderr);
+        return 2;
+    }
     if (argc > 2 && !strcmp(argv[1], "xbps")) {
         if ((argc == 12 || argc == 14) && !strcmp(argv[2], "index") &&
             !strcmp(argv[4], "--sha256") && !strcmp(argv[6], "--source") &&

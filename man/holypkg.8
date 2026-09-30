@@ -266,6 +266,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg test PLAN [--sha256 PLAN_SHA256] [--mode root|vm] [--root DIRECTORY] [--json] [--shell | -- COMMAND [ARGS...]]
 .br
+.B holypkg override list --root DIRECTORY [--json]
+.br
 .B holypkg db check SHA256 --root DIRECTORY
 .br
 .B holypkg db check --all --root DIRECTORY
@@ -2694,6 +2696,39 @@ trial is not a defence against code that attacks the shared kernel on purpose, a
 the plan is still not applied by it: it verifies the plan against --root and then
 runs the probe against the running root, so a trial that applies a prepared plan
 still needs an isolated copy of the filesystem.
+.SH USER OVERRIDES
+override list reads the user override store of one target root and reports every
+record in it. It changes nothing, needs no cache object and no plan, and it never
+edits a packaged file. The store is etc/holy/overrides in the target root, and a
+file in it is a record when its name ends in .override. A root without a usable
+database is 6, and an unfinished transaction is 5, because a record cannot be
+answered without knowing which artifact owns the path.
+.PP
+A record is the fixed line order format holy-override-1, scope, path, an optional
+arch and an optional libc, sha256, patch, result, and then the patch body. The
+scope names what the record is for: scope artifact with a digest field is that one
+artifact, scope version with name and version fields is that package version, and
+scope package with a package field is that package and its later versions. The
+sha256 field is the digest of the packaged file the patch applies to, patch is the
+digest of the body in the same file, and result is the digest the patched file has
+to carry. A path is absolute and has no empty, dot or dot-dot component; a missing
+arch or libc means any.
+.PP
+The owner of the path comes from the installed manifests, so a record never claims an
+artifact by its own word, and the file is read through the root so the digests are
+the bytes the running system uses. Each record is reported with one state:
+applied, when the file carries the recorded result; pending, when it still carries
+the recorded source; not-installed, when no installed artifact owns the path; review,
+when the scope or the conditions name another artifact, or when the file is neither
+the recorded source nor its result; unreadable, when the file cannot be read through
+the root or the installed set; and invalid, when the record is not a valid
+holy-override-1 record or the store entry is not a readable regular file. A record
+that needs a review and a new package version is what the record cannot decide, so
+one review is 3 and one invalid record is 2. The summary line counts every state.
+--json uses the holy-override-report-1 schema.
+.PP
+Applying a record, and the conditions under which a set re-applies one, are not part
+of this command: it reports what a store says about the installed set.
 .SH INSTALLED FILE INDEX
 index reads a consistent installed-state snapshot under the database's shared lock
 and answers two questions the planner answers internally: which installed artifact

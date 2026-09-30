@@ -385,7 +385,23 @@
   alias owners for a later script installation using root-confined lookup,
   including chains split between installed and new packages.
 - [ ] Handle hooks, service consent, overrides, general rollback and
-  recovery of each interrupted mutation phase.
+  recovery of each interrupted mutation phase. `holypkg override list` now
+  reads the user override store of a target root and reports every record
+  against the installed set. A record is the fixed line order
+  holy-override-1 form: a scope naming one artifact digest, one package
+  version or one package with its later versions, an absolute path,
+  optional arch and libc conditions, the digest of the packaged file, the
+  digest of the patch body in the same file and the digest the patched file
+  has to carry. The owner of the path comes from the installed manifests
+  and the file is read through the root, so a record never claims an
+  artifact by its own word. Each record reports applied, pending,
+  not-installed, review, unreadable or invalid; one review is 3 and one
+  invalid record is 2, and --json uses holy-override-report-1. A fixture
+  covers all six states, a scope naming another artifact, a body that is
+  not the recorded patch, a store entry that is not a regular file, a file
+  that cannot be read through the root and a root with no database.
+  Applying a record and re-applying one on a later version are still open,
+  as are service consent, general rollback and per-phase recovery.
 - [x] Carry config/mutable flags through verified manifests and installed checks;
   import Debian conffiles as config files, reject invalid declarations, and
   report changed-config.
