@@ -182,8 +182,8 @@ static void option_set_free(struct option_set *set)
 
 static void option_set_read(struct option_set *set, const struct shell_script *pkg)
 {
-    char *joined = holy_shell_join(pkg, "build_options");
-    char *defaults = holy_shell_join(pkg, "build_options_default");
+    char *joined = holy_shell_all(pkg, "build_options");
+    char *defaults = holy_shell_all(pkg, "build_options_default");
     memset(set, 0, sizeof *set);
     if (joined) {
         set->names = holy_shell_words(joined, &set->count);
@@ -796,8 +796,8 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
     }
     summary = holy_shell_join(&pkg, "short_desc");
     homepage = holy_shell_join(&pkg, "homepage");
-    license = holy_shell_join(&pkg, "license");
-    maintainer = holy_shell_join(&pkg, "maintainer");
+    license = holy_shell_all(&pkg, "license");
+    maintainer = holy_shell_all(&pkg, "maintainer");
     style = holy_shell_join(&pkg, "build_style");
     if (!result && pkg.condition_count) {
         for (k = 0; k < pkg.condition_count; ++k) {
@@ -910,7 +910,7 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
         fputs("x-maintainer ", out); holy_token(out, maintainer); fputc('\n', out);
     }
     {
-        char *changelog = holy_shell_join(&pkg, "changelog");
+        char *changelog = holy_shell_all(&pkg, "changelog");
         if (changelog && *changelog) {
             fputs("x-changelog ", out); holy_token(out, changelog); fputc('\n', out);
             holy_note_add(&note, "carried", "changelog template:%zu", holy_shell_line(&pkg, "changelog"));
@@ -935,7 +935,7 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
             char *value;
             char *fixed;
             if (!holy_shell_present(&pkg, preserved[index])) continue;
-            fixed = resolve_options(&pkg, &note, &review, holy_shell_join(&pkg, preserved[index]),
+            fixed = resolve_options(&pkg, &note, &review, holy_shell_all(&pkg, preserved[index]),
                                     preserved[index]);
             if (!fixed) { wrote = 0; break; }
             value = fixed;
@@ -959,8 +959,8 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
     }
 
     /* distfiles with their checksum entries */
-    distfiles = holy_shell_join(&pkg, "distfiles");
-    checksum = holy_shell_join(&pkg, "checksum");
+    distfiles = holy_shell_all(&pkg, "distfiles");
+    checksum = holy_shell_all(&pkg, "checksum");
     {
         size_t distfile_count = 0, digest_count = 0;
         char **urls = distfiles ? holy_shell_words(distfiles, &distfile_count) : NULL;
@@ -1101,7 +1101,7 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
         size_t list_index;
         for (list_index = 0; build_lists[list_index]; ++list_index) {
             size_t count = 0;
-            char *raw = holy_shell_join(&pkg, build_lists[list_index]);
+            char *raw = holy_shell_all(&pkg, build_lists[list_index]);
             char **items = raw ? holy_shell_words(raw, &count) : NULL;
             free(raw);
             for (k = 0; items && k < count; ++k) {
@@ -1126,7 +1126,7 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
     }
     {
         size_t count = 0;
-        char *raw = holy_shell_join(&pkg, "depends");
+        char *raw = holy_shell_all(&pkg, "depends");
         char **items = raw ? holy_shell_words(raw, &count) : NULL;
         free(raw);
         for (k = 0; items && k < count; ++k) {
@@ -1154,7 +1154,7 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
         };
         for (index = 0; config_keys[index].key; ++index) {
             size_t count = 0;
-            char *raw = holy_shell_join(&pkg, config_keys[index].key);
+            char *raw = holy_shell_all(&pkg, config_keys[index].key);
             char **items = raw ? holy_shell_words(raw, &count) : NULL;
             free(raw);
             for (k = 0; items && k < count; ++k) {

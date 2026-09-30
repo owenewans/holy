@@ -858,7 +858,7 @@ int holy_convert_gentoo(const char *input, const char *source, const char *outpu
     eapi = holy_shell_join(&script, "EAPI");
     summary = holy_shell_join(&script, "DESCRIPTION");
     homepage = holy_shell_join(&script, "HOMEPAGE");
-    license = holy_shell_join(&script, "LICENSE");
+    license = holy_shell_all(&script, "LICENSE");
     slot = holy_shell_join(&script, "SLOT");
     if (!eapi || !*eapi) {
         free(eapi);
@@ -923,7 +923,7 @@ int holy_convert_gentoo(const char *input, const char *source, const char *outpu
 
     /* the metadata that steers a build and that a Holy recipe has no place for */
     for (index = 0; metadata[index]; ++index) {
-        char *value = holy_shell_join(&script, metadata[index]);
+        char *value = holy_shell_all(&script, metadata[index]);
         if (!value) continue;
         if (*value && strcmp(value, "(")) {
             review = 1;
@@ -961,7 +961,7 @@ int holy_convert_gentoo(const char *input, const char *source, const char *outpu
     }
 
     {
-        char *value = holy_shell_join(&script, "SRC_URI");
+        char *value = holy_shell_all(&script, "SRC_URI");
         if (value) {
             if (!emit_sources(out, value, directory, output, &name, eapi, &note, &review)) {
                 free(value);
@@ -975,7 +975,7 @@ int holy_convert_gentoo(const char *input, const char *source, const char *outpu
     /* a patch the ebuild names lives in the files directory, so it travels with
        the recipe for the src_prepare default to apply */
     {
-        char *value = holy_shell_join(&script, "PATCHES");
+        char *value = holy_shell_all(&script, "PATCHES");
         const char *cursor = value;
         if (value) {
             while (*cursor) {
@@ -1053,7 +1053,7 @@ int holy_convert_gentoo(const char *input, const char *source, const char *outpu
     }
 
     for (index = 0; dependencies[index].key; ++index) {
-        char *value = holy_shell_join(&script, dependencies[index].key);
+        char *value = holy_shell_all(&script, dependencies[index].key);
         if (!value) continue;
         if (*value) {
             if (!emit_dependencies(out, value, dependencies[index].kind, &note, &review,

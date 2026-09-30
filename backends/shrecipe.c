@@ -117,9 +117,31 @@ char *holy_shell_join(const struct shell_script *script, const char *name)
     return out;
 }
 
-const struct shell_value *holy_shell_entries(const struct shell_script *script, const char *name,
-                                             size_t *count)
+/* every record of NAME joined with a space. a list is one record per element, so a
+   reader that splits the result into words sees the whole list, whether it was
+   written on one line or on many. */
+char *holy_shell_all(const struct shell_script *script, const char *name)
 {
+    char *out = NULL;
+    size_t i, used = 0;
+    for (i = 0; i < script->value_count; ++i) {
+        size_t add;
+        char *grown;
+        if (strcmp(script->values[i].name, name)) continue;
+        add = strlen(script->values[i].text) + 1;
+        grown = realloc(out, used + add + 1);
+        if (!grown) { free(out); return NULL; }
+        out = grown;
+        if (used) out[used++] = ' ';
+        memcpy(out + used, script->values[i].text, add);
+        used += add - 1;
+    }
+    if (out) out[used] = 0;
+    return out;
+}
+
+const struct shell_value *holy_shell_entries(const struct shell_script *script, const char *name,
+                                             size_t *count){
     static struct shell_value *snapshot;
     size_t i, used = 0;
     free(snapshot);
@@ -248,7 +270,10 @@ static const char *heredoc_word(const char *body, size_t offset, const char *sto
 {
     const char *cursor = body + offset, *word;
     *strip = 0;
+    /* a heredoc word may be written apart from the <<, since both forms are shell */
+    while (cursor < stop && isspace((unsigned char)*cursor)) ++cursor;
     if (cursor < stop && *cursor == '-') { ++cursor; *strip = 1; }
+    while (cursor < stop && isspace((unsigned char)*cursor)) ++cursor;
     if (cursor < stop && (*cursor == '\'' || *cursor == '"')) {
         char quote = *cursor;
         word = ++cursor;
@@ -361,7 +386,7 @@ static int push_condition(struct shell_script *script, const char *text, size_t 
 
 /* splits a parenthesized list body into one record per element */
 static int push_list(struct shell_script *script, const char *name, const char *body,
-                     size_t length, size_t line)
+                     size_t length, size_t line, int append, int conditional)
 {
     size_t i = 0;
     while (i < length) {
@@ -385,7 +410,7 @@ static int push_list(struct shell_script *script, const char *name, const char *
         }
         if (quote) return 0;
         text = holy_shell_unquote(body + start, i - start);
-        if (!text || !push_value(script, strdup(name), text, line, 0, 0)) {
+        if (!text || !push_value(script, strdup(name), text, line, append, conditional)) {
             free(text);
             return 0;
         }
@@ -558,26 +583,42 @@ static int parse(struct shell_script *script, const char *label)
         }
         /* a list is written name=( one element per line ) as often as it is written
            on one line, so an opening paren alone starts a list too */
-        if (name_length + 1 < size && cursor[name_length] == '(' &&
-            (cursor[name_length + 1] == ')' ||
-             (cursor[name_length + 1] == '\n' && name_length + 2 == size))) {
-            const char *body = cursor + name_length + 2;
-            const char *close = list_end(body, script->text + script->length);
+        if (name_length + 2 <= size && cursor[name_length] == '=' && cursor[name_length + 1] == '(' &&
+            (cursor[name_length + 2] == ')' || size == name_length + 2)) {
             char *name = holy_shell_copy(start, name_length);
-            int ok;
+            const char *body = cursor + name_length + 3;
+            const char *close = NULL;
+            int ok = 1;
             if (!name) return 1;
-            while (!close && offset < script->length) {
-                char *row = script->text + offset;
-                char *row_end = memchr(row, '\n', script->length - offset);
-                size_t row_size = row_end ? (size_t)(row_end - row) : script->length - offset;
+            if (cursor[name_length + 2] == ')') {
+                /* an empty list holds nothing, so reading past it would take the
+                   next line for an element of it */
+                offset = (size_t)(body - script->text) + 1;
+            } else {
+                close = list_end(body, script->text + script->length);
+                while (!close && offset < script->length) {
+                    char *row = script->text + offset;
+                    char *row_end = memchr(row, '\n', script->length - offset);
+                    size_t row_size = row_end ? (size_t)(row_end - row) :
+                                              script->length - offset;
+                    ++line;
+                    offset = (size_t)(row_end ? row_end + 1 : script->text + script->length) -
+                             (size_t)script->text;
+                    close = list_end(row, row + row_size);
+                    if (close) break;
+                }
+                if (!close) close = script->text + script->length;
+                ok = close > body && push_list(script, name, body, (size_t)(close - body), line,
+                                               0, conditional);
+                /* the elements start on the line below the opening paren and the
+                   closing paren may be several lines further down, so the line
+                   count has to follow the whole list */
                 ++line;
-                offset = (size_t)(row_end ? row_end + 1 : script->text + script->length) -
-                         (size_t)script->text;
-                close = list_end(row, row + row_size);
-                if (close) break;
+                for (i = 0; body + i < close; ++i) if (body[i] == '\n') ++line;
+                /* the newline that ends the line is stepped over here, so that it
+                   does not count as a line of its own */
+                offset = (size_t)(close - script->text) + (close[1] == '\n' ? 2 : 1);
             }
-            if (!close) close = script->text + script->length;
-            ok = close > body && push_list(script, name, body, (size_t)(close - body), line);
             free(name);
             if (!ok) {
                 fprintf(stderr, "holypkg: %s: unterminated list\n", label);
@@ -607,16 +648,38 @@ static int parse(struct shell_script *script, const char *label)
             value = cursor + at;
             value_size = size - at;
             while (value_size && (*value == ' ' || *value == '\t')) { ++value; --value_size; }
+            /* a quoted value ends at its closing quote, so a case pattern that ends
+               its assignment with ;; does not put the terminator in the value */
+            if (value_size && (*value == '"' || *value == '\'')) {
+                size_t index;
+                char quote = *value;
+                for (index = 1; index < value_size; ++index) {
+                    if (value[index] == quote) break;
+                    if (quote == '"' && value[index] == '\\') ++index;
+                }
+                if (index < value_size) value_size = index + 1;
+            }
             /* a list runs to its closing paren, which is often several lines below,
                and an element may hold a comment, so the value ends at that paren */
             if (value_size && *value == '(') {
                 const char *close = list_end(value + 1, script->text + script->length);
                 if (close) {
-                    value_size = (size_t)(close - value) + 1;
-                    offset = (size_t)(close - script->text) + 1;
-                    for (i = 0; i < value_size; ++i) if (value[i] == '\n') ++line;
-                    text = holy_shell_unquote(value, value_size);
-                    goto recorded;
+                    /* a parenthesized value is a list, so every element is one record
+                       and not one value with the parens left in it, whether the list
+                       is written on one line or on many */
+                    int ok = push_list(script, name, value + 1,
+                                       (size_t)(close - value - 1), line, append, conditional);
+                    free(name);
+                    if (!ok) {
+                        fprintf(stderr, "holypkg: %s:%zu: unterminated list\n", label, line);
+                        return 2;
+                    }
+                    for (i = 0; i < (size_t)(close - value) + 1; ++i)
+                        if (value[i] == '\n') ++line;
+                    /* the newline that ends the line is stepped over here, so that it
+                       does not count as a line of its own */
+                    offset = (size_t)(close - script->text) + (close[1] == '\n' ? 2 : 1);
+                    continue;
                 }
             }
             /* an unquoted value ends at a comment the way the shell reads it */
@@ -674,7 +737,6 @@ static int parse(struct shell_script *script, const char *label)
             } else {
                 text = holy_shell_unquote(value, value_size);
             }
-            recorded:
             if (!name || !text || !push_value(script, name, text, line, append, conditional)) {
                 free(name);
                 free(text);

@@ -270,7 +270,7 @@ static int is_digest(const char *value)
 /* the declared sha256 for one source name, or NULL when the file has none */
 static char *declared_digest(const struct shell_script *pkg, const char *name)
 {
-    char *raw = holy_shell_join(pkg, "sha256sums");
+    char *raw = holy_shell_all(pkg, "sha256sums");
     size_t count = 0, index;
     char **items = raw ? holy_shell_words(raw, &count) : NULL;
     char *found = NULL;
@@ -552,8 +552,8 @@ int holy_convert_aports(const char *input, const char *source, const char *outpu
     }
     summary = holy_shell_join(&pkg, "pkgdesc");
     homepage = holy_shell_join(&pkg, "url");
-    license = holy_shell_join(&pkg, "license");
-    maintainer = holy_shell_join(&pkg, "maintainer");
+    license = holy_shell_all(&pkg, "license");
+    maintainer = holy_shell_all(&pkg, "maintainer");
     {
         char *arches = holy_shell_join(&pkg, "arch");
         if (arches) map_arch(arches, arch, sizeof arch, &note, &review);
@@ -595,7 +595,7 @@ int holy_convert_aports(const char *input, const char *source, const char *outpu
 
     /* the source list carries patches, install scripts and conf files as well */
     {
-        char *entries = holy_shell_join(&pkg, "source");
+        char *entries = holy_shell_all(&pkg, "source");
         size_t count = 0, item;
         char **items = entries ? holy_shell_words(entries, &count) : NULL;
         size_t entry_count = 0;
@@ -663,7 +663,7 @@ int holy_convert_aports(const char *input, const char *source, const char *outpu
             "langdir", "soname", "provides", "replaces", NULL
         };
         for (index = 0; kept[index]; ++index) {
-            char *value = holy_shell_join(&pkg, kept[index]);
+            char *value = holy_shell_all(&pkg, kept[index]);
             if (!value || !*value) { free(value); continue; }
             fputs("x-", out);
             fputs(kept[index], out);
@@ -686,7 +686,7 @@ int holy_convert_aports(const char *input, const char *source, const char *outpu
     }
     if (!wrote) { result = 1; goto done; }
     {
-        char *sha512 = holy_shell_join(&pkg, "sha512sums");
+        char *sha512 = holy_shell_all(&pkg, "sha512sums");
         if (sha512 && *sha512) {
             review = 1;
             holy_note_add(&note, "unknown", "sha512sums pins a digest a Holy source cannot use, "
@@ -704,7 +704,7 @@ int holy_convert_aports(const char *input, const char *source, const char *outpu
             "depends_dev", "depends_doc", "depends_openrc", "depends_libs", "depends_static",
             "depends_systemd", "depends_udev", NULL
         };
-        char *raw = holy_shell_join(&pkg, "depends");
+        char *raw = holy_shell_all(&pkg, "depends");
         size_t count = 0, item;
         char **items = raw ? holy_shell_words(raw, &count) : NULL;
         size_t list_index;
@@ -719,7 +719,7 @@ int holy_convert_aports(const char *input, const char *source, const char *outpu
         holy_shell_words_free(items);
         free(raw);
         for (list_index = 0; build_lists[list_index]; ++list_index) {
-            char *list = holy_shell_join(&pkg, build_lists[list_index]);
+            char *list = holy_shell_all(&pkg, build_lists[list_index]);
             size_t list_size = 0;
             char **entries = list ? holy_shell_words(list, &list_size) : NULL;
             for (item = 0; entries && item < list_size; ++item) {
@@ -750,7 +750,7 @@ int holy_convert_aports(const char *input, const char *source, const char *outpu
             { "pre-deinstall", "hook-remove", "preremove" },
             { "post-deinstall", NULL, NULL }
         };
-        char *entries = holy_shell_join(&pkg, "install");
+        char *entries = holy_shell_all(&pkg, "install");
         size_t count = 0, item;
         char **items = entries ? holy_shell_words(entries, &count) : NULL;
         char *hooks[8];
@@ -830,7 +830,7 @@ int holy_convert_aports(const char *input, const char *source, const char *outpu
 
     /* every declared subpackage becomes one output */
     {
-        char *entries = holy_shell_join(&pkg, "subpackages");
+        char *entries = holy_shell_all(&pkg, "subpackages");
         size_t count = 0, item;
         char **items = entries ? holy_shell_words(entries, &count) : NULL;
         for (item = 0; items && item < count; ++item) {

@@ -48,6 +48,8 @@ void holy_shell_free(struct shell_script *script);
 
 /* the value of NAME with every appended record following the earlier one. */
 char *holy_shell_join(const struct shell_script *script, const char *name);
+/* every record of NAME joined with a space, which is a whole list. */
+char *holy_shell_all(const struct shell_script *script, const char *name);
 const struct shell_value *holy_shell_entries(const struct shell_script *script, const char *name,
                                              size_t *count);
 int holy_shell_present(const struct shell_script *script, const char *name);

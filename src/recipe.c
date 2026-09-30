@@ -560,7 +560,8 @@ static int parse_recipe(const char *path, struct recipe *recipe)
                and requoted into a single value, one record per line. */
             size_t i, used = recipe->extra ? strlen(recipe->extra) : 0, needed = strlen(tokens[0]) + 3;
             char *record;
-            for (i = 1; i < count; ++i) needed += strlen(tokens[i]) * 2 + 3;
+            /* a byte outside printable ASCII is written as \xHH, so it needs four */
+            for (i = 1; i < count; ++i) needed += strlen(tokens[i]) * 4 + 3;
             record = malloc(needed);
             if (!record) { holy_tokens_free(tokens, count); result = 1; goto done; }
             needed = (size_t)sprintf(record, "%s \"", tokens[0]);
