@@ -289,7 +289,34 @@ grep -qx 'holypkg: override missing.override is not a readable record' "$tmp/err
 ln -s "$tmp/foo.conf" "$store/unreadable.override"
 expect 2 "$bin" override plan unreadable.override --root "$root"
 grep -qx 'holypkg: override unreadable.override is not a readable record' "$tmp/err"
-rm "$store/unreadable.override" "$store/elsewhere.override" "$store/whole.override"
+rm "$store/unreadable.override" "$store/elsewhere.override"
+# applying the prepared plan writes the body over the file and nothing else: the path
+# keeps its name and its mode, the owner is unchanged, and a second apply is the work
+# already done
+expect 0 "$bin" override plan whole.override --root "$root"
+apply_hash=$(sed -n 's/^override-plan-sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+expect 3 "$bin" override apply whole.override --sha256 "$(printf '%064d' 0)" --root "$root"
+grep -qx 'holypkg: the prepared plan changed before the apply' "$tmp/err"
+grep -qx 'packaged line' "$root/etc/foo.conf"
+expect 0 "$bin" override apply whole.override --sha256 "$apply_hash" --root "$root"
+grep -qx "override-applied whole.override path /etc/foo.conf result $patched owner $artifact generation $(cat "$root/var/lib/holypkg/generation")" "$tmp/out"
+grep -qx 'the patched configuration line' "$root/etc/foo.conf"
+test "$(stat -c %a "$root/etc/foo.conf")" = "$(stat -c %a "$root/etc/bar.conf")"
+test -z "$(find "$root/etc" -name '.holy-tmp-*' -print)"
+# the record now reads as applied, and the plan refuses it as a decision. a-applied
+# covered the same file with another result, so it needs a review instead.
+expect 3 "$bin" override list --root "$root"
+grep -qx "override whole.override state applied scope artifact $artifact path /etc/foo.conf arch any libc any" "$tmp/out"
+grep -qx "override-owner whole.override $artifact override-fixture 1 noarch" "$tmp/out"
+grep -qx 'override-detail a-applied.override the file is neither the recorded source nor its result' "$tmp/out"
+expect 3 "$bin" override plan whole.override --root "$root"
+grep -qx 'holypkg: the installed payload file /etc/foo.conf drifted' "$tmp/err"
+# the applied file is payload drift the installed check reports, and the record is the
+# reason the plan can no longer write it
+expect 4 "$bin" db check --all --root "$root"
+grep -qx 'holypkg: changed-file etc/foo.conf' "$tmp/err"
+expect 2 "$bin" override apply whole.override --sha256 not-a-digest --root "$root"
+rm "$store/whole.override"
 # a root without a database cannot answer which artifact owns a path
 mkdir "$tmp/empty"
 expect 6 "$bin" override list --root "$tmp/empty"

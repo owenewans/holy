@@ -1212,7 +1212,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=717438c7c7091c5c4ecbce08bdbee6f5cc77fba079156a32467bff2c9ef81d91
+holypkg.8 source=holy version=development sha256=350d660986c9fc636f0da2919b174b5c532f023bc975c392ef6222184df99d79
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1441,6 +1441,7 @@ SYNOPSIS
      TORY] [--json] [--shell | -- COMMAND [ARGS...]]
      holypkg override list --root DIRECTORY [--json]
      holypkg override plan NAME --root DIRECTORY [--json]
+     holypkg override apply NAME --sha256 PLAN_SHA256 --root DIRECTORY [--json]
      holypkg db check SHA256 --root DIRECTORY
      holypkg db check --all --root DIRECTORY
      holypkg db check SHA256|--all --root DIRECTORY --json
@@ -3972,8 +3973,22 @@ USER OVERRIDES
      a	different  database  is a different plan. --json uses the holy-override-
      plan-1 schema.
 
-     Applying a record is not part of this command: it reports what a store says
-     about the installed set, and prepares the one plan an apply would need.
+     override apply is that plan applied. It takes the SHA-256 the plan printed,
+     re-derives the plan and refuses it as status 3 when anything changed,  then
+     writes  the  record  body over the file under the database writer lock. The
+     body is written to a temporary beside the file and renamed over it, so  the
+     path keeps its name, its mode and its owner while the content is never half
+     written;  a  crash	 leaves	 the  file either as the record states or as the
+     record does not yet apply to. Every installed mutation publishes a new gen-
+     eration, so an unchanged generation is the proof that the set is  what  the
+     plan  derived, and a record whose result is already in place is reported as
+     already applied rather than written twice. --json uses  the  holy-override-
+     apply-1 schema.
+
+     A	patched file is payload drift by the manifest that recorded the packaged
+     bytes, so db check reports it as a changed file afterwards. The  record  is
+     the  reason  it  is  changed,  and the plan refuses it because the file the
+     record applies to is no longer there in the state the record described.
 
      A set plan states the records it would write over	and  binds  them,  so  a
      store  that  changed between the plan and the apply moves the plan hash and

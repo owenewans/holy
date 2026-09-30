@@ -418,8 +418,18 @@
   that is not what the record applies to, then states what applying it would
   write with a SHA-256 over the record, the owner, both digests and the
   identity of the target root with its installed generation. Applying that
-  plan and re-applying a record on a later version are still open, as do
-  service consent, general rollback and per-phase recovery.
+  `holypkg override apply NAME --sha256 PLAN_SHA256` applies that
+  plan: it re-derives it, refuses a stale one, and writes the record
+  body over the file under the database writer lock through a
+  temporary renamed into place, so the path keeps its name, mode and
+  owner and the content is never half written. an unchanged installed
+  generation is the proof that the set is what the plan derived, since
+  every mutation publishes one, and a record whose result is already in
+  place is reported as already applied. a patched file is payload drift
+  by the manifest that recorded the packaged bytes, so db check reports
+  a changed file afterwards and the plan refuses to write it again.
+  Re-applying a record on a later version is still open, as do service
+  consent, general rollback and per-phase recovery.
 - [x] Carry config/mutable flags through verified manifests and installed checks;
   import Debian conffiles as config files, reject invalid declarations, and
   report changed-config.

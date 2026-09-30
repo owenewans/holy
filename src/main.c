@@ -1572,8 +1572,15 @@ int main(int argc, char **argv)
             return holy_override_plan(argv[3], argv[5], 0);
         if (argc == 7 && !strcmp(argv[2], "plan") && !strcmp(argv[4], "--root") &&
             !strcmp(argv[6], "--json")) return holy_override_plan(argv[3], argv[5], 1);
+        if (argc == 8 && !strcmp(argv[2], "apply") && !strcmp(argv[4], "--sha256") &&
+            !strcmp(argv[6], "--root")) return holy_override_apply(argv[3], argv[5], argv[7], 0);
+        if (argc == 9 && !strcmp(argv[2], "apply") && !strcmp(argv[4], "--sha256") &&
+            !strcmp(argv[6], "--root") && !strcmp(argv[8], "--json"))
+            return holy_override_apply(argv[3], argv[5], argv[7], 1);
         fputs("usage: holypkg override list --root DIRECTORY [--json]"
-              " | holypkg override plan NAME --root DIRECTORY [--json]\n", stderr);
+              " | holypkg override plan NAME --root DIRECTORY [--json]"
+              " | holypkg override apply NAME --sha256 PLAN_SHA256 --root DIRECTORY\n",
+              stderr);
         return 2;
     }
     if (argc > 1 && !strcmp(argv[1], "up")) return holy_up_command(argc, argv);

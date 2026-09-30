@@ -16,6 +16,12 @@ int holy_override_list(const char *root_path, int json);
    not one this manager applies or no longer applies to the file in place,
    5 an unfinished transaction, 6 the record or the target root is unavailable. */
 int holy_override_plan(const char *name, const char *root_path, int json);
+/* applies the reviewed plan of one whole-file record, writing the body over the file it
+   names under the database writer lock. 0 written or already in place, 2 the approval
+   or the record is not usable, 3 the plan or the installed set changed, 5 an
+   unfinished transaction, 6 the record or the target root is unavailable. */
+int holy_override_apply(const char *name, const char *approved, const char *root_path,
+                        int json);
 
 /* one valid record with what the file it names holds in the target root. the caller
    owns the vector. */

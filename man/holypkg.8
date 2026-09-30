@@ -270,6 +270,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg override plan NAME --root DIRECTORY [--json]
 .br
+.B holypkg override apply NAME --sha256 PLAN_SHA256 --root DIRECTORY [--json]
+.br
 .B holypkg db check SHA256 --root DIRECTORY
 .br
 .B holypkg db check --all --root DIRECTORY
@@ -2745,8 +2747,20 @@ owner, both digests and the identity of the target root with its installed
 generation, so a plan that names a different artifact, a different file or a
 different database is a different plan. --json uses the holy-override-plan-1 schema.
 .PP
-Applying a record is not part of this command: it reports what a store says about the
-installed set, and prepares the one plan an apply would need.
+override apply is that plan applied. It takes the SHA-256 the plan printed, re-derives
+the plan and refuses it as status 3 when anything changed, then writes the record body
+over the file under the database writer lock. The body is written to a temporary beside
+the file and renamed over it, so the path keeps its name, its mode and its owner while
+the content is never half written; a crash leaves the file either as the record states
+or as the record does not yet apply to. Every installed mutation publishes a new
+generation, so an unchanged generation is the proof that the set is what the plan
+derived, and a record whose result is already in place is reported as already applied
+rather than written twice. --json uses the holy-override-apply-1 schema.
+.PP
+A patched file is payload drift by the manifest that recorded the packaged bytes, so
+db check reports it as a changed file afterwards. The record is the reason it is
+changed, and the plan refuses it because the file the record applies to is no longer
+there in the state the record described.
 .PP
 A set plan states the records it would write over and binds them, so a store that
 changed between the plan and the apply moves the plan hash and the apply is a
