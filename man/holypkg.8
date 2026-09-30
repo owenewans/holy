@@ -11,7 +11,7 @@ holypkg \- Holy local package tooling prototype
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
 .B holypkg import INPUT --source NAME
-.B "     --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|scoop|winget|nix|pkgbuild"
+.B "     --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|scoop|winget|nix|eopkg|pkgbuild"
 .B "     |void|aports|slackbuild|rpmspec|debian|gentoo|pacstall|flatpak"
 .br
 .B "     --output NEW_DIRECTORY [--public-key FILE (apk only)]"
@@ -2746,6 +2746,56 @@ Nothing is executed. No Nix store, daemon, profile or sandbox is reproduced, and
 program that opens an absolute /nix/store path needs a store view this manager does
 not build, which the report and the transform record name. import returns status 3
 after writing the output. NAME does not grant a registered source identity.
+.SS Solus eopkg
+import FILE.eopkg --source NAME --format eopkg --output NEW_DIRECTORY reads one Solus
+binary package and writes a conversion directory holding the artifact, one native
+package and an eopkg report. An eopkg is a ZIP carrying metadata.xml, files.xml and
+an install tar. The metadata is required and the install tar is required, and an
+artifact missing either is refused with status 2. A member this reader does not
+model is counted rather than dropped, and a member that is not a regular file is
+refused, since an eopkg is a set of regular files.
+.PP
+The metadata is read as XML text. A value lands in its own context, so a Name under
+Source is a packager identity and the Name under Package is the package name, and a
+dependency under BuildDependencies is not a runtime requirement. The fields carried
+are the name, the version, the architecture, the summary, the license, the source
+URL, the component PartOf names, the PiSi format and each RuntimeDependencies entry
+with the distribution release its releaseFrom attribute states. Solus states no
+release of its own, so the native release is 1. A metadata without a name, a version
+or an architecture is refused with status 2, and a document that is not well formed
+or that ends inside an element is refused the same way. An element this reader does
+not model is counted: a description, a packager, a history entry, a conflict, a
+replacement and a declared capability are all named in the report and none of them
+becomes a requirement.
+.PP
+The architecture decides the placement. noarch, x86_64, i686, aarch64 and armv7hl
+name an architecture this manager places, and anything else needs classification, so
+the import returns status 3 without writing a package.
+.PP
+The install tar travels whole under /usr/lib/holy/private/NAME/eopkg/. A Solus
+package owns a system layout, and this manager records that layout rather than
+claiming it, so the payload installs under a private path and claims no public bin
+path. A leading ./ names the same path and is dropped; a member that names .. is
+refused rather than placed, and the conversion is refused with status 1. A payload
+that is not an archive this reader can read is refused the same way. A member that is
+neither a regular file, a directory nor a symbolic link is skipped and counted, and a
+symbolic link whose target leaves the private tree becomes a recorded file
+requirement on the path it named.
+.PP
+Each runtime dependency becomes one exact package requirement on the package name,
+with any architecture and any runtime, since the dependency names a repository member
+and not a file the payload can place. The original field is the releaseFrom value
+when the metadata states one and - when it does not, because a distribution release
+is a property of the repository rather than of the dependency. A SONAME the payload
+needs and does not provide becomes a SONAME requirement, and a package requirement on
+the package name is recorded as well.
+.PP
+Nothing is executed. An install script, a COMAR object, a delta, a signature and a
+declared file list are named in the report and dropped: a COMAR object is a lifecycle
+ABI this manager does not provide, a delta is a different payload rather than a
+patch, and a signature is recorded without being trusted, so the artifact is verified
+by its own digest only. import returns status 3 after writing the output. NAME does
+not grant a registered source identity.
 .SS Split proposal
 holypkg split TREE --output NEW_FILE [--split OUTPUT GLOB ...] reads one prepared
 package tree, the HOLY and DATA shape that manifest generate and pack consume, and

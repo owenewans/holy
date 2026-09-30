@@ -591,6 +591,16 @@
   provides from classified ELF payloads, so a selected archive can supply
   separate file-level evidence. Complex patterns remain review-required. Key enrollment,
   automatic provider selection and a file index remain open.
+  A Solus eopkg importer now reads the ZIP artifact, carries the metadata as text and
+  walks the install tar with libarchive. The metadata is read in its own context, so a
+  packager identity is not a package name and a build dependency is not a runtime
+  requirement; a description, a history entry, a conflict, a replacement and a
+  declared capability are counted and named rather than imported. Each runtime
+  dependency becomes one exact package requirement whose original field is the
+  releaseFrom value the metadata states. The install tar travels whole under a private
+  path, since a Solus layout is recorded rather than claimed, and an install script, a
+  COMAR object, a delta and a signature are dropped rather than run or trusted. Homebrew
+  and Guix remain open.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
   Gentoo and Pacstall recipe conversion with helper environments and split
   outputs.
@@ -944,6 +954,23 @@
   `make check-cc` now compiles the core with tcc, gcc and clang in turn, packs a
   package with each result and verifies it, and returns 6 when a toolchain is
   absent, so the three named host compilers are checked rather than assumed.
+  The Solus eopkg importer reads a ZIP artifact holding metadata.xml, files.xml and
+  an install tar, and emits one native package. The metadata is read as XML text in
+  its own element context, so a Name under Source is a packager identity rather than
+  the package name and a BuildDependencies entry is not a runtime requirement. Each
+  RuntimeDependencies entry becomes one exact package requirement whose original
+  field is the releaseFrom value, since a distribution release is a property of the
+  repository and not of the dependency. Solus states no release, so the native one
+  is 1, and an architecture this manager does not place is a decision rather than a
+  guess. The install tar travels whole under /usr/lib/holy/private/NAME/eopkg/, a
+  leading ./ is dropped, a member naming .. is refused, and a link that leaves the
+  private tree becomes a recorded file requirement. An install script, a COMAR
+  object, a delta, a signature and a declared file list are named in the report and
+  dropped: nothing runs and no signature is trusted. A fixture converts a real
+  artifact, installs the package beside a provider that closes the requirement,
+  checks the private layout is what landed, and refuses a missing metadata, a
+  missing install tar, a malformed document, an unplaceable path and an unknown
+  architecture.
 - [ ] Implement `holypkg run`, context-specific provider paths, grouped `up --prepare`,
   isolated root/VM trials and full `check` reports.
   The existing run launcher now derives private PATH directories from the

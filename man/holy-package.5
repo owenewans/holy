@@ -179,6 +179,20 @@ reference to a store path it does not carry becomes a requirement whose original
 is the store hash and which names no architecture or runtime. Nix states no version,
 so every package records version 0 and the store hash is its identity in
 x-nix-store-hash. HOLY/hooks stays empty because nothing runs at install.
+.PP
+The Solus eopkg importer records family eopkg with the converter holy-eopkg-1, the
+artifact digest, the original version, the original architecture, the PiSi format,
+the install tar digest and mode artifact in HOLY/origin, and it writes
+x-eopkg-format, x-source-arch and x-eopkg-component into the metadata. The install
+tar travels whole under /usr/lib/holy/private/NAME/eopkg/, since a Solus layout is
+recorded rather than claimed. HOLY/transform records the private layout, the install
+tar digest, the dropped install script and COMAR object, the dropped delta and the
+untrusted signature. Each runtime dependency becomes one exact package requirement
+whose original field is the releaseFrom value the metadata states, or - when it
+states none, since a distribution release is a property of the repository rather than
+of the dependency. A SONAME the payload needs and does not provide becomes a SONAME
+requirement, and the package name is provided as a package capability. HOLY/hooks
+stays empty because nothing runs at install.
 .SH INSTALLED GRAPH
 New local installations use holy-instance-4 state, or holy-instance-5 when an
 explicit non-native architecture placement decision was accepted. Version 5 adds
