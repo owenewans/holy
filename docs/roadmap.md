@@ -575,7 +575,12 @@
   cache walk cannot see: every installed artifact whose cached object is absent,
   named with its package name and the no-cached-object reason, followed by a
   generation, cached, unavailable and unretained summary, so a cache requirement
-  is visible before a plan needs it. Resolve add, fetch, search and info without
+  is visible before a plan needs it. A retained object that a transaction record
+  refers to now carries reason transaction-reference, and one whose transaction tree
+  is too deep to inspect carries reason unverified-transactions, so the provenance
+  cache clean checks is visible without failing a whole-cache inventory. The walk
+  rewinds the shared directory offset, since a repeated walk over one descriptor
+  would otherwise see an exhausted stream. Resolve add, fetch, search and info without
   repeating --catalog; reject corrupt bindings and changed mirrors. Keep the
   binding across alias renames. Sync without --output now publishes a verified
   generation in the target cache and binds it for source queries. A registered

@@ -129,6 +129,11 @@ replace() {
     expect 0 "$bin" orphan --root "$copy_root" --json
 }
 replace "$old" "$new"
+# the replaced artifact keeps its object because a committed transaction refers to it
+expect 0 "$bin" cache list --root "$copy_root"
+grep -qx "cache $old size [0-9][0-9]* retained reason transaction-reference" "$tmp/out"
+grep -qx "cache $new size [0-9][0-9]* installed" "$tmp/out"
+test "$(sed -n 's/^cache [0-9a-f]* size [0-9]* retained$/retained/p' "$tmp/out" | wc -l)" -ge 1
 grep -qx base2 "$copy_root/usr/share/payload"
 grep -q "\"$new\"" "$copy_root/var/lib/holypkg/installed/$app/graph"
 if grep -q "\"$old\"" "$copy_root/var/lib/holypkg/installed/$app/graph"; then exit 1; fi

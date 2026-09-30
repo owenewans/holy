@@ -1200,7 +1200,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=81328f01b66b4d04ed81bd3d9a8f288911e134e0232e1a6760154440cc704ad6
+holypkg.8 source=holy version=development sha256=e08ab7c44f710bbe55d6ca721109c5a30a77e09911219e55c359d2faaba81971
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -3385,8 +3385,13 @@ DESCRIPTION
      the  verified  name,  arch	 and libc. It does not mutate the cache or prove
      that other package dependencies can be satisfied.	cache list reads SHA-256
      objects in name order and reports size and current	 installed-slot	 status.
-     It	 also  shows  hashes  marked unavailable after explicit deletion. It re-
-     quires an intact database and does not verify payload bytes.
+     An object no instance owns is retained, and a retained object that a trans-
+     action  record refers to carries reason transaction-reference, which is the
+     provenance cache clean checks before deletion. A transaction tree too  deep
+     to	 inspect  is  reported as reason unverified-transactions, since a whole-
+     cache inventory is still a fact and an unproven provenance is not	a  fail-
+     ure.  It  also  shows hashes marked unavailable after explicit deletion. It
+     requires an intact database and does not verify payload bytes.
 
      The list then reports the reverse fact an installed  set  can  hold  and  a
      cache  walk  cannot see: each installed artifact whose cached object is ab-

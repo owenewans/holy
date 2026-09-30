@@ -2190,7 +2190,13 @@ verified name, arch and libc. It does not mutate the cache or prove that
 other package dependencies can be satisfied.
 .B cache list
 reads SHA-256 objects in name order and reports size and current installed-slot
-status. It also shows hashes marked unavailable after explicit deletion. It
+status. An object no instance owns is retained, and a retained object that a
+transaction record refers to carries reason transaction-reference, which is the
+provenance cache clean checks before deletion. A transaction tree too deep to
+inspect is reported as reason unverified-transactions, since a whole-cache
+inventory is still a fact and an unproven provenance is not a failure. It also
+shows hashes marked
+unavailable after explicit deletion. It
 requires an intact database and does not verify payload bytes.
 .PP
 The list then reports the reverse fact an installed set can hold and a cache walk

@@ -264,7 +264,9 @@ static int transaction_refs(int dir, const char *digest, unsigned depth)
     DIR *list;
     struct dirent *entry;
     int result = 0;
-    if (depth > 4 || (list = fdopendir(dup(dir))) == NULL) return -1;
+    /* a dup shares the directory offset, so a repeated walk rewinds it first */
+    if (depth > 4 || lseek(dir, 0, SEEK_SET) < 0 ||
+        (list = fdopendir(dup(dir))) == NULL) return -1;
     errno = 0;
     while ((entry = readdir(list))) {
         struct stat st;
@@ -337,24 +339,35 @@ int holy_cache_list(const char *root_path)
     size_t count = 0, i, cached = 0, unavailable_count = 0;
     struct unretained state = {-1, 0, 0};
     unsigned long long generation;
-    int status = 1, state_fd = -1, installed = -1, cache = -1, unavailable = -1, result = 1;
+    int status = 1, state_fd = -1, installed = -1, transactions = -1, cache = -1;
+    int unavailable = -1, result = 1;
     state_fd = holy_state_lock(root_path, 0, &generation, &status);
     if (state_fd < 0) return status;
     installed = openat(state_fd, "installed", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    transactions = openat(state_fd, "transactions",
+                         O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     cache = cache_directory(root_path, 0);
-    if (installed < 0 || cache < 0 || flock(cache, LOCK_SH) ||
+    if (installed < 0 || transactions < 0 || cache < 0 || flock(cache, LOCK_SH) ||
         !cache_names(cache, &names, &count, 0)) goto done;
     for (i = 0; i < count; ++i) {
         struct stat st, used;
         char digest[65];
+        int refs;
         memcpy(digest, names[i], 64); digest[64] = 0;
         if (fstatat(cache, names[i], &st, AT_SYMLINK_NOFOLLOW) || !S_ISREG(st.st_mode)) goto done;
         if (!fstatat(installed, digest, &used, AT_SYMLINK_NOFOLLOW)) {
             if (!S_ISDIR(used.st_mode)) goto done;
             printf("cache %s size %ju installed\n", digest, (uintmax_t)st.st_size);
-        } else if (errno == ENOENT)
-            printf("cache %s size %ju retained\n", digest, (uintmax_t)st.st_size);
-        else goto done;
+            continue;
+        } else if (errno != ENOENT) goto done;
+        /* an object no instance owns is either plain retained or kept because a
+           transaction record refers to it, which is the provenance clean needs. a
+           transaction tree too deep to inspect is reported as unproven rather than
+           failing an inventory of the whole cache. */
+        refs = transaction_refs(transactions, digest, 0);
+        printf("cache %s size %ju retained%s\n", digest, (uintmax_t)st.st_size,
+               refs > 0 ? " reason transaction-reference" :
+               refs < 0 ? " reason unverified-transactions" : "");
     }
     cached = count;
     for (i = 0; i < count; ++i) free(names[i]);
@@ -385,6 +398,7 @@ done:
     free(names);
     if (unavailable >= 0) close(unavailable);
     if (cache >= 0) close(cache);
+    if (transactions >= 0) close(transactions);
     if (installed >= 0) close(installed);
     if (state_fd >= 0) close(state_fd);
     return result;
