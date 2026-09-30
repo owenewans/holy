@@ -2729,6 +2729,16 @@ one review is 3 and one invalid record is 2. The summary line counts every state
 .PP
 Applying a record, and the conditions under which a set re-applies one, are not part
 of this command: it reports what a store says about the installed set.
+.PP
+A set plan states the records it would write over and binds them, so a store that
+changed between the plan and the apply moves the plan hash and the apply is a
+decision rather than a silent overwrite. The plan line is
+override NAME path PATH file STATE patch SHA256, where the file state is applied when
+the file carries the recorded result, pending when it carries the recorded source,
+absent when the target root has no such file, and review when the file is neither.
+Only a record whose path the set writes is stated, and the read takes no database
+lock, so a plan and the apply that follows it compare the same store. An update plan
+does not bind records yet.
 .SH INSTALLED FILE INDEX
 index reads a consistent installed-state snapshot under the database's shared lock
 and answers two questions the planner answers internally: which installed artifact

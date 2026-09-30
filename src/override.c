@@ -44,6 +44,7 @@ struct override_record {
     char *owner_version;
     char *owner_arch;
     char *state;
+    char *file;
     char *detail;
 };
 
@@ -453,7 +454,7 @@ static void store_free(struct override_store *store)
         free(record->source_digest); free(record->patch_digest);
         free(record->result_digest); free(record->owner); free(record->owner_name);
         free(record->owner_version); free(record->owner_arch);
-        free(record->state); free(record->detail);
+        free(record->state); free(record->file); free(record->detail);
     }
     free(store->records);
     memset(store, 0, sizeof *store);
@@ -483,14 +484,95 @@ static void summary(size_t records, size_t applied, size_t pending, size_t absen
                records, applied, pending, absent, review, invalid);
 }
 
+/* loads every record of the store in name order. a record that is not one is kept with
+   its own state, so a report names it instead of dropping it. */
+static int store_load(int listing, struct override_store *store, size_t *invalid)
+{
+    char **names = NULL;
+    size_t count = 0, i;
+    DIR *directory;
+    int ok = 1;
+    if (!(directory = fdopendir(dup(listing)))) return 0;
+    errno = 0;
+    while (names == NULL || count < OVERRIDE_LIMIT) {
+        struct dirent *entry = readdir(directory);
+        char **grown;
+        size_t length;
+        if (!entry) break;
+        length = strlen(entry->d_name);
+        if (length < 10 || strcmp(entry->d_name + length - 9, ".override")) continue;
+        grown = realloc(names, (count + 1) * sizeof *grown);
+        if (!grown || !(grown[count] = strdup(entry->d_name))) { ok = 0; goto done; }
+        names = grown;
+        ++count;
+    }
+    if (count) qsort(names, count, sizeof *names, names_order);
+    for (i = 0; i < count; ++i) {
+        struct override_record record;
+        unsigned char *data = NULL;
+        size_t size = 0;
+        char *message = NULL;
+        if (!record_read(listing, names[i], &data, &size)) {
+            struct override_record unreadable = {0};
+            unreadable.name = strdup(names[i]);
+            unreadable.state = strdup("unreadable");
+            unreadable.detail = strdup("override file is not a readable regular file");
+            if (!record_push(store, &unreadable)) { ok = 0; goto done; }
+            ++*invalid;
+            continue;
+        }
+        if (!record_parse(names[i], (const char *)data, size, &record, &message)) {
+            struct override_record broken = {0};
+            broken.name = strdup(names[i]);
+            broken.state = strdup("invalid");
+            broken.detail = message ? message : strdup("not a valid holy-override-1 record");
+            free(data);
+            if (!record_push(store, &broken)) { ok = 0; goto done; }
+            ++*invalid;
+            continue;
+        }
+        free(data);
+        if (!record_push(store, &record)) { ok = 0; goto done; }
+    }
+done:
+    for (i = 0; i < count; ++i) free(names[i]);
+    free(names);
+    return ok;
+}
+
+/* the state of one record against the installed set. an absent store has no record. */
+static int store_state(struct override_store *store, const char *root_path, int root,
+                       unsigned long long *generation)
+{
+    size_t i;
+    for (i = 0; i < store->count; ++i) {
+        struct override_record *record = &store->records[i];
+        struct override_owner owner;
+        int visit;
+        if (!record->path) continue;
+        memset(&owner, 0, sizeof owner);
+        owner.path = record->path;
+        owner.relative = record->path + 1;
+        visit = holy_state_visit(root_path, owner_visit, &owner, generation);
+        if (visit) {
+            free(record->state);
+            record->state = strdup("unreadable");
+            free(record->detail);
+            record->detail = strdup(visit == 5 ? "unfinished transaction" :
+                                    "the installed set could not be read");
+            continue;
+        }
+        record_state(record, root, &owner);
+    }
+    return 0;
+}
+
 int holy_override_list(const char *root_path, int json)
 {
     struct override_store store = {0};
     unsigned long long generation = 0;
-    char **names = NULL;
-    size_t count = 0, i, applied = 0, pending = 0, absent = 0, review = 0, invalid = 0;
+    size_t i, applied = 0, pending = 0, absent = 0, review = 0, invalid = 0;
     int status = 1, root = -1, listing = -1, visit = 0;
-    DIR *directory;
 
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0) {
@@ -518,75 +600,13 @@ int holy_override_list(const char *root_path, int json)
         status = 6;
         goto done;
     }
-    if (!(directory = fdopendir(dup(listing)))) {
+    if (!store_load(listing, &store, &invalid) ||
+        store_state(&store, root_path, root, &generation)) {
         status = 1;
         goto done;
     }
-    errno = 0;
-    while (names == NULL || count < OVERRIDE_LIMIT) {
-        struct dirent *entry = readdir(directory);
-        char **grown;
-        size_t length;
-        if (!entry) break;
-        length = strlen(entry->d_name);
-        if (length < 10 || strcmp(entry->d_name + length - 9, ".override")) continue;
-        grown = realloc(names, (count + 1) * sizeof *grown);
-        if (!grown || !(grown[count] = strdup(entry->d_name))) {
-            status = 1;
-            goto done;
-        }
-        names = grown;
-        ++count;
-    }
-    if (count) qsort(names, count, sizeof *names, names_order);
-    for (i = 0; i < count; ++i) {
-        struct override_record record;
-        unsigned char *data = NULL;
-        size_t size = 0;
-        char *message = NULL;
-        if (!record_read(listing, names[i], &data, &size)) {
-            struct override_record unreadable = {0};
-            unreadable.name = strdup(names[i]);
-            unreadable.state = strdup("unreadable");
-            unreadable.detail = strdup("override file is not a readable regular file");
-            if (!record_push(&store, &unreadable)) { status = 1; goto done; }
-            ++invalid;
-            continue;
-        }
-        if (!record_parse(names[i], (const char *)data, size, &record, &message)) {
-            struct override_record broken = {0};
-            broken.name = strdup(names[i]);
-            broken.state = strdup("invalid");
-            broken.detail = message ? message : strdup("not a valid holy-override-1 record");
-            free(data);
-            if (!record_push(&store, &broken)) { status = 1; goto done; }
-            ++invalid;
-            continue;
-        }
-        free(data);
-        if (!record_push(&store, &record)) { status = 1; goto done; }
-    }
-    /* the owner of a path comes from the installed manifests, so a record never claims
-       an artifact by its own word, and an unfinished transaction is reported instead of
-       a set read half way. */
     for (i = 0; i < store.count; ++i) {
         struct override_record *record = &store.records[i];
-        if (record->path) {
-            struct override_owner owner;
-            memset(&owner, 0, sizeof owner);
-            owner.path = record->path;
-            owner.relative = record->path + 1;
-            visit = holy_state_visit(root_path, owner_visit, &owner, &generation);
-            if (visit) {
-                free(record->state);
-                record->state = strdup("unreadable");
-                free(record->detail);
-                record->detail = strdup(visit == 5 ? "unfinished transaction" :
-                                        "the installed set could not be read");
-            } else {
-                record_state(record, root, &owner);
-            }
-        }
         record_print(record, json);
         if (!strcmp(record->state, "applied")) ++applied;
         else if (!strcmp(record->state, "pending")) ++pending;
@@ -599,10 +619,86 @@ int holy_override_list(const char *root_path, int json)
     else if (review) status = 3;
     else status = 0;
 done:
-    for (i = 0; i < count; ++i) free(names[i]);
-    free(names);
     if (listing >= 0) close(listing);
     if (root >= 0) close(root);
     store_free(&store);
+    return status;
+}
+
+/* the state of the file a record names, read through the root. it needs no database
+   lock, so a plan and the apply that follows it read the same bytes. */
+static void record_file_state(struct override_record *record, int root)
+{
+    char digest[65];
+    if (!root_digest(root, record->path, digest)) {
+        record->file = strdup("absent");
+        return;
+    }
+    if (!strcmp(digest, record->result_digest)) record->file = strdup("applied");
+    else if (!strcmp(digest, record->source_digest)) record->file = strdup("pending");
+    else record->file = strdup("review");
+}
+
+void holy_override_records_free(struct holy_override_record_info *records, size_t count)
+{
+    size_t i;
+    for (i = 0; i < count; ++i) {
+        free(records[i].name);
+        free(records[i].path);
+        free(records[i].file);
+        free(records[i].patch);
+    }
+    free(records);
+}
+
+int holy_override_records(const char *root_path, struct holy_override_record_info **records,
+                          size_t *record_count)
+{
+    struct override_store store = {0};
+    struct holy_override_record_info *found = NULL;
+    size_t invalid = 0, count = 0, i;
+    int status = 1, root = -1, listing = -1;
+
+    *records = NULL;
+    *record_count = 0;
+    root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0) return 1;
+    listing = openat(root, overrides_path,
+                     O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (listing < 0) {
+        status = errno == ENOENT ? 0 : 1;
+        goto done;
+    }
+    if (!store_load(listing, &store, &invalid)) goto done;
+    for (i = 0; i < store.count; ++i) {
+        struct override_record *record = &store.records[i];
+        struct holy_override_record_info info = {0};
+        struct holy_override_record_info *grown;
+        if (!record->path || !record->patch_digest) continue;
+        record_file_state(record, root);
+        info.name = strdup(record->name);
+        info.path = strdup(record->path);
+        info.file = record->file ? strdup(record->file) : NULL;
+        info.patch = strdup(record->patch_digest);
+        if (!info.name || !info.path || !info.file || !info.patch) {
+            free(info.name); free(info.path); free(info.file); free(info.patch);
+            goto done;
+        }
+        grown = realloc(found, (count + 1) * sizeof *grown);
+        if (!grown) {
+            free(info.name); free(info.path); free(info.file); free(info.patch);
+            goto done;
+        }
+        found = grown;
+        found[count++] = info;
+    }
+    *records = found;
+    *record_count = count;
+    status = 0;
+done:
+    if (listing >= 0) close(listing);
+    if (root >= 0) close(root);
+    store_free(&store);
+    if (status) holy_override_records_free(found, count);
     return status;
 }

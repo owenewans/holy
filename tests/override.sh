@@ -13,7 +13,11 @@ expect() {
     shift
     rc=0
     "$@" > "$tmp/out" 2> "$tmp/err" || rc=$?
-    test "$rc" -eq "$wanted" || { cat "$tmp/out" "$tmp/err"; exit 1; }
+    test "$rc" -eq "$wanted" || {
+        echo "status $rc wanted $wanted: $*" >&2
+        cat "$tmp/out" "$tmp/err" >&2
+        exit 1
+    }
 }
 printf 'packaged line\n' > "$tmp/foo.conf"
 printf 'second packaged line\n' > "$tmp/bar.conf"
@@ -147,6 +151,66 @@ cp "$tmp/foo.conf" "$root/etc/foo.conf"
 rm "$store/e-absent.override"
 expect 0 "$bin" override list --root "$root"
 grep -qx "override-summary records 2 applied 1 pending 1 not-installed 0 review 0 invalid 0 read-only" "$tmp/out"
+# a set states the records it would write over and binds them into its plan, so a
+# store that changed between the plan and the apply moves the plan hash
+# a record the store keeps for a file no installed artifact owns yet
+printf 'extra packaged line\n' > "$tmp/extra.conf"
+extra=$(tree_digest "$tmp/extra.conf")
+cat > "$store/i-extra.override" <<EOF
+format holy-override-1
+scope artifact
+digest $artifact
+path /etc/extra.conf
+sha256 $other
+patch $body
+result $extra
+EOF
+cat "$tmp/body" >> "$store/i-extra.override"
+rm -rf "$tree"
+mkdir -p "$tree/HOLY" "$tree/DATA/etc"
+printf 'format holy-package-1\nname override-fixture-two\nversion 1\nrelease 1\nos linux\narch noarch\nlibc nolibc\n' > "$tree/HOLY/meta"
+for field in deps provides hooks origin transform; do : > "$tree/HOLY/$field"; done
+cp "$tmp/extra.conf" "$tree/DATA/etc/extra.conf"
+expect 0 "$bin" manifest generate "$tree" --output "$tmp/files2"
+mv "$tmp/files2" "$tree/HOLY/files"
+expect 0 "$bin" pack "$tree" --output "$tmp/override-fixture-two.holy"
+expect 0 "$bin" cache stage "local:$tmp/override-fixture-two.holy" --root "$root"
+second=$(tree_digest "$tmp/override-fixture-two.holy")
+expect 0 "$bin" db plan-set "$second" --root "$root"
+grep -qx "override i-extra.override path /etc/extra.conf file absent patch $body" "$tmp/out"
+test "$(grep -c '^override ' "$tmp/out")" -eq 1
+set_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+test -n "$set_plan"
+# the same selection without the store is a different plan, since the records are inputs
+mv "$store" "$tmp/store-away"
+expect 0 "$bin" db plan-set "$second" --root "$root"
+bare_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+test "$bare_plan" != "$set_plan"
+test "$(grep -c '^override ' "$tmp/out")" -eq 0
+mv "$tmp/store-away" "$store"
+# a store that gained a record the plan did not see is a decision, not a silent change
+cat > "$store/h-added.override" <<EOF
+format holy-override-1
+scope artifact
+digest $artifact
+path /etc/extra.conf
+sha256 $other
+patch $body
+result $extra
+EOF
+cat "$tmp/body" >> "$store/h-added.override"
+expect 3 "$bin" db apply-set "$set_plan" "$second" --root "$root"
+test ! -e "$root/etc/extra.conf"
+rm "$store/h-added.override"
+expect 0 "$bin" db apply-set "$set_plan" "$second" --root "$root"
+grep -qx 'extra packaged line' "$root/etc/extra.conf"
+# a new artifact writing a file a record covered leaves that record naming another
+# artifact, which is the review the record cannot decide for itself
+expect 3 "$bin" override list --root "$root"
+grep -qx "override i-extra.override state review scope artifact $artifact path /etc/extra.conf arch any libc any" "$tmp/out"
+grep -qx "override-owner i-extra.override $second override-fixture-two 1 noarch" "$tmp/out"
+grep -qx 'override-detail i-extra.override scope or conditions name another artifact' "$tmp/out"
+grep -qx "override-summary records 3 applied 1 pending 1 not-installed 0 review 1 invalid 0 read-only" "$tmp/out"
 # a root without a database cannot answer which artifact owns a path
 mkdir "$tmp/empty"
 expect 6 "$bin" override list --root "$tmp/empty"

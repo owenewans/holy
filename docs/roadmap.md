@@ -400,8 +400,12 @@
   covers all six states, a scope naming another artifact, a body that is
   not the recorded patch, a store entry that is not a regular file, a file
   that cannot be read through the root and a root with no database.
-  Applying a record and re-applying one on a later version are still open,
-  as are service consent, general rollback and per-phase recovery.
+  A set plan states the records it would write over and binds them into the plan
+  hash, so a store that changed between the plan and the apply is status 3 instead
+  of a silent overwrite; the read takes no database lock, so a plan and its apply
+  compare the same store. Applying a record and re-applying one on a later version
+  are still open, and an update plan does not bind records yet, as do service
+  consent, general rollback and per-phase recovery.
 - [x] Carry config/mutable flags through verified manifests and installed checks;
   import Debian conffiles as config files, reject invalid declarations, and
   report changed-config.

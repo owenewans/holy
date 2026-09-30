@@ -9,6 +9,7 @@
 #include "package.h"
 #include "install.h"
 #include "conflict.h"
+#include "override.h"
 #include "config.h"
 #include "resolve.h"
 #include "scan.h"
@@ -54,6 +55,9 @@ static char *update_record(int dir, const char *name);
 static int installed_fields(int item, const char *const *keys,
                              const char *const *values, size_t fields);
 static int valid_owner_path(const char *path);
+struct install_set;
+static int set_override_records(struct install_set *,
+                                const struct holy_override_record_info *, size_t);
 static int loader_directories(const struct holy_elf_info *elf, const char *consumer,
                               char ***directories, size_t *count);
 static int default_loader_directories(const char *machine, char ***directories, size_t *count);
@@ -3261,6 +3265,8 @@ struct install_set {
     size_t graph_length;
     char **bindings;
     size_t binding_count;
+    struct holy_override_record_info *overrides;
+    size_t override_count;
     char hash[65];
     char host[65];
     char catalog_index[65];
@@ -3297,6 +3303,7 @@ static void free_set(struct install_set *set)
     free(set->graph);
     for (i = 0; i < set->binding_count; ++i) free(set->bindings[i]);
     free(set->bindings);
+    holy_override_records_free(set->overrides, set->override_count);
     holy_resolution_free(&set->resolution);
     memset(set, 0, sizeof *set);
 }
@@ -4167,6 +4174,8 @@ static int build_set(const char *root_path, int root, int dir,
                       const char *const *accepted_arch, size_t accepted_count,
                       const char *const *accepted_privileged, size_t privileged_count,
                       const char *const *skipped_hooks, size_t skipped_count,
+                      const struct holy_override_record_info *override_records,
+                      size_t override_record_count,
                       struct install_set *set)
 {
     char **snapshots = NULL;
@@ -4440,6 +4449,15 @@ static int build_set(const char *root_path, int root, int dir,
         snprintf(binding, 130, "%s=%s", set->items[i].identity.digest,
                  set->items[i].source_id);
         set->bindings[set->binding_count++] = binding;
+    }
+    if (!set_override_records(set, override_records, override_record_count)) goto done;
+    for (i = 0; i < set->override_count; ++i) {
+        char line[512];
+        int length = snprintf(line, sizeof line, "override %s %s %s %s\n",
+                              set->overrides[i].name, set->overrides[i].path,
+                              set->overrides[i].file, set->overrides[i].patch);
+        if (length < 0 || (size_t)length >= sizeof line ||
+            !hash_text(plan.hash, line)) goto done;
     }
     if (EVP_DigestFinal_ex(plan.hash, digest, &length) != 1 || length != 32) goto done;
     for (i = 0; i < 32; ++i) snprintf(set->hash + i * 2, 3, "%02x", digest[i]);
@@ -4723,6 +4741,51 @@ static int set_generation(int dir, unsigned long long generation)
     return ok;
 }
 
+/* a user override record whose path this set writes is part of what the plan fixed, so
+   it is stated with the plan and bound into the plan hash. a store that changed between
+   the plan and the apply moves the hash, which is the check the plan needs. the records
+   are read before the database lock, since the store walk takes no lock at all. */
+static int set_override_records(struct install_set *set,
+                                const struct holy_override_record_info *records,
+                                size_t record_count)
+{
+    struct holy_override_record_info *covered = NULL;
+    size_t i, count = 0;
+    for (i = 0; i < record_count; ++i) {
+        struct set_claim key = {0};
+        struct holy_override_record_info *grown;
+        key.path = records[i].path + 1;
+        if (!bsearch(&key, set->claims, set->claim_count, sizeof *set->claims, claim_order))
+            continue;
+        grown = realloc(covered, (count + 1) * sizeof *grown);
+        if (!grown) goto fail;
+        covered = grown;
+        covered[count] = records[i];
+        covered[count].name = strdup(records[i].name);
+        covered[count].path = strdup(records[i].path);
+        covered[count].file = strdup(records[i].file);
+        covered[count].patch = strdup(records[i].patch);
+        if (!covered[count].name || !covered[count].path || !covered[count].file ||
+            !covered[count].patch) { ++count; goto fail; }
+        ++count;
+    }
+    set->overrides = covered;
+    set->override_count = count;
+    return 1;
+fail:
+    holy_override_records_free(covered, count);
+    return 0;
+}
+
+static void print_set_overrides(const struct install_set *set)
+{
+    size_t i;
+    for (i = 0; i < set->override_count; ++i)
+        printf("override %s path %s file %s patch %s\n",
+               set->overrides[i].name, set->overrides[i].path,
+               set->overrides[i].file, set->overrides[i].patch);
+}
+
 /* the capabilities the selection itself offers twice, stated before a file is staged
    and in the plan that asked for it */
 static void print_set_conflicts(const struct install_set *set, unsigned long long generation)
@@ -4743,6 +4806,8 @@ static int state_set(const char *const *digests, size_t count, const char *choic
                      char plan_hash[65], int quiet)
 {
     struct install_set set = {0};
+    struct holy_override_record_info *override_records = NULL;
+    size_t override_record_count = 0;
     unsigned long long generation;
     int root = -1, dir = -1, installed = -1, transactions = -1, result = 1, journaled = 0;
     size_t i;
@@ -4750,6 +4815,13 @@ static int state_set(const char *const *digests, size_t count, const char *choic
     if ((approved && !valid_digest(approved)) || (choice && !set_choice_valid(choice))) return 2;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     dir = root < 0 ? -1 : state_dir_at(root, 0);
+    /* the override store is read before the database lock, since the plan binds what
+       the store says and the read must not wait for a lock this call takes */
+    if (dir >= 0 && holy_override_records(root_path, &override_records,
+                                           &override_record_count)) {
+        result = 1;
+        goto done;
+    }
     if (dir < 0 || flock(dir, approved ? LOCK_EX : LOCK_SH) ||
         !state_layout(dir, 0) || !read_generation(dir, &generation) ||
         generation == ULLONG_MAX || !empty_child(dir, "index")) goto done;
@@ -4758,7 +4830,8 @@ static int state_set(const char *const *digests, size_t count, const char *choic
     result = build_set(root_path, root, dir, generation, digests, count, choice, 0, bindings, binding_count,
                        default_source_id, catalog_index,
                        accepted_arch, accepted_count, accepted_privileged, privileged_count,
-                       skipped_hooks, skipped_count, &set);
+                       skipped_hooks, skipped_count, override_records,
+                       override_record_count, &set);
     if (result) goto done;
     if (!approved) {
         if (plan_hash) memcpy(plan_hash, set.hash, 65);
@@ -4767,6 +4840,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
                generation, set.resolution.root, set.count, set.paths, set.hash);
         if (set.catalog_index[0]) printf("catalog-index %s\n", set.catalog_index);
         print_set_conflicts(&set, generation);
+        print_set_overrides(&set);
         for (i = 0; i < set.count; ++i)
             printf("selected %s %s %s\n", set.items[i].identity.digest,
                    set.items[i].identity.name,
@@ -4792,6 +4866,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
     }
     if (strcmp(set.hash, approved)) { result = 3; goto done; }
     print_set_conflicts(&set, generation);
+    print_set_overrides(&set);
     installed = child_dir(dir, "installed", 0);
     transactions = child_dir(dir, "transactions", 0);
     if (installed < 0 || transactions < 0) { result = 1; goto done; }
@@ -4825,6 +4900,7 @@ done:
     if (result && !quiet) fprintf(stderr, "holypkg: package set failed (status %d)%s\n", result,
                         journaled ? "; incomplete set journal retained" : "");
     free_set(&set);
+    holy_override_records_free(override_records, override_record_count);
     if (transactions >= 0) close(transactions);
     if (installed >= 0) close(installed);
     if (dir >= 0) close(dir);
@@ -4974,6 +5050,8 @@ static int recover_set(const char *root_path, int resume)
 {
     struct install_set set = {0};
     struct set_journal journal = {0};
+    struct holy_override_record_info *override_records = NULL;
+    size_t override_record_count = 0;
     unsigned long long generation, recorded;
     const char **digests = NULL;
     unsigned char *present = NULL;
@@ -4982,6 +5060,8 @@ static int recover_set(const char *root_path, int resume)
     int root = -1, dir = -1, installed = -1, transactions = -1, result = 5;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     dir = root < 0 ? -1 : state_dir_at(root, 0);
+    if (dir >= 0 && holy_override_records(root_path, &override_records,
+                                           &override_record_count)) goto done;
     if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 1) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation)) { result = 1; goto done; }
     if (read_set_journal(dir, &journal) != 1 ||
@@ -5001,7 +5081,7 @@ static int recover_set(const char *root_path, int resume)
                   (const char *const *)journal.accepted_arch, journal.accepted_count,
                   (const char *const *)journal.accepted_privileged, journal.privileged_count,
                   (const char *const *)journal.skipped_hooks, journal.skipped_count,
-                  &set) ||
+                  override_records, override_record_count, &set) ||
         set.count != journal.count || strcmp(set.hash, journal.hash)) goto done;
     installed = child_dir(dir, "installed", 0);
     transactions = child_dir(dir, "transactions", 0);
@@ -5070,6 +5150,7 @@ done:
     free(present);
     free(digests);
     free_set(&set);
+    holy_override_records_free(override_records, override_record_count);
     free_set_journal(&journal);
     if (transactions >= 0) close(transactions);
     if (installed >= 0) close(installed);

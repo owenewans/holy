@@ -1212,7 +1212,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=dd19e5e9c72318bc139594a6c68f27481cffb318408c3fb6a4402517368e570b
+holypkg.8 source=holy version=development sha256=fabe64bbf4ae9778006497871da9b2f2769d1d6ee53dfe02b040105e7ab811af
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -3957,695 +3957,706 @@ USER OVERRIDES
      not part of this command: it reports what a store says about the  installed
      set.
 
+     A	set  plan  states  the	records it would write over and binds them, so a
+     store that changed between the plan and the apply moves the plan  hash  and
+     the  apply	 is  a decision rather than a silent overwrite. The plan line is
+     override NAME path PATH file STATE patch SHA256, where the	 file  state  is
+     applied  when the file carries the recorded result, pending when it carries
+     the recorded source, absent when the target root has no such file, and  re-
+     view  when the file is neither.  Only a record whose path the set writes is
+     stated, and the read takes no database lock, so a plan and the  apply  that
+     follows  it  compare  the	same store. An update plan does not bind records
+     yet.
+
 INSTALLED FILE INDEX
-     index  reads  a  consistent  installed-state  snapshot under the database's
+     index reads a consistent  installed-state	snapshot  under	 the  database's
      shared lock and answers two questions the planner answers internally: which
      installed artifact owns a path, and which artifacts provide a name. The de-
-     fault root is /. With no selector it prints the whole index,  one	artifact
-     record  followed by the paths it owns and the capabilities it declares, or-
+     fault  root  is /. With no selector it prints the whole index, one artifact
+     record followed by the paths it owns and the capabilities it declares,  or-
      dered by artifact hash, by path and by capability.
 
-     A path selector takes an absolute or a relative path, since  the  installed
-     manifests	record the relative form, and names the artifacts that own it. A
-     directory is shared and owns nothing, so it is not an index entry. A  capa-
-     bility  selector  takes  a kind and a name and names the artifacts that de-
-     clare it with the arch and libc each one records, since the  same	name  in
-     two  ABIs	is  two capabilities. Naming a path and a capability at once, or
+     A	path  selector takes an absolute or a relative path, since the installed
+     manifests record the relative form, and names the artifacts that own it.  A
+     directory	is shared and owns nothing, so it is not an index entry. A capa-
+     bility selector takes a kind and a name and names the  artifacts  that  de-
+     clare  it	with  the arch and libc each one records, since the same name in
+     two ABIs is two capabilities. Naming a path and a capability  at  once,  or
      one without the other, is a usage error.
 
-     A name with more than one provider is a candidate list, and the  status  is
-     1:	 choosing  one	of  them  would be a decision this report does not make,
-     which is what a fuzzy candidate becomes when nothing names	 the  choice.  A
-     path  or  a  capability no installed artifact owns or declares is status 6,
-     since an absent answer is not  a  proof  that  nothing  provides  it.  With
-     --json,  holy-file-index-1 records carry artifact, name, arch and libc, and
+     A	name  with more than one provider is a candidate list, and the status is
+     1: choosing one of them would be a decision  this	report	does  not  make,
+     which  is	what  a fuzzy candidate becomes when nothing names the choice. A
+     path or a capability no installed artifact owns or declares  is  status  6,
+     since  an	absent	answer	is  not	 a  proof that nothing provides it. With
+     --json, holy-file-index-1 records carry artifact, name, arch and libc,  and
      the path and capability records carry the artifact they belong to.	 The fi-
-     nal summary carries generation, artifacts, paths and  capabilities.  Status
-     is	 0 for one candidate or the whole index, 1 for several, 2 for an invalid
+     nal  summary  carries generation, artifacts, paths and capabilities. Status
+     is 0 for one candidate or the whole index, 1 for several, 2 for an	 invalid
      argument, 4 for an incomplete transaction, 5 for a pending transaction, and
      6 for an instance record that is unavailable.
 
 RUN INSTALLED COMMAND
      run selects one installed slot by source alias and package name. Use --arch
-     and --libc when several installed slots share that name.  The  local  alias
+     and  --libc  when	several installed slots share that name. The local alias
      selects a package installed without a registered source. A registered alias
      can still select its installed package after the source is removed from ac-
-     tive  config.   The  command after -- must be a bare name in a standard bin
-     directory, an absolute path in /usr/bin, /bin, /usr/sbin or  /sbin,  or  an
+     tive config.  The command after -- must be a bare name in	a  standard  bin
+     directory,	 an  absolute  path in /usr/bin, /bin, /usr/sbin or /sbin, or an
      absolute path the installed manifest owns under /usr/lib/holy/private/ARTI-
      FACT-ID/ with a bin directory and a plain file name after it. The last form
-     is	 how  a	 package whose payload is private names its own entry point. run
-     checks the installed manifest, including the  executable  bit  and	 current
+     is how a package whose payload is private names its own  entry  point.  run
+     checks  the  installed  manifest,	including the executable bit and current
      payload, before exec.
 
-     When  the	installed manifest owns a matching path under /usr/lib/holy/pri-
+     When the installed manifest owns a matching path  under  /usr/lib/holy/pri-
      vate/ARTIFACT-ID/, run selects it before the public path.	run prepends the
      selected package's manifest-owned private bin directories to PATH even when
-     the main executable uses a public path. It passes argv  unchanged	and  re-
+     the  main	executable  uses a public path. It passes argv unchanged and re-
      turns the program's exit status through exec. Without a path view this is a
-     direct  launcher.	It  does not replace shell builtins or intercept another
-     process that directly executes the public path. A private	path  still  re-
-     quires  an	 installation  transform that places and records the file there;
+     direct launcher. It does not replace shell builtins  or  intercept	 another
+     process  that  directly  executes the public path. A private path still re-
+     quires an installation transform that places and records  the  file  there;
      the current package installation flow does not create such a mapping from a
      conflicting public path.
 
-     With --root, run executes the selected file at that root's	 host  path.  It
-     does  not	chroot	or isolate the process. Dynamic interpreter and absolute
-     paths use the host's namespace, so a trial root must use a compatible  host
-     or	 a  static  program. An unavailable package or command returns 6; an al-
+     With  --root,  run	 executes the selected file at that root's host path. It
+     does not chroot or isolate the process. Dynamic  interpreter  and	absolute
+     paths  use the host's namespace, so a trial root must use a compatible host
+     or a static program. An unavailable package or command returns  6;	 an  al-
      tered payload returns 4. An incomplete transaction returns 5.
 
-     --view PUBLIC=PRIVATE maps one selected package-owned regular file	 or  di-
-     rectory  under  /usr/lib/holy/private/  onto an existing public path of the
-     same type.	 PUBLIC	 may  be  under	 /usr/bin,  /usr/sbin,	/bin,  /sbin  or
+     --view  PUBLIC=PRIVATE  maps one selected package-owned regular file or di-
+     rectory under /usr/lib/holy/private/ onto an existing public  path	 of  the
+     same  type.   PUBLIC  may	be  under  /usr/bin,  /usr/sbin,  /bin, /sbin or
      /usr/lib, or name an existing /app directory. run checks the selected pack-
      age manifest and current payload before creating user and mount namespaces.
-     It	 makes	mount propagation private, bind mounts the selected file, enters
-     the target root and execs the command with the  caller's  UID/GID	mapping.
-     Descendants  inherit  the	view; the mount ends with its namespace. No host
-     mount or setuid launcher is created. The user namespace maps  the	caller's
-     primary  UID and GID; supplementary groups are not remapped. If namespaces,
+     It makes mount propagation private, bind mounts the selected  file,  enters
+     the  target  root	and execs the command with the caller's UID/GID mapping.
+     Descendants inherit the view; the mount ends with its  namespace.	No  host
+     mount  or	setuid launcher is created. The user namespace maps the caller's
+     primary UID and GID; supplementary groups are not remapped. If  namespaces,
      openat2 or mounts are unavailable, run returns 6.	An unowned private path,
      missing target, symlink target or file/directory type mismatch is rejected.
-     Directory views require an existing target mountpoint; run does not  create
-     one  in the target root.  --view changes only the listed paths. With --view
-     and --root, the command executes inside the target root rather  than  at  a
+     Directory	views require an existing target mountpoint; run does not create
+     one in the target root.  --view changes only the listed paths. With  --view
+     and  --root,  the	command executes inside the target root rather than at a
      host-prefixed path.
 
      --auto-view derives regular-file bindings from the selected installed mani-
      fest: for a private path ending in usr/bin, bin, usr/sbin, sbin or usr/lib,
-     it	 binds that package-owned file over an existing matching public file. It
-     skips absent public paths and leaves directory views  to  explicit	 --view.
-     Explicit  --view  entries	take  precedence. Two private files claiming the
-     same public path require an explicit choice  and  return  decision-required
-     (3).  The	same  namespace,  ownership and payload checks apply; the option
+     it binds that package-owned file over an existing matching public file.  It
+     skips  absent  public  paths and leaves directory views to explicit --view.
+     Explicit --view entries take precedence. Two  private  files  claiming  the
+     same  public  path	 require an explicit choice and return decision-required
+     (3). The same namespace, ownership and payload  checks  apply;  the  option
      does not alter other processes or persist a provider switch.
 
    AppImage staging
-     appimage inspect accepts a type 2 ELF image, checks its x86 or  x86_64  ma-
+     appimage  inspect	accepts a type 2 ELF image, checks its x86 or x86_64 ma-
      chine type, locates one plausible SquashFS superblock and prints its offset
-     and  SHA-256.   The  command reads the image without executing its runtime.
-     appimage extract copies the exact image to a new private  output  directory
-     and  invokes  unsquashfs  with the recorded offset. It requires an unprivi-
-     leged user and an available unsquashfs command. The output contains  origi-
-     nal,  AppDir,  a  classification report and a conversion receipt with state
-     extracted-unclassified.  The report lists ELF  arch/libc/ISA,  interpreter,
-     DT_NEEDED,	 loader	 search	 paths, strong symbol versions, shebang scripts,
-     links that need a path view and unknown executables without following  sym-
-     links.  It reports the AppRun entrypoint and runtime probes that static in-
-     spection cannot close. No .holy is produced and no	 package  is  installed.
+     and SHA-256.  The command reads the image without	executing  its	runtime.
+     appimage  extract	copies the exact image to a new private output directory
+     and invokes unsquashfs with the recorded offset. It  requires  an	unprivi-
+     leged  user and an available unsquashfs command. The output contains origi-
+     nal, AppDir, a classification report and a conversion  receipt  with  state
+     extracted-unclassified.   The  report lists ELF arch/libc/ISA, interpreter,
+     DT_NEEDED, loader search paths, strong symbol  versions,  shebang	scripts,
+     links  that need a path view and unknown executables without following sym-
+     links. It reports the AppRun entrypoint and runtime probes that static  in-
+     spection  cannot  close.  No .holy is produced and no package is installed.
      This operation does not claim that the extracted program can run.
 
-     import  INPUT  --source  NAME --format appimage --output NEW_DIRECTORY uses
-     the same extraction, records NAME as unverified provenance and  then  emits
-     one  native package beside the review bundle. The package name is the image
-     file name without its .AppImage suffix, and  a  name  the	manifest  cannot
-     record  is refused with status 2 rather than rewritten. The version is read
-     from the desktop entry the image ships, X-AppImage-Version	 or  Version;  a
+     import INPUT --source NAME --format appimage  --output  NEW_DIRECTORY  uses
+     the  same	extraction, records NAME as unverified provenance and then emits
+     one native package beside the review bundle. The package name is the  image
+     file  name	 without  its  .AppImage  suffix, and a name the manifest cannot
+     record is refused with status 2 rather than rewritten. The version is  read
+     from  the	desktop	 entry the image ships, X-AppImage-Version or Version; a
      payload that states none records version 0 and the report says so. The arch
-     and  libc	come  from the payload's own ELF files, and a payload that mixes
-     architectures or runtimes is refused  with	 status	 3,  because  one  .holy
+     and libc come from the payload's own ELF files, and a  payload  that  mixes
+     architectures  or	runtimes  is  refused  with  status 3, because one .holy
      records one of each.
 
-     The  whole	 AppDir	 travels under /usr/lib/holy/private/NAME/appdir/, so no
+     The whole AppDir travels under  /usr/lib/holy/private/NAME/appdir/,  so  no
      public path is claimed for the image's own files. The entry point is reach-
-     able  as  /usr/lib/holy/private/NAME/usr/bin/NAME.appimage,   a   link   to
-     ../../appdir/AppRun,  and /usr/bin/NAME is a launcher that starts that file
-     in the package run context with holypkg run  SOURCE:NAME.	When  the  image
-     ships  an	app  tree the launcher adds a path view from /app, and only when
-     the target has /app. The launcher refuses to run as root because  the  con-
-     verted   payload	is   no	  sandbox.  The	 desktop  entry	 is  carried  to
+     able   as	 /usr/lib/holy/private/NAME/usr/bin/NAME.appimage,   a	link  to
+     ../../appdir/AppRun, and /usr/bin/NAME is a launcher that starts that  file
+     in	 the  package  run  context with holypkg run SOURCE:NAME. When the image
+     ships an app tree the launcher adds a path view from /app,	 and  only  when
+     the  target  has /app. The launcher refuses to run as root because the con-
+     verted  payload  is  no  sandbox.	The  desktop   entry   is   carried   to
      /usr/share/applications/NAME.desktop with Exec and TryExec rewritten to the
-     launcher, and the classification and conversion  reports  travel  with  the
-     package  as  /usr/share/holy/NAME/. Icons are not installed by this package
+     launcher,	and  the  classification  and conversion reports travel with the
+     package as /usr/share/holy/NAME/. Icons are not installed by  this	 package
      and no desktop database hook is declared; the distribution owns the cache.
 
-     Dependencies are derived from the payload. A DT_NEEDED the	 payload  itself
+     Dependencies  are	derived from the payload. A DT_NEEDED the payload itself
      carries through its own SONAME is satisfied privately and names no require-
-     ment;  every  other name becomes one soname requirement. A link with an ab-
-     solute or escaping target cannot travel in a package payload, so  the  path
+     ment; every other name becomes one soname requirement. A link with	 an  ab-
+     solute  or	 escaping target cannot travel in a package payload, so the path
      it named becomes one file requirement and the report counts it. Every entry
-     is	 attributed to the installing user, and each directory an entry sits un-
+     is attributed to the installing user, and each directory an entry sits  un-
      der is declared by the same manifest.
 
-     import returns status 3 after  writing  the  output,  because  the	 package
-     changes  the  launch conditions and carries no image-level sandbox. The re-
-     port in the output directory names	 the  changed  conditions,  the	 dropped
-     sandbox,  the runtime probes static inspection cannot close, the path views
-     a link needs, the scripts that carry an interpreter and the  version  deci-
+     import  returns  status  3	 after	writing	 the output, because the package
+     changes the launch conditions and carries no image-level sandbox.	The  re-
+     port  in  the  output  directory  names the changed conditions, the dropped
+     sandbox, the runtime probes static inspection cannot close, the path  views
+     a	link  needs, the scripts that carry an interpreter and the version deci-
      sion. NAME does not grant a registered source identity.
 
    Snap staging
-     snap  inspect  accepts a file whose first eight bytes state a little-endian
+     snap inspect accepts a file whose first eight bytes state	a  little-endian
      offset and a size, requires an offset of at least 8, checks that a SquashFS
-     superblock sits there and prints type, offset, compression and  SHA-256.  A
+     superblock	 sits  there and prints type, offset, compression and SHA-256. A
      superblock states no machine class, so the architecture comes from the pay-
-     load's  own  ELF  files.  The command reads the image without executing its
+     load's own ELF files. The command reads the  image	 without  executing  its
      runtime.
 
-     snap extract copies the exact image to a new private output  directory  and
-     invokes  unsquashfs  with	the recorded offset. It requires an unprivileged
+     snap  extract  copies the exact image to a new private output directory and
+     invokes unsquashfs with the recorded offset. It  requires	an  unprivileged
      user and an available unsquashfs command. The output contains original, the
-     snap tree, a classification report and a conversion receipt with state  ex-
-     tracted-unclassified.   The  report  lists	 ELF arch/libc/ISA, interpreter,
-     DT_NEEDED, loader search paths, strong symbol  versions,  shebang	scripts,
-     links  that need a path view and unknown executables without following sym-
-     links. It reports the command the manifest names and  runtime  probes  that
-     static  inspection cannot close. No .holy is produced and no package is in-
+     snap  tree, a classification report and a conversion receipt with state ex-
+     tracted-unclassified.  The report	lists  ELF  arch/libc/ISA,  interpreter,
+     DT_NEEDED,	 loader	 search	 paths, strong symbol versions, shebang scripts,
+     links that need a path view and unknown executables without following  sym-
+     links.  It	 reports  the command the manifest names and runtime probes that
+     static inspection cannot close. No .holy is produced and no package is  in-
      stalled. This operation does not claim that the extracted program can run.
 
-     import INPUT --source NAME --format snap --output	NEW_DIRECTORY  uses  the
-     same  extraction,	records NAME as unverified provenance and then emits one
-     native package beside the review bundle. The package name and  version  are
-     the  name and version the manifest declares; a name the package format can-
-     not record is refused with status 2 rather than rewritten, and  a	manifest
+     import  INPUT  --source  NAME --format snap --output NEW_DIRECTORY uses the
+     same extraction, records NAME as unverified provenance and then  emits  one
+     native  package  beside the review bundle. The package name and version are
+     the name and version the manifest declares; a name the package format  can-
+     not  record  is refused with status 2 rather than rewritten, and a manifest
      with no readable meta/snap.yaml or no command is refused with status 3. The
-     arch  and	libc  come  from the payload's own ELF files, and a payload that
+     arch and libc come from the payload's own ELF files,  and	a  payload  that
      mixes architectures or runtimes is refused with status 3, because one .holy
      records one of each.
 
-     The whole snap tree travels under /usr/lib/holy/private/NAME/snap/,  so  no
-     public  path is claimed for the image's own files. The command the manifest
-     names has to sit inside that tree; a command that names a path  outside  it
-     is	 refused  with	status	3.  The	 entry point is the snap image itself at
-     /usr/lib/holy/private/NAME/usr/bin/NAME.snap,  and	  /usr/bin/NAME	  is   a
-     launcher  that starts that file in the package run context with holypkg run
+     The  whole	 snap tree travels under /usr/lib/holy/private/NAME/snap/, so no
+     public path is claimed for the image's own files. The command the	manifest
+     names  has	 to sit inside that tree; a command that names a path outside it
+     is refused with status 3. The entry point	is  the	 snap  image  itself  at
+     /usr/lib/holy/private/NAME/usr/bin/NAME.snap,   and   /usr/bin/NAME   is  a
+     launcher that starts that file in the package run context with holypkg  run
      SOURCE:NAME. The launcher refuses to run as root because the converted pay-
-     load is no confinement.  The classification and conversion	 reports  travel
+     load  is  no confinement.	The classification and conversion reports travel
      with the package as /usr/share/holy/NAME/.
 
      Snap semantics that this format cannot keep are recorded, not emulated. The
-     base  the	manifest names is a runtime snapd would mount from a snap store,
-     so it becomes one package requirement on that name and the target	needs  a
+     base the manifest names is a runtime snapd would mount from a  snap  store,
+     so	 it  becomes one package requirement on that name and the target needs a
      source that provides it; a superblock states no runtime, so the requirement
-     names  no	libc.  The  plugs, the confinement, the system usernames and the
-     layouts are dropped and counted, the hooks	 are  recorded	because	 nothing
-     runs  them at install, and the environment names, the command-chain entries
+     names no libc. The plugs, the confinement, the  system  usernames	and  the
+     layouts  are  dropped  and	 counted, the hooks are recorded because nothing
+     runs them at install, and the environment names, the command-chain	 entries
      and the part stage-packages are kept as x- records with a report line each.
-     A link with an absolute or escaping target cannot travel in a package  pay-
+     A	link with an absolute or escaping target cannot travel in a package pay-
      load, so the path it named becomes one file requirement.
 
-     import  returns  status  3	 after	writing	 the output, because the package
+     import returns status 3 after  writing  the  output,  because  the	 package
      changes the confinement and needs a base package no snapd provides. The re-
-     port in the output directory names the base requirement, the  dropped  con-
+     port  in  the output directory names the base requirement, the dropped con-
      finement and interfaces, the recorded hooks, the command-chain and environ-
      ment records, the path views a link needs and the scripts that carry an in-
      terpreter. NAME does not grant a registered source identity.
 
    Scoop artifacts
-     import  INPUT --source NAME --format scoop --output NEW_DIRECTORY reads one
-     Scoop manifest as JSON text and writes a conversion directory  holding  the
-     original  manifest,  one  native package and a package report. The manifest
-     file name is the package name, as a bucket names an app,  and  a  name  the
-     package  format  cannot record is refused with status 2 rather than rewrit-
-     ten, as is a manifest with no  literal  version,  no  artifact  URL  or  no
+     import INPUT --source NAME --format scoop --output NEW_DIRECTORY reads  one
+     Scoop  manifest  as JSON text and writes a conversion directory holding the
+     original manifest, one native package and a package  report.  The	manifest
+     file  name	 is  the  package name, as a bucket names an app, and a name the
+     package format cannot record is refused with status 2 rather  than	 rewrit-
+     ten,  as  is  a  manifest	with  no  literal version, no artifact URL or no
      SHA-256 digest.
 
-     The  artifact  has	 to sit beside the manifest, since nothing runs to fetch
+     The artifact has to sit beside the manifest, since nothing	 runs  to  fetch
      and unpack it, and its SHA-256 must be the digest the manifest pins; a dif-
      ferent digest or an absent file returns 6. An artifact libarchive reads has
      its members placed under /usr/lib/holy/private/NAME/, and the directory the
      manifest declares as extract_dir replaces the first component of every mem-
      ber path. Any other artifact travels as one file. A member with an absolute
-     or escaping path, or of a kind a payload does  not	 carry,	 is  refused  or
-     counted  and  reported.  The program the manifest names is looked up inside
+     or	 escaping  path,  or  of  a kind a payload does not carry, is refused or
+     counted and reported. The program the manifest names is  looked  up  inside
      the payload and recorded as x-scoop-program when it is there.
 
-     A Scoop dependency names an app of the same bucket, so each one  becomes  a
-     package  requirement  the	target has to satisfy from a source that has it.
-     The  installer,  pre_install,  post_install,   uninstaller,   env_add_path,
-     env_set,  persist,	 shortcuts,  psmodule  and  suggest keys are dropped and
-     counted, because a PowerShell step and a Windows integration  belong  to  a
-     Windows  installation;  checkver  and  autoupdate	are counted too, since a
+     A	Scoop  dependency names an app of the same bucket, so each one becomes a
+     package requirement the target has to satisfy from a source  that	has  it.
+     The   installer,	pre_install,  post_install,  uninstaller,  env_add_path,
+     env_set, persist, shortcuts, psmodule and	suggest	 keys  are  dropped  and
+     counted,  because	a  PowerShell step and a Windows integration belong to a
+     Windows installation; checkver and autoupdate  are	 counted  too,	since  a
      bucket owns its own index. Nothing in the artifact is executed, and no Wine
-     requirement is recorded, because a package cannot promise	a  runtime  this
+     requirement  is  recorded,	 because a package cannot promise a runtime this
      manager does not provide.
 
-     import  returns status 3 after writing the output, because the payload is a
+     import returns status 3 after writing the output, because the payload is  a
      program for another operating system. The report names the artifact and its
-     digest, the directory and program the  manifest  states,  the  dropped  in-
-     staller  and  integration keys, the requirements a bucket dependency became
-     and any archive member the payload refused. NAME does not	grant  a  regis-
+     digest,  the  directory  and  program  the manifest states, the dropped in-
+     staller and integration keys, the requirements a bucket  dependency  became
+     and  any  archive	member the payload refused. NAME does not grant a regis-
      tered source identity.
 
    WinGet artifacts
      import INPUT --source NAME --format winget --output NEW_DIRECTORY reads one
-     winget-pkgs  manifest as YAML text and writes the same conversion directory
-     a Scoop manifest produces: the original manifest, one native package and  a
-     package  report.	PackageIdentifier is the package name and PackageVersion
+     winget-pkgs manifest as YAML text and writes the same conversion  directory
+     a	Scoop manifest produces: the original manifest, one native package and a
+     package report.  PackageIdentifier is the package name  and  PackageVersion
      the version; a name the package format cannot record is refused with status
-     2 rather than rewritten, as is a manifest with no literal version,	 no  In-
-     stallerUrl	 or no InstallerSha256. A WinGet digest is written in upper case
+     2	rather	than rewritten, as is a manifest with no literal version, no In-
+     stallerUrl or no InstallerSha256. A WinGet digest is written in upper  case
      and is compared in lower case, so both forms verify.
 
-     The artifact, the extract_dir and the counted keys are the shared	artifact
-     rules  the	 Scoop	section states, so a WinGet package carries the verified
-     artifact under /usr/lib/holy/private/NAME/ as well.  A  manifest  that  de-
-     clares  no	 program  path	records none, and the report says so rather than
+     The  artifact, the extract_dir and the counted keys are the shared artifact
+     rules the Scoop section states, so a WinGet package  carries  the	verified
+     artifact  under  /usr/lib/holy/private/NAME/  as  well. A manifest that de-
+     clares no program path records none, and the report  says	so  rather  than
      guessing one from the archive.
 
-     A PackageDependencies entry is the only nested block this converter  reads,
-     because  it  names	 the  packages the manifest requires; every other nested
+     A	PackageDependencies entry is the only nested block this converter reads,
+     because it names the packages the manifest	 requires;  every  other  nested
      block is skipped and its key counted. The installer keys, the Windows inte-
      gration keys and the catalog keys are dropped and counted the way the Scoop
-     report counts them, and the catalog is named as  a	 WinGet	 catalog  rather
-     than  a bucket. Nothing in the artifact is executed and no Wine requirement
+     report  counts  them,  and	 the catalog is named as a WinGet catalog rather
+     than a bucket. Nothing in the artifact is executed and no Wine  requirement
      is recorded, so import returns status 3 after writing the output.
 
    Nix closures
-     import CAPTURE --source NAME --format nix --output NEW_DIRECTORY reads  one
+     import  CAPTURE --source NAME --format nix --output NEW_DIRECTORY reads one
      captured closure as text and writes a conversion directory holding the cap-
-     ture,  one native package per store path and a closure report. A store path
+     ture, one native package per store path and a closure report. A store  path
      is a 32-character Nix base32 hash, a hyphen and a name, with or without the
-     /nix/store prefix, and a store path name the package format  cannot  record
+     /nix/store	 prefix,  and a store path name the package format cannot record
      is refused with status 2 rather than rewritten. Two store paths of one name
-     would  need one rewritten package name, so the capture is refused with sta-
+     would need one rewritten package name, so the capture is refused with  sta-
      tus 2 as well.
 
-     The capture is one record per line: path STORE_PATH declares a  store  path
-     of	 the  closure,	root  STORE_PATH names the output root, entry STORE_PATH
-     PATH names the program a  store  path  starts,  and  references  STORE_PATH
-     STORE_PATH...  declares the store paths one path needs. A path or a root is
-     named once; a reference to a store path the capture does not declare  loses
-     a	closure	 member, so it is refused with status 2. A record name this con-
+     The  capture  is one record per line: path STORE_PATH declares a store path
+     of the closure, root STORE_PATH names the	output	root,  entry  STORE_PATH
+     PATH  names  the  program	a  store  path starts, and references STORE_PATH
+     STORE_PATH... declares the store paths one path needs. A path or a root  is
+     named  once; a reference to a store path the capture does not declare loses
+     a closure member, so it is refused with status 2. A record name  this  con-
      verter does not model is counted and reported, since an unread reference is
      a requirement nobody counted.
 
      Every store path has to sit beside the capture as a directory named for it,
-     because nothing runs to build or fetch a store, and an absent  one	 returns
-     6.	   Each	   store    path    travels   whole   under   /usr/lib/holy/pri-
-     vate/NAME/store/STORE_PATH/, and one pass over its own bytes  confirms  the
-     references	 the  capture  declares: a reference the payload carries is con-
-     firmed and a reference it does not is counted, because a store records  the
+     because  nothing  runs to build or fetch a store, and an absent one returns
+     6.	  Each	 store	 path	 travels    whole    under    /usr/lib/holy/pri-
+     vate/NAME/store/STORE_PATH/,  and	one pass over its own bytes confirms the
+     references the capture declares: a reference the payload  carries	is  con-
+     firmed  and a reference it does not is counted, because a store records the
      references itself and a payload cannot prove that a store path has none.
 
-     A	reference  to  a  store path the capture carries becomes one package re-
-     quirement on that name, so two applications that name the same  store  path
-     share  one	 package  with one owner and several dependents, and removing an
-     application leaves it. A reference to a store path	 the  capture  does  not
-     carry  becomes a requirement on that name whose original field is the store
-     hash, and the target needs a  source  that	 provides  it;	the  requirement
-     states  no	 architecture  and  no	runtime, since the store path that would
-     state one is the one the capture does not carry. Nix states no version,  so
-     every  package  records  version  0  and  the  store  hash is its identity,
+     A reference to a store path the capture carries  becomes  one  package  re-
+     quirement	on  that name, so two applications that name the same store path
+     share one package with one owner and several dependents,  and  removing  an
+     application  leaves  it.  A  reference to a store path the capture does not
+     carry becomes a requirement on that name whose original field is the  store
+     hash,  and	 the  target  needs  a	source that provides it; the requirement
+     states no architecture and no runtime, since  the	store  path  that  would
+     state  one is the one the capture does not carry. Nix states no version, so
+     every package records version  0  and  the	 store	hash  is  its  identity,
      recorded as x-nix-store-hash.
 
-     A store path that states an entry point gets a link  at  /usr/lib/holy/pri-
-     vate/NAME/usr/bin/NAME  and  a  generated	launcher  at  /usr/bin/NAME that
-     starts it in the package run context with holypkg run SOURCE:NAME. A  store
-     path  that	 names	no entry point claims no public bin path, and the report
-     says so rather than guessing one. An entry point that is not an  executable
+     A	store  path that states an entry point gets a link at /usr/lib/holy/pri-
+     vate/NAME/usr/bin/NAME and	 a  generated  launcher	 at  /usr/bin/NAME  that
+     starts  it in the package run context with holypkg run SOURCE:NAME. A store
+     path that names no entry point claims no public bin path,	and  the  report
+     says  so rather than guessing one. An entry point that is not an executable
      file of its own store path is refused with status 3.
 
-     Nothing  is  executed.  No	 Nix store, daemon, profile or sandbox is repro-
-     duced, and a program that opens an absolute /nix/store path needs	a  store
+     Nothing is executed. No Nix store, daemon, profile	 or  sandbox  is  repro-
+     duced,  and  a program that opens an absolute /nix/store path needs a store
      view this manager does not build, which the report and the transform record
      name. import returns status 3 after writing the output. NAME does not grant
      a registered source identity.
 
    Solus eopkg
      import FILE.eopkg --source NAME --format eopkg --output NEW_DIRECTORY reads
-     one  Solus binary package and writes a conversion directory holding the ar-
-     tifact, one native package and an eopkg report. An eopkg is a ZIP	carrying
-     metadata.xml,  files.xml  and  an install tar. The metadata is required and
+     one Solus binary package and writes a conversion directory holding the  ar-
+     tifact,  one native package and an eopkg report. An eopkg is a ZIP carrying
+     metadata.xml, files.xml and an install tar. The metadata  is  required  and
      the install tar is required, and an artifact missing either is refused with
-     status 2. A member this reader  does  not	model  is  counted  rather  than
+     status  2.	 A  member  this  reader  does	not model is counted rather than
      dropped, and a member that is not a regular file is refused, since an eopkg
      is a set of regular files.
 
-     The  metadata  is	read as XML text. A value lands in its own context, so a
-     Name under Source is a packager identity and the Name under Package is  the
+     The metadata is read as XML text. A value lands in its own	 context,  so  a
+     Name  under Source is a packager identity and the Name under Package is the
      package name, and a dependency under BuildDependencies is not a runtime re-
-     quirement.	 The fields carried are the name, the version, the architecture,
-     the summary, the license, the source URL, the component PartOf  names,  the
-     PiSi  format  and	each RuntimeDependencies entry with the distribution re-
+     quirement. The fields carried are the name, the version, the  architecture,
+     the  summary,  the license, the source URL, the component PartOf names, the
+     PiSi format and each RuntimeDependencies entry with  the  distribution  re-
      lease its releaseFrom attribute states. Solus states no release of its own,
-     so the native release is 1. A metadata without a name, a version or an  ar-
+     so	 the native release is 1. A metadata without a name, a version or an ar-
      chitecture is refused with status 2, and a document that is not well formed
-     or	 that  ends  inside  an element is refused the same way. An element this
-     reader does not model is counted: a description, a packager, a history  en-
-     try,  a  conflict, a replacement and a declared capability are all named in
+     or that ends inside an element is refused the same	 way.  An  element  this
+     reader  does not model is counted: a description, a packager, a history en-
+     try, a conflict, a replacement and a declared capability are all  named  in
      the report and none of them becomes a requirement.
 
-     The architecture decides the placement. noarch, x86_64, i686,  aarch64  and
-     armv7hl  name  an architecture this manager places, and anything else needs
+     The  architecture	decides the placement. noarch, x86_64, i686, aarch64 and
+     armv7hl name an architecture this manager places, and anything  else  needs
      classification, so the import returns status 3 without writing a package.
 
-     The install tar travels whole  under  /usr/lib/holy/private/NAME/eopkg/.  A
-     Solus  package  owns  a system layout, and this manager records that layout
-     rather than claiming it, so the payload installs under a private  path  and
+     The  install  tar	travels whole under /usr/lib/holy/private/NAME/eopkg/. A
+     Solus package owns a system layout, and this manager  records  that  layout
+     rather  than  claiming it, so the payload installs under a private path and
      claims no public bin path. A leading ./ names the same path and is dropped;
      a member that names .. is refused rather than placed, and the conversion is
-     refused  with  status  1.	A payload that is not an archive this reader can
-     read is refused the same way. A member that is neither a  regular	file,  a
-     directory	nor  a symbolic link is skipped and counted, and a symbolic link
+     refused with status 1. A payload that is not an  archive  this  reader  can
+     read  is  refused	the same way. A member that is neither a regular file, a
+     directory nor a symbolic link is skipped and counted, and a  symbolic  link
      whose target leaves the private tree becomes a recorded file requirement on
      the path it named.
 
-     Each runtime dependency becomes one exact package requirement on the  pack-
+     Each  runtime dependency becomes one exact package requirement on the pack-
      age name, with any architecture and any runtime, since the dependency names
-     a	repository  member  and	 not  a file the payload can place. The original
-     field is the releaseFrom value when the metadata states one and -	when  it
-     does  not,	 because  a distribution release is a property of the repository
+     a repository member and not a file the  payload  can  place.  The	original
+     field  is	the releaseFrom value when the metadata states one and - when it
+     does not, because a distribution release is a property  of	 the  repository
      rather than of the dependency. A SONAME the payload needs and does not pro-
      vide becomes a SONAME requirement, and a package requirement on the package
      name is recorded as well.
 
-     Nothing is executed. An install script, a COMAR object, a delta,  a  signa-
-     ture  and a declared file list are named in the report and dropped: a COMAR
-     object is a lifecycle ABI this manager does not provide, a delta is a  dif-
+     Nothing  is  executed. An install script, a COMAR object, a delta, a signa-
+     ture and a declared file list are named in the report and dropped: a  COMAR
+     object  is a lifecycle ABI this manager does not provide, a delta is a dif-
      ferent payload rather than a patch, and a signature is recorded without be-
      ing trusted, so the artifact is verified by its own digest only. import re-
-     turns  status  3 after writing the output. NAME does not grant a registered
+     turns status 3 after writing the output. NAME does not grant  a  registered
      source identity.
 
    Split proposal
-     holypkg split TREE --output NEW_FILE [--split OUTPUT GLOB	...]  reads  one
-     prepared  package	tree, the HOLY and DATA shape that manifest generate and
-     pack consume, and writes a proposal naming the split  outputs  its	 payload
-     needs.  It changes nothing, executes nothing and installs nothing; the pro-
-     posal is what a holy-recipe(5) manifest states  in	 its  output  and  split
+     holypkg  split  TREE  --output NEW_FILE [--split OUTPUT GLOB ...] reads one
+     prepared package tree, the HOLY and DATA shape that manifest  generate  and
+     pack  consume,  and  writes a proposal naming the split outputs its payload
+     needs. It changes nothing, executes nothing and installs nothing; the  pro-
+     posal  is	what  a	 holy-recipe(5)	 manifest states in its output and split
      records.
 
-     Every  non-directory  path	 receives  exactly  one output, and the proposal
-     names the three the tree may use: the package name as its	runtime	 output,
-     NAME-devel	 and NAME-doc. A development or documentation output is declared
+     Every non-directory path receives exactly	one  output,  and  the	proposal
+     names  the	 three the tree may use: the package name as its runtime output,
+     NAME-devel and NAME-doc. A development or documentation output is	declared
      only when a path is assigned to it or a decision suggests it, because a de-
-     clared output that receives nothing is what a build rejects.  A  path  line
-     records  the  path,  its output and the reason, so an operator can overrule
+     clared  output  that  receives nothing is what a build rejects. A path line
+     records the path, its output and the reason, so an	 operator  can	overrule
      the heuristic.
 
-     An explicit --split rule outranks a heuristic: the first rule that	 matches
-     a	path  assigns  it,  and	 two rules naming different outputs for one path
-     leave that path a repeated decision rather than a guess. A	 rule  may  only
-     name  one of the three outputs the proposal declares, and a rule naming any
+     An	 explicit --split rule outranks a heuristic: the first rule that matches
+     a path assigns it, and two rules naming  different	 outputs  for  one  path
+     leave  that  path	a repeated decision rather than a guess. A rule may only
+     name one of the three outputs the proposal declares, and a rule naming  any
      other output is refused with status 2.
 
-     The heuristics are deliberately weak, because a file  extension  is  not  a
-     sufficient	 criterion.  A header, an include directory and pkg-config meta-
-     data are proposed for the development output. A shared  object  carrying  a
+     The  heuristics  are  deliberately	 weak, because a file extension is not a
+     sufficient criterion. A header, an include directory and  pkg-config  meta-
+     data  are	proposed  for the development output. A shared object carrying a
      version stays in the runtime output, and a man page, an info page or a ref-
-     erence  document  is proposed for the documentation output; a license and a
-     runtime data file are not documentation, however a	 general  pattern  would
+     erence document is proposed for the documentation output; a license  and  a
+     runtime  data  file  are not documentation, however a general pattern would
      match them, and they stay in the runtime output.
 
-     Four  cases  are  decisions rather than assignments, each reported with the
-     output a heuristic would have chosen and the reason. An unversioned  shared
-     object  is	 a  decision: the payload may open it through dlopen at runtime,
-     and a tree states no metadata or probe that settles that. A static	 archive
-     is	 a decision: it is development material to a builder and a link input to
-     nothing at run time, and only the project knows which. A link whose  target
-     leaves  the tree or is absolute is a decision, since a payload carries nei-
+     Four cases are decisions rather than assignments, each  reported  with  the
+     output  a heuristic would have chosen and the reason. An unversioned shared
+     object is a decision: the payload may open it through  dlopen  at	runtime,
+     and  a tree states no metadata or probe that settles that. A static archive
+     is a decision: it is development material to a builder and a link input  to
+     nothing  at run time, and only the project knows which. A link whose target
+     leaves the tree or is absolute is a decision, since a payload carries  nei-
      ther, and two rules contradicting each other are a decision by definition.
 
      The command prints the path counts per output and one decision line per un-
-     settled path, and returns status 3 when any path  is  a  decision.	 A  tree
+     settled  path,  and  returns  status  3 when any path is a decision. A tree
      without HOLY/meta or without a name the output names may be derived from is
-     refused  with  status  2, and a tree that is not there returns 6. A device,
+     refused with status 2, and a tree that is not there returns  6.  A	 device,
      socket or fifo is refused, because a payload carries none of them.
 
      --debug adds a NAME-debug output whose files are cut from the runtime files
-     with objcopy. Each debug record names the runtime	path  and  the	build-id
+     with  objcopy.  Each  debug  record names the runtime path and the build-id
      note both files keep, so a stripped artifact and its debug file are matched
-     by	 an  identity  rather than by a name, and a debug record states the tool
+     by an identity rather than by a name, and a debug record  states  the  tool
      that cuts the pair: objcopy --only-keep-debug on the runtime file, then ob-
-     jcopy --strip-debug --add-gnu-debuglink on the artifact that  installs.  An
-     ELF  that states no build-id is a decision rather than an untraceable debug
-     entry, because nothing then ties a debug file to the artifact  it	was  cut
-     from.  A  file this reader cannot parse as an ELF is refused, since --debug
+     jcopy  --strip-debug  --add-gnu-debuglink on the artifact that installs. An
+     ELF that states no build-id is a decision rather than an untraceable  debug
+     entry,  because  nothing  then ties a debug file to the artifact it was cut
+     from. A file this reader cannot parse as an ELF is refused,  since	 --debug
      reads only the ELF payloads of a tree.
 
-     holypkg elf FILE --build-id prints the GNU build-id note  of  one	file  in
-     lowercase	hex, reading the note section rather than the loadable segments.
-     A separate debug file keeps the note and loses the segments a loadable  ar-
-     tifact  needs,  so the strict elf reader refuses it and this form still an-
+     holypkg  elf  FILE	 --build-id  prints the GNU build-id note of one file in
+     lowercase hex, reading the note section rather than the loadable  segments.
+     A	separate debug file keeps the note and loses the segments a loadable ar-
+     tifact needs, so the strict elf reader refuses it and this form  still  an-
      swers. A file that states no note, or is not an ELF, returns 2.
 
    Recipe conversion
-     holypkg convert PKGBUILD --source NAME  --output  NEW_DIRECTORY  reads  one
-     PKGBUILD  as text and writes a conversion directory containing the original
+     holypkg  convert  PKGBUILD	 --source  NAME --output NEW_DIRECTORY reads one
+     PKGBUILD as text and writes a conversion directory containing the	original
      file, a copy of each local source it names, a holy-recipe(5) manifest and a
      conversion report. A file named template reaches the Void converter, a file
-     named APKBUILD reaches the Aports converter, and a name ending  in	 .Slack-
-     Build  reaches the SlackBuild converter, a name ending in .spec reaches the
-     RPM spec converter, a directory named debian reaches the  Debian  converter
+     named  APKBUILD  reaches the Aports converter, and a name ending in .Slack-
+     Build reaches the SlackBuild converter, a name ending in .spec reaches  the
+     RPM  spec	converter, a directory named debian reaches the Debian converter
      and a name ending in .ebuild reaches the Gentoo converter and a name ending
-     in	 converter,  a name ending in .scm reaches the Guix converter and a name
+     in converter, a name ending in .scm reaches the Guix converter and	 a  name
      ending in while any other name reaches the pacman converter, and import IN-
-     PUT  --source  NAME  --format   pkgbuild|void|aports|slackbuild|rpmspec|de-
+     PUT   --source  NAME  --format  pkgbuild|void|aports|slackbuild|rpmspec|de-
      bian|gentoo|pacstall|flatpak|homebrew|guix --output NEW_DIRECTORY names the
-     family  explicitly.  None of these commands installs a package, builds one,
-     or grants NAME a registered source	 identity;  the	 report	 records  it  as
+     family explicitly. None of these commands installs a package,  builds  one,
+     or	 grants	 NAME  a  registered  source  identity; the report records it as
      provenance.
 
-     The  PKGBUILD  converter carries pkgbase, pkgver, pkgrel, pkgdesc, url, li-
-     cense, arch, epoch,  depends,  makedepends,  checkdepends,	 optdepends  and
-     backup,  expands  $pkgbase, $pkgname, $pkgver and $pkgrel inside source en-
-     tries, and turns a sha256sums entry into source-sha256. A list is read  the
-     way  a  shell reads it: whitespace separates elements and a comma inside an
+     The PKGBUILD converter carries pkgbase, pkgver, pkgrel, pkgdesc,  url,  li-
+     cense,  arch,  epoch,  depends,  makedepends,  checkdepends, optdepends and
+     backup, expands $pkgbase, $pkgname, $pkgver and $pkgrel inside  source  en-
+     tries,  and turns a sha256sums entry into source-sha256. A list is read the
+     way a shell reads it: whitespace separates elements and a comma  inside  an
      element belongs to its name. The build, check and package bodies keep their
-     original Bash with a prologue that maps the makepkg working variables  onto
+     original  Bash with a prologue that maps the makepkg working variables onto
      the exported Holy paths, so $srcdir is $HOLY_SRC and $pkgdir is $HOLY_DEST,
-     or	 $HOLY_SPLIT_DEST  inside a package_NAME split output. An install= frag-
-     ment is copied into the payload and recorded as one postinstall hook.  pro-
-     vides,  conflicts,	 replaces, noextract, validpgpkeys, options, non-SHA-256
-     checksums and  architecture-specific  source  lists  are  preserved  as  x-
-     records  or reported as unknown. The build environment of makepkg itself is
-     not reproduced, so a converted recipe reports makepkg.conf	 and  the  phase
+     or $HOLY_SPLIT_DEST inside a package_NAME split output. An	 install=  frag-
+     ment  is copied into the payload and recorded as one postinstall hook. pro-
+     vides, conflicts, replaces, noextract, validpgpkeys,  options,  non-SHA-256
+     checksums	and  architecture-specific  source  lists  are	preserved  as x-
+     records or reported as unknown. The build environment of makepkg itself  is
+     not  reproduced,  so  a converted recipe reports makepkg.conf and the phase
      environments as unresolved helpers.
 
-     The  Void	converter  carries pkgname, version, revision, short_desc, home-
-     page, license, maintainer and changelog, reads distfiles  and  checksum  as
-     lists,  and expands $pkgname, $pkgbase, $version, $revision, $sourcepkg and
-     $pkgver inside them. The xbps-src phase functions keep their original  Bash
-     behind  a	prologue  that	maps  $wrksrc  onto  $HOLY_SRC,	 $masterdir onto
+     The Void converter carries pkgname, version,  revision,  short_desc,  home-
+     page,  license,  maintainer  and changelog, reads distfiles and checksum as
+     lists, and expands $pkgname, $pkgbase, $version, $revision, $sourcepkg  and
+     $pkgver  inside them. The xbps-src phase functions keep their original Bash
+     behind a  prologue	 that  maps  $wrksrc  onto  $HOLY_SRC,	$masterdir  onto
      $HOLY_WORK and $DESTDIR onto $HOLY_DEST, so HOLY_SRC takes the place of the
-     $wrksrc directory that xbps-src builds. The v* helpers  a	body  calls  are
-     carried  into  that prologue, and vman, vsv, vsed, vcompletion and vsrccopy
+     $wrksrc  directory	 that  xbps-src	 builds. The v* helpers a body calls are
+     carried into that prologue, and vman, vsv, vsed, vcompletion  and	vsrccopy
      are reported as unresolved. A NAME_package function becomes an output whose
-     split step carries its pkg_install body, with DESTDIR still the  main  tree
-     and  PKGDESTDIR  the staging tree. A patches or files directory is archived
-     beside the recipe and named by PATCHESDIR or FILESDIR, and	 an  INSTALL  or
+     split  step  carries its pkg_install body, with DESTDIR still the main tree
+     and PKGDESTDIR the staging tree. A patches or files directory  is	archived
+     beside  the  recipe  and named by PATCHESDIR or FILESDIR, and an INSTALL or
      REMOVE file becomes one hook.  build_options are fixed to build_options_de-
-     fault,  so	 a  $(vopt_with)  call	becomes its recorded value rather than a
-     shell helper. A phase the template leaves out is reported	as  supplied  by
+     fault, so a $(vopt_with) call becomes its	recorded  value	 rather	 than  a
+     shell  helper.  A	phase the template leaves out is reported as supplied by
      common/build-style/NAME.sh, which the converter does not run.
 
      The Aports converter carries pkgname, pkgver, pkgrel, pkgdesc, url, license
      and maintainer, maps arch onto the Holy machine names, and reads depends as
-     depend  and  makedepends,	makedepends_build, makedepends_host and checkde-
+     depend and makedepends, makedepends_build,	 makedepends_host  and	checkde-
      pends as build-depend, so a !NAME conflict becomes x-conflicts and a so: or
-     cmd: requirement is reported. The abuild phase bodies keep	 their	original
-     shell  behind  a  prologue that maps $srcdir onto $HOLY_SRC, $startdir onto
-     $HOLY_WORK, $pkgdir onto the main tree  and  $subpkgdir  onto  the	 staging
-     tree,  and	 the  step  changes  into  $builddir because abuild runs a phase
-     there. Each subpackages entry becomes an output whose  split  step	 carries
+     cmd:  requirement	is reported. The abuild phase bodies keep their original
+     shell behind a prologue that maps $srcdir onto  $HOLY_SRC,	 $startdir  onto
+     $HOLY_WORK,  $pkgdir  onto	 the  main  tree and $subpkgdir onto the staging
+     tree, and the step changes into  $builddir	 because  abuild  runs	a  phase
+     there.  Each  subpackages	entry becomes an output whose split step carries
      its split function, with the function taken from the entry or from the last
      dash-separated suffix of the name, and an entry with no written function is
-     reported  as  needing the abuild default_dev, default_doc or default_static
-     helper. A post-install or pre-deinstall  script  becomes  one  hook.  Since
-     aports  pins  sha512sums,	which  a Holy source cannot use, a remote source
-     with no sha256sums entry is reported rather than  fetched,	 while	a  local
-     source  beside  the APKBUILD is copied and hashed as SHA-256. The default_*
-     helpers, the abuild phases the template leaves out, the  cross  and  chroot
+     reported as needing the abuild default_dev, default_doc  or  default_static
+     helper.  A	 post-install  or  pre-deinstall  script becomes one hook. Since
+     aports pins sha512sums, which a Holy source cannot	 use,  a  remote  source
+     with  no  sha256sums  entry  is reported rather than fetched, while a local
+     source beside the APKBUILD is copied and hashed as SHA-256.  The  default_*
+     helpers,  the  abuild  phases the template leaves out, the cross and chroot
      variables and any top level statement abuild would source as a shell script
      are reported rather than run.
 
-     The  SlackBuild  converter carries PRGNAM, VERSION, BUILD, TAG and PKGTYPE,
-     reads the summary, homepage, requires and conflicts out of slack-desc,  and
-     reads  the	 upstream URL and the MD5 sum out of the info file. A SlackBuild
+     The SlackBuild converter carries PRGNAM, VERSION, BUILD, TAG  and	PKGTYPE,
+     reads  the summary, homepage, requires and conflicts out of slack-desc, and
+     reads the upstream URL and the MD5 sum out of the info file.  A  SlackBuild
      script is one linear shell program, so it becomes a single build step whose
-     prologue maps $ARCH onto $HOLY_ARCH, $CWD and  $TMP  onto	$HOLY_SRC,  $PKG
-     onto   $HOLY_DEST	 and  $OUTPUT  onto  $HOLY_OUT.	 The  cd  $PKG	and  the
-     /sbin/makepkg call are left out because the engine packs the  payload,  and
-     so	 is  a tar line that reads $CWD, because the engine has already unpacked
-     the recorded archive. Every other file the script reads through $CWD  trav-
-     els  beside  the recipe as a source, a doinst.sh becomes one hook, and this
+     prologue  maps  $ARCH  onto  $HOLY_ARCH, $CWD and $TMP onto $HOLY_SRC, $PKG
+     onto  $HOLY_DEST  and  $OUTPUT  onto  $HOLY_OUT.  The  cd	$PKG   and   the
+     /sbin/makepkg  call  are left out because the engine packs the payload, and
+     so is a tar line that reads $CWD, because the engine has  already	unpacked
+     the  recorded archive. Every other file the script reads through $CWD trav-
+     els beside the recipe as a source, a doinst.sh becomes one hook,  and  this
      format pins an MD5 sum rather than a SHA-256 digest, so a remote archive is
      reported unless a local copy is beside the script. The strip pass, the own-
-     ership rewrite, the user and group creation  and  the  loader  and	 desktop
+     ership  rewrite,  the  user  and  group creation and the loader and desktop
      cache helpers are reported as unresolved.
 
      The RPM spec converter carries Name, Version, Release, Summary, License and
-     URL,  collects  the  %global and %define records, and expands the macros it
-     can resolve, so a body keeps its own words with _sourcedir,  _builddir  and
-     buildroot	rewritten  onto the exported paths. BuildRequires becomes build-
+     URL, collects the %global and %define records, and expands	 the  macros  it
+     can  resolve,  so a body keeps its own words with _sourcedir, _builddir and
+     buildroot rewritten onto the exported paths. BuildRequires	 becomes  build-
      depend and Requires becomes depend, read one record per line so the compar-
      ison travels with the name, while Provides, Conflicts, Obsoletes and Recom-
-     mends become x- records because none of them is a	requirement.  The  prep,
-     build,  install and check sections become the matching phases, %setup, %au-
+     mends  become  x-	records because none of them is a requirement. The prep,
+     build, install and check sections become the matching phases, %setup,  %au-
      tosetup and %autopatch become a cd into the unpacked tree and a patch pass,
      and every other rpm section command is reported and left in the body so the
-     build fails visibly. A %package block becomes an output  whose  split  step
-     copies  the  paths	 its own %files list named out of the main tree. A local
-     Source or Patch file beside the spec is copied and hashed as  SHA-256;  one
+     build  fails  visibly.  A %package block becomes an output whose split step
+     copies the paths its own %files list named out of the main	 tree.	A  local
+     Source  or	 Patch file beside the spec is copied and hashed as SHA-256; one
      that is absent is reported, since a spec normally pins no digest.
 
-     The  Debian  converter  reads debian/control and takes the version from the
-     first record of debian/changelog, so the distribution version is  what  the
-     recipe  records.  The Debian revision becomes the Holy release, an epoch is
-     preserved and dropped, and a native package with no revision  gets	 release
-     one.  A  relationship field is a comma separated list of groups and a group
-     may offer alternatives with a pipe, so the first alternative of each  group
-     is	 carried  and  the rest are reported, while Provides, Breaks, Conflicts,
-     Replaces, Recommends, Suggests and Enhances become x- records. A dpkg  sub-
-     stitution	variable  such	as  $  {misc:Depends}  is  reported  rather than
-     guessed. Each binary stanza becomes an output, and a binary  that	names  a
-     .install,	.docs,	.manpages or .links file list becomes a subpackage whose
+     The Debian converter reads debian/control and takes the  version  from  the
+     first  record  of debian/changelog, so the distribution version is what the
+     recipe records. The Debian revision becomes the Holy release, an  epoch  is
+     preserved	and  dropped, and a native package with no revision gets release
+     one. A relationship field is a comma separated list of groups and	a  group
+     may  offer alternatives with a pipe, so the first alternative of each group
+     is carried and the rest are reported, while  Provides,  Breaks,  Conflicts,
+     Replaces,	Recommends, Suggests and Enhances become x- records. A dpkg sub-
+     stitution variable	 such  as  $  {misc:Depends}  is  reported  rather  than
+     guessed.  Each  binary  stanza becomes an output, and a binary that names a
+     .install, .docs, .manpages or .links file list becomes a  subpackage  whose
      split step copies the paths that list named out of the main tree, while the
-     binary that names no list owns the whole tree.   debian/rules  becomes  the
+     binary  that  names  no list owns the whole tree.	debian/rules becomes the
      build step behind a prologue that sets DEB_HOST_MULTIARCH and DEB_BUILD_OP-
-     TIONS,  and  every debhelper call, every debhelper override and dpkg-build-
-     package are reported and left in the body so the build fails  visibly.  The
+     TIONS, and every debhelper call, every debhelper override	and  dpkg-build-
+     package  are  reported and left in the body so the build fails visibly. The
      maintainer scripts, debian/copyright, debian/watch and debian/source/format
      are copied next to the recipe.
 
      The Gentoo converter takes the identity from the file name, which is PN-PV-
      rPR.ebuild, so a trailing -rN becomes the Holy release and a file name with
      no revision gets release one, and an epoch is preserved and dropped.  EAPI,
-     LICENSE  and SLOT are carried, and KEYWORDS names the machines an ebuild is
-     tested on rather than the machine that builds it, so arch is any. A  depen-
+     LICENSE and SLOT are carried, and KEYWORDS names the machines an ebuild  is
+     tested  on rather than the machine that builds it, so arch is any. A depen-
      dency atom is a category, a package and an optional comparison, so the cat-
-     egory  is	dropped,  a blocker becomes x-conflicts, and a version keeps its
+     egory is dropped, a blocker becomes x-conflicts, and a  version  keeps  its
      upstream part with the same comparator names the PKGBUILD converter uses. A
-     USE conditional, an any-of group, a slot, a use dependency	 and  a	 virtual
-     are  reported,  since  a Holy recipe has no USE flags and cannot choose be-
-     tween the members of a group, and the atoms inside one are carried	 anyway.
+     USE  conditional,	an  any-of group, a slot, a use dependency and a virtual
+     are reported, since a Holy recipe has no USE flags and  cannot  choose  be-
+     tween  the members of a group, and the atoms inside one are carried anyway.
      A mirror:// entry and a remote archive are reported, because a Gentoo Mani-
-     fest  pins	 a  BLAKE2B rather than the SHA-256 a Holy source needs, while a
-     PATCHES entry and any other file named beside the ebuild is copied next  to
-     the  recipe  and hashed.  Each standard phase function becomes the matching
-     phase behind a prologue that rebuilds EPREFIX,  ED,  D,  DESTDIR,	WORKDIR,
-     DISTDIR,  T,  PN,	PV,  PR, PF, P and PVR from the exported Holy paths, and
-     every eclass and every ebuild.sh helper a body  calls  is	reported  rather
+     fest pins a BLAKE2B rather than the SHA-256 a Holy source	needs,	while  a
+     PATCHES  entry and any other file named beside the ebuild is copied next to
+     the recipe and hashed.  Each standard phase function becomes  the	matching
+     phase  behind  a  prologue	 that rebuilds EPREFIX, ED, D, DESTDIR, WORKDIR,
+     DISTDIR, T, PN, PV, PR, PF, P and PVR from the  exported  Holy  paths,  and
+     every  eclass  and	 every	ebuild.sh helper a body calls is reported rather
      than run, so the build fails visibly rather than losing a step.
 
-     The  Pacstall  converter carries pkgname, pkgver, pkgrel, pkgdesc, url, li-
-     cense, maintainer, repology, arch and gives, and expands  $pkgname,  ${pkg-
-     name},  $pkgver,  $pkgrel,	 $gives,  $pkgbase and $epoch inside a value, as
+     The Pacstall converter carries pkgname, pkgver, pkgrel, pkgdesc,  url,  li-
+     cense,  maintainer,  repology, arch and gives, and expands $pkgname, ${pkg-
+     name}, $pkgver, $pkgrel, $gives, $pkgbase and $epoch  inside  a  value,  as
      well as a variable the same pacscript states in an assignment of its own. A
      value that needs the shell to choose a substring is a computed identity and
-     returns 2. An epoch is preserved  and  dropped,  amd64  and  x86_64  become
-     x86_64,  i386  and	 i686 become i686, any and all become any, and a machine
+     returns  2.  An  epoch  is	 preserved  and dropped, amd64 and x86_64 become
+     x86_64, i386 and i686 become i686, any and all become any,	 and  a	 machine
      Holy does not carry is written as it stands and reported. A source entry is
-     NAME::URL, ?NAME::URL or a plain URL, a sha256sums entry in the same  order
+     NAME::URL,	 ?NAME::URL or a plain URL, a sha256sums entry in the same order
      becomes source-sha256, and a file named beside the pacscript is copied next
      to the recipe and hashed; a git address, a remote source with no digest and
-     a	plain  http address are reported.  depends, makedepends and checkdepends
+     a plain http address are reported.	 depends, makedepends  and  checkdepends
      become depend and build-depend, a group of alternatives written with a pipe
-     is reported with the first of them carried, pacdeps become depend with  the
-     fact  that they name packages of the same pacstall repository reported, and
-     provides, conflicts, breaks, replaces, enhances,  recommends  and	suggests
-     become  x-	 records while an optdepends entry becomes x-optdepend. A backup
-     entry becomes config, and an r: prefix becomes config mutable.  Every  list
-     written  per machine or per distribution under a suffixed name is reported,
-     as is every setting that steers a Pacstall run and every digest list  other
-     than  sha256sums.	prepare,  build,  check	 and package become the matching
-     phase behind a prologue that rebuilds  pkgdir,  pacdir,  srcdir,  startdir,
+     is	 reported with the first of them carried, pacdeps become depend with the
+     fact that they name packages of the same pacstall repository reported,  and
+     provides,	conflicts,  breaks,  replaces, enhances, recommends and suggests
+     become x- records while an optdepends entry becomes x-optdepend.  A  backup
+     entry  becomes  config, and an r: prefix becomes config mutable. Every list
+     written per machine or per distribution under a suffixed name is  reported,
+     as	 is every setting that steers a Pacstall run and every digest list other
+     than sha256sums. prepare, build, check  and  package  become  the	matching
+     phase  behind  a  prologue	 that rebuilds pkgdir, pacdir, srcdir, startdir,
      builddir, TARCH, NCPU, pkgname, pkgbase, pkgver, pkgrel, pacname, gives and
-     epoch  from  the  exported	 Holy paths; a list of names with a pkgbase is a
+     epoch from the exported Holy paths; a list of names with  a  pkgbase  is  a
      split pkgbase whose package_NAME functions become the split steps that fill
-     each output. Every helper a body calls and every variable of  the	Pacstall
+     each  output.  Every helper a body calls and every variable of the Pacstall
      environment  a  body  reads  is  reported,	 and  pre_install,  pre_upgrade,
-     post_install and post_upgrade become one install hook while pre_remove  and
-     post_remove  become one remove hook, each written beside the recipe and in-
+     post_install  and post_upgrade become one install hook while pre_remove and
+     post_remove become one remove hook, each written beside the recipe and  in-
      stalled into the payload.
 
-     The Flatpak converter reads a JSON manifest. The name is  the  last  dotted
-     component	of  its	 application  id,  and	an id that names a machine and a
-     branch after a slash keeps that reflex in x-app-id while  the  branch  sup-
-     plies  the	 machine. The version, summary, url, command, branch and machine
-     are carried; a manifest that states no version records zero and the  report
-     says  so. The sdk becomes a build requirement and the runtime a runtime re-
+     The  Flatpak  converter  reads a JSON manifest. The name is the last dotted
+     component of its application id, and an id	 that  names  a	 machine  and  a
+     branch  after  a  slash keeps that reflex in x-app-id while the branch sup-
+     plies the machine. The version, summary, url, command, branch  and	 machine
+     are  carried; a manifest that states no version records zero and the report
+     says so. The sdk becomes a build requirement and the runtime a runtime  re-
      quirement, because the SDK that builds the modules and the runtime the pro-
      gram runs on are two different ids. A module becomes one step in module or-
-     der: its build-options export env, the flag variables and append-path,  its
-     commands  keep their shell, and the make, autotools, autogen, cmake and me-
+     der:  its build-options export env, the flag variables and append-path, its
+     commands keep their shell, and the make, autotools, autogen, cmake and  me-
      son templates are replaced by the shell that runs the same tools, which the
-     report names. A patch applies with -p1 before its module builds, an  inline
-     source  becomes a file beside the recipe, a local archive is copied next to
+     report  names. A patch applies with -p1 before its module builds, an inline
+     source becomes a file beside the recipe, a local archive is copied next  to
      the recipe and a remote one keeps its declared sha256. A /app path inside a
      command becomes $DESTDIR and the prefix of a module becomes /usr, so a con-
-     verted build writes into the  payload.   finish-args  permissions,	 cleanup
-     steps,  build  extensions and a buildsystem with no Holy phase are reported
-     as dropped or unresolved, and a manifest with several modules is  reported,
-     because  a	 Flatpak  build	 shares one prefix across its modules while each
+     verted  build  writes  into  the payload.	finish-args permissions, cleanup
+     steps, build extensions and a buildsystem with no Holy phase  are	reported
+     as	 dropped or unresolved, and a manifest with several modules is reported,
+     because a Flatpak build shares one prefix across  its  modules  while  each
      step here installs into the payload.
 
      The Homebrew converter reads a formula as Ruby text and never evaluates it.
-     The class name becomes the package name, the description, homepage and  li-
+     The  class name becomes the package name, the description, homepage and li-
      cense are carried, the url and its sha256 become one pinned source, the re-
-     vision  becomes  the  release, and a formula that states no version records
+     vision becomes the release, and a formula that states  no	version	 records
      the version its source url carries or zero, with the report naming which. A
-     depends_on becomes a runtime requirement and a :build  dependency	a  build
-     requirement;  a  :recommended  or :optional dependency is reported, since a
-     build cannot promise a feature it did not ask for. A resource  or	a  patch
-     block  that  pins	a url and a digest becomes a fetched source, and a patch
+     depends_on	 becomes  a  runtime requirement and a :build dependency a build
+     requirement; a :recommended or :optional dependency is  reported,	since  a
+     build  cannot  promise  a feature it did not ask for. A resource or a patch
+     block that pins a url and a digest becomes a fetched source,  and	a  patch
      applies with -p1 in the prepare phase.
 
      A system call inside def install or on_linux becomes a build step that runs
-     the same command in the source root, and the Homebrew prefix  is  rewritten
-     onto  the	build  root:  #{prefix}	 and  HOMEBREW_PREFIX become $HOLY_DEST,
+     the  same	command in the source root, and the Homebrew prefix is rewritten
+     onto the build  root:  #{prefix}  and  HOMEBREW_PREFIX  become  $HOLY_DEST,
      #{libexec}	  becomes   $HOLY_DEST/libexec,	  #{etc}   and	 #{var}	  become
      $HOLY_DEST/etc and $HOLY_DEST/var, and #{buildpath} becomes $HOLY_BUILD. An
-     interpolation  this  reader  does not model keeps its text and is reported.
+     interpolation this reader does not model keeps its text  and  is  reported.
      Every other statement of that body is Ruby, so the formula is copied beside
      the recipe as homebrew-install.rb, the build declares a ruby build require-
-     ment, and the report names the file and line of  each  statement:	a  shell
+     ment,  and	 the  report  names the file and line of each statement: a shell
      step that pretended to run Ruby would be a lie. An engine lift puts the ex-
-     tracted  source root where a Homebrew build runs, since the engine extracts
-     an archive under its own name. A head, a mirror, a	 uses_from_macos  frame-
-     work,  an	on_macos,  on_arm  or  on_intel block, a bottle block, a service
+     tracted source root where a Homebrew build runs, since the engine	extracts
+     an	 archive  under its own name. A head, a mirror, a uses_from_macos frame-
+     work, an on_macos, on_arm or on_intel block,  a  bottle  block,  a	 service
      block and a test block are reported, because a bottle is a prebuilt foreign
-     binary, a launchd job has no Linux counterpart and a Homebrew test	 harness
+     binary,  a launchd job has no Linux counterpart and a Homebrew test harness
      does not exist here.
 
-     The  Guix	converter  reads  a  package definition as Scheme text and never
-     evaluates it.  The name, version, synopsis,  homepage,  license  and  build
-     system  are  carried, and a definition that states no version records zero,
+     The Guix converter reads a package definition  as	Scheme	text  and  never
+     evaluates	it.   The  name,  version, synopsis, homepage, license and build
+     system are carried, and a definition that states no version  records  zero,
      which the report names. An origin becomes one pinned source: a url-fetch is
      fetched by its uri, a uri written as a string-append becomes the concatena-
-     tion of its literals, and the base32 digest a definition writes is	 decoded
-     into  the	hex  a Holy source records. An origin that is not a url-fetch is
+     tion  of its literals, and the base32 digest a definition writes is decoded
+     into the hex a Holy source records. An origin that is not	a  url-fetch  is
      reported, since a git or a local origin is a source this converter does not
-     fetch. Each name in inputs becomes a runtime requirement and each	name  in
-     native-inputs  a  build requirement; a versioned entry contributes only its
+     fetch.  Each  name in inputs becomes a runtime requirement and each name in
+     native-inputs a build requirement; a versioned entry contributes  only  its
      name, since a version constraint is not a name a record can hold.
 
-     The build system becomes the tools it runs.  gnu-build-system  becomes  au-
+     The  build	 system	 becomes the tools it runs. gnu-build-system becomes au-
      toreconf when the source carries configure.ac or configure.in, then config-
-     ure  with the payload prefix, make and make install; cmake-build-system and
-     meson-build-system become their three commands; a build system this  reader
+     ure with the payload prefix, make and make install; cmake-build-system  and
+     meson-build-system	 become their three commands; a build system this reader
      does not replace, and the trivial one whose procedure is a Scheme body, are
-     reported.	An engine lift puts the extracted source root where a guix build
-     runs, since the engine extracts an archive under its own name. A  #:config-
-     ure-flags,	 #:make-flags or #:install-flags argument whose entries are lit-
-     eral strings becomes the flags of the phase that takes them, and  an  argu-
-     ment  that	 computes  a  value is reported. A #:phases argument, a #:tests?
-     that turns the suite off, a patch-shebang and any	expression  this  reader
+     reported. An engine lift puts the extracted source root where a guix  build
+     runs,  since the engine extracts an archive under its own name. A #:config-
+     ure-flags, #:make-flags or #:install-flags argument whose entries are  lit-
+     eral  strings  becomes the flags of the phase that takes them, and an argu-
+     ment that computes a value is reported. A	#:phases  argument,  a	#:tests?
+     that  turns  the  suite off, a patch-shebang and any expression this reader
      does not evaluate, such as a modulo, are reported.
 
-     All  of  these  reports  name every carried, preserved, helper, unknown and
-     changed item with its source file and line range, and their status	 is  na-
-     tive  or  review-required.	 A review-required conversion returns 3 with the
-     recipe written; a computed identity, a missing identity or	 malformed  text
+     All of these reports name every carried,  preserved,  helper,  unknown  and
+     changed  item  with its source file and line range, and their status is na-
+     tive or review-required. A review-required conversion returns  3  with  the
+     recipe  written;  a computed identity, a missing identity or malformed text
      returns 2, and an unreadable input returns 6.
 
    Prepared source set
-     add  SOURCE:PACKAGE  --prepare prints the selected set, source bindings and
-     plan hash, then returns success  without  installing  files  or  writing  a
+     add SOURCE:PACKAGE --prepare prints the selected set, source  bindings  and
+     plan  hash,  then	returns	 success  without  installing files or writing a
      transaction. It can stage verified artifacts in the target cache. It cannot
-     be	 combined  with --yes. The caller must preserve the catalog and artifact
+     be combined with --yes. The caller must preserve the catalog  and	artifact
      hashes when carrying this selection into another target root.
 
 EXIT STATUS
-     0 indicates success under the implemented checks; 1 indicates a failed  lo-
-     cal  fetch,  extraction or check; 2 indicates invalid arguments, configura-
-     tion or package inspection. Diagnostics go to standard error except  --json
+     0	indicates success under the implemented checks; 1 indicates a failed lo-
+     cal fetch, extraction or check; 2 indicates invalid  arguments,  configura-
+     tion  or package inspection. Diagnostics go to standard error except --json
      check events, which go to standard output.
 
-     Preview  returns  3  when valid requirements need provider decisions, 4 for
-     path conflicts and 6 when hooks or privileged modes  need	unsupported  re-
+     Preview returns 3 when valid requirements need provider  decisions,  4  for
+     path  conflicts  and  6 when hooks or privileged modes need unsupported re-
      view. It returns 1 on target-root I/O failure.
 
 SEE ALSO
