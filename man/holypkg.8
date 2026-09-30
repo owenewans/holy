@@ -2192,6 +2192,15 @@ other package dependencies can be satisfied.
 reads SHA-256 objects in name order and reports size and current installed-slot
 status. It also shows hashes marked unavailable after explicit deletion. It
 requires an intact database and does not verify payload bytes.
+.PP
+The list then reports the reverse fact an installed set can hold and a cache walk
+cannot see: each installed artifact whose cached object is absent, as
+unretained DIGEST NAME reason no-cached-object, where the name is the package the
+instance was installed from. Such an artifact is still discovered as a provider
+from its intact installed payload, but a set cannot select it, because a set
+resolves and hashes the archive it stages. Staging the same verified object again
+clears the report. The final line is
+generation G cached N unavailable U unretained M read-only.
 .B cache clean SHA256
 prints a read-only deletion preview. --yes removes the exact object after
 rechecking it under the database writer lock and cache lock. The preview reports

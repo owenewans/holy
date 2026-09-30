@@ -571,7 +571,11 @@
   chosen update.
   Large-catalog index scaling remains open.
 - [x] Bind a verified synced mirror and index digest to a registered source-id
-  under the target database lock. Resolve add, fetch, search and info without
+  under the target database lock. `cache list` now also reports the reverse fact a
+  cache walk cannot see: every installed artifact whose cached object is absent,
+  named with its package name and the no-cached-object reason, followed by a
+  generation, cached, unavailable and unretained summary, so a cache requirement
+  is visible before a plan needs it. Resolve add, fetch, search and info without
   repeating --catalog; reject corrupt bindings and changed mirrors. Keep the
   binding across alias renames. Sync without --output now publishes a verified
   generation in the target cache and binds it for source queries. A registered

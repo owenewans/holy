@@ -1153,8 +1153,8 @@ done:
     return result;
 }
 
-/* the instance meta is the package meta the instance was installed from, so its arch
-   and libc records are the ones the payload was proven against */
+/* the instance meta is the package meta the instance was installed from, so its arch,
+   libc and name records are the ones the payload was proven against */
 static int installed_field(int item, const char *key, char *out, size_t size)
 {
     struct stat st;
@@ -1191,6 +1191,11 @@ done:
     free(line);
     fclose(input);
     return found;
+}
+
+int holy_state_instance_field(int instance, const char *key, char *out, size_t size)
+{
+    return key && out && size && installed_field(instance, key, out, size);
 }
 
 static int installed_name(int item, const char *name)

@@ -303,15 +303,44 @@ static int transaction_refs(int dir, const char *digest, unsigned depth)
     return result;
 }
 
+/* an installed artifact without its cached object is discoverable from its payload but
+   cannot be reused, since a set resolves and hashes the archive it stages. the report
+   names the artifact and the reason, so the fact is visible before a plan needs it. */
+struct unretained {
+    int cache;
+    size_t count;
+    int failed;
+};
+
+/* a state visitor returns 0 to continue and a nonzero status to stop the walk */
+static int unretained_visit(void *context, int root, int instance, const char *digest)
+{
+    struct unretained *state = context;
+    char name[256], object[70];
+    struct stat st;
+    (void)root;
+    if (snprintf(object, sizeof object, "%s.holy", digest) < 0) return 1;
+    if (!fstatat(state->cache, object, &st, AT_SYMLINK_NOFOLLOW)) return 0;
+    if (errno != ENOENT ||
+        !holy_state_instance_field(instance, "name", name, sizeof name)) {
+        state->failed = 1;
+        return 1;
+    }
+    printf("unretained %s %s reason no-cached-object\n", digest, name);
+    ++state->count;
+    return 0;
+}
+
 int holy_cache_list(const char *root_path)
 {
     char **names = NULL;
-    size_t count = 0, i;
+    size_t count = 0, i, cached = 0, unavailable_count = 0;
+    struct unretained state = {-1, 0, 0};
     unsigned long long generation;
-    int status = 1, state = -1, installed = -1, cache = -1, unavailable = -1, result = 1;
-    state = holy_state_lock(root_path, 0, &generation, &status);
-    if (state < 0) return status;
-    installed = openat(state, "installed", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int status = 1, state_fd = -1, installed = -1, cache = -1, unavailable = -1, result = 1;
+    state_fd = holy_state_lock(root_path, 0, &generation, &status);
+    if (state_fd < 0) return status;
+    installed = openat(state_fd, "installed", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     cache = cache_directory(root_path, 0);
     if (installed < 0 || cache < 0 || flock(cache, LOCK_SH) ||
         !cache_names(cache, &names, &count, 0)) goto done;
@@ -327,6 +356,7 @@ int holy_cache_list(const char *root_path)
             printf("cache %s size %ju retained\n", digest, (uintmax_t)st.st_size);
         else goto done;
     }
+    cached = count;
     for (i = 0; i < count; ++i) free(names[i]);
     free(names); names = NULL; count = 0;
     unavailable = unavailable_dir(cache, 0);
@@ -339,8 +369,16 @@ int holy_cache_list(const char *root_path)
             if (fstatat(cache, object, &st, AT_SYMLINK_NOFOLLOW) == 0) continue;
             if (errno != ENOENT) goto done;
             printf("cache %s unavailable\n", names[i]);
+            ++unavailable_count;
         }
     } else if (errno != ENOENT) goto done;
+    for (i = 0; i < count; ++i) free(names[i]);
+    free(names); names = NULL; count = 0;
+    state.cache = cache;
+    if (holy_state_visit(root_path, unretained_visit, &state, &generation) || state.failed)
+        goto done;
+    printf("generation %llu cached %zu unavailable %zu unretained %zu read-only\n",
+           generation, cached, unavailable_count, state.count);
     result = ferror(stdout) ? 1 : 0;
 done:
     for (i = 0; i < count; ++i) free(names[i]);
@@ -348,7 +386,7 @@ done:
     if (unavailable >= 0) close(unavailable);
     if (cache >= 0) close(cache);
     if (installed >= 0) close(installed);
-    if (state >= 0) close(state);
+    if (state_fd >= 0) close(state_fd);
     return result;
 }
 

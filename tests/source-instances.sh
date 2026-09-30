@@ -89,6 +89,16 @@ expect 0 "$bin" db status --root "$root"
 expect 0 "$bin" db check --all --root "$root"
 expect 0 "$bin" cache list --root "$root"
 grep -q "^cache $app size [0-9][0-9]* installed$" "$tmp/out"
+grep -qx "generation $(cat "$db/generation") cached 4 unavailable 0 unretained 0 read-only" "$tmp/out"
+# an installed artifact whose cached object is gone is discoverable but not reusable,
+# and the list says so before a plan needs the fact
+mv "$root/var/cache/holypkg/objects/sha256/$app.holy" "$tmp/app-cache"
+expect 0 "$bin" cache list --root "$root"
+grep -qx "unretained $app app reason no-cached-object" "$tmp/out"
+grep -qx "generation $(cat "$db/generation") cached 3 unavailable 0 unretained 1 read-only" "$tmp/out"
+mv "$tmp/app-cache" "$root/var/cache/holypkg/objects/sha256/$app.holy"
+expect 0 "$bin" cache list --root "$root"
+grep -qx "generation $(cat "$db/generation") cached 4 unavailable 0 unretained 0 read-only" "$tmp/out"
 expect 3 "$bin" cache clean "$app" --root "$root" --yes
 expect 0 "$bin" check --root "$root" --json
 grep -q '"type":"summary"' "$tmp/out"
