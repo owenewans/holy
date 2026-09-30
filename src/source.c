@@ -1,6 +1,7 @@
 #define _XOPEN_SOURCE 700
 #include "source.h"
 #include "config.h"
+#include "keyring.h"
 #include "state.h"
 #include "stage.h"
 #include "repo.h"
@@ -368,23 +369,35 @@ static const struct holy_entry *config_field(const struct holy_config *config,
     return NULL;
 }
 
-static char *source_key_path(const struct holy_entry *entry)
+/* a public-key value is a file path, and a name with no directory that names no
+   such file is the name of a key enrolled in the target root, which is how one key
+   file backs several sources without repeating its path. */
+static char *source_key_path(const struct holy_entry *entry, const char *root)
 {
     const char *name = entry->values[0], *slash;
-    char *path, *resolved;
+    char *path, *resolved = NULL;
     size_t a, b;
-    if (name[0] == '/') return realpath(name, NULL);
-    slash = strrchr(entry->file, '/');
-    a = slash ? (size_t)(slash - entry->file + 1) : 0;
-    b = strlen(name);
-    if (a > (size_t)-1 - b - 1) return NULL;
-    path = malloc(a + b + 1);
-    if (!path) return NULL;
-    memcpy(path, entry->file, a);
-    memcpy(path + a, name, b + 1);
-    resolved = realpath(path, NULL);
-    free(path);
-    return resolved;
+    if (name[0] == '/') resolved = realpath(name, NULL);
+    else {
+        slash = strrchr(entry->file, '/');
+        a = slash ? (size_t)(slash - entry->file + 1) : 0;
+        b = strlen(name);
+        if (a <= (size_t)-1 - b - 1 && (path = malloc(a + b + 1)) != NULL) {
+            memcpy(path, entry->file, a);
+            memcpy(path + a, name, b + 1);
+            resolved = realpath(path, NULL);
+            free(path);
+        }
+    }
+    if (resolved) return resolved;
+    if (!strchr(name, '/') && holy_keyring_name(name)) {
+        char enrolled[4096];
+        int status = holy_keyring_path(root, name, enrolled, sizeof enrolled);
+        if (status == 1) return realpath(enrolled, NULL);
+        fprintf(stderr, "holypkg: %s: %s\n",
+                status == -2 ? "enrolled key changed" : "no enrolled key", name);
+    }
+    return NULL;
 }
 
 static void describe_changes(const struct registry *before, const struct registry *after)
@@ -465,7 +478,7 @@ int holy_source_plan(const char *path, const char *root)
             free(trust); result = 2; goto done;
         }
         if (key_entry) {
-            key_path = source_key_path(key_entry);
+            key_path = source_key_path(key_entry, root);
             if (!key_path ||
                 (!strcmp(e->values[0], "apk") ?
                  !holy_apk_key_fingerprint(key_path, key) :

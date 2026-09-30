@@ -114,6 +114,14 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg conflict [--root DIRECTORY] [--json]
 .br
+.B holypkg key add NAME FILE [--root DIRECTORY] [--replace]
+.br
+.B holypkg key list [--root DIRECTORY] [--json]
+.br
+.B holypkg key show NAME [--root DIRECTORY]
+.br
+.B holypkg key remove NAME [--root DIRECTORY] [--yes]
+.br
 .B holypkg index [--root DIRECTORY] [--path PATH | --capability KIND --name NAME] [--json]
 .br
 .B holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--auto-view] [--view PUBLIC=PRIVATE ...] -- COMMAND [ARGS...]
@@ -2179,7 +2187,7 @@ deletion. The command does not remove installed files or rewrite transaction
 history.
 .PP
 Database init creates an empty ROOT/var/lib/holypkg with installed,
-transactions and index directories, and a generation file containing 0.
+transactions, index and keys directories, and a generation file containing 0.
 It locks the database directory for this operation and uses a synced temporary
 file plus link for exclusive generation creation; repeating init retains the
 existing generation. Init checks existing records and generation before
@@ -2371,7 +2379,8 @@ trust to the package; repository metadata and objects remain unsigned.
 .SH SOURCE REGISTRATION
 source plan reads the explicit configuration and writes a complete proposed
 registry to stdout. It reports alias changes, origin changes, additions and
-deactivations on stderr. A change to trust, key, parent, family or priority
+deactivations on stderr. A public-key value may be a path or the name of a key
+enrolled in the target root, as described under ENROLLED KEYS. A change to trust, key, parent, family or priority
 under the same source ID is reported as policy-change. Review and save the plan, then supply its SHA-256 to
 source apply. An existing initialized database is required. No source command
 downloads packages or runs package code.
@@ -2555,6 +2564,41 @@ db plan-set and db apply-set read the same four claim shapes from the archives o
 the artifacts they select, so a plan states the ambiguity its own selection creates
 before any file is staged. The reason names and the conflict line format are the
 same; the set report adds no JSON, since a plan has no JSON output.
+.SH ENROLLED KEYS
+key add NAME FILE enrolls one public key under NAME in the keys directory of the
+target root, which is ROOT/var/lib/holypkg/keys. The default root is /. A name is
+1 to 64 characters of letters, digits, dot, underscore and dash, which cannot
+begin with a dash or be a dot name, so no enrolled name can name a path. The
+file must be a regular file of at most 1 MiB with no NUL byte, holding a PEM
+public key, a DER public key or an ASCII armored block, since the apk, apt and
+xbps families read keyrings the OpenSSL PEM and DER readers do not parse.
+Enrollment writes the key bytes and the SHA-256 recorded at enrollment through
+temporary files and a rename, holding the database write lock. var/lib/holypkg is
+reserved from payload ownership, so no installed package can place a file beside
+an enrolled key.
+.PP
+Enrolling the same key under a name again is accepted and reports the same
+digest. A different key under an enrolled name is decision-required status 3 and
+names both digests; --replace states the change. A file that cannot be read is 4
+and a name that is not usable is 2. The store holds public material, so the key
+files are ordinary 0644 files and no secret is written.
+.PP
+key list prints one line per enrolled name with its digest, byte count and
+whether the stored bytes still match the recorded digest, then a generation,
+keys and read-only summary. --json emits holy-keyring-1 key events with name,
+sha256, bytes and state, then a summary carrying generation and keys. key show
+prints one intact line and returns 4 for a changed key, 6 for a name nothing
+enrolled. key remove needs --yes, reports decision-required status 3 without it,
+and unlinks the key, its digest record and any temporary file.
+.PP
+A source public-key value that contains no slash and is a usable key name is an
+enrolled name, resolved in the target root of that command, so one key file backs
+several sources without repeating its path. A name nothing enrolled is refused
+with no enrolled key and a name whose stored bytes changed is refused with
+enrolled key changed, rather than a key the enrollment did not record. The frozen
+source record is the digest the key file has, so a source enrolled by name and
+the same source enrolled by path freeze the same source identity. Every other
+public-key value stays a path resolved as before.
 .SH INSTALLED FILE INDEX
 index reads a consistent installed-state snapshot under the database's shared lock
 and answers two questions the planner answers internally: which installed artifact

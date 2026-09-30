@@ -19,6 +19,7 @@
 #include "graph.h"
 #include "conflict.h"
 #include "index.h"
+#include "keyring.h"
 #include "source.h"
 #include "stage.h"
 #include "import.h"
@@ -2082,6 +2083,42 @@ sync_usage:
                       "KIND --name NAME] [--json]\n", stderr);
             return indexed;
         }
+    }
+    if (argc > 2 && !strcmp(argv[1], "key")) {
+        const char *root = "/", *name, *file = NULL, *action = argv[2];
+        int json = 0, replace = 0, yes = 0, i = 3;
+        if (!strcmp(action, "list")) {
+            for (; i < argc; ++i) {
+                if (!strcmp(argv[i], "--root") && i + 1 < argc && !strcmp(root, "/")) root = argv[++i];
+                else if (!strcmp(argv[i], "--json") && !json) json = 1;
+                else goto key_usage;
+            }
+            return holy_keyring_list(root, json);
+        }
+        if (strcmp(action, "add") && strcmp(action, "show") && strcmp(action, "remove")) goto key_usage;
+        if (argc < 4) goto key_usage;
+        name = argv[3];
+        i = 4;
+        if (!strcmp(action, "add")) {
+            if (argc < 5) goto key_usage;
+            file = argv[4];
+            i = 5;
+        }
+        for (; i < argc; ++i) {
+            if (!strcmp(argv[i], "--root") && i + 1 < argc && !strcmp(root, "/")) root = argv[++i];
+            else if (!strcmp(action, "add") && !strcmp(argv[i], "--replace") && !replace) replace = 1;
+            else if (!strcmp(action, "remove") && !strcmp(argv[i], "--yes") && !yes) yes = 1;
+            else goto key_usage;
+        }
+        if (!strcmp(action, "add")) return holy_keyring_add(root, name, file, replace);
+        if (!strcmp(action, "show")) return holy_keyring_show(root, name);
+        return holy_keyring_remove(root, name, yes);
+key_usage:
+        fputs("usage: holypkg key add NAME FILE [--root DIRECTORY] [--replace] | "
+              "holypkg key list [--root DIRECTORY] [--json] | "
+              "holypkg key show NAME [--root DIRECTORY] | "
+              "holypkg key remove NAME [--root DIRECTORY] [--yes]\n", stderr);
+        return 2;
     }
     if (argc > 1 && !strcmp(argv[1], "conflict")) {
         const char *root = "/";

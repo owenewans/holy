@@ -1200,7 +1200,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=a880d1da4a22c1c466d11e14816ca51d60fd7dcac0c133f149f770146b788f91
+holypkg.8 source=holy version=development sha256=cf6f275012c771ece4758df97beb7d77e6a4b54627ea1a3165ad129c1781db3f
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1321,6 +1321,10 @@ SYNOPSIS
      [--files] [--ca-file FILE]
      holypkg orphan [--root DIRECTORY] [--json]
      holypkg conflict [--root DIRECTORY] [--json]
+     holypkg key add NAME FILE [--root DIRECTORY] [--replace]
+     holypkg key list [--root DIRECTORY] [--json]
+     holypkg key show NAME [--root DIRECTORY]
+     holypkg key remove NAME [--root DIRECTORY] [--yes]
      holypkg  index  [--root  DIRECTORY] [--path PATH | --capability KIND --name
      NAME] [--json]
      holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH]  [--libc  LIBC]
@@ -3377,202 +3381,203 @@ DESCRIPTION
      stalled files or rewrite transaction history.
 
      Database  init creates an empty ROOT/var/lib/holypkg with installed, trans-
-     actions and index directories, and a  generation  file  containing	 0.   It
-     locks the database directory for this operation and uses a synced temporary
-     file  plus	 link  for exclusive generation creation; repeating init retains
-     the existing generation. Init checks existing records and generation before
-     publishing a new generation file; unknown entries	cannot	turn  a	 partial
-     database  into  an	 apparently  initialized one. Status holds a shared lock
-     while validating the layout and reading the generation. It	 recognizes  in-
-     stalled  instance directories and one pending reservation. Init rejects any
-     nonempty installed, transactions or index directory. Both	commands  reject
-     symlinked, group-writable or world-writable ancestor directories inside the
-     target root.  Init does not register packages or install files.
+     actions, index and keys directories, and a generation  file  containing  0.
+     It locks the database directory for this operation and uses a synced tempo-
+     rary  file	 plus link for exclusive generation creation; repeating init re-
+     tains the existing generation. Init checks existing records and  generation
+     before publishing a new generation file; unknown entries cannot turn a par-
+     tial  database  into  an  apparently initialized one. Status holds a shared
+     lock while validating the layout and reading the generation. It  recognizes
+     installed	instance  directories  and one pending reservation. Init rejects
+     any nonempty installed, transactions or index directory. Both commands  re-
+     ject  symlinked,  group-writable or world-writable ancestor directories in-
+     side the target root.  Init does not register packages or install files.
 
      Database reserve checks a verified SHA-256 object in the target-root cache,
      locks the database at its current generation and publishes one fsynced pre-
-     pared  reservation in transactions/pending. Status validates the record and
+     pared reservation in transactions/pending. Status validates the record  and
      returns 5 while it is present. Reserve refuses a second pending record with
-     status 5. Database cancel validates and  removes  a  prepared  or	approved
-     record;  it  leaves the cached archive and rootfs unchanged. The record has
-     format holy-reservation-1, its stage, generation and  artifact  digest.  An
-     approved  record  also  contains the plan digest.	This is a reservation of
-     inputs, not a dependency-resolved install plan  or	 committed  transaction.
-     Incomplete	 file  mutation	 requires manual inspection.  An unknown or mal-
+     status  5.	 Database  cancel  validates  and removes a prepared or approved
+     record; it leaves the cached archive and rootfs unchanged. The  record  has
+     format  holy-reservation-1,  its  stage, generation and artifact digest. An
+     approved record also contains the plan digest.  This is  a	 reservation  of
+     inputs,  not  a  dependency-resolved install plan or committed transaction.
+     Incomplete file mutation requires manual inspection.  An  unknown	or  mal-
      formed journal entry remains an error; cancel will not discard it silently.
 
-     Status --json emits one holy-db-status-1 state event with	numeric	 genera-
-     tion  and	pending	 null or a prepared/approved SHA-256 object. An approved
-     object also includes its plan digest. A malformed database	 emits	one  in-
-     valid-state  event	 and returns 1, without partial state on stdout. A valid
-     file-mutation journal produces an incomplete event and exit code 5.  Status
-     checks  the  installed  record  layout; it does not replace holypkg check's
+     Status  --json  emits one holy-db-status-1 state event with numeric genera-
+     tion and pending null or a prepared/approved SHA-256  object.  An	approved
+     object  also  includes  its plan digest. A malformed database emits one in-
+     valid-state event and returns 1, without partial state on stdout.	A  valid
+     file-mutation  journal produces an incomplete event and exit code 5. Status
+     checks the installed record layout; it does  not  replace	holypkg	 check's
      comparison of installed manifests against the actual rootfs.
 
-     Database recover handles interruption of reservation  publication.	 It  ac-
-     cepts  one	 .holy-tmp-  followed  by  32 lowercase hex digits, verifies its
-     record against the current generation and removes that directory entry.  If
-     pending  also  exists,  the temporary name must be a hardlink to that exact
-     pending inode. A valid unpublished approved record for  the  same	artifact
-     may  instead  be removed while leaving its prepared predecessor intact. Re-
-     cover preserves pending and returns 5. With no pending it returns	0  after
-     removing  the  orphan. Unknown entries, stale generations, unrelated inodes
-     and malformed records fail without deletion.  For	an  incomplete	applying
+     Database  recover	handles	 interruption of reservation publication. It ac-
+     cepts one .holy-tmp- followed by 32  lowercase  hex  digits,  verifies  its
+     record  against the current generation and removes that directory entry. If
+     pending also exists, the temporary name must be a hardlink	 to  that  exact
+     pending  inode.  A	 valid unpublished approved record for the same artifact
+     may instead be removed while leaving its prepared predecessor  intact.  Re-
+     cover  preserves  pending and returns 5. With no pending it returns 0 after
+     removing the orphan. Unknown entries, stale generations,  unrelated  inodes
+     and  malformed  records  fail  without deletion. For an incomplete applying
      transaction, recover returns 5 unless --abort-empty proves that none of its
-     payload  files  or installed instance has appeared. --finish-apply clears a
-     completed applying transaction after validating the new generation and  in-
-     stalled  payload.	For an incomplete removing transaction, --continue veri-
-     fies and removes any remaining listed files. It does not  replay  hooks  or
+     payload files or installed instance has appeared. --finish-apply  clears  a
+     completed	applying transaction after validating the new generation and in-
+     stalled payload. For an incomplete removing transaction,  --continue  veri-
+     fies  and	removes	 any remaining listed files. It does not replay hooks or
      undo installed files.
 
-     Database  preflight holds a shared database lock, validates the one pending
-     reservation, reads a verified private snapshot of its cached  artifact  and
-     runs  the	same target-root collision and dependency preview as preview lo-
-     cal:FILE.	It returns 0 for a zero-decision preview, 3 for	 unresolved  re-
+     Database preflight holds a shared database lock, validates the one	 pending
+     reservation,  reads  a verified private snapshot of its cached artifact and
+     runs the same target-root collision and dependency preview as  preview  lo-
+     cal:FILE.	 It  returns 0 for a zero-decision preview, 3 for unresolved re-
      quirements or runtime edges, 4 for path conflicts and 6 if the reservation,
-     cached  input or supported payload profile is unavailable. The output names
+     cached input or supported payload profile is unavailable. The output  names
      the database generation and artifact digest.  It does not turn the reserva-
-     tion into an approved plan. File changes outside the database lock can  in-
-     validate  the  preview  before apply; apply rechecks paths and the artifact
-     under its writer lock.  With --json, both preview	and  database  preflight
-     emit  holy-preview-1  path events and a summary only after the full archive
-     walk. Path events include state new, existing-dir or conflict and	optional
+     tion  into an approved plan. File changes outside the database lock can in-
+     validate the preview before apply; apply rechecks paths  and  the	artifact
+     under  its	 writer	 lock.	With --json, both preview and database preflight
+     emit holy-preview-1 path events and a summary only after the  full	 archive
+     walk.  Path events include state new, existing-dir or conflict and optional
      interpreter and helper fields. A completed database preflight adds a reser-
-     vation  event  with  generation and artifact. A hook decision emits a deci-
-     sion-required error event; database preflight also	 emits	its  reservation
-     event.  Invalid  input and unavailable reservations emit a structured error
+     vation event with generation and artifact. A hook decision	 emits	a  deci-
+     sion-required  error  event;  database preflight also emits its reservation
+     event. Invalid input and unavailable reservations emit a  structured  error
      event without partial path output.
 
      The repository index command validates regular .holy files in DIRECTORY and
-     writes an unsigned, lexicographically ordered index through an  atomic  re-
-     name.   It	 refuses  symlinked packages, duplicate package identities and a
+     writes  an	 unsigned, lexicographically ordered index through an atomic re-
+     name.  It refuses symlinked packages, duplicate package  identities  and  a
      nonregular	 existing  index.  It  rejects	unsupported  HOLY/deps	records.
-     Records  in format holy-index-prototype-8 contain the quoted name, version,
-     release, os, arch, libc, relative filename, SHA-256, size and version  com-
-     parator  family. The last field is - when the artifact declares no compara-
-     tor. The reader checks this field against the  chosen  archive.   Following
-     package  records  include	typed  claim lines bound to the package SHA-256,
+     Records in format holy-index-prototype-8 contain the quoted name,	version,
+     release,  os, arch, libc, relative filename, SHA-256, size and version com-
+     parator family. The last field is - when the artifact declares no	compara-
+     tor.  The	reader	checks this field against the chosen archive.  Following
+     package records include typed claim lines bound  to  the  package	SHA-256,
      copied from validated HOLY/provides. Readers compare every indexed claim to
-     the artifact before returning records. A separate	coverage  line	declares
+     the  artifact  before  returning records. A separate coverage line declares
      complete native payload file coverage. File records contain the package di-
-     gest  and quoted nondirectory path from the verified manifest; readers com-
-     pare them to the artifact. A separate coverage line declares  complete  na-
-     tive  package  dependency coverage. Requirement records contain the package
-     digest and all  ten  validated  HOLY/deps	fields.	 Readers  compare  these
-     records  to  the  artifact. ELF-derived requirements still require artifact
+     gest and quoted nondirectory path from the verified manifest; readers  com-
+     pare  them	 to the artifact. A separate coverage line declares complete na-
+     tive package dependency coverage. Requirement records contain  the	 package
+     digest  and  all  ten  validated  HOLY/deps  fields.  Readers compare these
+     records to the artifact. ELF-derived requirements	still  require	artifact
      inspection. A separate coverage line declares complete DT_SONAME facts from
-     scanned ET_DYN files, with exact name, architecture, libc class  and  path.
+     scanned  ET_DYN  files, with exact name, architecture, libc class and path.
      repo providers DIRECTORY soname NAME uses these facts, ignoring unsupported
-     or	 forged	 SONAME	 claims. A further coverage line and elf-version records
-     bind defined version names to each library path. When an ELF  consumer  has
-     strong  version needs for a DT_NEEDED name, indexed closure staging selects
-     only same-ABI SONAME candidates carrying every required version. For  older
-     indexes,  strong  symbol  imports	trigger a targeted scan of each matching
-     candidate; a library with the right version name but without the  requested
-     export  is	 excluded. Generation 7 indexes exported dynamic symbols per li-
-     brary path, including version, type, binding, visibility and  hidden  flag.
+     or forged SONAME claims. A further coverage line  and  elf-version	 records
+     bind  defined  version names to each library path. When an ELF consumer has
+     strong version needs for a DT_NEEDED name, indexed closure staging	 selects
+     only  same-ABI SONAME candidates carrying every required version. For older
+     indexes, strong symbol imports trigger a targeted	scan  of  each	matching
+     candidate;	 a library with the right version name but without the requested
+     export is excluded. Generation 7 indexes exported dynamic symbols	per  li-
+     brary  path,  including version, type, binding, visibility and hidden flag.
      Provider search uses these facts to reject a missing export without opening
      the candidate archive. It compares indexed exports against the selected ar-
-     tifact  before  staging.  The  resolver checks selected archives again. Old
-     holy-index-prototype-1 through -7 generations  remain  readable,  with  the
-     coverage  each  generation	 declares; optional signatures are sidecars to a
-     sealed generation. Source adapters must not treat it as the native	 reposi-
-     tory  format.   repo  requirements	 reads one unambiguous package's indexed
-     HOLY/deps records from the pinned catalog generation  without  opening  its
+     tifact before staging. The resolver checks	 selected  archives  again.  Old
+     holy-index-prototype-1  through  -7  generations  remain readable, with the
+     coverage each generation declares; optional signatures are	 sidecars  to  a
+     sealed  generation. Source adapters must not treat it as the native reposi-
+     tory format.  repo requirements reads  one	 unambiguous  package's	 indexed
+     HOLY/deps	records	 from  the pinned catalog generation without opening its
      payload. It returns 6 when the index lacks complete dependency coverage and
      3 when name alone is ambiguous.  The digest-pinned index is metadata; pack-
-     age  installation	still verifies the downloaded artifact and scans its ELF
+     age installation still verifies the downloaded artifact and scans	its  ELF
      files.
 
-     The seal command validates the entire local index, creates an  index.SHA256
-     generation	 and  atomically  publishes a current pointer containing its di-
-     gest.  The list and search commands require current and  check  its  digest
-     before  reading  the generation. Indexing creates a draft index; publish it
+     The  seal command validates the entire local index, creates an index.SHA256
+     generation and atomically publishes a current pointer  containing	its  di-
+     gest.   The  list	and search commands require current and check its digest
+     before reading the generation. Indexing creates a draft index;  publish  it
      with seal after reviewing changes. Removing current makes the directory un-
      available to list and search rather than exposing an unsealed draft.  With-
-     out --key, the pointer and artifacts remain unsigned. With --key, seal  re-
-     quires  an	 Ed25519  PEM  private key, signs the exact index generation and
+     out  --key, the pointer and artifacts remain unsigned. With --key, seal re-
+     quires an Ed25519 PEM private key, signs the  exact  index	 generation  and
      publishes its 64-byte signature.SHA256 file before changing current. Exist-
-     ing signatures for the same generation must verify under the supplied  key;
+     ing  signatures for the same generation must verify under the supplied key;
      seal does not replace them. Existing generation files remain in place.
 
-     repo  verify requires an Ed25519 PEM public key. It checks the selected in-
-     dex digest, the signature over the exact index  bytes  and	 the  referenced
+     repo verify requires an Ed25519 PEM public key. It checks the selected  in-
+     dex  digest,  the	signature  over the exact index bytes and the referenced
      package artifacts. A missing or changed signature, wrong key or altered in-
      dex returns 4. The private key stays on the publishing machine. With --pub-
-     lic-key,  repo  mirror  downloads	the signature over HTTPS and verifies it
-     against  the  pinned  index  before  downloading	packages.   It	 records
+     lic-key, repo mirror downloads the signature over	HTTPS  and  verifies  it
+     against   the   pinned   index  before  downloading  packages.  It	 records
      ed25519-pinned-key in mirror-origin together with SHA-256 of the raw public
-     key;  a failed signature leaves the new mirror unpublished. Source sync en-
+     key; a failed signature leaves the new mirror unpublished. Source sync  en-
      forces a public key frozen by source plan when one is registered. Verifica-
-     tion establishes authenticity only relative to the supplied  key;	it  does
-     not  reject  an  older  signed  generation	 selected  by  a changed current
-     pointer. Publishers must distribute the public key through a trusted  chan-
+     tion  establishes	authenticity  only relative to the supplied key; it does
+     not reject an  older  signed  generation  selected	 by  a	changed	 current
+     pointer.  Publishers must distribute the public key through a trusted chan-
      nel and retain separate generation or hash pins where freshness matters.
 
-     The  repository  list command reads that prototype index with the holy.conf
+     The repository list command reads that prototype index with  the  holy.conf
      lexer and checks each referenced regular archive's size, SHA-256, identity,
      payload and known ELF ABI facts before printing records. An index without a
-     signature carries no provenance guarantee. Neither command	 installs  pack-
+     signature	carries	 no provenance guarantee. Neither command installs pack-
      ages or activates this directory as a package source.
 
-     The  repository  search  command verifies the same complete local index and
+     The repository search command verifies the same complete  local  index  and
      returns exact name matches. repo search-file takes an absolute path and re-
-     turns matching package records plus coverage status, index hash  and  time-
-     stamp.   With  a  version-3-or-newer index, it verifies only indexed candi-
+     turns  matching  package records plus coverage status, index hash and time-
+     stamp.  With a version-3-or-newer index, it verifies  only	 indexed  candi-
      dates; a changed unselected archive does not invalidate this query.  Legacy
-     generations return unavailable coverage and status 6. No match  in	 a  com-
-     plete  native  index  prints  a zero-count summary. This prototype does not
-     perform dependency resolution or provider selection.  --fuzzy emits  ranked
-     hints,  capped  at	 20  displayed	rows.  A hint is not an exact capability
+     generations  return  unavailable  coverage and status 6. No match in a com-
+     plete native index prints a zero-count summary.  This  prototype  does  not
+     perform  dependency resolution or provider selection.  --fuzzy emits ranked
+     hints, capped at 20 displayed rows. A  hint  is  not  an  exact  capability
      match.
 
-     Repository providers searches the sealed local catalog for	 an  exact  KIND
-     and  NAME	match.	It finds indexed claims from HOLY/provides and the pack-
+     Repository	 providers  searches  the sealed local catalog for an exact KIND
+     and NAME match. It finds indexed claims from HOLY/provides	 and  the  pack-
      age's own metadata name for KIND=package. With a version-5 index, KIND=son-
      ame uses scanned ELF facts instead of claims. For prototype-2 and later, it
-     validates the complete index and  verifies	 only  candidate  artifacts  and
+     validates	the  complete  index  and  verifies only candidate artifacts and
      their full claim sets before printing package records and a count. An unse-
-     lected  object  can  change  without  invalidating this query; no match de-
-     scribes the sealed index generation, not every file in the	 repository  di-
-     rectory.  Prototype-1 queries still verify all artifacts. Listed claims are
-     unverified: an exact name does not prove file presence, ABI  compatibility,
+     lected object can change without invalidating  this  query;  no  match  de-
+     scribes  the  sealed index generation, not every file in the repository di-
+     rectory. Prototype-1 queries still verify all artifacts. Listed claims  are
+     unverified:  an exact name does not prove file presence, ABI compatibility,
      version constraints, or successful execution. There is no source ranking or
-     dependency	 solver yet; the prototype-2 query uses indexed claim lookup but
+     dependency solver yet; the prototype-2 query uses indexed claim lookup  but
      still scans all index rows.
 
      The make check-solver target (also run by make check) exercises an internal
-     libsolv interface with normalized, exact capability IDs  and  AND/OR,  con-
-     flict  and	 cyclic	 fixtures.   The caller must pre-filter candidates using
-     each source family's version semantics before it can  use	that  interface.
-     The  fixture  is not a holypkg solve command or an installed-system test. A
-     missing libsolv development package makes the target fail rather  than  re-
+     libsolv  interface	 with  normalized, exact capability IDs and AND/OR, con-
+     flict and cyclic fixtures.	 The caller  must  pre-filter  candidates  using
+     each  source  family's  version semantics before it can use that interface.
+     The fixture is not a holypkg solve command or an installed-system	test.  A
+     missing  libsolv  development package makes the target fail rather than re-
      porting a passed fixture.	The internal unique-solution check returns deci-
      sion-required when excluding a selected provider permits a second solution.
      It does not rank sources or ask the user for a choice. This detects differ-
      ing package sets, not multiple provider edges within one set. A plain solve
      returns one proposed set, not a reviewed installation plan.  With --json it
-     emits  holy-repo-candidates-1 candidate events (package identity, filename,
+     emits holy-repo-candidates-1 candidate events (package identity,  filename,
      SHA-256 and byte size), then a count summary. Invalid catalogs emit one er-
-     ror event without partial candidates; invalid KIND/NAME emits  an	invalid-
-     query  event.  The	 JSON  candidate  identifies an artifact, not a selected
+     ror  event	 without partial candidates; invalid KIND/NAME emits an invalid-
+     query event. The JSON candidate identifies	 an  artifact,	not  a	selected
      provider edge or an ABI compatibility verdict.
 
-     The repository fetch command requires a lowercase SHA-256 from  the  sealed
-     index.  It	 verifies  the complete index and artifacts, then copies the se-
-     lected snapshot to an existing output directory as SHA256.holy. It	 rejects
+     The  repository  fetch command requires a lowercase SHA-256 from the sealed
+     index. It verifies the complete index and artifacts, then	copies	the  se-
+     lected  snapshot to an existing output directory as SHA256.holy. It rejects
      a missing digest or a changed unrelated artifact. The copy does not install
-     or	 grant	trust to the package; repository metadata and objects remain un-
+     or grant trust to the package; repository metadata and objects  remain  un-
      signed.
 
 SOURCE REGISTRATION
      source plan reads the explicit configuration and writes a complete proposed
      registry to stdout. It reports alias changes, origin changes, additions and
-     deactivations on stderr. A change to trust, key, parent, family or priority
-     under the same source ID is reported as policy-change. Review and save  the
-     plan,  then  supply  its  SHA-256	to source apply. An existing initialized
-     database is required. No source command downloads packages or runs	 package
-     code.
+     deactivations  on stderr. A public-key value may be a path or the name of a
+     key enrolled in the target root, as described under ENROLLED KEYS. A change
+     to trust, key, parent, family or priority under the same source ID	 is  re-
+     ported  as policy-change. Review and save the plan, then supply its SHA-256
+     to source apply. An existing initialized database is  required.  No  source
+     command downloads packages or runs package code.
 
      The  plan binds the previous registry digest, installed database generation
      and database device/inode. Apply stages the plan, verifies its approved di-
@@ -3762,6 +3767,44 @@ INSTALLED CONFLICTS
      own  selection  creates before any file is staged. The reason names and the
      conflict line format are the same; the set report adds  no	 JSON,	since  a
      plan has no JSON output.
+
+ENROLLED KEYS
+     key  add  NAME FILE enrolls one public key under NAME in the keys directory
+     of the target root, which is ROOT/var/lib/holypkg/keys. The default root is
+     /. A name is 1 to 64 characters of letters,  digits,  dot,	 underscore  and
+     dash,  which cannot begin with a dash or be a dot name, so no enrolled name
+     can name a path. The file must be a regular file of at most 1 MiB	with  no
+     NUL  byte,	 holding  a PEM public key, a DER public key or an ASCII armored
+     block, since the apk, apt and xbps families read keyrings the  OpenSSL  PEM
+     and  DER  readers	do  not	 parse.	 Enrollment writes the key bytes and the
+     SHA-256 recorded at enrollment through temporary files and a rename,  hold-
+     ing  the database write lock. var/lib/holypkg is reserved from payload own-
+     ership, so no installed package can place a file beside an enrolled key.
+
+     Enrolling the same key under a name again is accepted and reports the  same
+     digest.  A different key under an enrolled name is decision-required status
+     3 and names both digests; --replace states the change. A file  that  cannot
+     be read is 4 and a name that is not usable is 2. The store holds public ma-
+     terial, so the key files are ordinary 0644 files and no secret is written.
+
+     key  list prints one line per enrolled name with its digest, byte count and
+     whether the stored bytes still match the recorded digest,	then  a	 genera-
+     tion,  keys  and  read-only summary. --json emits holy-keyring-1 key events
+     with name, sha256, bytes and state, then a summary carrying generation  and
+     keys.  key	 show  prints one intact line and returns 4 for a changed key, 6
+     for a name nothing enrolled. key remove needs --yes,  reports  decision-re-
+     quired  status 3 without it, and unlinks the key, its digest record and any
+     temporary file.
+
+     A source public-key value that contains no slash and is a usable  key  name
+     is	 an  enrolled  name, resolved in the target root of that command, so one
+     key file backs several sources without repeating its path. A  name	 nothing
+     enrolled  is  refused  with  no  enrolled key and a name whose stored bytes
+     changed is refused with enrolled key changed, rather than a key the enroll-
+     ment did not record. The frozen source record is the digest  the  key  file
+     has,  so  a  source  enrolled  by name and the same source enrolled by path
+     freeze the same source identity. Every other public-key value stays a  path
+     resolved as before.
 
 INSTALLED FILE INDEX
      index  reads  a  consistent  installed-state  snapshot under the database's

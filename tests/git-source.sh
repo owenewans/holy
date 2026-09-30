@@ -34,13 +34,59 @@ signed_commit=$(git -C "$tmp/repo" rev-parse HEAD)
 mkdir "$tmp/signed-root"
 "$bin" db init --root "$tmp/signed-root" > "$tmp/out"
 printf '[source fixture]\ntype holy-git\nurl "file://%s/repo"\ntrust require\npublic-key "%s/public.pem"\n' "$tmp" "$tmp" > "$tmp/signed-config"
-"$bin" source plan --config "$tmp/signed-config" --root "$tmp/signed-root" > "$tmp/signed-plan"
+"$bin" source plan --config "$tmp/signed-config" --root "$tmp/signed-root" > "$tmp/signed-plan" 2> "$tmp/signed-plan.err"
 plan=$(sha256sum "$tmp/signed-plan" | cut -d ' ' -f 1)
 "$bin" source apply "$tmp/signed-plan" --sha256 "$plan" --root "$tmp/signed-root" > "$tmp/out"
+signed_source=$(sed -n 's/^add-source \([0-9a-f]*\) "fixture"$/\1/p' "$tmp/signed-plan.err")
+test "${#signed_source}" -eq 64
 "$bin" sync fixture --root "$tmp/signed-root" --sha256 "$index" --commit "$signed_commit" > "$tmp/out" 2> "$tmp/err"
 "$bin" search git-fixture --source fixture --root "$tmp/signed-root" > "$tmp/out"
 grep -qx 'listed 1 packages' "$tmp/out"
 if "$bin" sync fixture --root "$tmp/signed-root" --sha256 "$index" --commit "$commit" --output "$tmp/unsigned-output" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+# the same key enrolled under a name backs a source without repeating its path, and
+# the frozen source record is the one the path produced
+enrolled_root="$tmp/enrolled-root"
+mkdir "$enrolled_root"
+"$bin" db init --root "$enrolled_root" > "$tmp/out"
+"$bin" key add fixture-key "$tmp/public.pem" --root "$enrolled_root" > "$tmp/out"
+grep -q 'enrolled$' "$tmp/out"
+"$bin" key list --root "$enrolled_root" > "$tmp/out"
+grep -qx 'generation 0 keys 1 read-only' "$tmp/out"
+"$bin" key show fixture-key --root "$enrolled_root" > "$tmp/out"
+grep -q ' intact$' "$tmp/out"
+printf '[source fixture]\ntype holy-git\nurl "file://%s/repo"\ntrust require\npublic-key "fixture-key"\n' "$tmp" > "$tmp/enrolled-config"
+"$bin" source plan --config "$tmp/enrolled-config" --root "$enrolled_root" > "$tmp/enrolled-plan" 2> "$tmp/enrolled-plan.err"
+grep -qx "add-source $signed_source \"fixture\"" "$tmp/enrolled-plan.err"
+enrolled_plan=$(sha256sum "$tmp/enrolled-plan" | cut -d ' ' -f 1)
+"$bin" source apply "$tmp/enrolled-plan" --sha256 "$enrolled_plan" --root "$enrolled_root" > "$tmp/out"
+"$bin" sync fixture --root "$enrolled_root" --sha256 "$index" --commit "$signed_commit" \
+    --output "$tmp/enrolled-mirror" > "$tmp/out" 2> "$tmp/err"
+grep -qx "verification ed25519-pinned-key" "$tmp/enrolled-mirror/mirror-origin"
+# a name nothing enrolled, a name that traverses and a file that is not a key
+printf '[source fixture]\ntype holy-git\nurl "file://%s/repo"\ntrust require\npublic-key "absent-key"\n' "$tmp" > "$tmp/absent-config"
+if "$bin" source plan --config "$tmp/absent-config" --root "$enrolled_root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+grep -q 'no enrolled key: absent-key' "$tmp/err"
+printf 'not a key\n' > "$tmp/not-a-key"
+if "$bin" key add not-a-key "$tmp/not-a-key" --root "$enrolled_root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+if "$bin" key add ../escape "$tmp/public.pem" --root "$enrolled_root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+# a key changed after enrollment is refused by name, and the enrollment is readable
+printf 'tampered\n' > "$enrolled_root/var/lib/holypkg/keys/fixture-key"
+if "$bin" source plan --config "$tmp/enrolled-config" --root "$enrolled_root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+grep -q 'enrolled key changed: fixture-key' "$tmp/err"
+if "$bin" key show fixture-key --root "$enrolled_root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+"$bin" key list --root "$enrolled_root" > "$tmp/out"
+grep -q ' changed$' "$tmp/out"
+if "$bin" key remove fixture-key --root "$enrolled_root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+"$bin" key remove fixture-key --root "$enrolled_root" --yes > "$tmp/out"
+if "$bin" key show fixture-key --root "$enrolled_root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+# a second key under the same name is a decision, and --replace states it
+"$bin" key add fixture-key "$tmp/public.pem" --root "$enrolled_root" > "$tmp/out"
+openssl genpkey -algorithm ED25519 -out "$tmp/other-private.pem" > /dev/null 2> "$tmp/err"
+openssl pkey -in "$tmp/other-private.pem" -pubout -out "$tmp/other-public.pem" > /dev/null 2> "$tmp/err"
+if "$bin" key add fixture-key "$tmp/other-public.pem" --root "$enrolled_root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+grep -q 'decision-required key=fixture-key' "$tmp/err"
+"$bin" key add fixture-key "$tmp/other-public.pem" --root "$enrolled_root" --replace > "$tmp/out"
+grep -q 'replaced enrolled$' "$tmp/out"
 mkdir -p "$tmp/image/inputs" "$tmp/image/work" "$tmp/image-source" "$tmp/image-root"
 cp "$tmp/signed-config" "$tmp/image-source/sources.conf"
 printf 'fixture\n' > "$tmp/image-source/aliases"

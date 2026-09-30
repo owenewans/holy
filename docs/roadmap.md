@@ -594,8 +594,18 @@
   shlib-provides index now gives exact SONAME candidate hints from Void metadata,
   including source-bound queries. Foreign binary import now derives SONAME
   provides from classified ELF payloads, so a selected archive can supply
-  separate file-level evidence. Complex patterns remain review-required. Key enrollment,
-  automatic provider selection remain open.
+  separate file-level evidence. Complex patterns remain review-required.
+  `holypkg key add|list|show|remove` now enrolls a public key under a name in
+  the target root, records the digest the enrollment saw and refuses a key whose
+  stored bytes changed, so one key file backs several sources and a changed key is
+  not trusted. A source public-key value with no slash and a usable key name is an
+  enrolled name, and the frozen source record is the same digest the path
+  produces. The git-source fixture enrolls the fixture key, plans and syncs the
+  source by name, and covers an unknown name, a traversing name, a file that is
+  not a key, a tampered enrollment, an unconfirmed removal and a replacement
+  decision. An enrolled RSA keyring still names a file for every command that
+  verifies with it, since the apk, apt and xbps readers take a path;
+  automatic provider selection remains open.
   `holypkg index` now answers the two questions the planner answers internally: it
   names the installed artifacts that own a path and the artifacts that declare a
   capability, and it prints the whole index when given no selector. A name with

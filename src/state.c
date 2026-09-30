@@ -206,7 +206,7 @@ static int read_generation(int dir, unsigned long long *generation)
 
 static int state_layout(int dir, int create)
 {
-    static const char *const names[] = { "installed", "transactions", "index" };
+    static const char *const names[] = { "installed", "transactions", "index", "keys" };
     size_t i;
     for (i = 0; i < sizeof names / sizeof *names; ++i) {
         int child = child_dir(dir, names[i], create);
