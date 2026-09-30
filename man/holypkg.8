@@ -12,13 +12,13 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg import INPUT --source NAME
 .B "     --format pacman|rpm|deb|slackware|apk|xbps|appimage|pkgbuild|void|aports"
-.B "     |slackbuild|rpmspec|debian|gentoo"
+.B "     |slackbuild|rpmspec|debian|gentoo|pacstall"
 .br
 .B "     --output NEW_DIRECTORY [--public-key FILE (apk only)]"
 .br
 .B holypkg build RECIPE --output NEW_DIRECTORY [--environment host|clean|vm] [--work NEW_DIRECTORY] [--jobs N] [--yes] [--noninteractive] [--keep]
 .br
-.B holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|debian|NAME.ebuild|TEMPLATE --source NAME --output NEW_DIRECTORY
+.B holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|debian|NAME.ebuild|NAME.pacscript|TEMPLATE --source NAME --output NEW_DIRECTORY
 .br
 .B holypkg apt index Packages[.gz|.xz|.zst] --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY
 .br
@@ -2544,9 +2544,10 @@ conversion report. A file named template reaches the Void converter, a file
 named APKBUILD reaches the Aports converter, and a name ending in .SlackBuild
 reaches the SlackBuild converter, a name ending in .spec reaches the RPM
 spec converter, a directory named debian reaches the Debian converter and a
-name ending in .ebuild reaches the Gentoo converter through the same command,
+name ending in .ebuild reaches the Gentoo converter and a name ending in
+.pacscript reaches the Pacstall converter through the same command,
 while any other name reaches the pacman converter, and
-import INPUT --source NAME --format pkgbuild|void|aports|slackbuild|rpmspec|debian|gentoo
+import INPUT --source NAME --format pkgbuild|void|aports|slackbuild|rpmspec|debian|gentoo|pacstall
 --output NEW_DIRECTORY names the family explicitly. None of these commands installs a
 package, builds one, or grants NAME a registered source identity; the report
 records it as provenance.
@@ -2649,6 +2650,56 @@ DEB_HOST_MULTIARCH and DEB_BUILD_OPTIONS, and every debhelper call, every
 debhelper override and dpkg-buildpackage are reported and left in the body so
 the build fails visibly. The maintainer scripts, debian/copyright,
 debian/watch and debian/source/format are copied next to the recipe.
+.PP
+The Gentoo converter takes the identity from the file name, which is
+PN-PV-rPR.ebuild, so a trailing -rN becomes the Holy release and a file name
+with no revision gets release one, and an epoch is preserved and dropped.
+EAPI, LICENSE and SLOT are carried, and KEYWORDS names the machines an ebuild
+is tested on rather than the machine that builds it, so arch is any. A
+dependency atom is a category, a package and an optional comparison, so the
+category is dropped, a blocker becomes x-conflicts, and a version keeps its
+upstream part with the same comparator names the PKGBUILD converter uses. A USE
+conditional, an any-of group, a slot, a use dependency and a virtual are
+reported, since a Holy recipe has no USE flags and cannot choose between the
+members of a group, and the atoms inside one are carried anyway. A mirror://
+entry and a remote archive are reported, because a Gentoo Manifest pins a
+BLAKE2B rather than the SHA-256 a Holy source needs, while a PATCHES entry and
+any other file named beside the ebuild is copied next to the recipe and hashed.
+Each standard phase function becomes the matching phase behind a prologue that
+rebuilds EPREFIX, ED, D, DESTDIR, WORKDIR, DISTDIR, T, PN, PV, PR, PF, P and
+PVR from the exported Holy paths, and every eclass and every ebuild.sh helper a
+body calls is reported rather than run, so the build fails visibly rather than
+losing a step.
+.PP
+The Pacstall converter carries pkgname, pkgver, pkgrel, pkgdesc, url, license,
+maintainer, repology, arch and gives, and expands $pkgname, ${pkgname},
+$pkgver, $pkgrel, $gives, $pkgbase and $epoch inside a value, as well as a
+variable the same pacscript states in an assignment of its own. A value that
+needs the shell to choose a substring is a computed identity and returns 2. An
+epoch is preserved and dropped, amd64 and x86_64 become x86_64, i386 and i686
+become i686, any and all become any, and a machine Holy does not carry is
+written as it stands and reported. A source entry is NAME::URL, ?NAME::URL or
+a plain URL, a sha256sums entry in the same order becomes source-sha256, and a
+file named beside the pacscript is copied next to the recipe and hashed; a git
+address, a remote source with no digest and a plain http address are reported.
+depends, makedepends and checkdepends become depend and build-depend, a group
+of alternatives written with a pipe is reported with the first of them carried,
+pacdeps become depend with the fact that they name packages of the same
+pacstall repository reported, and provides, conflicts, breaks, replaces,
+enhances, recommends and suggests become x- records while an optdepends entry
+becomes x-optdepend. A backup entry becomes config, and an r: prefix becomes
+config mutable. Every list written per machine or per distribution under a
+suffixed name is reported, as is every setting that steers a Pacstall run and
+every digest list other than sha256sums. prepare, build, check and package
+become the matching phase behind a prologue that rebuilds pkgdir, pacdir,
+srcdir, startdir, builddir, TARCH, NCPU, pkgname, pkgbase, pkgver, pkgrel,
+pacname, gives and epoch from the exported Holy paths; a list of names with a
+pkgbase is a split pkgbase whose package_NAME functions become the split steps
+that fill each output. Every helper a body calls and every variable of the
+Pacstall environment a body reads is reported, and pre_install, pre_upgrade,
+post_install and post_upgrade become one install hook while pre_remove and
+post_remove become one remove hook, each written beside the recipe and
+installed into the payload.
 .PP
 All of these reports name every carried, preserved, helper, unknown and changed item
 with its source file and line range, and their status is native or

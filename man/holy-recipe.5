@@ -422,6 +422,64 @@ than losing a step. A pkg_preinst, pkg_postinst, pkg_prerm or pkg_postrm
 function runs at install time through Portage, and a Holy hook carries a script
 rather than a function, so each is reported.
 
+.SS Pacstall pacscript
+A pacscript is recognized by its .pacscript suffix, or named with
+.BR "import \-\-format pacstall" .
+It is bash with a metadata header written as assignments, so pkgname, pkgver,
+pkgrel, epoch, pkgdesc, url, license, maintainer, repology, arch and gives are
+carried, with pkgdesc as the summary and url as the homepage. A value written
+with $pkgname, ${pkgname}, $pkgver, $pkgrel, $gives, $pkgbase or $epoch, or
+with a variable the same file states in an assignment of its own, is written
+out, and one that needs the shell to choose a substring is a computed identity
+and returns 2. An epoch names a packaging revision order rather than a version,
+so it is preserved and dropped. amd64 and x86_64 become x86_64, i386 and i686
+become i686, any and all become any, and a machine Holy does not carry is
+written as it stands and reported. A list of machines is reported, because the
+payload decides the machine the recipe is built for.
+
+.SH
+A source entry is NAME::URL, ?NAME::URL or a plain URL, and a sha256sums entry
+in the same order becomes source-sha256. The engine fetches and unpacks the
+recorded sources, so the extracted tree takes the place of srcdir, which is
+reported. A file named beside the pacscript is copied next to the recipe and
+hashed as SHA-256. A git address is reported, since a Holy source fetches
+archives, and so is a remote source with no sha256sums entry and a plain http
+address, since a Holy source is fetched over https.
+
+.SH
+depends, makedepends and checkdepends become depend and build-depend with the
+comparator names the PKGBUILD converter uses, and a group of alternatives
+written with a pipe is reported with the first of them carried, since a Holy
+record cannot choose one. pacdeps become depend as well, and the fact that they
+name packages of the same pacstall repository is reported, because a Holy
+resolver has to find them in a source that has them. provides, conflicts,
+breaks, replaces, enhances, recommends and suggests name no requirement, so
+they are preserved as x- records, and an optdepends entry becomes x-optdepend
+with its description. A backup entry becomes config, an r: prefix becomes config
+mutable and is reported, since a config record only marks a file. A list written
+per machine or per distribution under a suffixed name is reported, and so is
+every setting that steers a Pacstall run: priority, external_connection,
+incompatible, compatible, mask, noextract, custom_fields and ppa. A digest list
+other than sha256sums is reported, because a Holy source needs SHA-256.
+
+.SH
+prepare, build, check and package become the matching phase, and a body keeps
+its own shell behind a prologue that rebuilds pkgdir, pacdir, srcdir, startdir,
+builddir, TARCH, NCPU, pkgname, pkgbase, pkgver, pkgrel, pacname, gives and epoch
+from the exported Holy paths and changes into the source tree. Every helper the
+Pacstall environment supplies that a body calls, such as fancy_message, makepkg,
+parse_options or ask, is reported, and so is a variable of that environment a
+body reads: KVER, STAGEDIR, homedir, DISTRO, DIR, full_version and
+pacstall_root. A list of names with a pkgbase is a split pkgbase: every name
+becomes an output and its package_NAME function becomes the split step that
+fills it, and a package function beside those is reported. pre_install,
+pre_upgrade, post_install and post_upgrade become one install hook, and
+pre_remove and post_remove one remove hook; each hook is written beside the
+recipe, declared as a source and installed into the payload, and a Holy hook
+runs with ACTION unset, so the pre and post bodies arrive in the order Pacstall
+calls them. A conditional block and an assignment inside one are reported, since
+the converter evaluates neither.
+
 .SH CONVERSION REPORT
 The report lists every carried, preserved, helper, unknown and changed item with
 its source file and line range, and its status is native or review-required. A
@@ -505,3 +563,6 @@ Gentoo ebuild: https://wiki.gentoo.org/wiki/Ebuild
 Package specification: https://wiki.gentoo.org/wiki/Repository_format
 eclass: https://wiki.gentoo.org/wiki/Eclass
 USE flag dependencies: https://wiki.gentoo.org/wiki/USE_atoms
+Pacstall: https://github.com/pacstall/pacstall
+Pacstall manual: https://github.com/pacstall/pacstall/blob/master/misc/man/pacstall.8
+Pacstall programs: https://github.com/pacstall/pacstall-programs

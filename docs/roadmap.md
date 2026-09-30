@@ -774,8 +774,63 @@
   convert, the one refusal being the package skeleton, which carries no version
   in its file name, and every produced recipe passes the manager's own
   validation.
-  Pacstall, the makepkg build environment and
-  the vm build environment remain open.
+  The Pacstall family converts as well, and needs the shared shell parser plus
+  its own reading of a metadata header that is written as assignments.
+  `holypkg convert NAME.pacscript` and `holypkg import --format pacstall` read
+  the pacscript, carry pkgname, pkgver, pkgrel, pkgdesc, url, license,
+  maintainer, repology, arch and gives, and expand $pkgname, ${pkgname},
+  $pkgver, $pkgrel, $gives, $pkgbase and $epoch as well as a variable the same
+  pacscript states in an assignment of its own, so a name or a version written
+  from a private value of that file is carried; a value that needs the shell to
+  choose a substring is a computed identity and returns 2. An epoch is
+  preserved and dropped. amd64 and x86_64 become x86_64, i386 and i686 become
+  i686, any and all become any, and a machine Holy does not carry is written as
+  it stands and reported. A source entry is NAME::URL, ?NAME::URL or a plain
+  URL, a sha256sums entry in the same order becomes source-sha256, and a file
+  named beside the pacscript is copied next to the recipe and hashed; a git
+  address, a remote source with no digest and a plain http address are reported
+  rather than carried, since a Holy source is fetched over https. The engine
+  fetches and unpacks the recorded sources, so the extracted tree takes the
+  place of srcdir, which is reported. depends, makedepends and checkdepends
+  become depend and build-depend with the comparator names the other converters
+  use, a group of alternatives written with a pipe is reported with the first
+  of them carried, and pacdeps become depend with the fact that they name
+  packages of the same pacstall repository reported, because a Holy resolver has
+  to find them in a source that has them. provides, conflicts, breaks,
+  replaces, enhances, recommends and suggests name no requirement, so they
+  become x- records, an optdepends entry becomes x-optdepend with its
+  description, a backup entry becomes config and an r: prefix becomes config
+  mutable with a report. A list written per machine or per distribution under a
+  suffixed name is reported, and so is every setting that steers a Pacstall run
+  and every digest list other than sha256sums. prepare, build, check and
+  package keep their own shell behind a prologue that rebuilds pkgdir, pacdir,
+  srcdir, startdir, builddir, TARCH, NCPU, pkgname, pkgbase, pkgver, pkgrel,
+  pacname, gives and epoch from the exported Holy paths, and every helper a body
+  calls and every variable of the Pacstall environment a body reads is reported
+  rather than invented. A list of names with a pkgbase is a split pkgbase: every
+  name becomes an output and its package_NAME function becomes the split step
+  that fills it. pre_install, pre_upgrade, post_install and post_upgrade become
+  one install hook and pre_remove and post_remove one remove hook, each written
+  beside the recipe, declared as a source and installed into the payload, and a
+  Holy hook runs with ACTION unset, so the pre and post bodies arrive in the
+  order Pacstall calls them. A conditional block and an assignment inside one
+  are reported, since the converter evaluates neither. A fixture converts a
+  pacscript that builds through the normal engine, one that is a split pkgbase,
+  one with both hook groups, and one that carries every reported case; 910 of
+  the 919 upstream pacscripts from pacstall-programs convert and every produced
+  recipe passes the manager's own validation, the nine refusals being seven
+  versions that carry a tilde, which a recipe records as a label, and two names
+  that need a shell substring expansion.
+  The parser work this family needed fixes four gaps the Void, Aports, RPM,
+  Debian and Gentoo families could not reach: a list written on one line was
+  recorded as one value with its parens left in it, a list written on many
+  lines had its elements and its closing paren read again as statements of
+  their own, the line count drifted by one for every list, and a heredoc word
+  written apart from its << was not recognized, so an apostrophe inside such a
+  body ended the function early. An x- record of a recipe also undercounted its
+  buffer, so a value with a byte outside printable ASCII overflowed it while the
+  build read the recipe.
+  The makepkg build environment and the vm build environment remain open.
   The build runner no longer loses its private build root, keeps a root the
   caller named, and reaches both the default and the named-root path in the
   fixture. The same run also restores three interrupted-mutation fixtures whose
