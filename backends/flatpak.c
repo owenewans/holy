@@ -21,278 +21,11 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-/* the JSON a manifest is written in: objects, arrays, strings, numbers and the
-   three literals. a manifest is a few hundred lines, so a value tree that keeps
-   the line of each node is enough to report against. */
-enum json_kind { JSON_STRING, JSON_NUMBER, JSON_LITERAL, JSON_ARRAY, JSON_OBJECT };
-
-#define JSON_MAX_DEPTH 64
-#define FLATPAK_MAX_INPUT (4u * 1024u * 1024u)
-
-struct json_member {
-    char *key;
-    struct json_value *value;
-};
-
-struct json_value {
-    enum json_kind kind;
-    size_t line;
-    char *text;
-    struct json_member *members;
-    size_t count;
-};
-
-struct json_reader {
-    const char *text;
-    size_t at;
-    size_t length;
-    size_t line;
-};
-
-static struct json_value *json_value(struct json_reader *reader, unsigned depth);
-
-static void json_free(struct json_value *value)
+/* a manifest states no shell, so a value that asks one is reported rather than
+   expanded */
+static int json_literal(const char *value)
 {
-    size_t i;
-    if (!value) return;
-    for (i = 0; i < value->count; ++i) {
-        if (value->kind == JSON_OBJECT) free(value->members[i].key);
-        json_free(value->members[i].value);
-    }
-    free(value->members);
-    free(value->text);
-    free(value);
-}
-
-/* writes one code point as UTF-8, which a manifest needs for a translated name */
-static size_t json_utf8(unsigned long point, char *out)
-{
-    if (point < 0x80) { out[0] = (char)point; return 1; }
-    if (point < 0x800) {
-        out[0] = (char)(0xc0 | (point >> 6));
-        out[1] = (char)(0x80 | (point & 0x3f));
-        return 2;
-    }
-    if (point < 0x10000) {
-        out[0] = (char)(0xe0 | (point >> 12));
-        out[1] = (char)(0x80 | ((point >> 6) & 0x3f));
-        out[2] = (char)(0x80 | (point & 0x3f));
-        return 3;
-    }
-    out[0] = (char)(0xf0 | (point >> 18));
-    out[1] = (char)(0x80 | ((point >> 12) & 0x3f));
-    out[2] = (char)(0x80 | ((point >> 6) & 0x3f));
-    out[3] = (char)(0x80 | (point & 0x3f));
-    return 4;
-}
-
-static int json_hex(struct json_reader *reader, unsigned long *point)
-{
-    unsigned long value = 0;
-    size_t i;
-    for (i = 0; i < 4; ++i) {
-        char c;
-        if (reader->at >= reader->length) return 0;
-        c = reader->text[reader->at++];
-        value <<= 4;
-        if (c >= '0' && c <= '9') value |= (unsigned long)(c - '0');
-        else if (c >= 'a' && c <= 'f') value |= (unsigned long)(c - 'a' + 10);
-        else if (c >= 'A' && c <= 'F') value |= (unsigned long)(c - 'A' + 10);
-        else return 0;
-    }
-    *point = value;
-    return 1;
-}
-
-static int json_string(struct json_reader *reader, char **out)
-{
-    size_t start, used = 0;
-    char *text;
-    if (reader->at >= reader->length || reader->text[reader->at] != '"') return 0;
-    start = ++reader->at;
-    while (reader->at < reader->length && reader->text[reader->at] != '"') {
-        if (reader->text[reader->at] == '\\' && reader->at + 1 < reader->length) ++reader->at;
-        ++reader->at;
-    }
-    if (reader->at >= reader->length) return 0;
-    text = malloc(reader->at - start + 1);
-    if (!text) return 0;
-    while (start < reader->at) {
-        char c = reader->text[start++];
-        unsigned long point;
-        size_t written;
-        if (c != '\\') { text[used++] = c; continue; }
-        if (start >= reader->at) break;
-        c = reader->text[start++];
-        switch (c) {
-        case 'n': text[used++] = '\n'; break;
-        case 't': text[used++] = '\t'; break;
-        case 'r': text[used++] = '\r'; break;
-        case 'b': text[used++] = '\b'; break;
-        case 'f': text[used++] = '\f'; break;
-        case 'u':
-            if (!json_hex(reader, &point)) { free(text); return 0; }
-            if (point >= 0xd800 && point < 0xdc00 && start + 1 < reader->at &&
-                reader->text[start] == '\\' && reader->text[start + 1] == 'u') {
-                unsigned long low;
-                start += 2;
-                if (!json_hex(reader, &low) || low < 0xdc00 || low > 0xdfff) {
-                    free(text);
-                    return 0;
-                }
-                point = 0x10000 + ((point - 0xd800) << 10) + (low - 0xdc00);
-            }
-            if (point >= 0xd800 && point <= 0xdfff) { free(text); return 0; }
-            written = json_utf8(point, text + used);
-            used += written;
-            break;
-        default: text[used++] = c; break;
-        }
-    }
-    text[used] = 0;
-    *out = text;
-    ++reader->at;
-    return 1;
-}
-
-static int json_container(struct json_reader *reader, unsigned depth, char close,
-                          enum json_kind kind, struct json_value **out)
-{
-    struct json_value *value = calloc(1, sizeof *value);
-    if (!value) return 0;
-    value->kind = kind;
-    value->line = reader->line;
-    ++reader->at;
-    for (;;) {
-        struct json_member member;
-        struct json_value *child;
-        struct json_member *grown;
-        while (reader->at < reader->length &&
-               isspace((unsigned char)reader->text[reader->at])) {
-            if (reader->text[reader->at] == '\n') ++reader->line;
-            ++reader->at;
-        }
-        if (reader->at >= reader->length) { json_free(value); return 0; }
-        if (reader->text[reader->at] == close) {
-            ++reader->at;
-            *out = value;
-            return 1;
-        }
-        if (reader->text[reader->at] == ',') { ++reader->at; continue; }
-        memset(&member, 0, sizeof member);
-        if (kind == JSON_OBJECT) {
-            char *key = NULL;
-            if (!json_string(reader, &key)) { json_free(value); return 0; }
-            member.key = key;
-            if (reader->at >= reader->length || reader->text[reader->at] != ':') {
-                free(key);
-                json_free(value);
-                return 0;
-            }
-            ++reader->at;
-        }
-        child = json_value(reader, depth + 1);
-        if (!child) { free(member.key); json_free(value); return 0; }
-        member.value = child;
-        grown = realloc(value->members, (value->count + 1) * sizeof *grown);
-        if (!grown) { free(member.key); json_free(child); json_free(value); return 0; }
-        value->members = grown;
-        value->members[value->count++] = member;
-        if (value->count > 65536) { json_free(value); return 0; }
-    }
-}
-
-static struct json_value *json_value(struct json_reader *reader, unsigned depth)
-{
-    struct json_value *value = NULL;
-    char c;
-    size_t start;
-    if (depth > JSON_MAX_DEPTH) return NULL;
-    while (reader->at < reader->length && isspace((unsigned char)reader->text[reader->at])) {
-        if (reader->text[reader->at] == '\n') ++reader->line;
-        ++reader->at;
-    }
-    if (reader->at >= reader->length) return NULL;
-    c = reader->text[reader->at];
-    if (c == '"') {
-        char *text = NULL;
-        if (!json_string(reader, &text)) return NULL;
-        value = calloc(1, sizeof *value);
-        if (!value) { free(text); return NULL; }
-        value->kind = JSON_STRING;
-        value->line = reader->line;
-        value->text = text;
-        return value;
-    }
-    if (c == '{' || c == '[') {
-        char close = c == '{' ? '}' : ']';
-        enum json_kind kind = c == '{' ? JSON_OBJECT : JSON_ARRAY;
-        if (!json_container(reader, depth, close, kind, &value)) return NULL;
-        return value;
-    }
-    /* a number or one of the three literals runs to the next structural character */
-    start = reader->at;
-    while (reader->at < reader->length &&
-           (isalnum((unsigned char)reader->text[reader->at]) || reader->text[reader->at] == '-' ||
-            reader->text[reader->at] == '+' || reader->text[reader->at] == '.'))
-        ++reader->at;
-    if (reader->at == start) return NULL;
-    value = calloc(1, sizeof *value);
-    if (!value) return NULL;
-    value->kind = isdigit((unsigned char)c) || c == '-' ? JSON_NUMBER : JSON_LITERAL;
-    value->line = reader->line;
-    value->text = malloc(reader->at - start + 1);
-    if (!value->text) { free(value); return NULL; }
-    memcpy(value->text, reader->text + start, reader->at - start);
-    value->text[reader->at - start] = 0;
-    return value;
-}
-
-/* the field of an object, or NULL */
-static const struct json_value *json_get(const struct json_value *object, const char *key)
-{
-    size_t i;
-    if (!object || object->kind != JSON_OBJECT) return NULL;
-    for (i = 0; i < object->count; ++i)
-        if (object->members[i].key && !strcmp(object->members[i].key, key))
-            return object->members[i].value;
-    return NULL;
-}
-
-/* the text of a string value, or NULL */
-static const char *json_text(const struct json_value *value)
-{
-    return value && value->kind == JSON_STRING ? value->text : NULL;
-}
-
-/* one element of an array of strings, or NULL */
-static const char *json_at(const struct json_value *array, size_t index)
-{
-    if (!array || array->kind != JSON_ARRAY || index >= array->count) return NULL;
-    return json_text(array->members[index].value);
-}
-
-/* a flag list a manifest writes as one string or as a list of them */
-static char *json_joined(const struct json_value *value)
-{
-    char *joined;
-    size_t used = 0, i;
-    if (!value) return NULL;
-    if (value->kind == JSON_STRING) return strdup(value->text);
-    if (value->kind != JSON_ARRAY) return NULL;
-    joined = malloc(1);
-    if (!joined) return NULL;
-    for (i = 0; i < value->count; ++i) {
-        const char *entry = json_at(value, i);
-        size_t length = entry ? strlen(entry) + 1 : 0;
-        char *grown = realloc(joined, used + length + 1);
-        if (!grown) { free(joined); return NULL; }
-        joined = grown;
-        if (used) joined[used++] = ' ';
-        if (entry) { memcpy(joined + used, entry, strlen(entry)); used += strlen(entry); }
-        joined[used] = 0;
-    }
-    return joined;
+    return value && *value && !strpbrk(value, "$`\\\"'");
 }
 
 static int json_label(const char *value)
@@ -304,13 +37,6 @@ static int json_label(const char *value)
             !(value[at] == '.' || value[at] == '_' || value[at] == '+' || value[at] == '-'))
             return 0;
     return 1;
-}
-
-/* the manifest states no shell, so a value that asks one is reported rather than
-   expanded */
-static int json_literal(const char *value)
-{
-    return value && *value && !strpbrk(value, "$`\\\"'");
 }
 
 /* the last dotted component of a Flatpak id, which is the part a package name
@@ -404,11 +130,11 @@ static void flatpak_keep_command(struct flatpak_build *build, const char *line)
 }
 
 /* a command list a module runs, kept in the order the manifest writes it */
-static void flatpak_keep_commands(struct flatpak_build *build, const struct json_value *list)
+static void flatpak_keep_commands(struct flatpak_build *build, const struct holy_json_value *list)
 {
     size_t i;
     for (i = 0; i < (list ? list->count : 0); ++i) {
-        const char *line = json_text(list->members[i].value);
+        const char *line = holy_json_text(list->members[i].value);
         if (line) flatpak_keep_command(build, line);
     }
 }
@@ -466,15 +192,15 @@ static int flatpak_patch(struct flatpak_build *build, const char *file)
 /* one source of one module: a recipe record where the format allows one, and a
    step line or a report where it does not */
 static void flatpak_source(struct flatpak_build *build, const char *label, size_t index,
-                           const struct json_value *entry)
+                           const struct holy_json_value *entry)
 {
-    const char *type = json_text(json_get(entry, "type"));
-    const char *url = json_text(json_get(entry, "url"));
-    const char *sum = json_text(json_get(entry, "sha256"));
-    const char *path = json_text(json_get(entry, "path"));
-    const char *contents = json_text(json_get(entry, "contents"));
-    const char *options = json_text(json_get(entry, "options"));
-    const struct json_value *expressions = json_get(entry, "sed");
+    const char *type = holy_json_text(holy_json_get(entry, "type"));
+    const char *url = holy_json_text(holy_json_get(entry, "url"));
+    const char *sum = holy_json_text(holy_json_get(entry, "sha256"));
+    const char *path = holy_json_text(holy_json_get(entry, "path"));
+    const char *contents = holy_json_text(holy_json_get(entry, "contents"));
+    const char *options = holy_json_text(holy_json_get(entry, "options"));
+    const struct holy_json_value *expressions = holy_json_get(entry, "sed");
     char named[4096], named_path[4096], digest[65], record[512];
     size_t at;    if (!type && url) type = "archive";
     if (!type) type = "file";
@@ -535,17 +261,17 @@ static void flatpak_source(struct flatpak_build *build, const char *label, size_
             if (!build->tree[0] && strlen(record) < sizeof build->tree)
                 memcpy(build->tree, record, strlen(record) + 1);
         }
-        if (json_get(entry, "strip-components"))
+        if (holy_json_get(entry, "strip-components"))
             flatpak_note(build, "unknown", "the archive %s asks for strip-components, which the "
                           "engine does not apply", url);
-        if (json_get(entry, "dest-filename"))
+        if (holy_json_get(entry, "dest-filename"))
             flatpak_note(build, "unknown", "the archive %s names dest-filename, and the engine "
                           "names the extracted tree itself", url);
-        if (json_text(json_get(entry, "dest")) &&
-            strcmp(json_text(json_get(entry, "dest")), "."))
+        if (holy_json_text(holy_json_get(entry, "dest")) &&
+            strcmp(holy_json_text(holy_json_get(entry, "dest")), "."))
             flatpak_note(build, "unknown", "the archive %s places itself at %s inside the build "
                           "tree, and a Holy source has one extracted directory", url,
-                          json_text(json_get(entry, "dest")));
+                          holy_json_text(holy_json_get(entry, "dest")));
         return;
     }
     if (!strcmp(type, "file") || !strcmp(type, "patch") || !strcmp(type, "directory")) {
@@ -588,7 +314,7 @@ static void flatpak_source(struct flatpak_build *build, const char *label, size_
             build->review = 1;
             return;
         }
-        name = json_text(json_get(entry, "dest-filename"));
+        name = holy_json_text(holy_json_get(entry, "dest-filename"));
         if (!name || !json_literal(name) || !json_label(name)) name = "inline-source";
         at = snprintf(target, sizeof target, "%s/%s", build->output, name);
         if (at >= sizeof target) return;
@@ -608,14 +334,14 @@ static void flatpak_source(struct flatpak_build *build, const char *label, size_
     }
     if (!strcmp(type, "sed")) {
         size_t i;
-        if (!expressions || expressions->kind != JSON_ARRAY) {
+        if (!expressions || expressions->kind != HOLY_JSON_ARRAY) {
             flatpak_note(build, "unknown", "the sed source of module %s names no expression",
                           label);
             build->review = 1;
             return;
         }
         for (i = 0; i < expressions->count; ++i) {
-            const char *expression = json_text(expressions->members[i].value);
+            const char *expression = holy_json_text(expressions->members[i].value);
             if (!expression) continue;
             flatpak_note(build, "unknown", "the sed source of module %s rewrites a file the "
                           "Flatpak template owns (%s), so the build needs it by hand", label,
@@ -625,10 +351,10 @@ static void flatpak_source(struct flatpak_build *build, const char *label, size_
         return;
     }
     if (!strcmp(type, "shell")) {
-        const struct json_value *commands = json_get(entry, "commands");
+        const struct holy_json_value *commands = holy_json_get(entry, "commands");
         size_t i;
         for (i = 0; i < (commands ? commands->count : 0); ++i) {
-            const char *line = json_text(commands->members[i].value);
+            const char *line = holy_json_text(commands->members[i].value);
             if (line && !flatpak_collect(build, line)) return;
         }
         flatpak_note(build, "preserved", "the shell source of module %s runs before the module "
@@ -643,14 +369,14 @@ static void flatpak_source(struct flatpak_build *build, const char *label, size_
 /* the shell that runs the tools a buildsystem names, since the flatpak-builder
    template that normally runs them does not travel with the recipe */
 static void flatpak_buildsystem(struct flatpak_build *build, const char *system,
-                                const struct json_value *options, const char *prefix)
+                                const struct holy_json_value *options, const char *prefix)
 {
-    const struct json_value *flags = json_get(options, "flags");
-    const struct json_value *directory = json_get(options, "build-dir");
+    const struct holy_json_value *flags = holy_json_get(options, "flags");
+    const struct holy_json_value *directory = holy_json_get(options, "build-dir");
     size_t i;
     int separate = 0;
-    if (json_text(directory) && strcmp(json_text(directory), "false")) separate = 1;
-    if (directory && directory->kind == JSON_LITERAL && !strcmp(directory->text, "true"))
+    if (holy_json_text(directory) && strcmp(holy_json_text(directory), "false")) separate = 1;
+    if (directory && directory->kind == HOLY_JSON_LITERAL && !strcmp(directory->text, "true"))
         separate = 1;
     if (separate && !strcmp(system, "simple")) {
         flatpak_note(build, "unknown", "the simple buildsystem has no build directory, so the "
@@ -683,7 +409,7 @@ static void flatpak_buildsystem(struct flatpak_build *build, const char *system,
         }
         fprintf(build->out, "./configure --prefix=\"%s\"", prefix);
         for (i = 0; i < (flags ? flags->count : 0); ++i) {
-            const char *flag = json_at(flags, i);
+            const char *flag = holy_json_at(flags, i);
             if (flag) fprintf(build->out, " %s", flag);
         }
         fputc('\n', build->out);
@@ -697,7 +423,7 @@ static void flatpak_buildsystem(struct flatpak_build *build, const char *system,
         flatpak_keep_line(build, "cmake -S . -B build -DCMAKE_INSTALL_PREFIX=\"$PREFIX\""
                           " -DCMAKE_INSTALL_LIBDIR=lib");
         for (i = 0; i < (flags ? flags->count : 0); ++i) {
-            const char *flag = json_at(flags, i);
+            const char *flag = holy_json_at(flags, i);
             if (flag) fprintf(build->out, " %s\n", flag);
         }
         flatpak_keep_line(build, "cmake --build build -j \"$HOLY_JOBS\"");
@@ -709,7 +435,7 @@ static void flatpak_buildsystem(struct flatpak_build *build, const char *system,
                       "meson setup, compile and install lines below", build->name);
         flatpak_keep_line(build, "meson setup build --prefix=\"$PREFIX\" --libdir=lib");
         for (i = 0; i < (flags ? flags->count : 0); ++i) {
-            const char *flag = json_at(flags, i);
+            const char *flag = holy_json_at(flags, i);
             if (flag) fprintf(build->out, " %s\n", flag);
         }
         flatpak_keep_line(build, "meson compile -C build -j \"$HOLY_JOBS\"");
@@ -732,7 +458,7 @@ static void flatpak_buildsystem(struct flatpak_build *build, const char *system,
 }
 
 /* the environment a module asks the build to run with */
-static void flatpak_environment(struct flatpak_build *build, const struct json_value *options)
+static void flatpak_environment(struct flatpak_build *build, const struct holy_json_value *options)
 {
     static const struct {
         const char *key;
@@ -741,9 +467,9 @@ static void flatpak_environment(struct flatpak_build *build, const struct json_v
         { "cflags", "CFLAGS" }, { "cxxflags", "CXXFLAGS" }, { "ldflags", "LDFLAGS" },
         { "cppflags", "CPPFLAGS" }, { NULL, NULL }
     };
-    const struct json_value *env = json_get(options, "env");
-    const struct json_value *append = json_get(options, "append-path");
-    const char *prefix = json_text(json_get(options, "prefix"));
+    const struct holy_json_value *env = holy_json_get(options, "env");
+    const struct holy_json_value *append = holy_json_get(options, "append-path");
+    const char *prefix = holy_json_text(holy_json_get(options, "prefix"));
     size_t i, j;
     if (prefix && strcmp(prefix, "/app"))
         flatpak_note(build, "semantic-change", "the prefix %s of module %s is kept, where a "
@@ -753,31 +479,31 @@ static void flatpak_environment(struct flatpak_build *build, const struct json_v
                       "because a Holy payload has no /app", build->name);
     /* env is written as a record or as a list of NAME=VALUE */
     for (i = 0; i < (env ? env->count : 0); ++i) {
-        if (env->kind == JSON_OBJECT) {
+        if (env->kind == HOLY_JSON_OBJECT) {
             const char *key = env->members[i].key;
-            const char *value = json_text(env->members[i].value);
+            const char *value = holy_json_text(env->members[i].value);
             if (key && value) fprintf(build->out, "export %s=\"%s\"\n", key, value);
             continue;
         }
         {
-            const char *entry = json_at(env, i);
+            const char *entry = holy_json_at(env, i);
             if (entry) fprintf(build->out, "export %s\n", entry);
         }
     }
     for (i = 0; variables[i].key; ++i) {
-        char *value = json_joined(json_get(options, variables[i].key));
+        char *value = holy_json_joined(holy_json_get(options, variables[i].key));
         if (!value) continue;
         fprintf(build->out, "export %s=\"%s\"\n", variables[i].variable, value);
         free(value);
     }
     for (i = 0; i < (append ? append->count : 0); ++i) {
-        const char *entry = json_at(append, i);
+        const char *entry = holy_json_at(append, i);
         if (!entry) continue;
         fprintf(build->out, "PATH=\"%s:$PATH\"\n", entry);
     }
-    if (env && env->kind != JSON_OBJECT && (!append || !append->count)) {
+    if (env && env->kind != HOLY_JSON_OBJECT && (!append || !append->count)) {
         for (j = 0; j < env->count; ++j) {
-            const char *entry = json_at(env, j);
+            const char *entry = holy_json_at(env, j);
             if (entry && !strncmp(entry, "PATH=", 5))
                 flatpak_note(build, "unknown", "module %s sets PATH in env, where the template "
                               "reads the search path of the SDK", build->name);
@@ -786,15 +512,15 @@ static void flatpak_environment(struct flatpak_build *build, const struct json_v
 }
 
 /* one module: its sources, then the step that builds it */
-static void flatpak_module(struct flatpak_build *build, const struct json_value *module,
-                           const struct json_value *shared)
+static void flatpak_module(struct flatpak_build *build, const struct holy_json_value *module,
+                           const struct holy_json_value *shared)
 {
-    const char *name = json_text(json_get(module, "name"));
-    const char *system = json_text(json_get(module, "buildsystem"));
-    const struct json_value *options = json_get(module, "build-options");
-    const struct json_value *commands = json_get(module, "build-commands");
-    const struct json_value *sources = json_get(module, "sources");
-    const struct json_value *pre, *post, *install;
+    const char *name = holy_json_text(holy_json_get(module, "name"));
+    const char *system = holy_json_text(holy_json_get(module, "buildsystem"));
+    const struct holy_json_value *options = holy_json_get(module, "build-options");
+    const struct holy_json_value *commands = holy_json_get(module, "build-commands");
+    const struct holy_json_value *sources = holy_json_get(module, "sources");
+    const struct holy_json_value *pre, *post, *install;
     const char *prefix = "usr";
     size_t i;
     if (!name) name = "module";
@@ -811,11 +537,11 @@ static void flatpak_module(struct flatpak_build *build, const struct json_value 
         flatpak_source(build, name, i, sources->members[i].value);
     /* the options of a module replace the ones the manifest states for them all */
     if (!options) options = shared;
-    pre = options ? json_get(options, "pre-commands") : NULL;
-    post = options ? json_get(options, "post-commands") : NULL;
-    install = options ? json_get(options, "post-install") : NULL;
-    if (options && json_text(json_get(options, "prefix")))
-        prefix = json_text(json_get(options, "prefix"));
+    pre = options ? holy_json_get(options, "pre-commands") : NULL;
+    post = options ? holy_json_get(options, "post-commands") : NULL;
+    install = options ? holy_json_get(options, "post-install") : NULL;
+    if (options && holy_json_text(holy_json_get(options, "prefix")))
+        prefix = holy_json_text(holy_json_get(options, "prefix"));
     while (*prefix == '/') ++prefix;
     /* the patches of a module apply to its tree, so they run before it builds */
     if (build->patch_count) {
@@ -854,11 +580,11 @@ static void flatpak_module(struct flatpak_build *build, const struct json_value 
     flatpak_keep_commands(build, post);
     fputs("STEP\n", build->out);
     flatpak_note(build, "preserved", "the module %s builds as one step in module order", name);
-    if (json_get(module, "cleanup"))
+    if (holy_json_get(module, "cleanup"))
         flatpak_note(build, "unknown", "the cleanup of module %s removes or rewrites metadata the "
                       "Flatpak template owns", name);
-    if (json_get(module, "build-extension") ||
-        (options && json_get(options, "build-extension")))
+    if (holy_json_get(module, "build-extension") ||
+        (options && holy_json_get(options, "build-extension")))
         flatpak_note(build, "unknown", "module %s names a build extension, which is an SDK "
                       "feature a Holy build root has no place for", name);
     for (i = 0; i < build->patch_count; ++i) free(build->patches[i]);
@@ -881,41 +607,17 @@ static int flatpak_note(struct flatpak_build *build, const char *kind, const cha
     return holy_note_add(build->note, kind, "%s", body);
 }
 
-static char *flatpak_read(const char *path, size_t *length)
-{
-    FILE *in = fopen(path, "rb");
-    char *text = NULL;
-    long size;
-    if (!in) return NULL;
-    if (fseek(in, 0, SEEK_END) || (size = ftell(in)) < 0 ||
-        (unsigned long)size > FLATPAK_MAX_INPUT || fseek(in, 0, SEEK_SET)) {
-        fclose(in);
-        return NULL;
-    }
-    text = malloc((size_t)size + 1);
-    if (!text) { fclose(in); return NULL; }
-    if (fread(text, 1, (size_t)size, in) != (size_t)size || ferror(in)) {
-        free(text);
-        fclose(in);
-        return NULL;
-    }
-    fclose(in);
-    text[size] = 0;
-    *length = (size_t)size;
-    return text;
-}
-
 /* whether any module of the manifest pulls an archive the engine has to extract */
-static int flatpak_has_archive(const struct json_value *modules)
+static int flatpak_has_archive(const struct holy_json_value *modules)
 {
     size_t index, i;
     for (index = 0; modules && index < modules->count; ++index) {
-        const struct json_value *module = modules->members[index].value;
-        const struct json_value *sources = json_get(module, "sources");
+        const struct holy_json_value *module = modules->members[index].value;
+        const struct holy_json_value *sources = holy_json_get(module, "sources");
         for (i = 0; i < (sources ? sources->count : 0); ++i) {
-            const char *type = json_text(json_get(sources->members[i].value, "type"));
+            const char *type = holy_json_text(holy_json_get(sources->members[i].value, "type"));
             if (type && (!strcmp(type, "archive") || !strcmp(type, "archive-url"))) return 1;
-            if (!type && json_get(sources->members[i].value, "url")) return 1;
+            if (!type && holy_json_get(sources->members[i].value, "url")) return 1;
         }
     }
     return 0;
@@ -923,18 +625,17 @@ static int flatpak_has_archive(const struct json_value *modules)
 
 int holy_convert_flatpak(const char *input, const char *source, const char *output)
 {
-    struct json_reader reader;
-    struct json_value *manifest = NULL;
+    struct holy_json_value *manifest = NULL;
     struct recipe_note note = {0};
     struct flatpak_build build;
-    char *text = NULL, *directory = NULL, *cut;
+    char *directory = NULL, *cut;
     char name[256], version[256], release[64], arch[64], digest[65];
     char recipe_path[4096], report_path[4096], component[256], branch_text[256];
     const char *id, *branch, *summary, *homepage, *command, *sdk, *runtime;
-    const struct json_value *modules, *options, *permissions, *cleanup, *extension;
+    const struct holy_json_value *modules, *options, *permissions, *cleanup, *extension;
     const char *at;
     size_t index, i;
-    int result = 1;
+    int result = 1, read_status = 0;
 
     memset(&build, 0, sizeof build);
     build.note = &note;
@@ -964,23 +665,24 @@ int holy_convert_flatpak(const char *input, const char *source, const char *outp
         directory = strdup(".");
         if (!directory) return 1;
     }
-    text = flatpak_read(input, &reader.length);
-    if (!text) {
-        fprintf(stderr, "holypkg: manifest unavailable: %s\n", input);
-        result = 6;
+    manifest = holy_json_read(input, &read_status);
+    if (!manifest) {
+        if (read_status == 6) {
+            fprintf(stderr, "holypkg: manifest unavailable: %s\n", input);
+        } else {
+            fputs("holypkg: a Flatpak manifest is JSON text, and this converter reads no other "
+                  "form\n", stderr);
+        }
+        result = read_status;
         goto done;
     }
-    reader.text = text;
-    reader.at = 0;
-    reader.line = 1;
-    manifest = json_value(&reader, 0);
-    if (!manifest || manifest->kind != JSON_OBJECT) {
+    if (manifest->kind != HOLY_JSON_OBJECT) {
         fputs("holypkg: a Flatpak manifest is JSON text, and this converter reads no other form\n",
               stderr);
         result = 2;
         goto done;
     }
-    id = json_text(json_get(manifest, "id"));
+    id = holy_json_text(holy_json_get(manifest, "id"));
     if (!id || !json_literal(id)) {
         fputs("holypkg: a Flatpak manifest needs a literal id\n", stderr);
         result = 2;
@@ -1011,15 +713,15 @@ int holy_convert_flatpak(const char *input, const char *source, const char *outp
             goto done;
         }
     }
-    if (json_text(json_get(manifest, "version"))) {
-        snprintf(version, sizeof version, "%s", json_text(json_get(manifest, "version")));
+    if (holy_json_text(holy_json_get(manifest, "version"))) {
+        snprintf(version, sizeof version, "%s", holy_json_text(holy_json_get(manifest, "version")));
         if (!json_label(version)) {
             fputs("holypkg: a Flatpak manifest version is not one a recipe can hold\n", stderr);
             result = 2;
             goto done;
         }
     }
-    branch = json_text(json_get(manifest, "branch"));
+    branch = holy_json_text(holy_json_get(manifest, "branch"));
     if (!branch) {
         /* an id may carry its own machine and branch, so the tail of the id is the
            branch the manifest did not write on its own */
@@ -1034,9 +736,9 @@ int holy_convert_flatpak(const char *input, const char *source, const char *outp
             branch = branch_text;
         }
     }
-    if (json_text(json_get(manifest, "arch"))) {
-        const char *machine = json_text(json_get(manifest, "arch"));
-        if (!machine) machine = json_at(json_get(manifest, "arch"), 0);
+    if (holy_json_text(holy_json_get(manifest, "arch"))) {
+        const char *machine = holy_json_text(holy_json_get(manifest, "arch"));
+        if (!machine) machine = holy_json_at(holy_json_get(manifest, "arch"), 0);
         if (machine && !strcmp(machine, "x86_64")) snprintf(arch, sizeof arch, "x86_64");
         else if (machine && (!strcmp(machine, "i386") || !strcmp(machine, "i686")))
             snprintf(arch, sizeof arch, "i686");
@@ -1080,12 +782,12 @@ int holy_convert_flatpak(const char *input, const char *source, const char *outp
     fputs("\nrelease ", build.out); holy_token(build.out, release);
     fputs("\narch ", build.out); holy_token(build.out, arch);
     fputs("\nlibc any\n", build.out);
-    summary = json_text(json_get(manifest, "summary"));
+    summary = holy_json_text(holy_json_get(manifest, "summary"));
     if (summary && json_literal(summary) && *summary) {
         fputs("summary ", build.out); holy_token(build.out, summary); fputc('\n', build.out);
         flatpak_note(&build, "carried", "the summary of the manifest");
     }
-    homepage = json_text(json_get(manifest, "url"));
+    homepage = holy_json_text(holy_json_get(manifest, "url"));
     if (homepage && json_literal(homepage) && strstr(homepage, "://")) {
         fputs("homepage ", build.out); holy_token(build.out, homepage); fputc('\n', build.out);
         flatpak_note(&build, "carried", "the url of the manifest");
@@ -1106,15 +808,15 @@ int holy_convert_flatpak(const char *input, const char *source, const char *outp
         fputs("x-flatpak-branch ", build.out); holy_token(build.out, branch); fputc('\n', build.out);
         flatpak_note(&build, "carried", "the branch %s", branch);
     }
-    command = json_text(json_get(manifest, "command"));
+    command = holy_json_text(holy_json_get(manifest, "command"));
     if (command) {
         fputs("x-flatpak-command ", build.out); holy_token(build.out, command);
         fputc('\n', build.out);
         flatpak_note(&build, "semantic-change", "the command %s is a path under /app, and a "
                       "Holy payload installs under /usr", command);
     }
-    sdk = json_text(json_get(manifest, "sdk"));
-    runtime = json_text(json_get(manifest, "runtime"));
+    sdk = holy_json_text(holy_json_get(manifest, "sdk"));
+    runtime = holy_json_text(holy_json_get(manifest, "runtime"));
     if (sdk && flatpak_component(sdk, component, sizeof component)) {
         fputs("build-depend ", build.out); holy_token(build.out, component);
         fputs(" \"any\" \"-\"\n", build.out);
@@ -1136,19 +838,19 @@ int holy_convert_flatpak(const char *input, const char *source, const char *outp
         build.review = 1;
     }
     if (sdk && runtime) {
-        const char *version_text = json_text(json_get(manifest, "runtime-version"));
+        const char *version_text = holy_json_text(holy_json_get(manifest, "runtime-version"));
         flatpak_note(&build, "semantic-change", "the sdk %s builds the modules and the runtime "
                       "%s%s%s is what the program runs on, so they are separate requirements",
                       sdk, runtime, version_text ? "//" : "", version_text ? version_text : "");
     }
     fputs("output ", build.out); holy_token(build.out, name); fputs(" runtime\n", build.out);
 
-    permissions = json_get(manifest, "finish-args");
+    permissions = holy_json_get(manifest, "finish-args");
     if (permissions && permissions->count) {
         char joined[1024];
         size_t used = 0;
         for (i = 0; i < permissions->count; ++i) {
-            const char *permission = json_at(permissions, i);
+            const char *permission = holy_json_at(permissions, i);
             if (!permission) continue;
             flatpak_note(&build, "unknown", "the permission %s is a Flatpak sandbox decision, "
                           "and a Holy package runs with the caller's context", permission);
@@ -1160,27 +862,27 @@ int holy_convert_flatpak(const char *input, const char *source, const char *outp
         holy_token(build.out, joined);
         fputc('\n', build.out);
     }
-    cleanup = json_get(manifest, "cleanup");
+    cleanup = holy_json_get(manifest, "cleanup");
     for (i = 0; i < (cleanup ? cleanup->count : 0); ++i) {
-        const char *entry = json_at(cleanup, i);
+        const char *entry = holy_json_at(cleanup, i);
         if (entry)
             flatpak_note(&build, "unknown", "the cleanup step %s runs after the build inside the "
                           "Flatpak sandbox", entry);
     }
-    extension = json_get(manifest, "build-extension");
+    extension = holy_json_get(manifest, "build-extension");
     if (extension)
         flatpak_note(&build, "unknown", "the manifest names the build extension %s, which is an "
                       "SDK feature a Holy build root has no place for",
-                      json_text(json_get(extension, "name")) ? json_text(json_get(extension, "name"))
+                      holy_json_text(holy_json_get(extension, "name")) ? holy_json_text(holy_json_get(extension, "name"))
                       : "unknown");
 
-    modules = json_get(manifest, "modules");
-    if (!modules || modules->kind != JSON_ARRAY || !modules->count) {
+    modules = holy_json_get(manifest, "modules");
+    if (!modules || modules->kind != HOLY_JSON_ARRAY || !modules->count) {
         flatpak_note(&build, "unknown", "the manifest names no module, so the recipe builds "
                       "nothing to package");
         build.review = 1;
     } else {
-        options = json_get(manifest, "build-options");
+        options = holy_json_get(manifest, "build-options");
         if (flatpak_has_archive(modules)) {
             /* the engine extracts an archive into HOLY_SRC/NAME, and a module builds
                where its sources are, so one top directory inside it is lifted */
@@ -1204,8 +906,8 @@ int holy_convert_flatpak(const char *input, const char *source, const char *outp
                           "builds where the manifest expects its sources");
         }
         for (index = 0; index < modules->count; ++index) {
-            const struct json_value *module = modules->members[index].value;
-            if (!module || module->kind != JSON_OBJECT) {
+            const struct holy_json_value *module = modules->members[index].value;
+            if (!module || module->kind != HOLY_JSON_OBJECT) {
                 flatpak_note(&build, "unknown", "the module %zu of the manifest is not a "
                               "record", index + 1);
                 build.review = 1;
@@ -1262,8 +964,7 @@ done:
     free(build.patches);
     for (i = 0; i < build.collected_count; ++i) free(build.collected[i]);
     free(build.collected);
-    json_free(manifest);
-    free(text);
+    holy_json_free(manifest);
     free(directory);
     holy_note_free(&note);
     return result;

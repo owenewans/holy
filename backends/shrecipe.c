@@ -16,6 +16,322 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+/* the JSON text a manifest or a lock file is written in: objects, arrays,
+   strings, numbers and the three literals. such a file is a few hundred lines, so
+   a value tree that keeps the line of each node is enough to report against. */
+#define HOLY_JSON_MAX_DEPTH 64
+#define HOLY_JSON_MAX_INPUT (4u * 1024u * 1024u)
+
+struct holy_json_reader {
+    const char *text;
+    size_t at;
+    size_t length;
+    size_t line;
+};
+
+static struct holy_json_value *holy_json_value(struct holy_json_reader *reader, unsigned depth);
+
+void holy_json_free(struct holy_json_value *value)
+{
+    size_t i;
+    if (!value) return;
+    for (i = 0; i < value->count; ++i) {
+        if (value->kind == HOLY_JSON_OBJECT) free(value->members[i].key);
+        holy_json_free(value->members[i].value);
+    }
+    free(value->members);
+    free(value->text);
+    free(value);
+}
+
+/* writes one code point as UTF-8, which a manifest needs for a translated name */
+static size_t holy_json_utf8(unsigned long point, char *out)
+{
+    if (point < 0x80) { out[0] = (char)point; return 1; }
+    if (point < 0x800) {
+        out[0] = (char)(0xc0 | (point >> 6));
+        out[1] = (char)(0x80 | (point & 0x3f));
+        return 2;
+    }
+    if (point < 0x10000) {
+        out[0] = (char)(0xe0 | (point >> 12));
+        out[1] = (char)(0x80 | ((point >> 6) & 0x3f));
+        out[2] = (char)(0x80 | (point & 0x3f));
+        return 3;
+    }
+    out[0] = (char)(0xf0 | (point >> 18));
+    out[1] = (char)(0x80 | ((point >> 12) & 0x3f));
+    out[2] = (char)(0x80 | ((point >> 6) & 0x3f));
+    out[3] = (char)(0x80 | (point & 0x3f));
+    return 4;
+}
+
+static int holy_json_hex(struct holy_json_reader *reader, unsigned long *point)
+{
+    unsigned long value = 0;
+    size_t i;
+    for (i = 0; i < 4; ++i) {
+        char c;
+        if (reader->at >= reader->length) return 0;
+        c = reader->text[reader->at++];
+        value <<= 4;
+        if (c >= '0' && c <= '9') value |= (unsigned long)(c - '0');
+        else if (c >= 'a' && c <= 'f') value |= (unsigned long)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') value |= (unsigned long)(c - 'A' + 10);
+        else return 0;
+    }
+    *point = value;
+    return 1;
+}
+
+static int holy_json_string(struct holy_json_reader *reader, char **out)
+{
+    size_t start, used = 0;
+    char *text;
+    if (reader->at >= reader->length || reader->text[reader->at] != '"') return 0;
+    start = ++reader->at;
+    while (reader->at < reader->length && reader->text[reader->at] != '"') {
+        if (reader->text[reader->at] == '\\' && reader->at + 1 < reader->length) ++reader->at;
+        ++reader->at;
+    }
+    if (reader->at >= reader->length) return 0;
+    text = malloc(reader->at - start + 1);
+    if (!text) return 0;
+    while (start < reader->at) {
+        char c = reader->text[start++];
+        unsigned long point;
+        size_t written;
+        if (c != '\\') { text[used++] = c; continue; }
+        if (start >= reader->at) break;
+        c = reader->text[start++];
+        switch (c) {
+        case 'n': text[used++] = '\n'; break;
+        case 't': text[used++] = '\t'; break;
+        case 'r': text[used++] = '\r'; break;
+        case 'b': text[used++] = '\b'; break;
+        case 'f': text[used++] = '\f'; break;
+        case 'u':
+            if (!holy_json_hex(reader, &point)) { free(text); return 0; }
+            if (point >= 0xd800 && point < 0xdc00 && start + 1 < reader->at &&
+                reader->text[start] == '\\' && reader->text[start + 1] == 'u') {
+                unsigned long low;
+                start += 2;
+                if (!holy_json_hex(reader, &low) || low < 0xdc00 || low > 0xdfff) {
+                    free(text);
+                    return 0;
+                }
+                point = 0x10000 + ((point - 0xd800) << 10) + (low - 0xdc00);
+            }
+            if (point >= 0xd800 && point <= 0xdfff) { free(text); return 0; }
+            written = holy_json_utf8(point, text + used);
+            used += written;
+            break;
+        default: text[used++] = c; break;
+        }
+    }
+    text[used] = 0;
+    *out = text;
+    ++reader->at;
+    return 1;
+}
+
+static int holy_json_container(struct holy_json_reader *reader, unsigned depth, char close,
+                          enum holy_json_kind kind, struct holy_json_value **out)
+{
+    struct holy_json_value *value = calloc(1, sizeof *value);
+    if (!value) return 0;
+    value->kind = kind;
+    value->line = reader->line;
+    ++reader->at;
+    for (;;) {
+        struct holy_json_member member;
+        struct holy_json_value *child;
+        struct holy_json_member *grown;
+        while (reader->at < reader->length &&
+               isspace((unsigned char)reader->text[reader->at])) {
+            if (reader->text[reader->at] == '\n') ++reader->line;
+            ++reader->at;
+        }
+        if (reader->at >= reader->length) { holy_json_free(value); return 0; }
+        if (reader->text[reader->at] == close) {
+            ++reader->at;
+            *out = value;
+            return 1;
+        }
+        if (reader->text[reader->at] == ',') { ++reader->at; continue; }
+        memset(&member, 0, sizeof member);
+        if (kind == HOLY_JSON_OBJECT) {
+            char *key = NULL;
+            if (!holy_json_string(reader, &key)) { holy_json_free(value); return 0; }
+            member.key = key;
+            if (reader->at >= reader->length || reader->text[reader->at] != ':') {
+                free(key);
+                holy_json_free(value);
+                return 0;
+            }
+            ++reader->at;
+        }
+        child = holy_json_value(reader, depth + 1);
+        if (!child) { free(member.key); holy_json_free(value); return 0; }
+        member.value = child;
+        grown = realloc(value->members, (value->count + 1) * sizeof *grown);
+        if (!grown) { free(member.key); holy_json_free(child); holy_json_free(value); return 0; }
+        value->members = grown;
+        value->members[value->count++] = member;
+        if (value->count > 65536) { holy_json_free(value); return 0; }
+    }
+}
+
+static struct holy_json_value *holy_json_value(struct holy_json_reader *reader, unsigned depth)
+{
+    struct holy_json_value *value = NULL;
+    char c;
+    size_t start;
+    if (depth > HOLY_JSON_MAX_DEPTH) return NULL;
+    while (reader->at < reader->length && isspace((unsigned char)reader->text[reader->at])) {
+        if (reader->text[reader->at] == '\n') ++reader->line;
+        ++reader->at;
+    }
+    if (reader->at >= reader->length) return NULL;
+    c = reader->text[reader->at];
+    if (c == '"') {
+        char *text = NULL;
+        if (!holy_json_string(reader, &text)) return NULL;
+        value = calloc(1, sizeof *value);
+        if (!value) { free(text); return NULL; }
+        value->kind = HOLY_JSON_STRING;
+        value->line = reader->line;
+        value->text = text;
+        return value;
+    }
+    if (c == '{' || c == '[') {
+        char close = c == '{' ? '}' : ']';
+        enum holy_json_kind kind = c == '{' ? HOLY_JSON_OBJECT : HOLY_JSON_ARRAY;
+        if (!holy_json_container(reader, depth, close, kind, &value)) return NULL;
+        return value;
+    }
+    /* a number or one of the three literals runs to the next structural character */
+    start = reader->at;
+    while (reader->at < reader->length &&
+           (isalnum((unsigned char)reader->text[reader->at]) || reader->text[reader->at] == '-' ||
+            reader->text[reader->at] == '+' || reader->text[reader->at] == '.'))
+        ++reader->at;
+    if (reader->at == start) return NULL;
+    value = calloc(1, sizeof *value);
+    if (!value) return NULL;
+    value->kind = isdigit((unsigned char)c) || c == '-' ? HOLY_JSON_NUMBER : HOLY_JSON_LITERAL;
+    value->line = reader->line;
+    value->text = malloc(reader->at - start + 1);
+    if (!value->text) { free(value); return NULL; }
+    memcpy(value->text, reader->text + start, reader->at - start);
+    value->text[reader->at - start] = 0;
+    return value;
+}
+
+/* the field of an object, or NULL */
+const struct holy_json_value *holy_json_get(const struct holy_json_value *object, const char *key)
+{
+    size_t i;
+    if (!object || object->kind != HOLY_JSON_OBJECT) return NULL;
+    for (i = 0; i < object->count; ++i)
+        if (object->members[i].key && !strcmp(object->members[i].key, key))
+            return object->members[i].value;
+    return NULL;
+}
+
+/* the text of a string value, or NULL */
+const char *holy_json_text(const struct holy_json_value *value)
+{
+    return value && value->kind == HOLY_JSON_STRING ? value->text : NULL;
+}
+
+/* one element of an array of strings, or NULL */
+const char *holy_json_at(const struct holy_json_value *array, size_t index)
+{
+    if (!array || array->kind != HOLY_JSON_ARRAY || index >= array->count) return NULL;
+    return holy_json_text(array->members[index].value);
+}
+
+/* a flag list a manifest writes as one string or as a list of them */
+char *holy_json_joined(const struct holy_json_value *value)
+{
+    char *joined;
+    size_t used = 0, i;
+    if (!value) return NULL;
+    if (value->kind == HOLY_JSON_STRING) return strdup(value->text);
+    if (value->kind != HOLY_JSON_ARRAY) return NULL;
+    joined = malloc(1);
+    if (!joined) return NULL;
+    for (i = 0; i < value->count; ++i) {
+        const char *entry = holy_json_at(value, i);
+        size_t length = entry ? strlen(entry) + 1 : 0;
+        char *grown = realloc(joined, used + length + 1);
+        if (!grown) { free(joined); return NULL; }
+        joined = grown;
+        if (used) joined[used++] = ' ';
+        if (entry) { memcpy(joined + used, entry, strlen(entry)); used += strlen(entry); }
+        joined[used] = 0;
+    }
+    return joined;
+}
+
+/* the document at PATH, its root value, or NULL. status is 6 when the file cannot
+   be read and 2 when it is not the JSON this reader accepts. the caller frees the
+   root with holy_json_free. */
+struct holy_json_value *holy_json_read(const char *path, int *status)
+{
+    struct holy_json_reader reader;
+    struct holy_json_value *root;
+    FILE *in;
+    long size;
+    char *text;
+    int parsed;
+    *status = 0;
+    in = fopen(path, "rb");
+    if (!in) {
+        *status = 6;
+        return NULL;
+    }
+    if (fseek(in, 0, SEEK_END) || (size = ftell(in)) < 0 ||
+        (unsigned long)size > HOLY_JSON_MAX_INPUT || fseek(in, 0, SEEK_SET)) {
+        fclose(in);
+        *status = 6;
+        return NULL;
+    }
+    text = malloc((size_t)size + 1);
+    if (!text) {
+        fclose(in);
+        *status = 6;
+        return NULL;
+    }
+    parsed = fread(text, 1, (size_t)size, in) == (size_t)size && !ferror(in);
+    fclose(in);
+    if (!parsed) {
+        free(text);
+        *status = 6;
+        return NULL;
+    }
+    text[size] = 0;
+    reader.text = text;
+    reader.at = 0;
+    reader.length = (size_t)size;
+    reader.line = 1;
+    root = holy_json_value(&reader, 0);
+    while (root && reader.at < reader.length &&
+           isspace((unsigned char)reader.text[reader.at])) {
+        if (reader.text[reader.at] == '\n') ++reader.line;
+        ++reader.at;
+    }
+    /* anything after the root value is not the document this reader accepts */
+    if (root && reader.at < reader.length) {
+        holy_json_free(root);
+        root = NULL;
+    }
+    free(text);
+    if (!root) *status = 2;
+    return root;
+}
+
 char *holy_shell_copy(const char *text, size_t length)
 {
     char *value = malloc(length + 1);

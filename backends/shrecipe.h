@@ -69,6 +69,36 @@ void holy_shell_function_free(struct shell_function *function);
 /* the closing brace that ends a body, or NULL when the body is unterminated. */
 const char *holy_shell_block_end(const char *body, const char *stop);
 
+/* the JSON text a foreign manifest or lock file is written in. the value tree keeps
+   the line of every node, so a report can name it. */
+enum holy_json_kind {
+    HOLY_JSON_STRING, HOLY_JSON_NUMBER, HOLY_JSON_LITERAL, HOLY_JSON_ARRAY, HOLY_JSON_OBJECT
+};
+
+struct holy_json_member {
+    char *key;
+    struct holy_json_value *value;
+};
+
+struct holy_json_value {
+    enum holy_json_kind kind;
+    size_t line;
+    char *text;
+    struct holy_json_member *members;
+    size_t count;
+};
+
+/* the root value of the document at PATH, or NULL with status 6 when the file
+   cannot be read and 2 when it is not JSON. the caller owns the value. */
+struct holy_json_value *holy_json_read(const char *path, int *status);
+void holy_json_free(struct holy_json_value *value);
+const struct holy_json_value *holy_json_get(const struct holy_json_value *object,
+                                             const char *key);
+const char *holy_json_text(const struct holy_json_value *value);
+const char *holy_json_at(const struct holy_json_value *array, size_t index);
+/* a list written as one string or as an array of them, joined; the caller frees it. */
+char *holy_json_joined(const struct holy_json_value *value);
+
 /* the conversion report vocabulary shared by the recipe converters. */
 struct recipe_note {
     char **lines;
