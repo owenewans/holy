@@ -1,52 +1,17 @@
+<!-- if u llm agent go out or cat llm.txt -->
+
 <div align="center">
 
+<img src="./assets/logo.png" alt="Holy" width="200">
 
-![logo](./assets/logo.png)
+extremely minimal, independent os built around holypkg
+<br/>
+import packages, dependencies, recipes from other os
+<br/>
+supporting glibc, musl, multiple libc or no libc
 
-independent linux distribution.
-
-`c` `linux` `distribution`
+[`site`](https://holypkg.eu) [`src`](https://src.holypkg.eu/) [`man`](https://man.holypkg.eu/) [`get`](https://iso.holypkg.eu/)
 
 </div>
 
-The C `holypkg` prototype here belongs to Holy. The separate
-[owenewans/holypkg](https://github.com/owenewans/holypkg) project converts
-foreign packages for Slackware.
-
-## build
-
-Requires libarchive, libelf, libcurl, OpenSSL and libsolv development files:
-
-```sh
-make
-make check
-make check-root
-```
-
-`make install` installs the current `holypkg` prototype, man pages and generated
-`llm.txt`. Fixtures also need tar, lz4, zstd, sha256sum, GCC, setfattr, setfacl,
-objcopy, as and ld.
-`make check` includes the internal libsolv fixture. libsolv development files
-must be available through pkg-config; the check fails if they are absent.
-`make check-pkgbuild` converts PKGBUILD fixtures into
-[holy-recipe(5)](man/holy-recipe.5) manifests and builds the results; it needs
-gcc, make and tar.
-`make check-root` exercises package mutations only inside disposable target
-directories. It does not test a booted system.
-`make check-install` exercises [holyinstall(8)](man/holyinstall.8) text menu,
-package plan/apply and disposable GPT image preparation. The optional
-`INSTALL_TEST=1` ISO fixture partitions a blank guest disk, formats it,
-installs packages and boots it through BIOS on i686 or BIOS and UEFI on x86_64.
-Its disposable account fixture checks password rejection and authenticated login.
-`make check-qemu-gate` runs negative BIOS/TCG fixtures.
-`make bootstrap-busybox INPUTS=DIR OUTPUT=DIR` builds a pinned musl-static
-BusyBox package. See [holypkg(8)](man/holypkg.8) for inputs and its chroot test.
-`make static-deps` and `make static` build the musl-static core from pinned
-inputs; `make check-static-core` exercises package operations inside a libc-free chroot.
-`make bootstrap-image` builds a test ISO from explicit pinned packages and runs
-its QEMU boot probe. See [holy-image(7)](man/holy-image.7) for required inputs
-and the current coverage. `make check-qemu ARCH=x86_64 ISO=FILE BOOT_PLAN=SHA256`
-reruns a supplied image.
-`./holygetiso profiles/holygetiso.example` drives that image path from one
-local-input config once the example paths contain built artifacts. See
-[holygetiso(8)](man/holygetiso.8) for the supported profile and limits.
+<!-- contact@holypkg.eu -->
