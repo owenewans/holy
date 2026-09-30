@@ -591,7 +591,17 @@
   including source-bound queries. Foreign binary import now derives SONAME
   provides from classified ELF payloads, so a selected archive can supply
   separate file-level evidence. Complex patterns remain review-required. Key enrollment,
-  automatic provider selection and a file index remain open.
+  automatic provider selection remain open.
+  `holypkg index` now answers the two questions the planner answers internally: it
+  names the installed artifacts that own a path and the artifacts that declare a
+  capability, and it prints the whole index when given no selector. A name with
+  several providers is a candidate list and the status is 1, since choosing one of
+  them is a decision a report does not make, and a name nothing declares is status 6
+  because an absent answer is not a proof. A fixture installs an application, the
+  library it chose and a second provider of the same soname that places its file
+  elsewhere, then checks one owner, two candidates, the agreement with the conflict
+  report and every refusal. The planner still reads the manifests themselves, so an
+  index narrows nothing yet.
   A Homebrew formula converter now reads a formula as Ruby text and never evaluates
   it. The class name, description, homepage, license, url, sha256 and revision are
   carried, a formula that states no version records the version its source url

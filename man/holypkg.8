@@ -114,6 +114,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg conflict [--root DIRECTORY] [--json]
 .br
+.B holypkg index [--root DIRECTORY] [--path PATH | --capability KIND --name NAME] [--json]
+.br
 .B holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] [--auto-view] [--view PUBLIC=PRIVATE ...] -- COMMAND [ARGS...]
 .br
 .B holypkg docs --root DIRECTORY --output FILE
@@ -2526,6 +2528,31 @@ is 0 when nothing collides, 1 when a conflict was found, 2 for an invalid argume
 5 for an incomplete transaction and 6 when an instance or graph record is
 unavailable. A pending transaction means the installed set is mid-change, so no
 finding from it would be a fact.
+.SH INSTALLED FILE INDEX
+index reads a consistent installed-state snapshot under the database's shared lock
+and answers two questions the planner answers internally: which installed artifact
+owns a path, and which artifacts provide a name. The default root is /. With no
+selector it prints the whole index, one artifact record followed by the paths it owns
+and the capabilities it declares, ordered by artifact hash, by path and by
+capability.
+.PP
+A path selector takes an absolute or a relative path, since the installed manifests
+record the relative form, and names the artifacts that own it. A directory is shared
+and owns nothing, so it is not an index entry. A capability selector takes a kind and
+a name and names the artifacts that declare it with the arch and libc each one
+records, since the same name in two ABIs is two capabilities. Naming a path and a
+capability at once, or one without the other, is a usage error.
+.PP
+A name with more than one provider is a candidate list, and the status is 1: choosing
+one of them would be a decision this report does not make, which is what a fuzzy
+candidate becomes when nothing names the choice. A path or a capability no installed
+artifact owns or declares is status 6, since an absent answer is not a proof that
+nothing provides it. With --json, holy-file-index-1 records carry artifact, name,
+arch and libc, and the path and capability records carry the artifact they belong to.
+The final summary carries generation, artifacts, paths and capabilities. Status is 0
+for one candidate or the whole index, 1 for several, 2 for an invalid argument, 4 for
+an incomplete transaction, 5 for a pending transaction, and 6 for an instance record
+that is unavailable.
 .SH RUN INSTALLED COMMAND
 run selects one installed slot by source alias and package name. Use --arch and
 --libc when several installed slots share that name. The local alias selects a

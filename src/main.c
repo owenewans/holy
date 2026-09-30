@@ -18,6 +18,7 @@
 #include "docs.h"
 #include "graph.h"
 #include "conflict.h"
+#include "index.h"
 #include "source.h"
 #include "stage.h"
 #include "import.h"
@@ -2057,6 +2058,31 @@ sync_usage:
         return 2;
     }
 
+    if (argc > 1 && !strcmp(argv[1], "index")) {
+        const char *root = "/", *path = NULL, *kind = NULL, *name = NULL;
+        int json = 0, i;
+        for (i = 2; i < argc; ++i) {
+            if (!strcmp(argv[i], "--root") && i + 1 < argc && !strcmp(root, "/")) root = argv[++i];
+            else if (!strcmp(argv[i], "--path") && i + 1 < argc && !path) path = argv[++i];
+            else if (!strcmp(argv[i], "--capability") && i + 1 < argc && !kind) kind = argv[++i];
+            else if (!strcmp(argv[i], "--name") && i + 1 < argc && !name) name = argv[++i];
+            else if (!strcmp(argv[i], "--json") && !json) json = 1;
+            else {
+                fputs("usage: holypkg index [--root DIRECTORY] [--path PATH | --capability KIND "
+                      "--name NAME] [--json]\n", stderr);
+                return 2;
+            }
+        }
+        {
+            int indexed = holy_index_report(root, path, kind, name, json);
+            /* a selector the index cannot accept is a usage error, so the command
+               line says what the index accepts */
+            if (indexed == 2)
+                fputs("usage: holypkg index [--root DIRECTORY] [--path PATH | --capability "
+                      "KIND --name NAME] [--json]\n", stderr);
+            return indexed;
+        }
+    }
     if (argc > 1 && !strcmp(argv[1], "conflict")) {
         const char *root = "/";
         int json = 0, i;
