@@ -120,7 +120,7 @@ expect 2 "$bin" override list --root "$root"
 grep -qx "override a-applied.override state applied scope artifact $artifact path /etc/foo.conf arch any libc any" "$tmp/out"
 grep -qx "override b-pending.override state pending scope version override-fixture@1 path /etc/bar.conf arch any libc any" "$tmp/out"
 grep -qx 'override-detail c-scope.override scope or conditions name another artifact' "$tmp/out"
-grep -qx "override-owner c-scope.override $artifact override-fixture 1 noarch" "$tmp/out"
+grep -qx "override-owner c-scope.override $artifact override-fixture 1 noarch source -" "$tmp/out"
 grep -qx 'override-detail d-drift.override the file is neither the recorded source nor its result' "$tmp/out"
 grep -qx 'override-detail e-absent.override no installed artifact owns this path' "$tmp/out"
 grep -qx 'override-detail f-invalid.override override patch body does not match its digest' "$tmp/out"
@@ -214,7 +214,7 @@ grep -qx 'extra packaged line' "$root/etc/extra.conf"
 # artifact, which is the review the record cannot decide for itself
 expect 3 "$bin" override list --root "$root"
 grep -qx "override i-extra.override state review scope artifact $artifact path /etc/extra.conf arch any libc any" "$tmp/out"
-grep -qx "override-owner i-extra.override $second override-fixture-two 1 noarch" "$tmp/out"
+grep -qx "override-owner i-extra.override $second override-fixture-two 1 noarch source -" "$tmp/out"
 grep -qx 'override-detail i-extra.override scope or conditions name another artifact' "$tmp/out"
 grep -qx "override-summary records 3 applied 1 pending 1 not-installed 0 review 1 invalid 0 whole-file 1 diff 2 read-only" "$tmp/out"
 # the plan for one whole-file record says what applying it would write, and refuses
@@ -257,7 +257,7 @@ result $patched
 EOF
 cat "$tmp/patched" >> "$store/other-version.override"
 expect 3 "$bin" override plan other-version.override --root "$root"
-grep -qx 'holypkg: override other-version.override is scoped to version override-fixture@9; the artifact owning /etc/foo.conf is override-fixture 1' "$tmp/err"
+grep -qx 'holypkg: override other-version.override is scoped to version override-fixture@9; the artifact owning /etc/foo.conf is override-fixture 1 source -' "$tmp/err"
 cat > "$store/package-scope.override" <<EOF
 format holy-override-1
 scope package
@@ -271,7 +271,7 @@ cat "$tmp/patched" >> "$store/package-scope.override"
 expect 0 "$bin" override plan package-scope.override --root "$root"
 grep -qx "override-plan package-scope.override path /etc/foo.conf owner $artifact override-fixture 1 source $foo result $patched patch $patched form whole-file" "$tmp/out"
 expect 3 "$bin" override apply other-version.override --sha256 "$(printf '%064d' 0)" --root "$root"
-grep -qx 'holypkg: override other-version.override is scoped to version override-fixture@9; the artifact owning /etc/foo.conf is override-fixture 1' "$tmp/err"
+grep -qx 'holypkg: override other-version.override is scoped to version override-fixture@9; the artifact owning /etc/foo.conf is override-fixture 1 source -' "$tmp/err"
 rm "$store/other-version.override" "$store/package-scope.override"
 # a file that is not what the record applies to is a decision, not a plan
 cat > "$store/elsewhere.override" <<EOF
@@ -337,7 +337,7 @@ test -z "$(find "$root/etc" -name '.holy-tmp-*' -print)"
 # covered the same file with another result, so it needs a review instead.
 expect 3 "$bin" override list --root "$root"
 grep -qx "override whole.override state applied scope artifact $artifact path /etc/foo.conf arch any libc any" "$tmp/out"
-grep -qx "override-owner whole.override $artifact override-fixture 1 noarch" "$tmp/out"
+grep -qx "override-owner whole.override $artifact override-fixture 1 noarch source -" "$tmp/out"
 grep -qx 'override-detail a-applied.override the file is neither the recorded source nor its result' "$tmp/out"
 expect 3 "$bin" override plan whole.override --root "$root"
 grep -qx 'holypkg: the installed payload file /etc/foo.conf drifted' "$tmp/err"

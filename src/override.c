@@ -34,6 +34,7 @@ struct override_record {
     char *name;
     char *scope;
     char *subject;
+    char *source;        /* the source id the scope belongs to, or NULL for any */
     char *path;
     char *arch;
     char *libc;
@@ -44,6 +45,7 @@ struct override_record {
     char *owner_name;
     char *owner_version;
     char *owner_arch;
+    char *owner_source;
     char *state;
     char *file;
     char *detail;
@@ -56,6 +58,7 @@ struct override_record {
 struct override_owner {
     const char *path;        /* absolute, as the record states it */
     const char *relative;    /* the installed manifest form of the same path */
+    char source[65];         /* the installed source, "-" when it has none */
     char digest[65];
     char name[256];
     char version[256];
@@ -167,6 +170,7 @@ static int owner_visit(void *context, int root, int instance, const char *digest
         !holy_state_instance_field(instance, "arch", owner->arch, sizeof owner->arch) ||
         !holy_state_instance_field(instance, "libc", owner->libc, sizeof owner->libc))
         return 0;
+    if (!holy_state_instance_source(instance, owner->source)) owner->source[0] = 0;
     memcpy(owner->digest, digest, 65);
     owner->found = 1;
     return 0;
@@ -210,6 +214,7 @@ static int record_parse(const char *name, const char *data, size_t size,
 {
     char *cursor, *scope = NULL, *value = NULL, *arch = NULL, *libc = NULL;
     char *path = NULL, *source = NULL, *patch = NULL, *result = NULL, *copy;
+    char *source_id = NULL;
     char computed[65];
     int whole_file = 0, ok = 0;
     *message = NULL;
@@ -219,7 +224,7 @@ static int record_parse(const char *name, const char *data, size_t size,
     copy[size] = 0;
     cursor = copy;
     if (!take_field(&cursor, "format", &value, message) ||
-        strcmp(value, "holy-override-1")) {
+        (strcmp(value, "holy-override-1") && strcmp(value, "holy-override-2"))) {
         *message = strdup("unsupported override format");
         goto done;
     }
@@ -249,6 +254,14 @@ static int record_parse(const char *name, const char *data, size_t size,
         *message = strdup("unknown override scope");
         goto done;
     }
+    /* holy-override-2 narrows the scope to one source, which is what the package
+       scope needs to name a package of one source rather than a name several sources
+       carry */
+    optional_field(&cursor, "source", &source_id);
+    if (source_id && strspn(source_id, "0123456789abcdef") != 64) {
+        *message = strdup("override record has an invalid source id");
+        goto done;
+    }
     if (!take_field(&cursor, "path", &path, message)) goto done;
     optional_field(&cursor, "arch", &arch);
     optional_field(&cursor, "libc", &libc);
@@ -272,6 +285,7 @@ static int record_parse(const char *name, const char *data, size_t size,
     record->name = strdup(name);
     record->scope = scope;
     record->subject = value;
+    record->source = source_id;
     record->path = path;
     record->arch = arch ? arch : strdup("any");
     record->libc = libc ? libc : strdup("any");
@@ -284,13 +298,14 @@ static int record_parse(const char *name, const char *data, size_t size,
     if (!record->body) goto done;
     memcpy(record->body, cursor, record->body_length + 1);
     scope = value = path = arch = libc = source = patch = result = NULL;
+    source_id = NULL;
     if (!record->name || !record->scope || !record->subject || !record->path ||
         !record->arch || !record->libc) goto done;
     ok = 1;
 done:
     if (!ok && !*message) *message = strdup("override record is incomplete");
     free(scope); free(value); free(path); free(arch); free(libc);
-    free(source); free(patch); free(result);
+    free(source); free(patch); free(result); free(source_id);
     free(copy);
     return ok;
 }
@@ -342,9 +357,17 @@ static int record_push(struct override_store *store, struct override_record *rec
 /* the conditions a record states, compared with the artifact that owns the file. an
    arch or libc the record leaves out is any, and a scope naming another artifact,
    version or package is out of scope rather than a match. */
+static int scope_source_mismatch(const struct override_record *record,
+                                 const struct override_owner *owner)
+{
+    return record->source && (!owner->source[0] ||
+                              strcmp(record->source, owner->source));
+}
+
 static int scope_matches(const struct override_record *record,
                          const struct override_owner *owner)
 {
+    if (scope_source_mismatch(record, owner)) return 0;
     if (strcmp(record->arch, "any") && strcmp(record->arch, owner->arch)) return 0;
     if (strcmp(record->libc, "any") && strcmp(record->libc, owner->libc)) return 0;
     if (!strcmp(record->scope, "artifact"))
@@ -377,6 +400,12 @@ static void record_state(struct override_record *record, int root,
     record->owner_name = strdup(owner->name);
     record->owner_version = strdup(owner->version);
     record->owner_arch = strdup(owner->arch);
+    record->owner_source = strdup(owner->source[0] ? owner->source : "-");
+    if (scope_source_mismatch(record, owner)) {
+        record->state = strdup("review");
+        record->detail = strdup("the record names another source");
+        return;
+    }
     if (!scope_matches(record, owner)) {
         record->state = strdup("review");
         record->detail = strdup("scope or conditions name another artifact");
@@ -421,6 +450,10 @@ static void record_print(const struct override_record *record, int json)
         print_string(record->scope);
         printf(",\"subject\":");
         print_string(record->subject);
+        if (record->source) {
+            printf(",\"source\":");
+            print_string(record->source);
+        }
         printf(",\"path\":");
         print_string(record->path);
         printf(",\"arch\":");
@@ -453,13 +486,15 @@ static void record_print(const struct override_record *record, int json)
     }
     printf("override %s state %s", record->name, record->state);
     if (record->scope) printf(" scope %s %s", record->scope, record->subject);
+    if (record->source) printf(" source %s", record->source);
     if (record->path) printf(" path %s", record->path);
     if (record->arch) printf(" arch %s", record->arch);
     if (record->libc) printf(" libc %s", record->libc);
     putchar('\n');
     if (record->owner)
-        printf("override-owner %s %s %s %s %s\n", record->name, record->owner,
-               record->owner_name, record->owner_version, record->owner_arch);
+        printf("override-owner %s %s %s %s %s source %s\n", record->name, record->owner,
+               record->owner_name, record->owner_version, record->owner_arch,
+               record->owner_source[0] ? record->owner_source : "-");
     if (record->patch_digest)
         printf("override-form %s %s\n", record->name,
                record->whole_file ? "whole-file" : "diff");
@@ -472,10 +507,10 @@ static void store_free(struct override_store *store)
     for (i = 0; i < store->count; ++i) {
         struct override_record *record = &store->records[i];
         free(record->name); free(record->scope); free(record->subject);
-        free(record->path); free(record->arch); free(record->libc);
+        free(record->source); free(record->path); free(record->arch); free(record->libc);
         free(record->source_digest); free(record->patch_digest);
         free(record->result_digest); free(record->owner); free(record->owner_name);
-        free(record->owner_version); free(record->owner_arch);
+        free(record->owner_version); free(record->owner_arch); free(record->owner_source);
         free(record->state); free(record->file); free(record->detail);
         free(record->body);
     }
@@ -755,7 +790,7 @@ static void plan_forget(struct override_plan *plan)
 {
     struct override_record *record = &plan->record;
     free(record->name); free(record->scope); free(record->subject);
-    free(record->path); free(record->arch); free(record->libc);
+    free(record->source); free(record->path); free(record->arch); free(record->libc);
     free(record->source_digest); free(record->patch_digest);
     free(record->result_digest); free(record->body);
     memset(plan, 0, sizeof *plan);
@@ -827,9 +862,12 @@ static int plan_derive(const char *name, const char *root_path, struct override_
        the file of another, while one scoped to the package reaches every version it
        does not name */
     if (!scope_matches(&plan->record, &plan->owner)) {
-        fprintf(stderr, "holypkg: override %s is scoped to %s %s; the artifact owning"
-                        " %s is %s %s\n", name, plan->record.scope, plan->record.subject,
-                plan->record.path, plan->owner.name, plan->owner.version);
+        fprintf(stderr, "holypkg: override %s is scoped to %s %s%s%s; the artifact owning"
+                        " %s is %s %s source %s\n", name, plan->record.scope,
+                plan->record.subject, plan->record.source ? " source " : "",
+                plan->record.source ? plan->record.source : "", plan->record.path,
+                plan->owner.name, plan->owner.version,
+                plan->owner.source[0] ? plan->owner.source : "none");
         status = 3;
         goto done;
     }

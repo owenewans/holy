@@ -1220,6 +1220,11 @@ static int installed_source_id(int item, char source[65])
     return 1;
 }
 
+int holy_state_instance_source(int instance, char source[65])
+{
+    return instance && source && installed_source_id(instance, source);
+}
+
 int holy_state_find_slot(const char *root_path, const char *source_id,
                          const char *name, const char *arch, const char *libc,
                          char digest[65])

@@ -82,6 +82,35 @@ grep -qx 'format holy-instance-4' "$db/installed/$app/state"
 grep -qx "source-id $one" "$db/installed/$app/state"
 grep -qx "source $one \"renamed\"" "$db/installed/$app/source"
 grep -qx "source-id $two" "$db/installed/$lib/state"
+# a package scope names a name several sources can carry, so a record narrows it to one
+# source: the record reaches the version it does not name, and names another source as a
+# review with a reason the plan refuses
+mkdir -p "$root/etc/holy/overrides"
+printf 'patched app\n' > "$tmp/app-patched"
+app_source=$(sha256sum "$root/usr/share/app" | cut -d ' ' -f 1)
+app_result=$(sha256sum "$tmp/app-patched" | cut -d ' ' -f 1)
+cat > "$root/etc/holy/overrides/app-source.override" <<EOF
+format holy-override-2
+scope package
+package app
+source $one
+path /usr/share/app
+sha256 $app_source
+patch $app_result
+result $app_result
+EOF
+cat "$tmp/app-patched" >> "$root/etc/holy/overrides/app-source.override"
+expect 0 "$bin" override list --root "$root"
+grep -qx "override-owner app-source.override $app app 1 noarch source $one" "$tmp/out"
+expect 0 "$bin" override plan app-source.override --root "$root"
+grep -qx "override-plan app-source.override path /usr/share/app owner $app app 1 source $app_source result $app_result patch $app_result form whole-file" "$tmp/out"
+sed "s/^source $one$/source $two/" "$root/etc/holy/overrides/app-source.override" \
+    > "$root/etc/holy/overrides/other-source.override"
+expect 3 "$bin" override list --root "$root"
+grep -qx 'override-detail other-source.override the record names another source' "$tmp/out"
+expect 3 "$bin" override plan other-source.override --root "$root"
+grep -qx "holypkg: override other-source.override is scoped to package app source $two; the artifact owning /usr/share/app is app 1 source $one" "$tmp/err"
+rm "$root/etc/holy/overrides/app-source.override" "$root/etc/holy/overrides/other-source.override"
 cp "$db/installed/$lib/state" "$tmp/legacy-source-state"
 mv "$db/installed/$lib/provides" "$tmp/legacy-source-provides"
 sed '/^provides /d; s/holy-instance-4/holy-instance-3/' "$tmp/legacy-source-state" > "$db/installed/$lib/state"

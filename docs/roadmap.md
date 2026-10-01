@@ -468,7 +468,13 @@
   Re-applying a record on a later version is therefore a matter of the
   scope the user writes: scope package reaches every version that owns the
   path, and the source digest still decides whether the file in place is
-  what the record applies to.
+  what the record applies to. A package name several sources carry is not
+  one package, so holy-override-2 adds an optional source field after the
+  scope that narrows any scope to one registered source id, taken from the
+  installed instance record rather than from the package metadata. A
+  record naming another source reads review with the reason that it does,
+  and the plan refuses it with both sources named. The report also states
+  the source of the artifact owning each path.
 - [x] Carry config/mutable flags through verified manifests and installed checks;
   import Debian conffiles as config files, reject invalid declarations, and
   report changed-config.

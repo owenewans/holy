@@ -2765,6 +2765,11 @@ arch and an optional libc, sha256, patch, result, and then the patch body. The
 scope names what the record is for: scope artifact with a digest field is that one
 artifact, scope version with name and version fields is that package version, and
 scope package with a package field is that package and its later versions. The
+format holy-override-2 is the same order with an optional source field after the
+scope, which narrows any scope to one source id. That field is what a package
+scope needs, since several sources can carry one package name: the source id is
+the registered one from the installed instance record, and a record that names
+another source is a review the plan refuses. The
 sha256 field is the digest of the packaged file the patch applies to, patch is the
 digest of the body in the same file, and result is the digest the patched file has
 to carry. A path is absolute and has no empty, dot or dot-dot component; a missing
@@ -2779,10 +2784,12 @@ artifact by its own word, and the file is read through the root so the digests a
 the bytes the running system uses. Each record is reported with one state:
 applied, when the file carries the recorded result; pending, when it still carries
 the recorded source; not-installed, when no installed artifact owns the path; review,
-when the scope or the conditions name another artifact, or when the file is neither
-the recorded source nor its result; unreadable, when the file cannot be read through
-the root or the installed set; and invalid, when the record is not a valid
-holy-override-1 record or the store entry is not a readable regular file. A record
+when the record names another source, when the scope or the conditions name another
+artifact, or when the file is neither the recorded source nor its result;
+unreadable, when the file cannot be read through the root or the installed set; and
+invalid, when the record is not a valid holy-override-1 or holy-override-2 record or
+the store entry is not a readable regular file. Each record also reports the source of
+the artifact that owns its path, or the word none for an instance with no source. A record
 that needs a review and a new package version is what the record cannot decide, so
 one review is 3 and one invalid record is 2. The summary line counts every state.
 --json uses the holy-override-report-1 schema, with a form field on every record and

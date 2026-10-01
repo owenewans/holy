@@ -114,6 +114,8 @@ int holy_state_visit(const char *root_path, holy_instance_visit visit, void *con
 /* one field of an installed instance meta record, which is the package meta the
    instance was installed from; 0 when the record is absent, unreadable or lacks it. */
 int holy_state_instance_field(int instance, const char *key, char *out, size_t size);
+/* the source an installed instance came from, or 0 when it states none. */
+int holy_state_instance_source(int instance, char source[65]);
 /* returns a locked database fd, caller closes it; status uses CLI codes. */
 int holy_state_lock(const char *root_path, int exclusive,
                      unsigned long long *generation, int *status);
