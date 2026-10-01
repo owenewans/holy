@@ -190,7 +190,8 @@ with tempfile.TemporaryDirectory(prefix="holy-architecture-") as scratch:
                 "--accept-arch", next_library[1], "--root", root, env=environment, status=5)
             journal = root / "var/lib/holypkg/transactions/update/journal"
             saved = journal.read_text()
-            assert "format holy-update-journal-3\n" in saved
+            assert "format holy-update-journal-4\n" in saved
+            assert "phase instances\n" in saved
             assert "accept-arch " + next_library[1] + "\n" in saved
             journal.write_text(saved.replace("accept-arch " + next_library[1],
                                              "accept-arch " + library[1]))
@@ -212,7 +213,9 @@ with tempfile.TemporaryDirectory(prefix="holy-architecture-") as scratch:
                 "--root", root, env=environment, status=-9)
             journal = root / "var/lib/holypkg/transactions/update/journal"
             saved = journal.read_text()
-            assert "format holy-update-journal-4\n" in saved
+            assert "format holy-update-journal-5\n" in saved
+            # the exchange already happened, so the journal says so
+            assert "phase swapped\n" in saved
             assert "accept-arch " + privileged_library[1] + "\n" in saved
             assert "accept-privileged " + privileged_library[1] + "\n" in saved
             for decision in ("accept-arch ", "accept-privileged "):

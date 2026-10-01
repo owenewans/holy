@@ -260,10 +260,13 @@ if test "$fault_client" != skip; then
             find "$copy_root/usr/share" -name '.holy-update-*' -type f -delete
         fi
         expect 0 "$bin" db recover --update --root "$copy_root"
-        # an interrupted apply kept its progress record, and the recovery names the
-        # stage it had reached
-        if test -f "$copy_root/var/lib/holypkg/transactions/update/progress"; then
-            grep -q '^resumed-stage ' "$tmp/out"
+        # an interrupted apply states the phase it reached, and the recovery resumes
+        # from that phase instead of inferring where the crash fell
+        if test -d "$copy_root/var/lib/holypkg/transactions/update"; then
+            grep -q '^resumed-phase ' "$tmp/out"
+            journal_phase=$(sed -n 's/^phase //p' \
+                "$copy_root/var/lib/holypkg/transactions/update/journal")
+            test -n "$journal_phase"
         fi
         expect 0 "$bin" db status --root "$copy_root"
         expect 0 "$bin" db check --all --root "$copy_root"
@@ -440,10 +443,12 @@ if test "$fault_client" != skip; then
             --root "$unit_fault" > "$tmp/out" 2> "$tmp/err"; then exit 1; else code=$?; fi
     fi
     test "$code" -eq 137
-    grep -qxF 'format holy-update-journal-5' "$unit_fault/var/lib/holypkg/transactions/update/journal"
+    grep -qxF 'format holy-update-journal-6' "$unit_fault/var/lib/holypkg/transactions/update/journal"
     grep -qx 'service unit' "$unit_fault/var/lib/holypkg/transactions/update/journal"
+    grep -qx 'phase instances' "$unit_fault/var/lib/holypkg/transactions/update/journal"
     expect 5 "$bin" db status --root "$unit_fault"
     expect 0 "$bin" db recover --update --root "$unit_fault"
+    grep -qx 'resumed-phase instances' "$tmp/out"
     expect 0 "$bin" db check --all --root "$unit_fault"
     test -f "$unit_fault/etc/dinit.d/unit"
 fi

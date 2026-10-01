@@ -1323,7 +1323,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=f532afad67421edba3f21dde6259534962e6f8790bafec057fc2d889a222dcde
+holypkg.8 source=holy version=development sha256=af4f4426a2798a3fb93d8f8ae05b6ed75fd7ce3e6bae18fe522f94fecfa5e4b5
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -2963,18 +2963,21 @@ DESCRIPTION
      artifact contains a setuid executable, plan-update requires --accept-privi-
      leged  NEW_SHA256.	 The old installed decision only authorizes checking and
      replacing the old file; it does not approve the new hash. Apply must repeat
-     the same flag. Update journal versions 2, 3 and 4 bind privilege, architec-
-     ture and both decisions, respectively, to the new artifact. A group  writes
-     journal  version  6 and plan version 2, which carry replacement COUNT and a
-     pair OLD_SHA256 NEW_SHA256 line per slot, then the decisions that	name  an
-     artifact.	One pair keeps the single-slot formats, so a root that holds ei-
-     ther shape recovers the same way.	Setgid, sticky and  privileged	hardlink
-     groups  remain  unsupported.   It	requires  the  old archive, the proposed
-     archive and archives for every other installed package  in	 the  cache.  It
-     does  not	select versions or download missing dependencies. The caller ex-
-     plicitly proposes local delivery in the installed source's	 slot;	metadata
-     inside  the new archive cannot assign a source-id or provide signature evi-
-     dence.
+     the same flag. A journal that states a phase is one version above the jour-
+     nal with the same decisions, so versions 2 to 6 bind  privilege,  architec-
+     ture,  both  decisions  and the consented units, and every one of them ends
+     with the phase the transaction proved. A group writes journal version 7 and
+     plan version 2,  which  carry  replacement	 COUNT	and  a	pair  OLD_SHA256
+     NEW_SHA256	 line  per  slot, then the decisions that name an artifact, then
+     the phase. One pair keeps the single-slot formats, so a root that holds ei-
+     ther shape recovers  the  same  way.   The	 phases	 are  instances,  files,
+     swapped,  generation  and	committed,  in the order the replacement reaches
+     them.  Setgid, sticky and privileged hardlink  groups  remain  unsupported.
+     It	 requires  the	old archive, the proposed archive and archives for every
+     other installed package in the cache. It does not select versions or  down-
+     load missing dependencies. The caller explicitly proposes local delivery in
+     the  installed source's slot; metadata inside the new archive cannot assign
+     a source-id or provide signature evidence.
 
      The command takes the database's shared lock, refuses pending  transactions
      and  checks  installed metadata, file ownership, payload and saved provider
@@ -3019,7 +3022,7 @@ DESCRIPTION
      status 3 until the user names the unit with --accept-service UNIT, the same
      consent a set needs for the same reason.
 
-     The  consent  travels in the update journal as holy-update-journal-5, which
+     The  consent  travels in the update journal as holy-update-journal-6, which
      carries the accepted architecture, the accepted setuid  placement	and  the
      consented	unit names, so an interrupted replacement finishes the placement
      it was reviewed for. db recover --update takes the consent from the journal
@@ -3160,9 +3163,12 @@ DESCRIPTION
      puts must be restored. Interruption before publishing the immutable journal
      requires manual inspection. Unchanged files must still match their recorded
      state. Recovery can finish a reviewed PATH.holy-new  publication;	it  does
-     not execute hooks or merge file contents.	An interrupted setuid update can
-     leave  a  reviewed	 executable  under a reserved mode are shown in the file
-     plan; root operators must treat it as installed code.
+     not  execute hooks or merge file contents.	 An update journal that states a
+     phase has to agree with the database it left: a phase that claims	the  ex-
+     change  without  the installed records showing it, or an earlier phase with
+     the exchange already done, is refused rather than resumed.	 An  interrupted
+     setuid  update  can  leave	 a reviewed executable under a reserved mode are
+     shown in the file plan; root operators must treat it as installed code.
 
      The internal resolver can also validate a complete proposed  artifact  set.
      It	 requires  every supplied artifact, including disconnected consumers and

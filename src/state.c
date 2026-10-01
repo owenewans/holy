@@ -6150,7 +6150,44 @@ struct update_journal {
     int *privileged;                     /* per slot, the privileged decision */
     char **services;      /* the unit names the plan was reviewed with */
     size_t service_count;
+    char phase[16];       /* the phase the transaction proved, empty in an old journal */
 };
+
+/* the phases a replacement passes through, in order. the journal states the one it
+   reached, so recovery resumes there instead of re-deriving where the crash fell. */
+static const char *const update_phases[] = {
+    "instances", "files", "swapped", "generation", "committed"
+};
+
+static int update_phase_valid(const char *phase)
+{
+    size_t i;
+    for (i = 0; i < sizeof update_phases / sizeof *update_phases; ++i)
+        if (!strcmp(phase, update_phases[i])) return 1;
+    return 0;
+}
+
+/* the phase is the last line of the journal, so the replace rewrites the journal in
+   place and a replace that fails leaves the earlier phase standing */
+static int update_journal_phase(int work, const char *phase)
+{
+    char *record = update_record(work, "journal"), *line = NULL, *next = NULL;
+    size_t length = 0;
+    int ok = 0;
+    if (!record || !update_phase_valid(phase)) { free(record); return 0; }
+    length = strlen(record);
+    if (length && record[length - 1] == '\n') record[--length] = 0;
+    line = strrchr(record, '\n');
+    if (line && !strncmp(line + 1, "phase ", 6)) *line = 0;
+    if (asprintf(&next, "%s\nphase %s\n", record, phase) < 0) {
+        free(record);
+        return 0;
+    }
+    ok = update_replace(work, "journal", next);
+    free(next);
+    free(record);
+    return ok;
+}
 
 static void update_journal_forget(struct update_journal *journal)
 {
@@ -6405,7 +6442,8 @@ static int read_update_group_journal(const char *record, unsigned long long gene
             memchr(line, 0, (size_t)got)) break;
         line[got - 1] = 0;
         if (number == 1) {
-            if (strcmp(line, "format holy-update-journal-6")) break;
+            if (strcmp(line, "format holy-update-journal-7") &&
+                strcmp(line, "format holy-update-journal-6")) break;
             continue;
         }
         if (number == 2) {
@@ -6430,8 +6468,14 @@ static int read_update_group_journal(const char *record, unsigned long long gene
             journal->pair_count = declared;
             continue;
         }
-        /* the plan digest closes the journal, so nothing follows it */
-        if (planned) break;
+        /* the plan digest closes the journal, and a phase line may follow it as the
+           last line of the record */
+        if (planned) {
+            if (strncmp(line, "phase ", 6) || strlen(line) > 22) break;
+            memcpy(journal->phase, line + 6, strlen(line + 6) + 1);
+            if (!update_phase_valid(journal->phase)) break;
+            continue;
+        }
         if (!strncmp(line, "pair ", 5) && strlen(line) == 134 && count < declared) {
             memcpy(journal->olds[count], line + 5, 64);
             memcpy(journal->news[count], line + 70, 64);
@@ -6500,6 +6544,22 @@ static int read_update_group_journal(const char *record, unsigned long long gene
     return ok;
 }
 
+/* a group names its slots as pairs and a single slot as one old/new line, and version 6
+   is a group written before phases existed as well as the single slot that carries a
+   phase, so the third line says which one this is */
+static int update_journal_is_group(const char *record)
+{
+    const char *line;
+    if (!strncmp(record, "format holy-update-journal-7\n",
+                 sizeof "format holy-update-journal-7\n" - 1)) return 1;
+    if (strncmp(record, "format holy-update-journal-6\n",
+                sizeof "format holy-update-journal-6\n" - 1)) return 0;
+    line = strchr(record, '\n');
+    if (line && (line = strchr(line + 1, '\n')))
+        return !strncmp(line + 1, "replacement ", 12);
+    return 0;
+}
+
 static int read_update_journal(int work, unsigned long long current,
                                struct update_journal *journal)
 {
@@ -6507,8 +6567,7 @@ static int read_update_journal(int work, unsigned long long current,
     size_t capacity = 0, number = 0;
     int version = 0, ok = 0, attempt;
     if (!record) return 0;
-    if (!strncmp(record, "format holy-update-journal-6\n",
-                 sizeof "format holy-update-journal-6\n" - 1)) {
+    if (update_journal_is_group(record)) {
         for (attempt = 0; attempt < 2 && !ok; ++attempt) {
             if (attempt && !current) break;
             update_journal_forget(journal);
@@ -6538,7 +6597,7 @@ static int read_update_journal(int work, unsigned long long current,
                 line[got - 1] = 0;
                 if (number == 1) {
                     if (sscanf(line, "format holy-update-journal-%d", &version) != 1 ||
-                        version < 1 || version > 5) break;
+                        version < 1 || version > 6) break;
                     continue;
                 }
                 if (number == 2) {
@@ -6562,6 +6621,12 @@ static int read_update_journal(int work, unsigned long long current,
                     memcpy(journal->plan, line + 5, 65);
                     continue;
                 }
+                if (!journal->phase[0] && version >= 2 && !strncmp(line, "phase ", 6) &&
+                    strlen(line) <= 22) {
+                    memcpy(journal->phase, line + 6, strlen(line + 6) + 1);
+                    if (!update_phase_valid(journal->phase)) break;
+                    continue;
+                }
                 if (version >= 3 && !journal->arch_decision &&
                     !strncmp(line, "accept-arch ", 12) && strlen(line) == 76 &&
                     !memcmp(line + 12, journal->next, 64)) {
@@ -6574,7 +6639,7 @@ static int read_update_journal(int work, unsigned long long current,
                     journal->priv_decision = 1;
                     continue;
                 }
-                if (version == 5 && !strncmp(line, "service ", 8)) {
+                if (version >= 5 && !strncmp(line, "service ", 8)) {
                     char **next;
                     size_t i;
                     if (!holy_unit_name_valid(line + 8)) break;
@@ -6603,13 +6668,26 @@ static int read_update_journal(int work, unsigned long long current,
              valid_digest(journal->next) && valid_digest(journal->plan) &&
              strcmp(journal->old, journal->next) &&
              journal->generation == current - (unsigned)attempt &&
-             (version == 1 ? !journal->arch_decision && !journal->priv_decision &&
+             /* a journal that states a phase is one version above the journal with the
+                same decisions, so the version and the decisions have to agree */
+             (journal->phase[0] ?
+              (version == 2 ? !journal->arch_decision && !journal->priv_decision &&
+                               !journal->service_count :
+               version == 3 ? !journal->arch_decision && journal->priv_decision &&
+                               !journal->service_count :
+               version == 4 ? journal->arch_decision && !journal->priv_decision &&
+                               !journal->service_count :
+               version == 5 ? journal->arch_decision && journal->priv_decision &&
+                               !journal->service_count :
+               version == 6 && journal->service_count != 0) &&
+               update_phase_valid(journal->phase) :
+              version <= 1 ? !journal->arch_decision && !journal->priv_decision &&
                               !journal->service_count :
-              version == 2 ? !journal->arch_decision && journal->priv_decision &&
+              version <= 2 ? !journal->arch_decision && journal->priv_decision &&
                               !journal->service_count :
-              version == 3 ? journal->arch_decision && !journal->priv_decision &&
+              version <= 3 ? journal->arch_decision && !journal->priv_decision &&
                               !journal->service_count :
-              version == 4 ? journal->arch_decision && journal->priv_decision &&
+              version <= 4 ? journal->arch_decision && journal->priv_decision &&
                               !journal->service_count :
               journal->service_count != 0);
         if (ok) {
@@ -6938,6 +7016,7 @@ static int finish_update(int root, int db, int transactions, int work, int befor
         if (current != journal->generation || !update_exchange_available(work) ||
             !update_instances(next_db, before, names, snapshots, count, slots, slot_count,
                               journal->generation, resolution, journal->plan, 1) ||
+            !update_journal_phase(work, update_phases[0]) ||
             !update_replace(work, "progress", "stage prepared\n")) goto done;
         /* the plans name disjoint paths, so each slot stages and applies its own */
         for (k = 0; k < slot_count; ++k) {
@@ -6951,6 +7030,7 @@ static int finish_update(int root, int db, int transactions, int work, int befor
                 goto done;
             }
         }
+        if (!update_journal_phase(work, update_phases[1])) goto done;
         if (fstat(before, &expected) || fstatat(db, "installed", &observed, AT_SYMLINK_NOFOLLOW) ||
             expected.st_dev != observed.st_dev || expected.st_ino != observed.st_ino ||
             !update_replace(work, "progress", "stage publishing\n")) goto done;
@@ -6960,6 +7040,7 @@ static int finish_update(int root, int db, int transactions, int work, int befor
                 fputs("holypkg: renameat2(RENAME_EXCHANGE) unavailable; update remains incomplete\n", stderr);
             goto done;
         }
+        if (!update_journal_phase(work, update_phases[2])) goto done;
 #else
         fputs("holypkg: renameat2(RENAME_EXCHANGE) unavailable; update remains incomplete\n", stderr);
         goto done;
@@ -6970,11 +7051,13 @@ static int finish_update(int root, int db, int transactions, int work, int befor
         if (holy_file_plan_finished(&slots[k].changes, root)) goto done;
     if (!update_instances(db, before, names, snapshots, count, slots, slot_count,
                           journal->generation, resolution, journal->plan, 0) ||
-        (current == journal->generation && !set_generation(db, journal->generation + 1)) || fsync(db)) goto done;
+        (current == journal->generation && !set_generation(db, journal->generation + 1)) || fsync(db) ||
+        !update_journal_phase(work, update_phases[3])) goto done;
     snprintf(committed, sizeof committed, "%s\n", journal->plan);
     for (k = 0; k < slot_count; ++k)
         if (holy_file_plan_cleanup(&slots[k].changes, root)) goto done;
     if (!update_replace(work, "progress", "stage committed\n") ||
+        !update_journal_phase(work, update_phases[4]) ||
         !update_replace(work, "committed", committed)) goto done;
 #ifdef SYS_renameat2
     if (syscall(SYS_renameat2, transactions, "update", transactions, journal->plan, 1u) || fsync(transactions)) goto done;
@@ -7108,20 +7191,9 @@ static int state_update_group(const struct holy_update_request *request,
         if (work < 0) goto done;
         journaled = 1; result = 5;
         if (!read_update_journal(work, generation, &journal) || !journal.pair_count) goto done;
-        /* the progress record names the stage the apply reached, so the recovery states
-           it rather than leaving the operator to read the journal */
-        {
-            char *stage = update_record(work, "progress");
-            if (stage) {
-                size_t length = strlen(stage);
-                if (!strncmp(stage, "stage ", 6) && length > 12 && stage[length - 1] == '\n' &&
-                    !memchr(stage, '\n', length - 1)) {
-                    stage[length - 1] = 0;
-                    printf("resumed-stage %s\n", stage + 6);
-                }
-                free(stage);
-            }
-        }
+        /* the journal states the phase the transaction proved, so the recovery names it
+           rather than leaving the operator to read the record */
+        if (journal.phase[0]) printf("resumed-phase %s\n", journal.phase);
         pair_count = journal.pair_count;
         owned_olds = calloc(pair_count, sizeof *owned_olds);
         owned_news = calloc(pair_count, sizeof *owned_news);
@@ -7160,6 +7232,15 @@ static int state_update_group(const struct holy_update_request *request,
         }
         close(live);
         swapped = pair_swapped;
+        /* a journal that states a phase has to agree with the database it left: a
+           swapped phase without the exchange, or an unswapped one with it, means the
+           journal describes another operation */
+        if (journal.phase[0] && (strcmp(journal.phase, "swapped") &&
+                                 strcmp(journal.phase, "generation") &&
+                                 strcmp(journal.phase, "committed")) == swapped) {
+            fputs("holypkg: update phase does not match the installed database\n", stderr);
+            goto done;
+        }
         if (swapped) {
             old_db = child_dir(work, "next-db", 0);
             if (old_db < 0) goto done;
@@ -7497,8 +7578,10 @@ pair_done:
             journal.privileged[k] = slots[k].privileged;
         }
         if (!header_stream) goto done;
+        /* a journal written by this command states the phase it starts in, which is the
+           version above the one that carried the same decisions without it */
         if (pair_count > 1) {
-            fprintf(header_stream, "format holy-update-journal-6\ngeneration %llu\n"
+            fprintf(header_stream, "format holy-update-journal-7\ngeneration %llu\n"
                     "replacement %zu\n", generation, pair_count);
             for (k = 0; k < pair_count; ++k)
                 fprintf(header_stream, "pair %s %s\n", slots[k].old, slots[k].next);
@@ -7510,11 +7593,11 @@ pair_done:
             }
             for (i = 0; i < service_count; ++i)
                 fprintf(header_stream, "service %s\n", accept_service[i]);
-            fprintf(header_stream, "plan %s\n", checksum);
+            fprintf(header_stream, "plan %s\nphase %s\n", checksum, update_phases[0]);
         } else {
             fprintf(header_stream, "format holy-update-journal-%d\ngeneration %llu\nold %s\nnew %s\nplan %s\n",
-                    service_count ? 5 : slots[0].architecture ? (slots[0].privileged ? 4 : 3) :
-                    (slots[0].privileged ? 2 : 1),
+                    service_count ? 6 : slots[0].architecture ? (slots[0].privileged ? 5 : 4) :
+                    (slots[0].privileged ? 3 : 2),
                     generation, slots[0].old, slots[0].next, checksum);
             if (slots[0].architecture)
                 fprintf(header_stream, "accept-arch %s\n", slots[0].next);
@@ -7522,6 +7605,7 @@ pair_done:
                 fprintf(header_stream, "accept-privileged %s\n", slots[0].next);
             for (i = 0; i < service_count; ++i)
                 fprintf(header_stream, "service %s\n", accept_service[i]);
+            fprintf(header_stream, "phase %s\n", update_phases[0]);
         }
         if (ferror(header_stream) || fclose(header_stream) ||
             !update_replace(work, "journal", header)) {

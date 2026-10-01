@@ -407,9 +407,12 @@
   written before phases existed reports `phase inferred`, and a phase word the
   recovery does not know is an unreadable journal. `db recover --update` prints
   `resumed-stage STAGE` from the progress record an interrupted apply leaves, so
-  the operator reads the stage the transaction had reached rather than the journal
-  layout. An explicit phase line in the update journal and the repair transaction
-  stay open. `holypkg override list` now
+  the operator reads the stage the transaction had reached. The update journal now
+  carries the phase it proved as its last line, instances, files, swapped,
+  generation or committed, which is one version above the journal with the same
+  decisions; a group writes version 7 and a single slot versions 2 to 6. The
+  recovery resumes from the phase and refuses a journal whose phase disagrees with
+  the installed records. The repair transaction stays open. `holypkg override list` now
   reads the user override store of a target root and reports every record
   against the installed set. A record is the fixed line order
   holy-override-1 form: a scope naming one artifact digest, one package

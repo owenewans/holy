@@ -1670,12 +1670,16 @@ This authorizes placement, not execution by the current kernel.
 If the new artifact contains a setuid executable, plan-update requires
 --accept-privileged NEW_SHA256. The old installed decision only authorizes
 checking and replacing the old file; it does not approve the new hash. Apply
-must repeat the same flag. Update journal versions 2, 3 and 4 bind privilege,
-architecture and both decisions, respectively, to the new artifact. A group
-writes journal version 6 and plan version 2, which carry
+must repeat the same flag. A journal that states a phase is one version above
+the journal with the same decisions, so versions 2 to 6 bind privilege,
+architecture, both decisions and the consented units, and every one of them
+ends with the phase the transaction proved. A group writes journal version 7
+and plan version 2, which carry
 replacement COUNT and a pair OLD_SHA256 NEW_SHA256 line per slot, then the
-decisions that name an artifact. One pair keeps the single-slot formats, so a
-root that holds either shape recovers the same way.
+decisions that name an artifact, then the phase. One pair keeps the
+single-slot formats, so a root that holds either shape recovers the same way.
+The phases are instances, files, swapped, generation and committed, in the
+order the replacement reaches them.
 Setgid, sticky and privileged hardlink groups remain unsupported.
 It requires the old archive, the proposed archive and archives for every other
 installed package in the cache. It does not select versions or download missing
@@ -1723,7 +1727,7 @@ replacement that ships none has an empty section. Such a replacement is
 refused with status 3 until the user names the unit with
 --accept-service UNIT, the same consent a set needs for the same reason.
 .PP
-The consent travels in the update journal as holy-update-journal-5, which
+The consent travels in the update journal as holy-update-journal-6, which
 carries the accepted architecture, the accepted setuid placement and the
 consented unit names, so an interrupted replacement finishes the placement
 it was reviewed for. db recover --update takes the consent from the
@@ -1864,6 +1868,9 @@ cached inputs must be restored. Interruption before publishing the immutable
 journal requires manual inspection. Unchanged files must still match their
 recorded state. Recovery can finish a reviewed PATH.holy-new publication; it
 does not execute hooks or merge file contents.
+An update journal that states a phase has to agree with the database it left: a
+phase that claims the exchange without the installed records showing it, or an
+earlier phase with the exchange already done, is refused rather than resumed.
 An interrupted setuid update can leave a reviewed executable under a reserved
 .holy-update name until recovery or manual inspection. The reserved name and
 mode are shown in the file plan; root operators must treat it as installed code.

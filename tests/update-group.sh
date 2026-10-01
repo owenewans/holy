@@ -83,7 +83,8 @@ grep -qx two2 "$root/usr/share/two"
 grep -qx "$approved" "$root/var/lib/holypkg/transactions/$approved/committed"
 expect 0 "$bin" db check --all --root "$root"
 # the journal names both slots and the decision it was reviewed with
-grep -qx "format holy-update-journal-6" "$root/var/lib/holypkg/transactions/$approved/journal"
+grep -qx "format holy-update-journal-7" "$root/var/lib/holypkg/transactions/$approved/journal"
+grep -qx "phase committed" "$root/var/lib/holypkg/transactions/$approved/journal"
 grep -qx "replacement 2" "$root/var/lib/holypkg/transactions/$approved/journal"
 grep -qx "pair $one_old $one_new" "$root/var/lib/holypkg/transactions/$approved/journal"
 grep -qx "pair $two_old $two_new" "$root/var/lib/holypkg/transactions/$approved/journal"
@@ -117,7 +118,8 @@ single=$(update_hash)
 grep -qx "old $one_old" "$tmp/out"
 if grep -qx "replacement 1" "$tmp/out"; then exit 1; fi
 expect 0 "$bin" db apply-update "$single" "$one_old" "$one_new" --root "$root"
-grep -qx "format holy-update-journal-1" "$root/var/lib/holypkg/transactions/$single/journal"
+grep -qx "format holy-update-journal-2" "$root/var/lib/holypkg/transactions/$single/journal"
+grep -qx "phase committed" "$root/var/lib/holypkg/transactions/$single/journal"
 expect 0 "$bin" db check --all --root "$root"
 # a slot that replaces itself is a decision, a pair list that names one artifact twice
 # or leaves a pair half-named is a shape this command does not take, and a new artifact
