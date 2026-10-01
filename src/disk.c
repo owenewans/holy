@@ -48,6 +48,19 @@ static const struct fs_profile profiles[] = {
       { "mkfs.f2fs", "-q", "-f", NULL, NULL }, 3 }
 };
 
+/* a filesystem label names the volume without a device path, which is what lets a moved
+   root find itself; the space is the limit every supported mkfs shares */
+static int label_valid(const char *text)
+{
+    size_t i, length = text ? strlen(text) : 0;
+    if (!length || length > 16) return 0;
+    for (i = 0; i < length; ++i)
+        if (!((text[i] >= 'a' && text[i] <= 'z') || (text[i] >= 'A' && text[i] <= 'Z') ||
+              (text[i] >= '0' && text[i] <= '9') || text[i] == '_' || text[i] == '-'))
+            return 0;
+    return 1;
+}
+
 static const char *const luks_tool = "/usr/sbin/cryptsetup";
 static const char *const luks_tool_key = "cryptsetup-sha256";
 
@@ -63,6 +76,7 @@ struct disk_plan {
     const struct fs_profile *profile;
     char *key_file;   /* the luks2 key, read at apply and never recorded */
     char *volume;     /* the luks2 label and the mapper name */
+    char boot_label[17], root_label[17];
 };
 
 /* the tools every block plan records: the partitioner, the boot filesystem, the root
@@ -309,10 +323,11 @@ static int write_plan(const char *path, const struct disk_plan *p)
     if (fd < 0) { perror("holyinstall: plan"); return 1; }
     f = fdopen(fd, "w");
     if (!f) { close(fd); unlink(path); return 1; }
-    /* format 3 records the chosen profile, any swap and any luks2 key file, so the
-       review names every tool the apply will run */
+    /* format 4 adds the two filesystem labels, so an install can name the volumes a
+       moved root has to find */
     ok = fprintf(f, "[disk-plan]\nformat %d\nimage ",
-                 p->profile && !image_profile(p->profile) ? 3 : p->block ? 2 : 1) >= 0 &&
+                 p->boot_label[0] ? 4 : p->profile && !image_profile(p->profile) ? 3 :
+                 p->block ? 2 : 1) >= 0 &&
          quote(f, p->image) &&
          fprintf(f, "\ndevice %" PRIuMAX "\ninode %" PRIuMAX
                  "\nsize %" PRIuMAX "\nroot-sectors %" PRIuMAX
@@ -320,6 +335,10 @@ static int write_plan(const char *path, const struct disk_plan *p)
                  p->size, p->root_sectors, p->head, p->tail) >= 0;
     if (ok && p->swap_sectors)
         ok = fprintf(f, "swap-sectors %" PRIuMAX "\n", p->swap_sectors) >= 0;
+    if (ok && p->boot_label[0])
+        ok = fputs("label ", f) >= 0 && quote(f, p->boot_label) &&
+             fputs("\nroot-label ", f) >= 0 && quote(f, p->root_label) &&
+             fputc('\n', f) >= 0;
     if (ok && p->block) {
         size_t i;
         ok = fputs("kind block\nserial ", f) >= 0 && quote(f, p->serial) &&
@@ -391,8 +410,11 @@ static int read_plan(const char *path, struct disk_plan *p)
     p->profile = &profiles[0];         /* formats 1 and 2 name no profile */
     p->tool_count = 4;
     ok = format && (!strcmp(format, "1") || !strcmp(format, "2") ||
-                    !strcmp(format, "3"));
-    p->block = ok && strcmp(format, "1");
+                    !strcmp(format, "3") || !strcmp(format, "4"));
+    /* the kind line, not the version, says whether the plan names a block device: an
+       image plan carries the labels without a kind */
+    s = value(&c, "disk-plan", "kind");
+    p->block = ok && s && !strcmp(s, "block");
     for (i = 0; i < c.count; ++i) if (strcmp(c.entries[i].section, "disk-plan")) ok = 0;
     s = value(&c, "disk-plan", "image");
     if (ok && s) p->image = strdup(s); else ok = 0;
@@ -408,6 +430,16 @@ static int read_plan(const char *path, struct disk_plan *p)
     if (ok && s && strlen(s) == 64) memcpy(p->head, s, 65); else ok = 0;
     s = value(&c, "disk-plan", "tail-sha256");
     if (ok && s && strlen(s) == 64) memcpy(p->tail, s, 65); else ok = 0;
+    {
+        const char *boot = value(&c, "disk-plan", "label");
+        const char *root = value(&c, "disk-plan", "root-label");
+        if (format && !strcmp(format, "4") &&
+            (!label_valid(boot) || !label_valid(root))) ok = 0;
+        else if (boot) {
+            strcpy(p->boot_label, boot);
+            strcpy(p->root_label, root ? root : "");
+        }
+    }
     for (i = 0; i < 64; ++i)
         if (!((p->head[i] >= '0' && p->head[i] <= '9') ||
               (p->head[i] >= 'a' && p->head[i] <= 'f')) ||
@@ -460,7 +492,8 @@ static int read_plan(const char *path, struct disk_plan *p)
                       (s[j] >= 'a' && s[j] <= 'f'))) ok = 0;
         }
     }
-    expected = (size_t)(p->block ? 15 : 8) + (p->swap_sectors ? 1 : 0) +
+    expected = (size_t)(p->block ? 15 : 8) + (p->boot_label[0] ? 2 : 0) +
+               (p->swap_sectors ? 1 : 0) +
                (p->block && !image_profile(p->profile) ? 1 : 0) + (p->volume ? 4 : 0);
     if (ok) ok = c.count == expected;
     if (ok) ok = p->size >= (1ULL << 30) && p->size % sector == 0 && p->swap_sectors < p->size / sector;
@@ -585,7 +618,7 @@ static int disk_plan(const char *config_path, const char *plan_path)
 {
     struct holy_config c = {0};
     struct disk_plan p = {0};
-    const char *image, *device, *layout, *swap, *key, *volume;
+    const char *image, *device, *layout, *swap, *key, *volume, *boot, *root;
     const struct fs_profile *profile = NULL;
     char *error = NULL;
     int fd, rc = 1, encrypted = 0;
@@ -599,6 +632,13 @@ static int disk_plan(const char *config_path, const char *plan_path)
     swap = value(&c, "disk", "swap");
     key = value(&c, "disk", "key-file");
     volume = value(&c, "disk", "volume");
+    /* the labels default to the names an install writes into the target root, so a
+       root copied to another path still finds its filesystems */
+    boot = value(&c, "disk", "label");
+    root = value(&c, "disk", "root-label");
+    if ((boot && !label_valid(boot)) || (root && !label_valid(root))) { rc = 2; goto done; }
+    snprintf(p.boot_label, sizeof p.boot_label, "%s", boot ? boot : "HOLYBOOT");
+    snprintf(p.root_label, sizeof p.root_label, "%s", root ? root : "holyroot");
     if (!!image == !!device || !layout || (swap && !device)) { rc = 2; goto done; }
     if (!layout_read(layout, &profile, &encrypted)) {
         fputs("holyinstall: unknown disk layout\n", stderr);
@@ -668,13 +708,15 @@ static int disk_plan(const char *config_path, const char *plan_path)
     }
     printf("disk %s %s\nidentity %" PRIuMAX ":%" PRIuMAX " size %" PRIuMAX "\n",
            p.block ? "device" : "image", p.image, p.device, p.inode, p.size);
-    printf("GPT: BIOS 2048+2048; ESP %d+%d FAT32", esp_start, esp_sectors);
+    printf("GPT: BIOS 2048+2048; ESP %d+%d FAT32 label %s", esp_start, esp_sectors,
+           p.boot_label);
     if (p.swap_sectors)
         printf("; swap %d+%" PRIuMAX, root_base, p.swap_sectors);
     printf("; root %" PRIuMAX "+%" PRIuMAX " %s", p.root_start, p.root_sectors,
            p.profile->filesystem);
     if (encrypted) printf(" luks2 %s", p.volume);
-    printf("\nall existing data on this %s will be destroyed\n",
+    printf(" label %s\n", p.root_label);
+    printf("all existing data on this %s will be destroyed\n",
            p.block ? "device" : "image");
     if (p.block) printf("serial %s\nrdev %" PRIuMAX "\n", p.serial, p.rdev);
     rc = write_plan(plan_path, &p);
@@ -690,19 +732,22 @@ static int disk_show(const char *plan_path)
     if (!rc) {
         printf("disk %s %s\nidentity %" PRIuMAX ":%" PRIuMAX " size %" PRIuMAX "\n",
                p.block ? "device" : "image", p.image, p.device, p.inode, p.size);
-        printf("GPT: BIOS 2048+2048; ESP %d+%d FAT32", esp_start, esp_sectors);
+        printf("GPT: BIOS 2048+2048; ESP %d+%d FAT32 label %s", esp_start, esp_sectors,
+               p.boot_label);
         if (p.swap_sectors)
             printf("; swap %d+%" PRIuMAX, root_base, p.swap_sectors);
         printf("; root %" PRIuMAX "+%" PRIuMAX " %s", p.root_start, p.root_sectors,
                p.profile->filesystem);
         if (p.volume) printf(" luks2 %s", p.volume);
-        printf("\nhead-sha256 %s\ntail-sha256 %s\n", p.head, p.tail);
+        printf(" label %s\n", p.root_label);
+        printf("head-sha256 %s\ntail-sha256 %s\n", p.head, p.tail);
         printf("all existing data on this %s will be destroyed\n",
                p.block ? "device" : "image");
     }
     if (!rc && p.block) {
         size_t i;
         printf("serial %s\nrdev %" PRIuMAX "\n", p.serial, p.rdev);
+        printf("label %s\nroot-label %s\n", p.boot_label, p.root_label);
         if (p.swap_sectors) printf("swap-sectors %" PRIuMAX "\n", p.swap_sectors);
         for (i = 0; i < p.tool_count; ++i)
             printf("%s %s\n", tool_key_at(&p, i), p.tools[i]);
@@ -815,13 +860,14 @@ static int disk_apply_block(const char *plan_path, const char *confirm,
 {
     struct disk_plan actual = {0};
     char *journal_path = NULL, *script = NULL, *esp = NULL, *swap = NULL, *root = NULL;
+    char *boot_label = NULL, *root_label = NULL;
     char *mapper = NULL, *device;
     int fd = -1, rc = 1;
     size_t i;
     char *const partition[] = {"sfdisk", "--no-reread", "--no-tell-kernel", "/proc/self/fd/9", NULL};
     char *const verify[] = {"sfdisk", "--verify", "/proc/self/fd/9", NULL};
-    char *fat[] = {"mkfs.fat", "-F", "32", "-s", "4", "-n", "HOLYBOOT", NULL, NULL};
-    char *root_format[8];
+    char *fat[] = {"mkfs.fat", "-F", "32", "-s", "4", "-n", NULL, NULL, NULL};
+    char *root_format[9];
     char *luks_format[] = {"cryptsetup", "luksFormat", "--type", "luks2", "--batch-mode",
                            "--key-file", NULL, "--label", NULL, NULL};
     char *luks_open[] = {"cryptsetup", "open", "--key-file", NULL, NULL, NULL};
@@ -874,10 +920,17 @@ static int disk_apply_block(const char *plan_path, const char *confirm,
         snprintf(mapper, (size_t)length + 1, "/dev/mapper/%s", expected->volume);
         device = mapper;
     }
+    /* the labels name the volumes, so a root copied to another path still finds them */
     for (i = 0; i < expected->profile->arg_count; ++i)
         root_format[i] = (char *)expected->profile->args[i];
-    root_format[expected->profile->arg_count] = device;
-    root_format[expected->profile->arg_count + 1] = NULL;
+    root_format[expected->profile->arg_count] = "-L";
+    boot_label = strdup(expected->boot_label);
+    root_label = strdup(expected->root_label);
+    if (!boot_label || !root_label) goto done;
+    root_format[expected->profile->arg_count + 1] = root_label;
+    root_format[expected->profile->arg_count + 2] = device;
+    root_format[expected->profile->arg_count + 3] = NULL;
+    fat[6] = boot_label;
     fat[7] = esp;
     swap_format[1] = swap;
     script = partition_script(expected);
@@ -932,6 +985,7 @@ done:
     if (rc == 5) fputs("holyinstall: device mutation may be partial; inspect journal and device\n", stderr);
     if (fd >= 0) close(fd);
     free(journal_path); free(script); free(esp); free(swap); free(root); free(mapper);
+    free(boot_label); free(root_label);
     return rc;
 }
 
@@ -943,8 +997,10 @@ static int disk_apply(const char *plan_path, const char *confirm)
     int fd = -1, rc = read_plan(plan_path, &p);
     char *const partition[] = {"sfdisk", "--no-reread", "--no-tell-kernel", "/proc/self/fd/9", NULL};
     char *const verify[] = {"sfdisk", "--verify", "/proc/self/fd/9", NULL};
-    char *const fat[] = {"mkfs.fat", "-F", "32", "-s", "4", "--offset=4096", "-n", "HOLYBOOT", "/proc/self/fd/9", "262144", NULL};
-    char *const ext[] = {"mke2fs", "-q", "-t", "ext4", "-F", "-b", "4096", "-E", offset, "/proc/self/fd/9", root_blocks, NULL};
+    char *fat[] = {"mkfs.fat", "-F", "32", "-s", "4", "--offset=4096", "-n", NULL,
+                   "/proc/self/fd/9", "262144", NULL};
+    char *ext[] = {"mke2fs", "-q", "-t", "ext4", "-F", "-b", "4096", "-L", NULL,
+                   "-E", offset, "/proc/self/fd/9", root_blocks, NULL};
     if (rc) goto done;
     if (p.block) { rc = disk_apply_block(plan_path, confirm, &p); goto done; }
     if (strcmp(confirm, p.image)) { fputs("holyinstall: confirmation must match image path\n", stderr); rc = 3; goto done; }
@@ -973,6 +1029,8 @@ static int disk_apply(const char *plan_path, const char *confirm)
     script = partition_script(&p);
     if (!script) { rc = 1; goto done; }
     snprintf(root_blocks, sizeof root_blocks, "%" PRIuMAX, p.root_sectors / 8);
+    fat[7] = p.boot_label;
+    ext[8] = p.root_label;
     snprintf(offset, sizeof offset, "offset=%" PRIuMAX, (uintmax_t)p.root_start * sector);
     if (!journal(journal_path, "prepared", 1)) { rc = 1; goto done; }
     rc = 5;

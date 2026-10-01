@@ -169,8 +169,30 @@ a profile with no firmware line is decision-required, since an install that
 needs Wi-Fi has to carry the firmware with it. The actual connection is a fact
 of the installed system, not of this transaction.
 .PP
-Plan format 6 applies the profile by writing the configuration the packages
-read and by creating the state directories they keep:
+disk-plan names an absolute path to a plan the disk stage wrote. Its two
+labels are what a target root names in its own files, so a root copied to
+another path still finds its filesystems without a device path. Planning
+reads the labels and the root filesystem from the disk plan and records the
+SHA-256 of the whole document; apply refuses a disk plan whose digest no
+longer matches the reviewed one, before the package manager touches the root.
+A disk plan with no labels is refused before a plan exists, since a volume
+nothing names cannot be mounted. Plan format 7 carries the path, its digest
+and both labels beside the root filesystem, and apply writes:
+.PP
+.RS
+.nf
+LABEL=holyroot / ext4 defaults 0 1
+LABEL=HOLYBOOT /boot/efi vfat umask=0077 0 1
+.fi
+.RE
+.PP
+The table is 0644. Nothing else in it depends on where the root lives, which
+is what makes the installed system relocatable. The filesystem is the one the
+disk plan names; an image plan carries ext4, since only that mkfs writes into
+a region of a file.
+.PP
+Plan format 6 applies the network profile by writing the configuration the
+packages read and by creating the state directories they keep:
 .RS
 .nf
 /etc/connman/connman.conf
@@ -222,12 +244,19 @@ which file the apply reads rather than a secret. A key file or a volume
 without a luks2 layout, a luks2 layout without both, a swap on an image and a
 volume name outside the mapper alphabet are refused before a plan exists.
 .PP
+A filesystem label names its volume without a device path, which is what lets
+a relocated root find itself. label sets the ESP label and root-label the root
+label; both default to HOLYBOOT and holyroot, both are at most 16 characters
+of A-Z, a-z, 0-9, underscore and hyphen, and a longer or otherwise unusable
+label is refused before a plan exists. Apply passes the ESP label to mkfs.fat
+and the root label to the mkfs of the chosen profile.
+.PP
 Each tool is checked before the plan is written: the partitioner, the boot
 filesystem, the mkfs of the chosen profile, the boot stage, and cryptsetup for
 a luks2 root, whose reported major version must be 2. Plan format 3 records
 the filesystem, any swap sectors, the encryption lines and the SHA-256 of
-every one of those tools. Apply rechecks each hash and refuses a changed tool,
-a changed device or an existing journal.
+every one of those tools. Plan format 4 adds the two labels. Apply rechecks
+each hash and refuses a changed tool, a changed device or an existing journal.
 .PP
 Apply formats the root inside the mapper when the plan names one, so a luks2
 container never receives a raw mkfs, and closes the mapper once the

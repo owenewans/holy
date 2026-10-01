@@ -232,6 +232,7 @@ static int key_arity(const char *section, const char *key)
             !strcmp(key, "size") || !strcmp(key, "head-sha256") ||
             !strcmp(key, "tail-sha256") || !strcmp(key, "root-sectors") ||
             !strcmp(key, "swap-sectors") || !strcmp(key, "filesystem") ||
+            !strcmp(key, "label") || !strcmp(key, "root-label") ||
             !strcmp(key, "encryption") || !strcmp(key, "volume") ||
             !strcmp(key, "key-file") || !strcmp(key, "kind") ||
             !strcmp(key, "serial") || !strcmp(key, "rdev") ||
@@ -243,6 +244,7 @@ static int key_arity(const char *section, const char *key)
     } else if (!strcmp(section, "disk")) {
         if (!strcmp(key, "image") || !strcmp(key, "device") ||
             !strcmp(key, "layout") || !strcmp(key, "swap") ||
+            !strcmp(key, "label") || !strcmp(key, "root-label") ||
             !strcmp(key, "key-file") || !strcmp(key, "volume")) return 1;
     } else if (!strcmp(section, "install")) {
         if (!strcmp(key, "source")) return 2;
@@ -251,7 +253,8 @@ static int key_arity(const char *section, const char *key)
             !strcmp(key, "accept-arch") || !strcmp(key, "accept-privileged") ||
             !strcmp(key, "password-file") || !strcmp(key, "locale") ||
             !strcmp(key, "timezone") || !strcmp(key, "network-profile") ||
-            !strcmp(key, "network-package") || !strcmp(key, "firmware")) return 1;
+            !strcmp(key, "disk-plan") || !strcmp(key, "network-package") ||
+            !strcmp(key, "firmware")) return 1;
     } else if (!strcmp(section, "install-plan")) {
         if (!strcmp(key, "source")) return 2;
         if (!strcmp(key, "account")) return 5;
@@ -262,7 +265,8 @@ static int key_arity(const char *section, const char *key)
             !strcmp(key, "accept-privileged") ||
             !strcmp(key, "password-file") || !strcmp(key, "locale") ||
             !strcmp(key, "timezone") || !strcmp(key, "network-profile") ||
-            !strcmp(key, "network-package") || !strcmp(key, "firmware")) return 1;
+            !strcmp(key, "disk-plan") || !strcmp(key, "network-package") ||
+            !strcmp(key, "firmware")) return 1;
     } else if (!strcmp(section, "general")) {
         if (!strcmp(key, "arch") || !strcmp(key, "compat-arch") ||
             !strcmp(key, "scripts") || !strcmp(key, "trust")) return 1;

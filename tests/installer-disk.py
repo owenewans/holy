@@ -55,7 +55,8 @@ def main(binary):
         run(binary, "disk", "plan", "--config", config, "--output", plan)
         shown = run(binary, "disk", "show", "--plan", plan)
         assert f"disk image {image}\n" in shown
-        assert "ESP 4096+524288 FAT32" in shown
+        assert "ESP 4096+524288 FAT32 label HOLYBOOT" in shown
+        assert f"root 528384+1566720 ext4 label holyroot\n" in shown
         assert f"head-sha256 {before[0]}\n" in shown
         assert f"tail-sha256 {before[1]}\n" in shown
         assert sample_hash(image) == before
@@ -100,6 +101,7 @@ def main(binary):
         root = run("/sbin/blkid", "-p", "-O", str(528384 * 512),
                    "-S", str(1566720 * 512), image)
         assert 'TYPE="vfat"' in fat and 'TYPE="ext4"' in root
+        assert 'LABEL="HOLYBOOT"' in fat and 'LABEL="holyroot"' in root
         esp_image = os.path.join(directory, "esp.fat")
         root_image = os.path.join(directory, "root.ext4")
         run("/sbin/mkfs.fat", "-C", "-F", "32", "-s", "4", esp_image, "262144")
@@ -191,7 +193,8 @@ def main(binary):
         block_size = 8 << 30
         block_root = ((block_size // 512 - 530432 - 34) // 2048) * 2048
         def block_document(swap=True, encryption=False):
-            return ("[disk-plan]\nformat 3\nimage \"/dev/sdz\"\ndevice 1\ninode 2\n"
+            return ("[disk-plan]\nformat 4\nimage \"/dev/sdz\"\ndevice 1\ninode 2\n"
+                    "label HOLYBOOT\nroot-label holyroot\n"
                     f"size {block_size}\nroot-sectors {block_root}\n"
                     + (f"swap-sectors {2048}\n" if swap else "")
                     + "head-sha256 " + "0" * 64 + "\ntail-sha256 " + "1" * 64 + "\n"
@@ -205,7 +208,8 @@ def main(binary):
             stream.write(block_document())
         shown = run(binary, "disk", "show", "--plan", block_plan)
         assert "swap 528384+2048" in shown
-        assert f"root 530432+{block_root} f2fs\n" in shown
+        assert f"root 530432+{block_root} f2fs label holyroot\n" in shown
+        assert "label HOLYBOOT\nroot-label holyroot\n" in shown
         assert "mkfs-f2fs-sha256 " + "6" * 64 + "\n" in shown
         assert "cryptsetup-sha256" not in shown
         # a plan that dropped its swap line is not a shorter plan
@@ -220,7 +224,7 @@ def main(binary):
         with open(block_plan + "4", "w") as stream:
             stream.write(block_document(encryption=True))
         shown = run(binary, "disk", "show", "--plan", block_plan + "4")
-        assert f"root 530432+{block_root} f2fs luks2 root" in shown
+        assert f"root 530432+{block_root} f2fs luks2 root label holyroot" in shown
         assert "key-file /run/holy/luks.key" in shown
         assert "cryptsetup-sha256 " + "2" * 64 + "\n" in shown
         with open(block_plan + "5", "w") as stream:

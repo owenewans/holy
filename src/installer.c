@@ -18,11 +18,19 @@
 /* defined below, next to the other target writers */
 static int host_wireless(void);
 
+struct install_input;
+
+/* reads the disk plan a target root will name, with the other target writers */
+static int read_disk_plan(struct install_input *input);
+
 struct install_input {
     char *root;
     char **accounts;      /* the account lines as the config wrote them */
     size_t account_count;
     char *password_file;  /* a file holding the shadow hash for every account */
+    char *disk_plan;      /* the disk plan whose labels the target root will name */
+    char disk_plan_hash[65];
+    char boot_label[17], root_label[17], filesystem[32];
     char *locale;         /* the locale the target boots with */
     char *timezone;       /* the zone the target boots with */
     char *network;        /* the network profile the target uses */
@@ -82,6 +90,29 @@ static int hash_string(EVP_MD_CTX *ctx, const char *s)
         length[i] = (unsigned char)((unsigned long long)size >> (i * 8));
     return EVP_DigestUpdate(ctx, length, sizeof length) == 1 &&
            EVP_DigestUpdate(ctx, s, size) == 1;
+}
+
+/* the digest of a whole file, so a plan can bind the document it read */
+static int digest_path(const char *path, char output[65])
+{
+    unsigned char buffer[65536], bytes[32];
+    unsigned length = 0;
+    EVP_MD_CTX *ctx;
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK), ok = 1;
+    if (fd < 0) return 0;
+    ctx = EVP_MD_CTX_new();
+    if (!ctx || EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1) ok = 0;
+    while (ok) {
+        ssize_t got = read(fd, buffer, sizeof buffer);
+        if (got < 0 && errno == EINTR) continue;
+        if (got < 0) { ok = 0; break; }
+        if (!got) break;
+        ok = EVP_DigestUpdate(ctx, buffer, (size_t)got) == 1;
+    }
+    if (ok) ok = EVP_DigestFinal_ex(ctx, bytes, &length) == 1 && length == 32;
+    EVP_MD_CTX_free(ctx);
+    if (close(fd)) ok = 0;
+    return ok && hex_digest(bytes, output);
 }
 
 static int config_hash(const struct holy_config *config, char output[65])
@@ -260,6 +291,16 @@ static int load_input(const char *path, struct holy_config *config,
             if (!*target) return 1;
             continue;
         }
+        if (!strcmp(e->key, "disk-plan")) {
+            if (e->count != 1 || input->disk_plan || e->values[0][0] != '/') {
+                fprintf(stderr, "holyinstall: disk-plan takes one absolute path at %s:%zu\n",
+                        e->file, e->line);
+                return 2;
+            }
+            input->disk_plan = strdup(e->values[0]);
+            if (!input->disk_plan) return 1;
+            continue;
+        }
         if (!strcmp(e->key, "network-package") || !strcmp(e->key, "firmware")) {
             char ***list = !strcmp(e->key, "network-package") ? &input->network_packages :
                            &input->firmware;
@@ -335,6 +376,7 @@ static int load_input(const char *path, struct holy_config *config,
         fputs("holyinstall: [install] password-file needs an account\n", stderr);
         return 2;
     }
+    if (input->disk_plan && read_disk_plan(input)) return 2;
     if (input->network && !input->firmware_count && host_wireless()) {
         fprintf(stderr, "holyinstall: this host has a wireless interface and %s has no"
                         " firmware lines; name the firmware artifacts\n", input->network);
@@ -538,7 +580,7 @@ static int write_plan(const char *path, const struct install_input *input,
     stream = fdopen(fd, "w");
     if (!stream) { close(fd); unlink(path); return 1; }
     if (fprintf(stream, "[install-plan]\nformat holy-install-plan-%d\nroot ",
-                input->locale || input->timezone || input->network ? 6 :
+                input->disk_plan ? 7 : input->locale || input->timezone || input->network ? 6 :
                 input->account_count ? 5 : input->source_count ? 4 :
                 input->privileged_count ? 3 : input->accept_count ? 2 : 1) < 0 ||
         !quote(stream, input->root) ||
@@ -553,6 +595,13 @@ static int write_plan(const char *path, const struct install_input *input,
         if (fprintf(stream, "accept-privileged %s\n", input->accepted_privileged[i]) < 0) ok = 0;
     for (i = 0; i < input->source_count && ok; ++i)
         if (fprintf(stream, "source %.64s %s\n", input->sources[i], input->sources[i] + 65) < 0) ok = 0;
+    /* the disk plan comes first among the target decisions, since its labels are what a
+       relocated root has to find */
+    if (input->disk_plan &&
+        (fprintf(stream, "disk-plan %s\n", input->disk_plan) < 0 ||
+         fprintf(stream, "disk-plan-sha256 %s\n", input->disk_plan_hash) < 0 ||
+         fprintf(stream, "boot-label %s\nroot-label %s\nroot-filesystem %s\n",
+                 input->boot_label, input->root_label, input->filesystem) < 0)) ok = 0;
     /* the accounts come after the artifact lists, since that is the order a plan names
        them, and the password file is a path rather than a secret */
     for (i = 0; i < input->account_count && ok; ++i)
@@ -885,6 +934,42 @@ static int link_in_root(int etc, const char *name, const char *target)
     return 1;
 }
 
+/* the labels and the filesystem a disk plan fixes. the install names them in the target
+   root so a root copied to another path still finds its filesystems, and the plan binds
+   the digest of the disk plan it read. */
+static int read_disk_plan(struct install_input *input)
+{
+    struct holy_config c = {0};
+    char *error = NULL;
+    const char *label, *root_label, *filesystem;
+    if (access(input->disk_plan, R_OK)) {
+        fprintf(stderr, "holyinstall: disk plan %s: %s\n", input->disk_plan, strerror(errno));
+        return 2;
+    }
+    if (!holy_config_load_plan(input->disk_plan, &c, &error)) {
+        fprintf(stderr, "holyinstall: %s\n", error ? error : "invalid disk plan");
+        free(error);
+        return 2;
+    }
+    free(error);
+    label = field(&c, "disk-plan", "label");
+    root_label = field(&c, "disk-plan", "root-label");
+    filesystem = field(&c, "disk-plan", "filesystem");
+    if (!label || !root_label ||
+        strlen(label) >= sizeof input->boot_label ||
+        strlen(root_label) >= sizeof input->root_label) {
+        holy_config_free(&c);
+        fputs("holyinstall: the disk plan states no filesystem labels\n", stderr);
+        return 2;
+    }
+    snprintf(input->boot_label, sizeof input->boot_label, "%s", label);
+    snprintf(input->root_label, sizeof input->root_label, "%s", root_label);
+    snprintf(input->filesystem, sizeof input->filesystem, "%s",
+             filesystem && filesystem[0] ? filesystem : "ext4");
+    holy_config_free(&c);
+    return digest_path(input->disk_plan, input->disk_plan_hash) ? 0 : 2;
+}
+
 /* the target boots with the locale, zone and network profile the plan names. these are
    the files the packages read, so a profile is configuration and nothing more */
 static int apply_target_identity(const struct install_input *input)
@@ -892,7 +977,7 @@ static int apply_target_identity(const struct install_input *input)
     char line[512];
     int root = -1, etc = -1, rc = 0;
     size_t i;
-    if (!input->locale && !input->timezone && !input->network) return 0;
+    if (!input->locale && !input->timezone && !input->network && !input->disk_plan) return 0;
     root = open(input->root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0 || (etc = openat(root, "etc", O_RDONLY | O_DIRECTORY | O_NOFOLLOW |
                                    O_CLOEXEC)) < 0) {
@@ -929,6 +1014,18 @@ static int apply_target_identity(const struct install_input *input)
         if (snprintf(line, sizeof line, "LANG=%s\n", input->locale) < 0 ||
             append_line(etc, "locale.conf", 0644, line, 0)) { rc = 1; goto done; }
         printf("locale %s\n", input->locale);
+    }
+    if (input->disk_plan) {
+        /* the labels name the volumes, so a root copied to another path boots without a
+           device path; nothing else here depends on where the root lives */
+        char table[512];
+        int length = snprintf(table, sizeof table,
+            "LABEL=%s / %s defaults 0 1\nLABEL=%s /boot/efi vfat umask=0077 0 1\n",
+            input->root_label, input->filesystem, input->boot_label);
+        if (length < 0 || (size_t)length >= sizeof table) { rc = 1; goto done; }
+        if (append_line(etc, "fstab", 0644, table, 0)) { rc = 1; goto done; }
+        printf("fstab root label %s filesystem %s boot label %s\n", input->root_label,
+               input->filesystem, input->boot_label);
     }
     if (input->network) {
         static const char settings[] = "[Settings]\nAutoConnect=true\nOfflineMode=false\n";
@@ -990,10 +1087,12 @@ static int check_plan(const char *path, struct install_input *input,
                  strcmp(v[1], "holy-install-plan-3") &&
                  strcmp(v[1], "holy-install-plan-4") &&
                  strcmp(v[1], "holy-install-plan-5") &&
-                 strcmp(v[1], "holy-install-plan-6"))) {
+                 strcmp(v[1], "holy-install-plan-6") &&
+                 strcmp(v[1], "holy-install-plan-7"))) {
                 holy_tokens_free(v, count); goto done;
             }
-            version = !strcmp(v[1], "holy-install-plan-6") ? 6 :
+            version = !strcmp(v[1], "holy-install-plan-7") ? 7 :
+                      !strcmp(v[1], "holy-install-plan-6") ? 6 :
                       !strcmp(v[1], "holy-install-plan-5") ? 5 :
                       !strcmp(v[1], "holy-install-plan-4") ? 4 :
                       !strcmp(v[1], "holy-install-plan-3") ? 3 :
@@ -1100,11 +1199,47 @@ static int check_plan(const char *path, struct install_input *input,
             }
             input->accounts = next;
             input->accounts[input->account_count++] = joined;
-        } else if (!strcmp(v[0], "password-file")) {
-            if (version < 5 || phase >= 5 || input->password_file || v[1][0] != '/') {
+        } else if (!strcmp(v[0], "disk-plan")) {
+            if (version < 7 || phase >= 5 || input->disk_plan || count != 2 ||
+                v[1][0] != '/' || strlen(v[1]) >= 4096) {
                 holy_tokens_free(v, count); goto done;
             }
             phase = 5;
+            input->disk_plan = strdup(v[1]);
+            if (!input->disk_plan) { holy_tokens_free(v, count); goto done; }
+        } else if (!strcmp(v[0], "disk-plan-sha256") || !strcmp(v[0], "boot-label") ||
+                   !strcmp(v[0], "root-label") || !strcmp(v[0], "root-filesystem")) {
+            if (version < 7 || !input->disk_plan || count != 2) {
+                holy_tokens_free(v, count); goto done;
+            }
+            if (!strcmp(v[0], "disk-plan-sha256")) {
+                if (strlen(v[1]) != 64) { holy_tokens_free(v, count); goto done; }
+                memcpy(input->disk_plan_hash, v[1], 65);
+                phase = 6;
+            } else if (!strcmp(v[0], "boot-label")) {
+                if (strlen(v[1]) >= sizeof input->boot_label) { holy_tokens_free(v, count); goto done; }
+                snprintf(input->boot_label, sizeof input->boot_label, "%s", v[1]);
+                phase = 7;
+            } else if (!strcmp(v[0], "root-label")) {
+                if (strlen(v[1]) >= sizeof input->root_label) { holy_tokens_free(v, count); goto done; }
+                snprintf(input->root_label, sizeof input->root_label, "%s", v[1]);
+                phase = 8;
+            } else {
+                /* the disk plan names its filesystem only for a block device, and an
+                   image plan carries ext4, so a name the target can mount is required */
+                size_t i;
+                static const char *const filesystems[] = {"ext4", "btrfs", "xfs",
+                                                          "f2fs", NULL};
+                for (i = 0; filesystems[i]; ++i) if (!strcmp(filesystems[i], v[1])) break;
+                if (!filesystems[i]) { holy_tokens_free(v, count); goto done; }
+                snprintf(input->filesystem, sizeof input->filesystem, "%s", v[1]);
+                phase = 11;
+            }
+        } else if (!strcmp(v[0], "password-file")) {
+            if (version < 5 || phase >= 12 || input->password_file || v[1][0] != '/') {
+                holy_tokens_free(v, count); goto done;
+            }
+            phase = 12;
             input->password_file = strdup(v[1]);
             if (!input->password_file) { holy_tokens_free(v, count); goto done; }
         } else if (!strcmp(v[0], "locale") || !strcmp(v[0], "timezone") ||
@@ -1116,7 +1251,7 @@ static int check_plan(const char *path, struct install_input *input,
                          !strcmp(v[0], "timezone") ? timezone_valid(v[1]) :
                          !strcmp(v[1], "connman-iwd"));
             if (!valid || *target) { holy_tokens_free(v, count); goto done; }
-            phase = 6;
+            phase = 13;
             *target = strdup(v[1]);
             if (!*target) { holy_tokens_free(v, count); goto done; }
         } else if (!strcmp(v[0], "network-package") || !strcmp(v[0], "firmware")) {
@@ -1128,7 +1263,7 @@ static int check_plan(const char *path, struct install_input *input,
             size_t i;
             /* the network packages come before the firmware, which is the order the
                writer names them */
-            int wanted = !strcmp(v[0], "network-package") ? 7 : 8;
+            int wanted = !strcmp(v[0], "network-package") ? 14 : 15;
             if (version < 6 || phase >= wanted || phase + 1 < wanted ||
                 count != 2 || !digest_valid(v[1]) || *total >= input->count + 64) {
                 holy_tokens_free(v, count); goto done;
@@ -1167,6 +1302,7 @@ static int check_plan(const char *path, struct install_input *input,
         holy_tokens_free(v, count);
     }
     if (ferror(stream) || row != 7 + input->count + input->accept_count +
+                                (input->disk_plan ? 5u : 0u) +
                                 input->privileged_count + input->source_count +
                                 input->account_count + (input->password_file ? 1u : 0u) +
                                 (input->locale ? 1u : 0u) + (input->timezone ? 1u : 0u) +
@@ -1222,6 +1358,7 @@ static void free_input(struct install_input *input)
     for (i = 0; i < input->account_count; ++i) free(input->accounts[i]);
     free(input->accounts);
     free(input->password_file);
+    free(input->disk_plan);
     free(input->locale);
     free(input->timezone);
     free(input->network);
@@ -1960,6 +2097,16 @@ int main(int argc, char **argv)
     if (apply) {
         rc = check_plan(plan_path, &input, hash);
         if (rc) goto done;
+        /* the disk plan is a document the caller reviewed, so a plan that changed after
+           the review is refused before the package manager touches the root */
+        if (input.disk_plan) {
+            char digest[65];
+            if (!digest_path(input.disk_plan, digest)) { rc = 2; goto done; }
+            if (strcmp(digest, input.disk_plan_hash)) {
+                fputs("holyinstall: disk plan changed since plan\n", stderr);
+                rc = 3; goto done;
+            }
+        }
         rc = run_package_manager(binary, &input, hash, &output);
         if (!rc && fputs(output, stdout) == EOF) rc = 1;
         /* the accounts and the target's identity land after the packages, since the

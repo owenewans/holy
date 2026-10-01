@@ -1447,7 +1447,10 @@
   explicit build-only path records untested and exits 6. The local-input and
   sealed-mirror builds above pass full QEMU gates. Explicit cross-source
   choices and unique native provider discovery now work for additional image
-  packages. Relocatable installation remains open.
+  packages. The disk stage now labels both volumes, defaulting to HOLYBOOT and
+  holyroot, and an install that names a disk plan writes a label-based fstab
+  into the target root, so a relocated root finds its filesystems. Relocating a
+  booted target under QEMU remains open.
 
 ## Acceptance gates
 

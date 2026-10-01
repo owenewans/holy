@@ -333,4 +333,56 @@ grep -qx 'holyinstall: plan inputs changed or invalid' "$tmp/err"
 sed '/^network-profile /d' "$tmp/identity.plan" > "$tmp/identity-noname.plan"
 if "$installer" --apply "$tmp/identity-noname.plan" --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
 grep -qx 'holyinstall: plan inputs changed or invalid' "$tmp/err"
+# a disk plan fixes the labels a target root names, so a root copied to another path
+# still finds its filesystems
+reloc_root="$tmp/reloc-root"
+mkdir -p "$reloc_root/usr/share" "$reloc_root/etc"
+"$holypkg" db init --root "$reloc_root" > /dev/null
+"$holypkg" cache stage "local:$tmp/fixture.holy" --root "$reloc_root" > /dev/null
+printf '[disk]\nimage "%s/reloc.img"\nlayout gpt-ext4\nlabel HOLYESP\nroot-label holy-system\n' \
+    "$tmp" > "$tmp/reloc.conf"
+truncate -s 1G "$tmp/reloc.img"
+"$installer" disk plan --config "$tmp/reloc.conf" --output "$tmp/reloc.plan" > "$tmp/out"
+grep -q 'ESP 4096+524288 FAT32 label HOLYESP' "$tmp/out"
+grep -q 'ext4 label holy-system' "$tmp/out"
+grep -qx 'label "HOLYESP"' "$tmp/reloc.plan"
+grep -qx 'root-label "holy-system"' "$tmp/reloc.plan"
+printf '[install]\nroot "%s"\ndisk-plan "%s"\nartifact %s\n' \
+    "$reloc_root" "$tmp/reloc.plan" "$digest" > "$tmp/reloc-install.conf"
+"$installer" --config "$tmp/reloc-install.conf" --plan "$tmp/reloc-install.plan" \
+    --holypkg "$holypkg" > "$tmp/out"
+grep -qx 'format holy-install-plan-7' "$tmp/reloc-install.plan"
+grep -qx "boot-label HOLYESP" "$tmp/reloc-install.plan"
+grep -qx "root-label holy-system" "$tmp/reloc-install.plan"
+plan_hash=$(sed -n 's/^disk-plan-sha256 //p' "$tmp/reloc-install.plan")
+test "${#plan_hash}" -eq 64
+test "$plan_hash" = "$(sha256sum "$tmp/reloc.plan" | cut -d ' ' -f 1)"
+"$installer" --apply "$tmp/reloc-install.plan" --holypkg "$holypkg" > "$tmp/out"
+grep -qx 'fstab root label holy-system filesystem ext4 boot label HOLYESP' "$tmp/out"
+grep -qx 'LABEL=holy-system / ext4 defaults 0 1' "$reloc_root/etc/fstab"
+grep -qx 'LABEL=HOLYESP /boot/efi vfat umask=0077 0 1' "$reloc_root/etc/fstab"
+test "$(stat -c '%a' "$reloc_root/etc/fstab")" = 644
+# a disk plan that changed after the review is the caller's decision, not a guess
+printf 'tampered\n' >> "$tmp/reloc.plan"
+if "$installer" --apply "$tmp/reloc-install.plan" --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then
+    exit 1
+else
+    test "$?" -eq 3
+fi
+grep -qx "holyinstall: disk plan changed since plan" "$tmp/err"
+# a disk plan without labels cannot name a volume, so the install refuses it
+printf '[disk]\nimage "%s/nolabel.img"\nlayout gpt-ext4\n' "$tmp" > "$tmp/nolabel-disk.conf"
+truncate -s 1G "$tmp/nolabel.img"
+"$installer" disk plan --config "$tmp/nolabel-disk.conf" --output "$tmp/nolabel.plan" > "$tmp/out"
+sed -i -e 's/^format 4$/format 1/' -e '/^label /d' -e '/^root-label /d' "$tmp/nolabel.plan"
+printf '[install]\nroot "%s"\ndisk-plan "%s"\nartifact %s\n' \
+    "$reloc_root" "$tmp/nolabel.plan" "$digest" > "$tmp/nolabel.conf"
+if "$installer" --config "$tmp/nolabel.conf" --plan "$tmp/nolabel.plan.install" \
+    --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+grep -qx 'holyinstall: the disk plan states no filesystem labels' "$tmp/err"
+test ! -e "$tmp/nolabel.plan.install"
+# a label the disk stage would not accept is refused before a plan is written
+sed 's/^label HOLYESP$/label HOLY ESP/' "$tmp/reloc.conf" > "$tmp/badlabel.conf"
+if "$installer" disk plan --config "$tmp/badlabel.conf" --output "$tmp/badlabel.plan" \
+    > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
 printf 'installer plan and apply fixtures passed\n'
