@@ -275,10 +275,17 @@ int holy_up_command(int argc, char **argv)
     if (result) goto done;
     if (strcmp(staged.index, candidates.index) || staged.count != 1 ||
         strcmp(staged.digests[0], selected->digest)) { result = 3; goto done; }
-    result = holy_state_update_prepare(old_hash, selected->digest,
-                                       accepted_arch, accepted_privileged,
-                                       services, service_count,
-                                       root, inner_hash, &inner);
+    {
+        const char *olds[1] = {old_hash}, *news[1] = {selected->digest};
+        struct holy_update_request request = {
+            olds, news, 1,
+            accepted_arch ? &accepted_arch : NULL, accepted_arch ? 1 : 0,
+            accepted_privileged ? &accepted_privileged : NULL,
+            accepted_privileged ? 1 : 0,
+            services, service_count
+        };
+        result = holy_state_update_prepare(&request, root, inner_hash, &inner);
+    }
     if (result) goto done;
     if (!output) {
         temporary_dir = strdup("/tmp/holypkg-up-XXXXXX");
@@ -550,12 +557,18 @@ int holy_apply_command(int argc, char **argv)
         fprintf(stderr, "holypkg: prepared artifact absent from source slot\n");
         goto done;
     }
-    result = holy_state_apply_update(plan.state_plan, plan.old_digest,
-                                     plan.new_digest,
-                                     strcmp(plan.accept_arch, "-") ? plan.accept_arch : NULL,
-                                     strcmp(plan.accept_privileged, "-") ? plan.accept_privileged : NULL,
-                                     (const char *const *)plan.services, plan.service_count,
-                                     root);
+    {
+        const char *olds[1] = {plan.old_digest}, *news[1] = {plan.new_digest};
+        const char *arch = strcmp(plan.accept_arch, "-") ? plan.accept_arch : NULL;
+        const char *privileged = strcmp(plan.accept_privileged, "-") ? plan.accept_privileged : NULL;
+        struct holy_update_request request = {
+            olds, news, 1,
+            arch ? &arch : NULL, arch ? 1 : 0,
+            privileged ? &privileged : NULL, privileged ? 1 : 0,
+            (const char *const *)plan.services, plan.service_count
+        };
+        result = holy_state_apply_update(plan.state_plan, &request, root);
+    }
 done:
     if (result == 2)
         fputs("usage: holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]\n", stderr);

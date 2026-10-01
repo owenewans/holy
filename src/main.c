@@ -2381,35 +2381,38 @@ key_usage:
     }
 
     if (argc > 1 && !strcmp(argv[1], "rollback")) {
-        const char *root = "/", *approved = NULL, *arch = NULL, *privileged = NULL;
-        const char **services = NULL;
-        size_t service_count = 0;
+        const char *root = "/", *approved = NULL;
+        const char **services = NULL, **arch = NULL, **privileged = NULL;
+        size_t service_count = 0, arch_count = 0, privileged_count = 0;
         int i, root_seen = 0, broken = 0, result = 2;
         if (argc < 3) goto rollback_usage;
         services = calloc((size_t)argc, sizeof *services);
-        if (!services) { result = 1; goto rollback_usage; }
-        (void)0;
+        arch = calloc((size_t)argc, sizeof *arch);
+        privileged = calloc((size_t)argc, sizeof *privileged);
+        if (!services || !arch || !privileged) { result = 1; goto rollback_usage; }
         for (i = 3; i < argc; ++i) {
             if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < argc) {
                 root = argv[++i]; root_seen = 1;
             } else if (!strcmp(argv[i], "--apply") && !approved && i + 1 < argc)
                 approved = argv[++i];
-            else if (!strcmp(argv[i], "--accept-arch") && !arch && i + 1 < argc)
-                arch = argv[++i];
-            else if (!strcmp(argv[i], "--accept-privileged") && !privileged && i + 1 < argc)
-                privileged = argv[++i];
+            else if (!strcmp(argv[i], "--accept-arch") && i + 1 < argc)
+                arch[arch_count++] = argv[++i];
+            else if (!strcmp(argv[i], "--accept-privileged") && i + 1 < argc)
+                privileged[privileged_count++] = argv[++i];
             else if (!strcmp(argv[i], "--accept-service") && i + 1 < argc)
                 services[service_count++] = argv[++i];
             else if (!strcmp(argv[i], "--accept-broken")) broken = 1;
             else goto rollback_usage;
         }
-        result = holy_state_rollback(argv[2], approved, broken, arch, privileged,
-                                     services, service_count, root);
-        free(services);
+        result = holy_state_rollback(argv[2], approved, broken,
+                                     (const char *const *)arch, arch_count,
+                                     (const char *const *)privileged, privileged_count,
+                                     (const char *const *)services, service_count, root);
+        free(services); free(arch); free(privileged);
         return result;
 rollback_usage:
-        free(services);
-        fputs("usage: holypkg rollback TRANSACTION [--root DIRECTORY] [--apply PLAN_SHA256] [--accept-arch ARTIFACT_SHA256] [--accept-privileged ARTIFACT_SHA256] [--accept-service UNIT ...] [--accept-broken]\n", stderr);
+        free(services); free(arch); free(privileged);
+        fputs("usage: holypkg rollback TRANSACTION [--root DIRECTORY] [--apply PLAN_SHA256] [--accept-arch ARTIFACT_SHA256 ...] [--accept-privileged ARTIFACT_SHA256 ...] [--accept-service UNIT ...] [--accept-broken]\n", stderr);
         return 2;
     }
 
@@ -2647,35 +2650,54 @@ rollback_usage:
         return 2;
     }
     /* a replacement names its unit consents one by one, so the shapes are parsed */
+    /* a replacement names its pairs and decisions one by one, so the shapes are parsed */
     if (argc > 4 && !strcmp(argv[1], "db") &&
         (!strcmp(argv[2], "plan-update") || !strcmp(argv[2], "apply-update"))) {
         int apply = !strcmp(argv[2], "apply-update");
-        int start = apply ? 6 : 5, end = argc - 2, i;
-        const char *arch = NULL, *privileged = NULL;
+        int start = apply ? 4 : 3, end = argc - 2, i;
         const char **services = calloc((size_t)argc, sizeof *services);
-        size_t service_count = 0;
+        const char **arch = calloc((size_t)argc, sizeof *arch);
+        const char **privileged = calloc((size_t)argc, sizeof *privileged);
+        const char **olds = calloc((size_t)argc / 2 + 1, sizeof *olds);
+        const char **news = calloc((size_t)argc / 2 + 1, sizeof *news);
+        size_t service_count = 0, arch_count = 0, privileged_count = 0, pair_count = 0;
+        struct holy_update_request request = {0};
         int result = 2;
-        if (strcmp(argv[argc - 2], "--root") || argc < (apply ? 8 : 7) || !services) {
-            free(services);
+        if (strcmp(argv[argc - 2], "--root") || argc < (apply ? 8 : 6) ||
+            !services || !arch || !privileged || !olds || !news) {
+            free(services); free(arch); free(privileged); free((void *)olds); free((void *)news);
             return 2;
         }
+        /* the pairs come first, then the decisions, whatever the order named them */
+        while (start + 1 < end && argv[start][0] != '-') {
+            olds[pair_count] = argv[start];
+            news[pair_count] = argv[start + 1];
+            ++pair_count;
+            start += 2;
+        }
         for (i = start; i < end; ++i) {
-            if (!strcmp(argv[i], "--accept-arch") && !arch && i + 1 < end) {
-                arch = argv[++i];
-            } else if (!strcmp(argv[i], "--accept-privileged") && !privileged &&
-                       i + 1 < end) {
-                privileged = argv[++i];
+            if (!strcmp(argv[i], "--accept-arch") && i + 1 < end) {
+                arch[arch_count++] = argv[++i];
+            } else if (!strcmp(argv[i], "--accept-privileged") && i + 1 < end) {
+                privileged[privileged_count++] = argv[++i];
             } else if (!strcmp(argv[i], "--accept-service") && i + 1 < end) {
                 services[service_count++] = argv[++i];
             } else { result = 2; goto update_done; }
         }
+        request.olds = (const char *const *)olds;
+        request.news = (const char *const *)news;
+        request.pair_count = pair_count;
+        request.accept_arch = (const char *const *)arch;
+        request.arch_count = arch_count;
+        request.accept_privileged = (const char *const *)privileged;
+        request.privileged_count = privileged_count;
+        request.accept_service = (const char *const *)services;
+        request.service_count = service_count;
         result = apply ?
-            holy_state_apply_update(argv[3], argv[4], argv[5], arch, privileged,
-                                    services, service_count, argv[argc - 1]) :
-            holy_state_update_plan(argv[3], argv[4], arch, privileged,
-                                   services, service_count, argv[argc - 1]);
+            holy_state_apply_update(argv[3], &request, argv[argc - 1]) :
+            holy_state_update_plan(&request, argv[argc - 1]);
 update_done:
-        free(services);
+        free(services); free(arch); free(privileged); free((void *)olds); free((void *)news);
         return result;
     }
     if (argc == 6 && !strcmp(argv[1], "db") && !strcmp(argv[2], "recover") &&

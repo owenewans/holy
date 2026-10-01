@@ -89,26 +89,35 @@ int holy_state_configure(const char *digest, const char *approved,
 
 /* missing-only repair; NULL digest resumes a recorded repair. */
 int holy_state_repair(const char *digest, const char *approved, const char *root_path);
+/* a replacement names the artifacts it replaces as pairs and the decisions it was
+   reviewed with as lists, so a group of slots is one transaction with one generation */
+struct holy_update_request {
+    const char *const *olds;
+    const char *const *news;
+    size_t pair_count;
+    const char *const *accept_arch;
+    size_t arch_count;
+    const char *const *accept_privileged;
+    size_t privileged_count;
+    const char *const *accept_service;
+    size_t service_count;
+};
+
 /* read-only replacement preview, preserving the installed source and slot. */
-int holy_state_update_plan(const char *old_digest, const char *new_digest,
-                           const char *accepted_arch, const char *accepted_privileged,
-                           const char *const *accepted_service, size_t service_count,
+int holy_state_update_plan(const struct holy_update_request *request,
                            const char *root_path);
 /* returns owned canonical plan text and its digest without printing it. */
-int holy_state_update_prepare(const char *old_digest, const char *new_digest,
-                              const char *accepted_arch, const char *accepted_privileged,
-                              const char *const *accepted_service, size_t service_count,
+int holy_state_update_prepare(const struct holy_update_request *request,
                               const char *root_path, char hash[65], char **record);
-int holy_state_apply_update(const char *plan, const char *old_digest,
-                            const char *new_digest, const char *accepted_arch,
-                            const char *accepted_privileged,
-                            const char *const *accepted_service, size_t service_count,
+int holy_state_apply_update(const char *plan,
+                            const struct holy_update_request *request,
                             const char *root_path);
 int holy_state_recover_update(const char *root_path);
 /* review or apply a cached reverse update from a committed transaction. a set
    transaction reports the operations its reverse needs instead. */
 int holy_state_rollback(const char *transaction, const char *approved, int accept_broken,
-                        const char *accepted_arch, const char *accepted_privileged,
+                        const char *const *accepted_arch, size_t arch_count,
+                        const char *const *accepted_privileged, size_t privileged_count,
                         const char *const *accepted_service, size_t service_count,
                         const char *root_path);
 /* finds one installed slot by immutable source ID and package identity. */
