@@ -58,7 +58,7 @@ plan=$(sha256sum "$tmp/plan" | cut -d ' ' -f 1)
 grep -qx "prepared $plan $tmp/plan old $old new $next index $index" "$tmp/out"
 # a prepared plan is the fixed set a test verifies: every input is present and bound.
 expect 0 "$bin" test "$tmp/plan" --root "$root"
-grep -qx "test-plan $plan mode root" "$tmp/out"
+grep -qx "test-plan $plan mode root slots 1" "$tmp/out"
 grep -qx "test-input source $source_id alias \"fixture\"" "$tmp/out"
 grep -qx "test-input catalog \"$repo\" index $index" "$tmp/out"
 grep -qx "test-input old $old new $next state-plan $(sed -n 's/^state-plan //p' "$tmp/plan")" "$tmp/out"
@@ -97,7 +97,9 @@ grep -qx 'holypkg: update plan unavailable' "$tmp/err"
 expect 2 "$bin" test "$tmp/edited.plan" --root "$root"
 # the machine-readable report carries the same facts under a stable schema.
 expect 0 "$bin" test "$tmp/plan" --root "$root" --json
-grep -qx "{\"schema\":\"holy-test-report-1\",\"type\":\"plan\",\"plan\":\"$plan\",\"mode\":\"root\",\"source\":\"$source_id\",\"alias\":\"fixture\",\"catalog\":\"$repo\",\"index\":\"$index\",\"old\":\"$old\",\"new\":\"$next\",\"state-plan\":\"$(sed -n 's/^state-plan //p' "$tmp/plan")\",\"coverage\":\"plan-inputs\"}" "$tmp/out"
+grep '"type":"plan"' "$tmp/out" > "$tmp/plan.json"
+sed 's|"plan":"'"$plan"'"|"plan":"PLAN"|; s|"catalog":"'"$repo"'"|"catalog":"REPO"|; s|"source":"'"$source_id"'"|"source":"SOURCE"|; s|"index":"'"$index"'"|"index":"INDEX"|; s|"old":"'"$old"'"|"old":"OLD"|; s|"new":"'"$next"'"|"new":"NEW"|; s|"state-plan":"[0-9a-f]*"|"state-plan":"STATE"|' "$tmp/plan.json" > "$tmp/plan.normalized"
+grep -qxF '{"schema":"holy-test-report-1","type":"plan","plan":"PLAN","mode":"root","slots":[{"source":"SOURCE","alias":"fixture","catalog":"REPO","index":"INDEX","old":"OLD","new":"NEW"}],"state-plan":"STATE","coverage":"plan-inputs"}' "$tmp/plan.normalized"
 grep -qx "{\"schema\":\"holy-test-report-1\",\"type\":\"check\",\"check\":\"old-archive\",\"result\":\"pass\"}" "$tmp/out"
 grep -q '"type":"image","mode":"root","generation":' "$tmp/out"
 grep -qx "{\"schema\":\"holy-test-report-1\",\"type\":\"unexecuted\",\"check\":\"runtime-probes\",\"reason\":\"explicit-probe-request\"}" "$tmp/out"

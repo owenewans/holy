@@ -15,10 +15,10 @@ expect() {
     test "$rc" -eq "$wanted" || { cat "$tmp/out" "$tmp/err"; exit 1; }
 }
 package() {
-    version=$1 comparator=${2:-pacman}
+    version=$1 comparator=${2:-pacman} unit=${3:-} name=${4:-update-fixture}
     tree="$tmp/tree-$version"
     mkdir -p "$tree/HOLY" "$tree/DATA/usr/share"
-    printf 'format holy-package-1\nname update-fixture\nversion %s\nrelease 1\nos linux\narch noarch\nlibc nolibc\n' "$version" > "$tree/HOLY/meta"
+    printf 'format holy-package-1\nname %s\nversion %s\nrelease 1\nos linux\narch noarch\nlibc nolibc\n' "$name" "$version" > "$tree/HOLY/meta"
     if test "$comparator" != unknown; then
         printf 'x-version-family %s\n' "$comparator" >> "$tree/HOLY/meta"
     fi
@@ -26,11 +26,10 @@ package() {
     if test "$version" = 2; then
         printf 'record payload normalized before pack\n' > "$tree/HOLY/transform"
     fi
-    printf 'version %s\n' "$version" > "$tree/DATA/usr/share/update-fixture"
-    if test "${3:-}" = unit; then
+    printf 'version %s\n' "$version" > "$tree/DATA/usr/share/$name"
+    if test "$unit" = unit; then
         mkdir -p "$tree/DATA/etc/dinit.d"
-        printf 'type = process\ncommand = /usr/bin/update-fixture\n' \
-            > "$tree/DATA/etc/dinit.d/update-fixture"
+        printf 'type = process\ncommand = /usr/bin/%s\n' "$name" > "$tree/DATA/etc/dinit.d/$name"
     fi
     expect 0 "$bin" manifest generate "$tree" --output "$tmp/files-$version"
     mv "$tmp/files-$version" "$tree/HOLY/files"
@@ -291,5 +290,38 @@ expect 3 "$bin" apply "$tmp/unit.plan" --sha256 "$(printf '%064d' 0)" --root "$r
 expect 0 "$bin" apply "$tmp/unit.plan" --sha256 "$prepared" --root "$root"
 test -f "$root/etc/dinit.d/update-fixture"
 grep -qx 'version 3' "$root/usr/share/update-fixture"
+expect 0 "$bin" db check --all --root "$root"
+# a group prepares several slots as one reviewed plan, and applying it needs no flag of
+# its own because the document states every decision the transaction had
+package 11 holy '' other
+other_old=$(sha256sum "$repo/update-11.holy" | cut -d ' ' -f 1)
+seal
+expect 0 "$bin" source catalog bind fixture "$repo" --root "$root"
+expect 0 "$bin" add fixture:other --root "$root" --yes
+grep -qx 'version 11' "$root/usr/share/other"
+package 8 holy
+newer=$(sha256sum "$repo/update-8.holy" | cut -d ' ' -f 1)
+package 12 holy '' other
+other_new=$(sha256sum "$repo/update-12.holy" | cut -d ' ' -f 1)
+seal
+expect 0 "$bin" source catalog bind fixture "$repo" --root "$root"
+index=$(awk '$1 == "sha256" {print $2}' "$repo/current")
+expect 0 "$bin" up fixture:update-fixture fixture:other --prepare \
+    --choose "fixture:update-fixture=$newer" --output "$tmp/group.plan" --root "$root"
+group=$(sha256sum "$tmp/group.plan" | cut -d ' ' -f 1)
+grep -qx "prepared-slot 0 source-id $source_id old $third new $newer index $index" "$tmp/out"
+grep -qx "prepared-slot 1 source-id $source_id old $other_old new $other_new index $index" "$tmp/out"
+grep -qx "prepared $group $tmp/group.plan slots 2" "$tmp/out"
+grep -qx 'slot 0' "$tmp/group.plan"
+grep -qx 'slot 1' "$tmp/group.plan"
+grep -qx 'replacement 2' "$tmp/group.plan"
+grep -qx 'format holy-update-plan-2' "$tmp/group.plan"
+grep -qxF '[update]' "$tmp/group.plan"
+expect 3 "$bin" apply "$tmp/group.plan" --sha256 "$(printf '%064d' 0)" --root "$root"
+grep -qx 'version 3' "$root/usr/share/update-fixture"
+expect 0 "$bin" apply "$tmp/group.plan" --sha256 "$group" --root "$root"
+grep -qx "updated-group slots 2 generation $(cat "$root/var/lib/holypkg/generation") plan $(sed -n 's/^state-plan //p' "$tmp/group.plan")" "$tmp/out"
+grep -qx 'version 8' "$root/usr/share/update-fixture"
+grep -qx 'version 12' "$root/usr/share/other"
 expect 0 "$bin" db check --all --root "$root"
 printf 'source update preparation and apply fixtures passed\n'

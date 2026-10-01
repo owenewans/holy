@@ -242,34 +242,42 @@ int holy_test_command(int argc, char **argv)
     else if (read == 3) fprintf(stderr, "holypkg: plan digest differs from the approved one\n");
     else if (read) fprintf(stderr, "holypkg: update plan unavailable\n");
     if (read) { status = read; goto done; }
-    observed.digest = plan.old_digest;
+    observed.digest = plan.slots[0].old_digest;
 
     if (run.json) {
         printf("{\"schema\":\"holy-test-report-1\",\"type\":\"plan\",\"plan\":");
         print_string(plan.hash);
         printf(",\"mode\":");
         print_string(mode);
-        printf(",\"source\":");
-        print_string(plan.source_id);
-        printf(",\"alias\":");
-        print_string(plan.alias);
-        printf(",\"catalog\":");
-        print_string(plan.catalog);
-        printf(",\"index\":");
-        print_string(plan.index);
-        printf(",\"old\":");
-        print_string(plan.old_digest);
-        printf(",\"new\":");
-        print_string(plan.new_digest);
-        printf(",\"state-plan\":");
+        printf(",\"slots\":[");
+        for (size_t slot_index = 0; slot_index < plan.slot_count; ++slot_index) {
+            const struct holy_up_slot *one = &plan.slots[slot_index];
+            printf("%s{\"source\":", slot_index ? "," : "");
+            print_string(one->source_id);
+            printf(",\"alias\":");
+            print_string(one->alias);
+            printf(",\"catalog\":");
+            print_string(one->catalog);
+            printf(",\"index\":");
+            print_string(one->index);
+            printf(",\"old\":");
+            print_string(one->old_digest);
+            printf(",\"new\":");
+            print_string(one->new_digest);
+            printf("}");
+        }
+        printf("],\"state-plan\":");
         print_string(plan.state_plan);
         printf(",\"coverage\":\"plan-inputs\"}\n");
     } else {
-        printf("test-plan %s mode %s\n", plan.hash, mode);
-        printf("test-input source %s alias \"%s\"\n", plan.source_id, plan.alias);
-        printf("test-input catalog \"%s\" index %s\n", plan.catalog, plan.index);
-        printf("test-input old %s new %s state-plan %s\n",
-               plan.old_digest, plan.new_digest, plan.state_plan);
+        printf("test-plan %s mode %s slots %zu\n", plan.hash, mode, plan.slot_count);
+        for (size_t slot_index = 0; slot_index < plan.slot_count; ++slot_index) {
+            const struct holy_up_slot *one = &plan.slots[slot_index];
+            printf("test-input source %s alias \"%s\"\n", one->source_id, one->alias);
+            printf("test-input catalog \"%s\" index %s\n", one->catalog, one->index);
+            printf("test-input old %s new %s state-plan %s\n",
+                   one->old_digest, one->new_digest, plan.state_plan);
+        }
     }
     index[0] = source_id[0] = slot[0] = binding[0] = 0;
 
@@ -292,28 +300,32 @@ int holy_test_command(int argc, char **argv)
     else printf("test-image %s none reason %s\n", mode,
                 strcmp(mode, "root") ? "no-vm-runner" : "no-image-binding");
 
-    if (holy_source_active_id(root, plan.alias, source_id))
+    /* every slot of a prepared group is a plan input the probe checks, since one
+       decision covers all of them */
+    for (size_t slot_index = 0; slot_index < plan.slot_count; ++slot_index) {
+    const struct holy_up_slot *one = &plan.slots[slot_index];
+    if (holy_source_active_id(root, one->alias, source_id))
         record(&run, "source-binding", "fail", "no-active-source");
-    else if (strcmp(plan.source_id, source_id))
+    else if (strcmp(one->source_id, source_id))
         record(&run, "source-binding", "fail", "source-id-changed");
-    else if (holy_source_catalog(root, plan.alias, plan.catalog, source_id))
+    else if (holy_source_catalog(root, one->alias, one->catalog, source_id))
         record(&run, "source-binding", "fail", "catalog-not-sealed-for-source");
     else
         record(&run, "source-binding", "pass", NULL);
 
-    dir = open(plan.catalog, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    dir = open(one->catalog, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dir < 0 || flock(dir, LOCK_SH))
         record(&run, "catalog-generation", "fail", "catalog-unavailable");
-    else if (!holy_repo_catalog_index(plan.catalog, index))
+    else if (!holy_repo_catalog_index(one->catalog, index))
         record(&run, "catalog-generation", "fail", "catalog-unverified");
-    else if (strcmp(index, plan.index))
+    else if (strcmp(index, one->index))
         record(&run, "catalog-generation", "fail", "catalog-generation-changed");
     else
         record(&run, "catalog-generation", "pass", NULL);
 
-    old_snapshot = holy_cache_snapshot(plan.old_digest, root);
+    old_snapshot = holy_cache_snapshot(one->old_digest, root);
     if (old_snapshot && holy_package_identity(old_snapshot, &old_identity) &&
-        !strcmp(old_identity.digest, plan.old_digest))
+        !strcmp(old_identity.digest, one->old_digest))
         record(&run, "old-archive", "pass", NULL);
     else
         record(&run, "old-archive", "fail",
@@ -322,9 +334,9 @@ int holy_test_command(int argc, char **argv)
     if (!old_identity.name)
         record(&run, "slot-candidate", "skip", "no-old-identity");
     else {
-        read = dir >= 0 ? holy_repo_catalog_slot_digest(plan.catalog, &old_identity,
-                                                        plan.new_digest, slot) : 6;
-        if (read == 0 && !strcmp(slot, plan.index))
+        read = dir >= 0 ? holy_repo_catalog_slot_digest(one->catalog, &old_identity,
+                                                        one->new_digest, slot) : 6;
+        if (read == 0 && !strcmp(slot, one->index))
             record(&run, "slot-candidate", "pass", NULL);
         else if (read == 3)
             record(&run, "slot-candidate", "fail", "prepared-artifact-absent-from-slot");
@@ -332,10 +344,11 @@ int holy_test_command(int argc, char **argv)
             record(&run, "slot-candidate", "fail", "slot-unverified");
     }
 
-    if (archived(plan.new_digest, root, old_identity.name ? &old_identity : NULL, &reason))
+    if (archived(one->new_digest, root, old_identity.name ? &old_identity : NULL, &reason))
         record(&run, "new-archive", "pass", NULL);
     else
         record(&run, "new-archive", "fail", reason);
+    }
 
     read = holy_state_visit(root, observed_visit, &observed, &generation);
     if (read == 5)
@@ -355,13 +368,18 @@ int holy_test_command(int argc, char **argv)
     if (!strcmp(mode, "vm")) record(&run, "vm-trial", "unknown", "no-vm-runner");
     record(&run, "runtime-probes", "skip", "explicit-probe-request");
 
-    if (strcmp(plan.accept_arch, "-")) {
-        if (run.json) emit("override", "kind", "accept-arch", "artifact", plan.accept_arch);
-        else printf("test-override accept-arch %s\n", plan.accept_arch);
-    }
-    if (strcmp(plan.accept_privileged, "-")) {
-        if (run.json) emit("override", "kind", "accept-privileged", "artifact", plan.accept_privileged);
-        else printf("test-override accept-privileged %s\n", plan.accept_privileged);
+    /* each slot states the decisions its review named, so the report names them all */
+    for (size_t slot_index = 0; slot_index < plan.slot_count; ++slot_index) {
+        const struct holy_up_slot *one = &plan.slots[slot_index];
+        if (strcmp(one->accept_arch, "-")) {
+            if (run.json) emit("override", "kind", "accept-arch", "artifact", one->accept_arch);
+            else printf("test-override accept-arch %s\n", one->accept_arch);
+        }
+        if (strcmp(one->accept_privileged, "-")) {
+            if (run.json) emit("override", "kind", "accept-privileged", "artifact",
+                               one->accept_privileged);
+            else printf("test-override accept-privileged %s\n", one->accept_privileged);
+        }
     }
     for (i = 0; (size_t)i < run.count; ++i) {
         const struct test_check *check = &run.checks[i];

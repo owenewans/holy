@@ -1180,8 +1180,12 @@
   architecture.
 - [ ] Implement `holypkg run`, context-specific provider paths, grouped `up --prepare`,
   isolated root/VM trials and full `check` reports.
-  The replacement transaction now takes a group of slots, so `up --prepare` can
-  prepare several slots as one reviewed plan.
+  `holypkg up` takes several references and prepares them as one document of
+  slot blocks with one state-plan, and `holypkg apply` checks every slot it names
+  while holding every catalog, so a group is one reviewed decision and one
+  transaction. A reference with nothing newer is reported and left out, and
+  `--choose` names the candidate of one slot as SOURCE:PACKAGE=SHA256 when a
+  group needs it. Signed catalogs and root/VM trials stay open.
   The existing run launcher now derives private PATH directories from the
   selected installed manifest, so a public executable can invoke its own
   private helper by name. Explicit directory views bind package-owned private

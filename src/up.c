@@ -141,33 +141,203 @@ done:
     return ok;
 }
 
+/* one reference being prepared: the slot it updates and the index generation that
+   decided its new artifact */
+struct up_slot {
+    char *alias;
+    char source_id[65];
+    char old_digest[65];
+    char new_digest[65];
+    char index[65];
+    char *catalog;        /* the canonical catalog path the index came from */
+    int dir;
+};
+
+/* what one reference resolved to, held until the group is prepared */
+struct up_selection {
+    char *old_snapshot;
+    struct holy_package_identity old;
+    struct holy_repo_slot_list candidates;
+    struct holy_repo_set staged;
+    struct holy_package_identity *selected;
+};
+
+static void up_slots_free(struct up_slot *slots, size_t count)
+{
+    size_t i;
+    if (!slots) return;
+    for (i = 0; i < count; ++i) {
+        free(slots[i].alias);
+        free(slots[i].catalog);
+        if (slots[i].dir >= 0) close(slots[i].dir);
+    }
+    free(slots);
+}
+
+static void up_selection_free(struct up_selection *work)
+{
+    if (!work) return;
+    if (work->old_snapshot) { unlink(work->old_snapshot); free(work->old_snapshot); }
+    holy_package_identity_free(&work->old);
+    holy_repo_slot_list_free(&work->candidates);
+    holy_repo_set_free(&work->staged);
+    memset(work, 0, sizeof *work);
+}
+
+/* resolves one reference against its catalog and states what it would install. a slot
+   that has nothing newer is reported and left out of the group. */
+/* --choose names one candidate: a bare digest covers the only reference of the
+   command, and SOURCE:PACKAGE=SHA256 is the choice of that one slot of a group */
+static const char *up_slot_choice(const char *choice, const char *name)
+{
+    const char *equals;
+    if (!choice) return NULL;
+    equals = strchr(choice, '=');
+    if (!equals) return choice;
+    if ((size_t)(equals - choice) != strlen(name) || strncmp(choice, name, strlen(name)))
+        return NULL;
+    return equals + 1;
+}
+
+static int up_select_slot(struct up_slot *slot, const char *name, const char *root,
+                          const char *catalog_option, const char *choice,
+                          const char *arch, const char *libc,
+                          struct up_selection *work, int *up_to_date)
+{
+    const char *separator, *catalog = catalog_option, *wanted;
+    char *bound = NULL, *canonical = NULL, source_id[65], actual_id[65];
+    size_t i, compatible = 0, ambiguous = 0;
+    int result = 2, old_present = 0;
+    *up_to_date = 0;
+    wanted = up_slot_choice(choice, name);
+    if (!(separator = strchr(name, ':')) || separator == name || !separator[1] ||
+        strchr(separator + 1, ':')) return 2;
+    slot->alias = malloc((size_t)(separator - name) + 1);
+    if (!slot->alias) return 1;
+    memcpy(slot->alias, name, (size_t)(separator - name));
+    slot->alias[separator - name] = 0;
+    if (!strcmp(slot->alias, "local")) return 2;
+    result = holy_source_active_id(root, slot->alias, source_id);
+    if (result) goto done;
+    memcpy(slot->source_id, source_id, 65);
+    result = holy_state_find_slot(root, source_id, separator + 1, arch, libc,
+                                  slot->old_digest);
+    if (result) goto done;
+    work->old_snapshot = holy_cache_snapshot(slot->old_digest, root);
+    if (!work->old_snapshot || !holy_package_identity(work->old_snapshot, &work->old)) {
+        fprintf(stderr, "holypkg: previous artifact unavailable for downgrade %s\n",
+                slot->old_digest);
+        result = 6;
+        goto done;
+    }
+    if (!catalog) {
+        result = holy_source_catalog_path_fast(root, slot->alias, &bound);
+        if (result) goto done;
+        catalog = bound;
+    }
+    canonical = realpath(catalog, NULL);
+    slot->catalog = canonical;
+    slot->dir = canonical ? open(canonical, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) : -1;
+    if (slot->dir < 0 || flock(slot->dir, LOCK_SH)) { result = 6; goto done; }
+    result = holy_source_catalog(root, slot->alias, canonical, actual_id);
+    if (result || strcmp(source_id, actual_id)) { result = 3; goto done; }
+    result = holy_repo_slot_candidates(canonical, &work->old, &work->candidates);
+    if (result) {
+        if (result == 6)
+            fprintf(stderr, "holypkg: source package slot changed or disappeared\n");
+        goto done;
+    }
+    for (i = 0; i < work->candidates.count; ++i) {
+        struct holy_package_identity *candidate = &work->candidates.items[i];
+        int order = 0;
+        if (!same_slot(&work->old, candidate)) { result = 1; goto done; }
+        ++compatible;
+        if (!strcmp(candidate->digest, slot->old_digest)) {
+            old_present = 1;
+            continue;
+        }
+        printf("update-candidate %s version %s release %s comparator %s\n",
+               candidate->digest, candidate->version, candidate->release,
+               candidate->version_family ? candidate->version_family : "unknown");
+        if (wanted) {
+            if (!strcmp(wanted, candidate->digest)) work->selected = candidate;
+            continue;
+        }
+        if (!version_order(candidate, &work->old, &order)) {
+            ambiguous = 1;
+            continue;
+        }
+        if (order <= 0) continue;
+        if (!work->selected) { work->selected = candidate; continue; }
+        if (!version_order(candidate, work->selected, &order) || !order) ambiguous = 1;
+        if (order > 0) work->selected = candidate;
+    }
+    if (!compatible) {
+        fprintf(stderr, "holypkg: source package slot changed or disappeared\n");
+        result = 6;
+        goto done;
+    }
+    if (wanted && !work->selected) { result = 6; goto done; }
+    if (!wanted && ambiguous) {
+        fprintf(stderr, "holypkg: decision-required update candidate; use --choose SHA256\n");
+        result = 3;
+        goto done;
+    }
+    if (!work->selected) {
+        if (!old_present) {
+            fprintf(stderr, "holypkg: installed artifact absent from source and no newer candidate\n");
+            result = 6;
+            goto done;
+        }
+        *up_to_date = 1;
+        result = 0;
+        goto done;
+    }
+    memcpy(slot->new_digest, work->selected->digest, 65);
+    result = holy_repo_stage_slot_digest(canonical, root, &work->old,
+                                         work->selected->digest, &work->staged);
+    if (result) goto done;
+    if (strcmp(work->staged.index, work->candidates.index) ||
+        work->staged.count != 1 ||
+        strcmp(work->staged.digests[0], work->selected->digest)) { result = 3; goto done; }
+    memcpy(slot->index, work->staged.index, 65);
+    result = 0;
+done:
+    free(bound);
+    return result;
+}
+
 int holy_up_command(int argc, char **argv)
 {
-    const char *separator, *root = "/", *catalog = NULL, *output = NULL;
+    const char *root = "/", *catalog = NULL, *output = NULL;
     const char *choice = NULL, *arch = NULL, *libc = NULL;
     const char *accepted_arch = NULL, *accepted_privileged = NULL;
-    const char **services = NULL;
-    size_t service_count = 0, s;
-    char *alias = NULL, *bound = NULL, *canonical = NULL, *old_snapshot = NULL;
+    const char **services = NULL, **references = NULL;
+    struct up_slot *slots = NULL;
+    struct up_selection *work = NULL;
+    struct holy_update_request request = {0};
+    const char **olds = NULL, **news = NULL;
+    size_t service_count = 0, reference_count = 0, chosen_count = 0;
+    size_t *chosen = NULL, i, s, size = 0;
     char *inner = NULL, *plan = NULL, *temporary_dir = NULL, *temporary_plan = NULL;
-    struct holy_package_identity old = {0}, *selected = NULL;
-    struct holy_repo_slot_list candidates = {0};
-    struct holy_repo_set staged = {0};
-    char source_id[65], actual_id[65], old_hash[65], inner_hash[65], plan_hash[65], answer[16];
-    size_t i, size = 0, compatible = 0, ambiguous = 0;
-    int dir = -1, result = 2, prepared = 0, yes = 0, noninteractive = 0;
-    int root_seen = 0, old_present = 0, plan_written = 0;
+    char inner_hash[65], plan_hash[65], answer[16];
+    int result = 2, prepared = 0, yes = 0, noninteractive = 0;
+    int root_seen = 0, up_to_date = 0;
     FILE *stream = NULL;
-    if (argc < 3 || !(separator = strchr(argv[2], ':')) ||
-        separator == argv[2] || !separator[1] || strchr(separator + 1, ':')) goto done;
+    if (argc < 3) goto done;
     services = calloc((size_t)argc, sizeof *services);
-    if (!services) { result = 1; goto done; }
-    alias = malloc((size_t)(separator - argv[2]) + 1);
-    if (!alias) { result = 1; goto done; }
-    memcpy(alias, argv[2], (size_t)(separator - argv[2]));
-    alias[separator - argv[2]] = 0;
-    if (!strcmp(alias, "local")) goto done;
-    for (i = 3; i < (size_t)argc; ++i) {
+    references = calloc((size_t)argc, sizeof *references);
+    slots = calloc((size_t)argc, sizeof *slots);
+    work = calloc((size_t)argc, sizeof *work);
+    chosen = calloc((size_t)argc, sizeof *chosen);
+    olds = calloc((size_t)argc, sizeof *olds);
+    news = calloc((size_t)argc, sizeof *news);
+    if (!services || !references || !slots || !work || !chosen || !olds || !news) {
+        result = 1;
+        goto done;
+    }
+    for (i = 0; i < (size_t)argc; ++i) slots[i].dir = -1;
+    for (i = 2; i < (size_t)argc; ++i) {
         if (!strcmp(argv[i], "--prepare") && !prepared) prepared = 1;
         else if (!strcmp(argv[i], "--output") && !output && i + 1 < (size_t)argc)
             output = argv[++i];
@@ -179,9 +349,9 @@ int holy_up_command(int argc, char **argv)
             arch = argv[++i];
         else if (!strcmp(argv[i], "--libc") && !libc && i + 1 < (size_t)argc)
             libc = argv[++i];
-        else if (!strcmp(argv[i], "--accept-arch") && !accepted_arch && i + 1 < (size_t)argc)
+        else if (!strcmp(argv[i], "--accept-arch") && i + 1 < (size_t)argc)
             accepted_arch = argv[++i];
-        else if (!strcmp(argv[i], "--accept-privileged") && !accepted_privileged && i + 1 < (size_t)argc)
+        else if (!strcmp(argv[i], "--accept-privileged") && i + 1 < (size_t)argc)
             accepted_privileged = argv[++i];
         else if (!strcmp(argv[i], "--accept-service") && i + 1 < (size_t)argc)
             services[service_count++] = argv[++i];
@@ -189,103 +359,45 @@ int holy_up_command(int argc, char **argv)
         else if (!strcmp(argv[i], "--noninteractive") && !noninteractive) noninteractive = 1;
         else if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < (size_t)argc) {
             root = argv[++i]; root_seen = 1;
-        } else goto done;
+        } else if (argv[i][0] == '-' || !strchr(argv[i], ':')) {
+            goto done;
+        } else {
+            references[reference_count++] = argv[i];
+        }
     }
-    if ((prepared && yes) ||
+    if (!reference_count || (reference_count > 1 && choice && !strchr(choice, '=')) ||
+        (prepared && yes) ||
         (output && !*output) || !*root ||
         (catalog && !*catalog) || (arch && !*arch) || (libc && !*libc) ||
-        (choice && !digest_valid(choice)) ||
+        (choice && (!digest_valid(strchr(choice, '=') ? strchr(choice, '=') + 1 : choice))) ||
         (accepted_arch && !digest_valid(accepted_arch)) ||
         (accepted_privileged && !digest_valid(accepted_privileged))) goto done;
-    result = holy_source_active_id(root, alias, source_id);
-    if (result) goto done;
-    result = holy_state_find_slot(root, source_id, separator + 1, arch, libc, old_hash);
-    if (result) goto done;
-    old_snapshot = holy_cache_snapshot(old_hash, root);
-    if (!old_snapshot || !holy_package_identity(old_snapshot, &old)) {
-        fprintf(stderr, "holypkg: previous artifact unavailable for downgrade %s\n", old_hash);
-        result = 6; goto done;
-    }
-    if (!catalog) {
-        result = holy_source_catalog_path_fast(root, alias, &bound);
+    for (i = 0; i < reference_count; ++i) {
+        result = up_select_slot(&slots[i], references[i], root, catalog, choice,
+                                arch, libc, &work[i], &up_to_date);
         if (result) goto done;
-        catalog = bound;
-    }
-    canonical = realpath(catalog, NULL);
-    dir = canonical ? open(canonical, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) : -1;
-    if (dir < 0 || flock(dir, LOCK_SH)) { result = 6; goto done; }
-    result = holy_source_catalog(root, alias, canonical, actual_id);
-    if (result || strcmp(source_id, actual_id)) { result = 3; goto done; }
-    result = holy_repo_slot_candidates(canonical, &old, &candidates);
-    if (result) {
-        if (result == 6)
-            fprintf(stderr, "holypkg: source package slot changed or disappeared\n");
-        goto done;
-    }
-    for (i = 0; i < candidates.count; ++i) {
-        struct holy_package_identity *candidate = &candidates.items[i];
-        int order = 0;
-        if (!same_slot(&old, candidate)) { result = 1; goto done; }
-        ++compatible;
-        if (!strcmp(candidate->digest, old_hash)) {
-            old_present = 1;
+        if (up_to_date) {
+            printf("up-to-date %s %s\n", slots[i].source_id, slots[i].old_digest);
             continue;
         }
-        printf("update-candidate %s version %s release %s comparator %s\n",
-               candidate->digest, candidate->version, candidate->release,
-               candidate->version_family ? candidate->version_family : "unknown");
-        if (choice) {
-            if (!strcmp(choice, candidate->digest)) {
-                selected = candidate;
-            }
-            continue;
-        }
-        if (!version_order(candidate, &old, &order)) {
-            ambiguous = 1;
-            continue;
-        }
-        if (order <= 0) continue;
-        if (!selected) { selected = candidate; continue; }
-        if (!version_order(candidate, selected, &order) || !order) ambiguous = 1;
-        if (order > 0) selected = candidate;
+        chosen[chosen_count++] = i;
     }
-    if (!compatible) {
-        fprintf(stderr, "holypkg: source package slot changed or disappeared\n");
-        result = 6; goto done;
+    if (!chosen_count) { result = 0; goto done; }
+    for (i = 0; i < chosen_count; ++i) {
+        olds[i] = slots[chosen[i]].old_digest;
+        news[i] = slots[chosen[i]].new_digest;
     }
-    if (choice && !selected) { result = 6; goto done; }
-    if (!choice && ambiguous) {
-        fprintf(stderr, "holypkg: decision-required update candidate; use --choose SHA256\n");
-        result = 3; goto done;
+    request.olds = (const char *const *)olds;
+    request.news = (const char *const *)news;
+    request.pair_count = chosen_count;
+    if (accepted_arch) { request.accept_arch = &accepted_arch; request.arch_count = 1; }
+    if (accepted_privileged) {
+        request.accept_privileged = &accepted_privileged;
+        request.privileged_count = 1;
     }
-    if (!selected) {
-        if (!old_present) {
-            fprintf(stderr, "holypkg: installed artifact absent from source and no newer candidate\n");
-            result = 6; goto done;
-        }
-        printf("up-to-date %s %s\n", source_id, old_hash);
-        result = 0; goto done;
-    }
-    if ((accepted_arch && strcmp(accepted_arch, selected->digest)) ||
-        (accepted_privileged && strcmp(accepted_privileged, selected->digest))) {
-        result = 2; goto done;
-    }
-    result = holy_repo_stage_slot_digest(canonical, root, &old,
-                                         selected->digest, &staged);
-    if (result) goto done;
-    if (strcmp(staged.index, candidates.index) || staged.count != 1 ||
-        strcmp(staged.digests[0], selected->digest)) { result = 3; goto done; }
-    {
-        const char *olds[1] = {old_hash}, *news[1] = {selected->digest};
-        struct holy_update_request request = {
-            olds, news, 1,
-            accepted_arch ? &accepted_arch : NULL, accepted_arch ? 1 : 0,
-            accepted_privileged ? &accepted_privileged : NULL,
-            accepted_privileged ? 1 : 0,
-            services, service_count
-        };
-        result = holy_state_update_prepare(&request, root, inner_hash, &inner);
-    }
+    request.accept_service = (const char *const *)services;
+    request.service_count = service_count;
+    result = holy_state_update_prepare(&request, root, inner_hash, &inner);
     if (result) goto done;
     if (!output) {
         temporary_dir = strdup("/tmp/holypkg-up-XXXXXX");
@@ -297,15 +409,23 @@ int holy_up_command(int argc, char **argv)
     }
     stream = open_memstream(&plan, &size);
     if (!stream) { result = 1; goto done; }
-    fprintf(stream, "format holy-up-plan-1\nsource-id %s\nalias ", source_id);
-    quoted(stream, alias);
-    fputs("\ncatalog ", stream);
-    quoted(stream, canonical);
-    fprintf(stream, "\nindex %s\nold %s\nnew %s\nstate-plan %s\naccept-arch %s\naccept-privileged %s\n",
-            staged.index, old_hash, selected->digest, inner_hash,
-            accepted_arch ? accepted_arch : "-",
-            accepted_privileged ? accepted_privileged : "-");
-    for (s = 0; s < service_count; ++s) fprintf(stream, "service %s\n", services[s]);
+    fputs("format holy-up-plan-2\n", stream);
+    for (i = 0; i < chosen_count; ++i) {
+        const struct up_slot *slot = &slots[chosen[i]];
+        fprintf(stream, "slot %zu\n", i);
+        fprintf(stream, "source-id %s\n", slot->source_id);
+        fputs("alias ", stream);
+        quoted(stream, slot->alias);
+        fputs("\ncatalog ", stream);
+        quoted(stream, slot->catalog);
+        fprintf(stream, "\nindex %s\nold %s\nnew %s\naccept-arch %s\naccept-privileged %s\n",
+                slot->index, slot->old_digest, slot->new_digest,
+                accepted_arch ? accepted_arch : "-",
+                accepted_privileged ? accepted_privileged : "-");
+        for (s = 0; s < service_count; ++s)
+            fprintf(stream, "service %s\n", services[s]);
+    }
+    fprintf(stream, "state-plan %s\n", inner_hash);
     fputs(inner, stream);
     {
         int failed = ferror(stream);
@@ -313,53 +433,59 @@ int holy_up_command(int argc, char **argv)
         stream = NULL;
         if (failed || !digest_bytes(plan, size, plan_hash) ||
             !write_plan(output, plan, size)) { result = 1; goto done; }
-        plan_written = 1;
     }
-    printf("prepared %s %s old %s new %s index %s\n",
-           plan_hash, output, old_hash, selected->digest, staged.index);
+    for (i = 0; i < chosen_count; ++i) {
+        const struct up_slot *slot = &slots[chosen[i]];
+        printf("prepared-slot %zu source-id %s old %s new %s index %s\n", i,
+               slot->source_id, slot->old_digest, slot->new_digest, slot->index);
+    }
+    if (chosen_count > 1)
+        printf("prepared %s %s slots %zu\n", plan_hash, output, chosen_count);
+    else
+        printf("prepared %s %s old %s new %s index %s\n", plan_hash, output,
+               slots[chosen[0]].old_digest, slots[chosen[0]].new_digest,
+               slots[chosen[0]].index);
     if (!prepared) {
         char *apply_argv[] = {"holypkg", "apply", (char *)output, "--sha256",
                               plan_hash, "--root", (char *)root, NULL};
         if (fwrite(plan, 1, size, stdout) != size || fflush(stdout)) {
-            result = 1; goto done;
+            result = 1;
+            goto done;
         }
         if (!yes) {
             if (noninteractive || !isatty(STDIN_FILENO)) {
                 fprintf(stderr, "holypkg: decision-required plan=%s file=%s; apply the reviewed file with its SHA-256\n",
                         plan_hash, output);
-                result = 3; goto done;
+                result = 3;
+                goto done;
             }
             if (fprintf(stderr, "Apply plan %s to %s? [y/N] ", plan_hash, root) < 0 ||
                 fflush(stderr) || !fgets(answer, sizeof answer, stdin) ||
                 (strcmp(answer, "y\n") && strcmp(answer, "Y\n") &&
                  strcmp(answer, "yes\n") && strcmp(answer, "YES\n"))) {
-                result = 3; goto done;
+                result = 3;
+                goto done;
             }
         }
-        if (dir >= 0) { close(dir); dir = -1; }
         result = holy_apply_command(7, apply_argv);
         if (!result && temporary_plan) {
             unlink(temporary_plan);
             rmdir(temporary_dir);
         }
-        if (result) goto done;
     }
     result = 0;
 done:
     if (result == 2)
-        fputs("usage: holypkg up SOURCE:PACKAGE [--prepare] [--output NEW_FILE] [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--accept-service UNIT ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
+        fputs("usage: holypkg up SOURCE:PACKAGE [SOURCE:PACKAGE ...] [--prepare] [--output NEW_FILE] [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--accept-service UNIT ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
     if (stream) fclose(stream);
-    if (dir >= 0) close(dir);
-    if (old_snapshot) { unlink(old_snapshot); free(old_snapshot); }
-    holy_package_identity_free(&old);
-    holy_repo_slot_list_free(&candidates);
-    holy_repo_set_free(&staged);
-    if (temporary_dir && !plan_written) rmdir(temporary_dir);
-    free(alias); free(bound); free(canonical); free(inner); free(plan);
-    free(temporary_plan); free(temporary_dir); free(services);
+    up_slots_free(slots, (size_t)argc);
+    for (i = 0; i < (size_t)argc; ++i) up_selection_free(&work[i]);
+    free(work);
+    free(chosen); free((void *)olds); free((void *)news);
+    free(inner); free(plan);
+    free(temporary_plan); free(temporary_dir); free(services); free(references);
     return result;
 }
-
 static char *read_plan(int fd, size_t *size)
 {
     struct stat st;
@@ -412,15 +538,142 @@ done:
     return ok;
 }
 
+/* one slot a prepared plan updates, and the decisions its review named */
+static void up_slot_forget(struct holy_up_slot *slot)
+{
+    size_t i;
+    if (!slot) return;
+    free(slot->alias); free(slot->catalog);
+    free(slot->accept_arch); free(slot->accept_privileged);
+    for (i = 0; i < slot->service_count; ++i) free(slot->services[i]);
+    free(slot->services);
+    memset(slot, 0, sizeof *slot);
+}
+
+void holy_up_plan_free(struct holy_up_plan *plan)
+{
+    size_t i;
+    if (!plan) return;
+    for (i = 0; i < plan->slot_count; ++i) up_slot_forget(&plan->slots[i]);
+    free(plan->slots);
+    free(plan->state_plan);
+    free(plan->body);
+    memset(plan, 0, sizeof *plan);
+}
+
+static int up_slot_add_service(struct holy_up_slot *slot, const char *unit, size_t *limit)
+{
+    char **grown;
+    size_t i;
+    if (!holy_unit_name_valid(unit)) return 0;
+    for (i = 0; i < slot->service_count; ++i)
+        if (!strcmp(slot->services[i], unit)) return 0;
+    if (slot->service_count >= *limit) return 0;
+    grown = realloc(slot->services, (slot->service_count + 1) * sizeof *grown);
+    if (!grown) return 0;
+    slot->services = grown;
+    grown[slot->service_count] = strdup(unit);
+    if (!grown[slot->service_count]) return 0;
+    ++slot->service_count;
+    return 1;
+}
+
+/* the header of a plan names one slot per block, and the unit consents belong to the
+   slot above them. a v1 document has one implicit slot and no slot line. */
+static int up_plan_take_slots(char **cursor, struct holy_up_plan *plan, int grouped,
+                              size_t limit)
+{
+    struct holy_up_slot *slot = NULL, *grown;
+    for (;;) {
+        char *value = NULL;
+        if (!strncmp(*cursor, "slot ", 5)) {
+            struct holy_up_slot *grown;
+            size_t declared;
+            char *stop;
+            if (!grouped || plan->slot_count >= limit) return 0;
+            errno = 0;
+            declared = strtoul(*cursor + 5, &stop, 10);
+            if (errno || *stop != '\n' || declared != plan->slot_count) return 0;
+            if (!(*cursor = next_line(*cursor))) return 0;
+            grown = realloc(plan->slots, (plan->slot_count + 1) * sizeof *grown);
+            if (!grown) return 0;
+            plan->slots = grown;
+            slot = &grown[plan->slot_count];
+            memset(slot, 0, sizeof *slot);
+            ++plan->slot_count;
+            if (!take_field(cursor, "source-id", &value)) return 0;
+            memcpy(slot->source_id, value, strlen(value) + 1);
+            free(value); value = NULL;
+            if (!digest_valid(slot->source_id)) return 0;
+            continue;
+        }
+        if (!slot) {
+            if (!grouped) {
+                grown = realloc(plan->slots, sizeof *grown);
+                if (!grown) return 0;
+                plan->slots = grown;
+                slot = &grown[0];
+                memset(slot, 0, sizeof *slot);
+                ++plan->slot_count;
+                if (!take_field(cursor, "source-id", &value)) return 0;
+                memcpy(slot->source_id, value, strlen(value) + 1);
+                free(value); value = NULL;
+                if (!digest_valid(slot->source_id)) return 0;
+                continue;
+            }
+            return 0;
+        }
+        if (!take_field(cursor, "alias", &value)) return 0;
+        free(slot->alias);
+        slot->alias = value;
+        if (!take_field(cursor, "catalog", &value)) return 0;
+        free(slot->catalog);
+        slot->catalog = value;
+        if (!take_field(cursor, "index", &value)) return 0;
+        memcpy(slot->index, value, strlen(value) + 1);
+        free(value); value = NULL;
+        if (!digest_valid(slot->index) || slot->catalog[0] != '/') return 0;
+        if (!take_field(cursor, "old", &value)) return 0;
+        memcpy(slot->old_digest, value, strlen(value) + 1);
+        free(value); value = NULL;
+        if (!take_field(cursor, "new", &value)) return 0;
+        memcpy(slot->new_digest, value, strlen(value) + 1);
+        free(value); value = NULL;
+        if (!digest_valid(slot->old_digest) || !digest_valid(slot->new_digest)) return 0;
+        if (!take_field(cursor, "accept-arch", &value)) return 0;
+        free(slot->accept_arch);
+        slot->accept_arch = value;
+        if (!take_field(cursor, "accept-privileged", &value)) return 0;
+        free(slot->accept_privileged);
+        slot->accept_privileged = value;
+        if ((strcmp(slot->accept_arch, "-") && strcmp(slot->accept_arch, slot->new_digest)) ||
+            (strcmp(slot->accept_privileged, "-") &&
+             strcmp(slot->accept_privileged, slot->new_digest)) ||
+            !*slot->alias) return 0;
+        while (!strncmp(*cursor, "service ", 8)) {
+            char unit[256];
+            size_t length = 0;
+            char *name = *cursor + 8;
+            while (name[length] && name[length] != '\n' && length < sizeof unit) ++length;
+            if (!length || length >= sizeof unit) return 0;
+            memcpy(unit, name, length);
+            unit[length] = 0;
+            if (!up_slot_add_service(slot, unit, &limit)) return 0;
+            if (!(*cursor = next_line(*cursor))) return 0;
+        }
+        /* another block starts the next slot of the group */
+        if (!strncmp(*cursor, "slot ", 5)) continue;
+        return 1;
+    }
+}
+
 int holy_up_plan_read(const char *path, const char *approved, struct holy_up_plan *plan)
 {
     struct stat st;
     char actual[65], recorded[65], *data = NULL, *cursor, *snapshot = NULL, *body = NULL;
-    char *source = NULL, *alias = NULL, *catalog = NULL, *index = NULL;
-    char *old = NULL, *next = NULL, *inner = NULL, *arch = NULL, *privileged = NULL;
-    char **services = NULL;
-    size_t size = 0, service_count = 0, i;
-    int input = -1, staged = -1, result = 6;
+    char *inner = NULL;
+    size_t size = 0, i, limit;
+    int input = -1, staged = -1, result = 6, grouped = 0;
     memset(plan, 0, sizeof *plan);
     if (!path || !*path || (approved && !digest_valid(approved))) return 2;
     input = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
@@ -430,151 +683,164 @@ int holy_up_plan_read(const char *path, const char *approved, struct holy_up_pla
         st.st_size > 64 * 1024 * 1024) { result = 2; goto done; }
     snapshot = holy_stage_fd(input, "holy-up-plan");
     staged = snapshot ? open(snapshot, O_RDONLY | O_NOFOLLOW | O_CLOEXEC) : -1;
-        if (staged < 0 || !(data = read_plan(staged, &size))) { result = 2; goto done; }
+    if (staged < 0 || !(data = read_plan(staged, &size))) { result = 2; goto done; }
     if (!digest_bytes(data, size, actual)) { result = 1; goto done; }
     memcpy(recorded, actual, 65);
     if (approved && strcmp(actual, approved)) { result = 3; goto done; }
-    if (strncmp(data, "format holy-up-plan-1\n", 22)) { result = 2; goto done; }
+    if (!strncmp(data, "format holy-up-plan-2\n", 22)) grouped = 1;
+    else if (strncmp(data, "format holy-up-plan-1\n", 22)) { result = 2; goto done; }
     cursor = data + 22;
-    if (!take_field(&cursor, "source-id", &source) ||
-        !take_field(&cursor, "alias", &alias) ||
-        !take_field(&cursor, "catalog", &catalog) ||
-        !take_field(&cursor, "index", &index) ||
-        !take_field(&cursor, "old", &old) ||
-        !take_field(&cursor, "new", &next) ||
-        !take_field(&cursor, "state-plan", &inner) ||
-        !take_field(&cursor, "accept-arch", &arch) ||
-        !take_field(&cursor, "accept-privileged", &privileged)) { result = 2; goto done; }
-    /* a unit name ends at the newline, and the rest of the document is not part of it */
-    while (!strncmp(cursor, "service ", 8)) {
-        char unit[256], **grown, *name = cursor + 8;
-        size_t k, length = 0;
-        while (name[length] && name[length] != '\n' && length < sizeof unit) ++length;
-        if (!length || length >= sizeof unit) { result = 2; goto done; }
-        memcpy(unit, name, length);
-        unit[length] = 0;
-        if (!holy_unit_name_valid(unit)) { result = 2; goto done; }
-        for (k = 0; k < service_count; ++k) {
-            if (!strcmp(unit, services[k])) { result = 2; goto done; }
-        }
-        if (service_count >= 65536) { result = 2; goto done; }
-        grown = realloc(services, (service_count + 1) * sizeof *grown);
-        if (!grown) { result = 1; goto done; }
-        services = grown;
-        services[service_count] = strdup(unit);
-        if (!services[service_count]) { result = 1; goto done; }
-        ++service_count;
-        if (!(cursor = next_line(cursor))) { result = 2; goto done; }
-    }
+    limit = size / 24 + 1;
+    if (!up_plan_take_slots(&cursor, plan, grouped, limit)) { result = 2; goto done; }
+    if (!plan->slot_count) { result = 2; goto done; }
+    if (!take_field(&cursor, "state-plan", &inner) || !digest_valid(inner)) { result = 2; goto done; }
     if (strncmp(cursor, "[update]\n", 9)) { result = 2; goto done; }
     body = cursor;
-    if (!digest_valid(source) || !*alias || catalog[0] != '/' ||
-        !digest_valid(index) || !digest_valid(old) || !digest_valid(next) ||
-        !digest_valid(inner) ||
-        (strcmp(arch, "-") && strcmp(arch, next)) ||
-        (strcmp(privileged, "-") && strcmp(privileged, next)) ||
-        !digest_bytes(body, strlen(body), actual) || strcmp(actual, inner)) {
-        result = 2; goto done;
+    if (!digest_bytes(body, strlen(body), actual) || strcmp(actual, inner)) {
+        result = 2;
+        goto done;
+    }
+    for (i = 0; i < plan->slot_count; ++i) {
+        struct holy_up_slot *slot = &plan->slots[i];
+        size_t j;
+        if (!strcmp(slot->old_digest, slot->new_digest)) { result = 2; goto done; }
+        for (j = 0; j < i; ++j)
+            if (!strcmp(slot->old_digest, plan->slots[j].old_digest) ||
+                !strcmp(slot->new_digest, plan->slots[j].new_digest) ||
+                !strcmp(slot->new_digest, plan->slots[j].old_digest)) {
+                result = 2;
+                goto done;
+            }
     }
     plan->body = strdup(body);
     if (!plan->body) { result = 1; goto done; }
     plan->body_length = strlen(body);
-    plan->source_id = source; source = NULL;
-    plan->alias = alias; alias = NULL;
-    plan->catalog = catalog; catalog = NULL;
-    plan->index = index; index = NULL;
-    plan->old_digest = old; old = NULL;
-    plan->new_digest = next; next = NULL;
-    plan->state_plan = inner; inner = NULL;
-    plan->accept_arch = arch; arch = NULL;
-    plan->accept_privileged = privileged; privileged = NULL;
-    plan->services = services;
-    plan->service_count = service_count;
-    services = NULL;
-    service_count = 0;
+    plan->state_plan = inner;
+    inner = NULL;
     /* the plan digest is the document digest, which the body digest check reuses */
     memcpy(plan->hash, recorded, 65);
     result = 0;
 done:
-    if (result) {
-        for (i = 0; i < service_count; ++i) free(services[i]);
-        free(services);
-    }
+    free(inner);
+    if (result) holy_up_plan_free(plan);
     if (staged >= 0) close(staged);
     if (input >= 0) close(input);
     if (snapshot) { unlink(snapshot); free(snapshot); }
-    free(data); free(source); free(alias); free(catalog); free(index);
-    free(old); free(next); free(inner); free(arch); free(privileged);
-    if (result) holy_up_plan_free(plan);
+    free(data);
     return result;
 }
-
-void holy_up_plan_free(struct holy_up_plan *plan)
+/* the catalogs of a group are locked in path order, so two applies of the same group
+   take them the same way round */
+static int up_slot_order(const void *left, const void *right)
 {
-    size_t i;
-    if (!plan) return;
-    free(plan->source_id); free(plan->alias); free(plan->catalog);
-    free(plan->index); free(plan->old_digest); free(plan->new_digest);
-    free(plan->state_plan); free(plan->accept_arch); free(plan->accept_privileged);
-    for (i = 0; i < plan->service_count; ++i) free(plan->services[i]);
-    free(plan->services);
-    free(plan->body);
-    memset(plan, 0, sizeof *plan);
+    const struct holy_up_slot *const *a = left, *const *b = right;
+    return strcmp((*a)->catalog, (*b)->catalog);
 }
 
 int holy_apply_command(int argc, char **argv)
 {
     const char *root = "/", *approved = NULL;
     struct holy_up_plan plan = {0};
-    struct holy_package_identity old_identity = {0};
-    char source_id[65], current[65];
-    int dir = -1, result = 2;
-    char *old_snapshot = NULL;
+    const char **olds = NULL, **news = NULL, **services = NULL, **arch = NULL, **privileged = NULL;
+    const struct holy_up_slot **order = NULL;
+    int *dirs = NULL;
+    char **snapshots = NULL;
+    size_t i, service_total = 0, arch_count = 0, privileged_count = 0, service_count = 0;
+    int result = 2;
     if (argc == 5 && !strcmp(argv[3], "--sha256")) approved = argv[4];
     else if (argc == 7 && !strcmp(argv[3], "--sha256") &&
              !strcmp(argv[5], "--root")) { approved = argv[4]; root = argv[6]; }
     if (!approved || !digest_valid(approved) || !*root) goto done;
     result = holy_up_plan_read(argv[2], approved, &plan);
     if (result) goto done;
-    dir = open(plan.catalog, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    if (dir < 0 || flock(dir, LOCK_SH)) { result = 6; goto done; }
-    result = holy_source_active_id(root, plan.alias, source_id);
-    if (result) goto done;
-    if (strcmp(plan.source_id, source_id)) { result = 3; goto done; }
-    result = holy_source_catalog(root, plan.alias, plan.catalog, source_id);
-    if (result) goto done;
-    old_snapshot = holy_cache_snapshot(plan.old_digest, root);
-    if (!old_snapshot || !holy_package_identity(old_snapshot, &old_identity) ||
-        strcmp(old_identity.digest, plan.old_digest)) { result = 6; goto done; }
-    result = holy_repo_catalog_slot_digest(plan.catalog, &old_identity,
-                                           plan.new_digest, current);
-    if (result != 0 && result != 3) goto done;
-    if (strcmp(current, plan.index)) {
-        fprintf(stderr, "holypkg: prepared catalog generation changed\n");
-        result = 3; goto done;
-    }
-    if (result) {
-        fprintf(stderr, "holypkg: prepared artifact absent from source slot\n");
+    for (i = 0; i < plan.slot_count; ++i) service_total += plan.slots[i].service_count;
+    dirs = calloc(plan.slot_count, sizeof *dirs);
+    olds = calloc(plan.slot_count, sizeof *olds);
+    news = calloc(plan.slot_count, sizeof *news);
+    services = calloc(service_total ? service_total : 1, sizeof *services);
+    arch = calloc(plan.slot_count, sizeof *arch);
+    privileged = calloc(plan.slot_count, sizeof *privileged);
+    snapshots = calloc(plan.slot_count, sizeof *snapshots);
+    order = calloc(plan.slot_count, sizeof *order);
+    if (!dirs || !olds || !news || !services || !arch || !privileged || !snapshots || !order) {
+        result = 1;
         goto done;
     }
+    for (i = 0; i < plan.slot_count; ++i) order[i] = &plan.slots[i];
+    if (plan.slot_count > 1) qsort(order, plan.slot_count, sizeof *order, up_slot_order);
+    /* the whole review is one decision, so every catalog it names is locked before any
+       slot is checked and stays locked until the transaction finishes */
+    for (i = 0; i < plan.slot_count; ++i) {
+        dirs[i] = open(order[i]->catalog, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (dirs[i] < 0 || flock(dirs[i], LOCK_SH)) { result = 6; goto done; }
+    }
+    for (i = 0; i < plan.slot_count; ++i) {
+        struct holy_up_slot *slot = &plan.slots[i];
+        struct holy_package_identity old_identity = {0};
+        char source_id[65], current[65];
+        const char *slot_arch = strcmp(slot->accept_arch, "-") ? slot->accept_arch : NULL;
+        const char *slot_privileged = strcmp(slot->accept_privileged, "-") ?
+                                      slot->accept_privileged : NULL;
+        size_t j;
+        olds[i] = slot->old_digest;
+        news[i] = slot->new_digest;
+        if (slot_arch) arch[arch_count++] = slot_arch;
+        if (slot_privileged) privileged[privileged_count++] = slot_privileged;
+        for (j = 0; j < slot->service_count; ++j) services[service_count++] = slot->services[j];
+        result = holy_source_active_id(root, slot->alias, source_id);
+        if (result) break;
+        if (strcmp(slot->source_id, source_id)) { result = 3; break; }
+        result = holy_source_catalog(root, slot->alias, slot->catalog, source_id);
+        if (result) break;
+        snapshots[i] = holy_cache_snapshot(slot->old_digest, root);
+        if (!snapshots[i] || !holy_package_identity(snapshots[i], &old_identity) ||
+            strcmp(old_identity.digest, slot->old_digest)) {
+            result = 6;
+            break;
+        }
+        result = holy_repo_catalog_slot_digest(slot->catalog, &old_identity,
+                                               slot->new_digest, current);
+        if (result != 0 && result != 3) break;
+        if (strcmp(current, slot->index)) {
+            fprintf(stderr, "holypkg: prepared catalog generation changed for %s\n",
+                    slot->alias);
+            result = 3;
+            break;
+        }
+        if (result) {
+            fprintf(stderr, "holypkg: prepared artifact absent from source slot for %s\n",
+                    slot->alias);
+            break;
+        }
+        holy_package_identity_free(&old_identity);
+    }
+    if (result) goto done;
     {
-        const char *olds[1] = {plan.old_digest}, *news[1] = {plan.new_digest};
-        const char *arch = strcmp(plan.accept_arch, "-") ? plan.accept_arch : NULL;
-        const char *privileged = strcmp(plan.accept_privileged, "-") ? plan.accept_privileged : NULL;
+        /* the state layer rebuilds the plan under its own writer lock and compares the
+           approved digest, so the review and the apply are one decision */
         struct holy_update_request request = {
-            olds, news, 1,
-            arch ? &arch : NULL, arch ? 1 : 0,
-            privileged ? &privileged : NULL, privileged ? 1 : 0,
-            (const char *const *)plan.services, plan.service_count
+            (const char *const *)olds, (const char *const *)news, plan.slot_count,
+            (const char *const *)arch, arch_count,
+            (const char *const *)privileged, privileged_count,
+            (const char *const *)services, service_count
         };
         result = holy_state_apply_update(plan.state_plan, &request, root);
     }
 done:
     if (result == 2)
         fputs("usage: holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]\n", stderr);
-    if (dir >= 0) close(dir);
-    if (old_snapshot) { unlink(old_snapshot); free(old_snapshot); }
-    holy_package_identity_free(&old_identity);
+    if (dirs) {
+        for (i = 0; i < plan.slot_count; ++i) if (dirs[i] >= 0) close(dirs[i]);
+        free(dirs);
+    }
+    if (snapshots) {
+        for (i = 0; i < plan.slot_count; ++i) {
+            if (snapshots[i]) { unlink(snapshots[i]); free(snapshots[i]); }
+        }
+        free(snapshots);
+    }
+    free(order);
+    free(olds); free(news); free(services); free(arch); free(privileged);
     holy_up_plan_free(&plan);
     return result;
 }

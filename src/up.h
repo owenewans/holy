@@ -6,21 +6,29 @@
 int holy_up_command(int argc, char **argv);
 int holy_apply_command(int argc, char **argv);
 
-/* a saved update plan, the fixed set one prepared update leaves behind. the body is
-   the update record whose digest the state-plan field carries. */
-struct holy_up_plan {
-    char hash[65];
-    char *source_id;
+/* one slot a prepared plan updates: where it is installed from, which index generation
+   decided its new artifact, and the decisions the review named for it */
+struct holy_up_slot {
+    char source_id[65];
     char *alias;
     char *catalog;
-    char *index;
-    char *old_digest;
-    char *new_digest;
-    char *state_plan;
-    char *accept_arch;
+    char index[65];
+    char old_digest[65];
+    char new_digest[65];
+    char *accept_arch;             /* or a dash, when the review named none */
     char *accept_privileged;
-    char **services;         /* the unit names this plan was prepared with */
+    char **services;              /* the unit names this slot was prepared with */
     size_t service_count;
+};
+
+/* a saved update plan, the fixed set one prepared update leaves behind. the body is
+   the update record whose digest the state-plan field carries, and it replaces every
+   slot the plan names. */
+struct holy_up_plan {
+    char hash[65];
+    struct holy_up_slot *slots;
+    size_t slot_count;
+    char *state_plan;
     char *body;
     size_t body_length;
 };
