@@ -6980,6 +6980,203 @@ int holy_state_recover_update(const char *root_path)
     return state_update(NULL, NULL, NULL, NULL, NULL, NULL, 0, root_path, 1, NULL, NULL);
 }
 
+/* the reverse of a committed set: an artifact the set installed comes out, and an
+   artifact it removed goes back in from the cache. the review states every operation
+   and whether the cache still holds that artifact, since a missing object is what
+   makes a reverse incomplete. applying the list is a different command, so this states
+   the operations and the hash a reverse plan would need. */
+struct rollback_operation {
+    char digest[65];
+    char name[128];
+    char version[96];
+    char direction[10];     /* remove or reinstall */
+    int available;
+};
+
+struct rollback_plan {
+    char **members;
+    size_t member_count;
+    struct rollback_operation *operations;
+    size_t count, capacity;
+    int failed;
+};
+
+static void rollback_plan_free(struct rollback_plan *plan)
+{
+    size_t i;
+    for (i = 0; i < plan->member_count; ++i) free(plan->members[i]);
+    free(plan->members);
+    free(plan->operations);
+    memset(plan, 0, sizeof *plan);
+}
+
+/* the line ends at the newline, so a digest is taken by its length rather than by a
+   terminator the record does not have there. */
+static int rollback_member(void *context, const char *line, size_t length)
+{
+    struct rollback_plan *plan = context;
+    char **grown;
+    if (length != 64 || plan->member_count >= 10000) return 0;
+    for (size_t i = 0; i < length; ++i)
+        if (!((line[i] >= '0' && line[i] <= '9') || (line[i] >= 'a' && line[i] <= 'f')))
+            return 0;
+    grown = realloc(plan->members, (plan->member_count + 1) * sizeof *grown);
+    if (!grown) return 0;
+    plan->members = grown;
+    plan->members[plan->member_count] = malloc(length + 1);
+    if (!plan->members[plan->member_count]) return 0;
+    memcpy(plan->members[plan->member_count], line, length);
+    plan->members[plan->member_count][length] = 0;
+    ++plan->member_count;
+    return 1;
+}
+
+static int rollback_record_lines(const char *record, int (*take)(void *, const char *, size_t),
+                                 void *context)
+{
+    const char *cursor = record;
+    int ok = 1;
+    while (*cursor && ok) {
+        const char *end = strchr(cursor, '\n');
+        size_t length = end ? (size_t)(end - cursor) : strlen(cursor);
+        if (length > 9 && !strncmp(cursor, "artifact ", 9))
+            if (!take(context, cursor + 9, length - 9)) ok = 0;
+        cursor += length + (end ? 1 : 0);
+    }
+    return ok;
+}
+
+static int rollback_installed(void *context, int root, int instance, const char *digest)
+{
+    struct rollback_plan *plan = context;
+    struct rollback_operation *operations;
+    size_t i;
+    (void)root;
+    for (i = 0; i < plan->member_count; ++i)
+        if (!strcmp(plan->members[i], digest)) break;
+    if (i == plan->member_count) return 0;
+    if (plan->count >= 4096) { plan->failed = 1; return 0; }
+    if (plan->count == plan->capacity) {
+        size_t size = plan->capacity ? plan->capacity * 2 : 16;
+        operations = realloc(plan->operations, size * sizeof *operations);
+        if (!operations) { plan->failed = 1; return 0; }
+        plan->operations = operations;
+        plan->capacity = size;
+    }
+    memset(&plan->operations[plan->count], 0, sizeof plan->operations[plan->count]);
+    memcpy(plan->operations[plan->count].digest, digest, 65);
+    snprintf(plan->operations[plan->count].direction,
+             sizeof plan->operations[plan->count].direction, "remove");
+    if (!holy_state_instance_field(instance, "name", plan->operations[plan->count].name,
+                                    sizeof plan->operations[plan->count].name) ||
+        !holy_state_instance_field(instance, "version", plan->operations[plan->count].version,
+                                   sizeof plan->operations[plan->count].version)) {
+        plan->failed = 1;
+        return 0;
+    }
+    ++plan->count;
+    return 0;
+}
+
+static int rollback_set_report(const char *transaction, const char *root_path)
+{
+    struct rollback_plan plan = {0};
+    unsigned long long generation = 0;
+    unsigned char digest[32];
+    unsigned int length;
+    EVP_MD_CTX *hash = EVP_MD_CTX_new();
+    char *record = NULL, computed[65];
+    char line[256];
+    int root = -1, dir = -1, transactions = -1, child = -1, result = 1, i;
+    size_t j, removed = 0, reinstalled = 0, unavailable = 0;
+
+    if (!valid_digest(transaction)) return 2;
+    root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0 || (dir = state_dir_at(root, 0)) < 0) {
+        fputs("holypkg: database unavailable\n", stderr);
+        result = 6;
+        goto done;
+    }
+    if (flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
+        !read_generation(dir, &generation) || generation == ULLONG_MAX ||
+        !installed_valid(dir)) goto done;
+    if ((transactions = child_dir(dir, "transactions", 0)) < 0 ||
+        (child = child_dir(transactions, transaction, 0)) < 0) { result = 6; goto done; }
+    record = update_record(child, "decisions");
+    if (!record || strncmp(record, "format holy-set-journal-",
+                           sizeof "format holy-set-journal-" - 1) ||
+        !rollback_record_lines(record, rollback_member, &plan) || !plan.member_count) {
+        fprintf(stderr, "holypkg: %s is not a set transaction\n", transaction);
+        result = 2;
+        goto done;
+    }
+    if (holy_state_visit(root_path, rollback_installed, &plan, &generation) || plan.failed) {
+        fputs("holypkg: installed set unavailable\n", stderr);
+        result = 6;
+        goto done;
+    }
+    /* an artifact this set touched that is not installed any more goes back in, and the
+       cache is what says whether it can. */
+    for (j = 0; j < plan.member_count; ++j) {
+        struct rollback_operation *operation, *operations;
+        size_t k;
+        for (k = 0; k < plan.count; ++k)
+            if (!strcmp(plan.operations[k].digest, plan.members[j])) break;
+        if (k < plan.count || plan.count >= 4096) continue;
+        operations = realloc(plan.operations, (plan.count + 1) * sizeof *operations);
+        if (!operations) { result = 1; goto done; }
+        plan.operations = operations;
+        plan.capacity = plan.count + 1;
+        operation = &plan.operations[plan.count];
+        memset(operation, 0, sizeof *operation);
+        memcpy(operation->digest, plan.members[j], 65);
+        snprintf(operation->direction, sizeof operation->direction, "reinstall");
+        operation->available = holy_cache_object(operation->digest, root_path);
+        ++plan.count;
+    }
+    for (j = 0; j < plan.count; ++j) {
+        if (!strcmp(plan.operations[j].direction, "remove")) ++removed;
+        else { ++reinstalled; if (!plan.operations[j].available) ++unavailable; }
+    }
+    if (!hash || EVP_DigestInit_ex(hash, EVP_sha256(), NULL) != 1 ||
+        !hash_text(hash, "holy-rollback-set-1") || !hash_text(hash, transaction) ||
+        !hash_text(hash, generation == ULLONG_MAX ? "-" : "generation")) {
+        result = 1;
+        goto done;
+    }
+    snprintf(line, sizeof line, " %llu", generation);
+    if (!hash_text(hash, line)) { result = 1; goto done; }
+    for (j = 0; j < plan.count; ++j) {
+        snprintf(line, sizeof line, "%s %s %s %d\n", plan.operations[j].direction,
+                 plan.operations[j].digest, plan.operations[j].name,
+                 plan.operations[j].available);
+        if (!hash_text(hash, line)) { result = 1; goto done; }
+    }
+    if (EVP_DigestFinal_ex(hash, digest, &length) != 1 || length != 32) { result = 1; goto done; }
+    for (i = 0; i < 32; ++i) snprintf(computed + 2 * i, 3, "%02x", digest[i]);
+    printf("rollback-set-plan transaction %s generation %llu remove %zu reinstall %zu"
+           " unavailable %zu sha256 %s read-only\n",
+           transaction, generation, removed, reinstalled, unavailable, computed);
+    for (j = 0; j < plan.count; ++j)
+        printf("rollback-set %s %s %s %s %s %s\n", transaction,
+               plan.operations[j].direction, plan.operations[j].digest,
+               plan.operations[j].name[0] ? plan.operations[j].name : "-",
+               plan.operations[j].version[0] ? plan.operations[j].version : "-",
+               !strcmp(plan.operations[j].direction, "remove") ? "installed" :
+               plan.operations[j].available ? "cached" : "unavailable");
+    printf("rollback-set-sha256 %s read-only\n", computed);
+    result = ferror(stdout) ? 1 : 0;
+done:
+    if (hash) EVP_MD_CTX_free(hash);
+    free(record);
+    if (child >= 0) close(child);
+    if (transactions >= 0) close(transactions);
+    if (dir >= 0) close(dir);
+    if (root >= 0) close(root);
+    rollback_plan_free(&plan);
+    return result;
+}
+
 int holy_state_rollback(const char *transaction, const char *approved,
                         const char *accepted_arch, const char *accepted_privileged,
                         const char *const *accepted_service, size_t service_count,
@@ -7005,11 +7202,32 @@ int holy_state_rollback(const char *transaction, const char *approved,
     }
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0 || (db = state_dir_at(root, 0)) < 0 || flock(db, LOCK_SH) ||
-        !state_layout(db, 0) || (transactions = child_dir(db, "transactions", 0)) < 0 ||
-        (work = child_dir(transactions, transaction, 0)) < 0) goto done;
+        !state_layout(db, 0) || (transactions = child_dir(db, "transactions", 0)) < 0) {
+        fputs("holypkg: database unavailable\n", stderr);
+        result = 6;
+        goto done;
+    }
+    if ((work = child_dir(transactions, transaction, 0)) < 0) {
+        fprintf(stderr, "holypkg: no transaction %s in this root\n", transaction);
+        result = 6;
+        goto done;
+    }
     committed = update_record(work, "committed");
     source_plan = update_record(work, "plan");
     marker = update_record(work, "journal");
+    if (committed && strlen(committed) == 65 && !memcmp(committed, transaction, 64) &&
+        committed[64] == '\n' && !source_plan) {
+        /* a set keeps no plan document, so its transaction names a set and the review
+           is the reverse operation list. */
+        free(committed); free(source_plan); free(marker);
+        close(work); close(transactions); close(db); close(root);
+        if (approved) {
+            fprintf(stderr, "holypkg: %s is a set transaction; a reverse set is not"
+                            " performed by this command\n", transaction);
+            return 3;
+        }
+        return rollback_set_report(transaction, root_path);
+    }
     if (!committed || strlen(committed) != 65 ||
         memcmp(committed, transaction, 64) || committed[64] != '\n' ||
         !source_plan || !marker ||

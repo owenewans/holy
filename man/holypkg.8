@@ -1672,6 +1672,26 @@ old database and journal under transactions/PLAN_SHA256. It retains cached
 old archives. These records can supply a reviewed reverse update through
 holypkg rollback.
 .PP
+A committed set names a different record, so rollback on one states what its
+reverse needs instead of a plan document:
+
+rollback-set-plan transaction IDENTITY generation GENERATION remove COUNT reinstall COUNT unavailable COUNT sha256 SHA256 read-only
+rollback-set IDENTITY remove ARTIFACT NAME VERSION installed
+rollback-set IDENTITY reinstall ARTIFACT - - cached|unavailable
+rollback-set-sha256 SHA256 read-only
+
+An artifact the set installed and that is still installed comes out, and
+an artifact it touched that is not installed goes back in, where the
+cached object decides whether it can and unavailable counts the ones it
+cannot. The name and version of a reinstall are dashes: the record holds a
+digest, and this command does not read the package to restate it. The hash
+covers the transaction, the generation it is read at and the operations, so
+a reverse plan made against another state is another plan. --apply on a
+set transaction is 3 with that reason, since a reverse set and a grouped
+removal are not implemented by this command. A transaction the root does
+not keep is 6.
+
+.PP
 holypkg rollback accepts the hash of a committed update transaction. It checks
 the committed marker, journal and exact plan hash, then previews a reverse
 replacement using the cached old artifact and the current dependency graph.
