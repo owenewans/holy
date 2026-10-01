@@ -247,4 +247,90 @@ printf '[install]\nroot "%s"\naccount cleo 1002 1002 /bin/sh -\npassword-file "%
 if "$installer" --apply "$tmp/word.plan" --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 grep -qx 'holyinstall: password file entry is a lock marker or a hash' "$tmp/err"
 test ! -e "$word_root/etc/passwd"
+# the locale, the zone and the network profile are planned steps, and apply writes the
+# files the packages read rather than owning a manager
+network_tree="$tmp/network-tree"
+mkdir -p "$network_tree/HOLY" "$network_tree/DATA/usr/lib/holy-units"
+printf 'format holy-package-1\nname network-fixture\nversion 1\nrelease 1\nos linux\narch noarch\nlibc nolibc\n' > "$network_tree/HOLY/meta"
+for field in deps provides hooks origin transform; do : > "$network_tree/HOLY/$field"; done
+printf 'type = process\n' > "$network_tree/DATA/usr/lib/holy-units/network-fixture"
+printf 'networked\n' > "$network_tree/DATA/usr/lib/network-fixture"
+
+"$holypkg" manifest generate "$network_tree" --output "$tmp/network-files" > /dev/null
+mv "$tmp/network-files" "$network_tree/HOLY/files"
+"$holypkg" pack "$network_tree" --output "$tmp/network.holy" > /dev/null
+network_digest=$(sha256sum "$tmp/network.holy" | cut -d ' ' -f 1)
+identity_root="$tmp/identity-root"
+mkdir -p "$identity_root/usr/share/zoneinfo/Europe" "$identity_root/usr/lib" "$identity_root/etc"
+printf 'TZif2identity\n' > "$identity_root/usr/share/zoneinfo/Europe/Berlin"
+"$holypkg" db init --root "$identity_root" > /dev/null
+"$holypkg" cache stage "local:$tmp/fixture.holy" --root "$identity_root" > /dev/null
+"$holypkg" cache stage "local:$tmp/network.holy" --root "$identity_root" > /dev/null
+printf '[install]\nroot "%s"\nlocale en_US.UTF-8\ntimezone Europe/Berlin\nnetwork-profile connman-iwd\nnetwork-package %s\nartifact %s\nartifact %s\n' \
+    "$identity_root" "$network_digest" "$digest" "$network_digest" > "$tmp/identity.conf"
+"$installer" --config "$tmp/identity.conf" --plan "$tmp/identity.plan" --holypkg "$holypkg" > "$tmp/out"
+grep -qx 'format holy-install-plan-6' "$tmp/identity.plan"
+grep -qx 'locale en_US.UTF-8' "$tmp/identity.plan"
+grep -qx 'timezone Europe/Berlin' "$tmp/identity.plan"
+grep -qx 'network-profile connman-iwd' "$tmp/identity.plan"
+grep -qx "network-package $network_digest" "$tmp/identity.plan"
+test ! -e "$identity_root/etc/locale.conf"
+"$installer" --apply "$tmp/identity.plan" --holypkg "$holypkg" > "$tmp/out"
+grep -qx 'locale en_US.UTF-8' "$tmp/out"
+grep -qx 'timezone Europe/Berlin' "$tmp/out"
+grep -qx "network connman-iwd packages 1 firmware 0" "$tmp/out"
+grep -qx 'LANG=en_US.UTF-8' "$identity_root/etc/locale.conf"
+grep -qx 'Europe/Berlin' "$identity_root/etc/timezone"
+test -L "$identity_root/etc/localtime"
+test "$(readlink "$identity_root/etc/localtime")" = /usr/share/zoneinfo/Europe/Berlin
+grep -qx 'AutoConnect=true' "$identity_root/etc/connman/connman.conf"
+test -d "$identity_root/var/lib/connman"
+test -d "$identity_root/var/lib/iwd"
+test "$(stat -c '%a' "$identity_root/etc/locale.conf")" = 644
+"$holypkg" db check --all --root "$identity_root" > /dev/null
+# a zone the target has no data for is not invented
+missing_zone="$tmp/missing-zone"
+mkdir -p "$missing_zone/usr/share/zoneinfo/Europe" "$missing_zone/etc"
+printf 'TZif2identity\n' > "$missing_zone/usr/share/zoneinfo/Europe/Berlin"
+"$holypkg" db init --root "$missing_zone" > /dev/null
+"$holypkg" cache stage "local:$tmp/fixture.holy" --root "$missing_zone" > /dev/null
+printf '[install]\nroot "%s"\ntimezone Africa/Nairobi\nartifact %s\n' \
+    "$missing_zone" "$digest" > "$tmp/missing-zone.conf"
+"$installer" --config "$tmp/missing-zone.conf" --plan "$tmp/missing-zone.plan" --holypkg "$holypkg" > "$tmp/out"
+if "$installer" --apply "$tmp/missing-zone.plan" --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+grep -qx 'holyinstall: timezone Africa/Nairobi is not in the target' "$tmp/err"
+test ! -e "$missing_zone/etc/localtime"
+# a profile needs its artifacts, a zone needs a shape and a locale needs a charset
+printf '[install]\nroot "%s"\nnetwork-profile connman-iwd\nartifact %s\n' \
+    "$missing_zone" "$digest" > "$tmp/profile-alone.conf"
+if "$installer" --config "$tmp/profile-alone.conf" --plan "$tmp/profile-alone.plan" \
+    --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+grep -qxF 'holyinstall: [install] network-profile needs network-package lines' "$tmp/err"
+printf '[install]\nroot "%s"\nnetwork-profile NetworkManager\nnetwork-package %s\nartifact %s\nartifact %s\n' \
+    "$identity_root" "$network_digest" "$digest" "$network_digest" > "$tmp/profile-name.conf"
+if "$installer" --config "$tmp/profile-name.conf" --plan "$tmp/profile-name.plan" \
+    --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+grep -qx "holyinstall: invalid network-profile at $tmp/profile-name.conf:3" "$tmp/err"
+printf '[install]\nroot "%s"\nnetwork-package %s\nartifact %s\n' \
+    "$identity_root" "$network_digest" "$digest" > "$tmp/profile-artifact.conf"
+if "$installer" --config "$tmp/profile-artifact.conf" --plan "$tmp/profile-artifact.plan" \
+    --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+grep -qx "holyinstall: network-package $network_digest is not a selected artifact at $tmp/profile-artifact.conf:3" "$tmp/err"
+printf '[install]\nroot "%s"\ntimezone ../escape\nartifact %s\n' \
+    "$identity_root" "$digest" > "$tmp/zone-shape.conf"
+if "$installer" --config "$tmp/zone-shape.conf" --plan "$tmp/zone-shape.plan" \
+    --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+grep -qx "holyinstall: invalid timezone at $tmp/zone-shape.conf:3" "$tmp/err"
+printf '[install]\nroot "%s"\nlocale en US\nartifact %s\n' \
+    "$identity_root" "$digest" > "$tmp/locale-shape.conf"
+if "$installer" --config "$tmp/locale-shape.conf" --plan "$tmp/locale-shape.plan" \
+    --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+grep -qxF "holyinstall: $tmp/locale-shape.conf:3: locale expects 1 argument(s)" "$tmp/err"
+# a profile that lost its packages, or lost its name, is not a shorter plan
+sed '/^network-package /d' "$tmp/identity.plan" > "$tmp/identity-short.plan"
+if "$installer" --apply "$tmp/identity-short.plan" --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -qx 'holyinstall: plan inputs changed or invalid' "$tmp/err"
+sed '/^network-profile /d' "$tmp/identity.plan" > "$tmp/identity-noname.plan"
+if "$installer" --apply "$tmp/identity-noname.plan" --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+grep -qx 'holyinstall: plan inputs changed or invalid' "$tmp/err"
 printf 'installer plan and apply fixtures passed\n'

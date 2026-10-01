@@ -2,6 +2,7 @@
 #include "config.h"
 #include "disk.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -14,20 +15,21 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-/* one account the install creates in the target root: the plan fixes the identity and
-   the shell, and the password comes from a file the caller supplies, never from argv */
-struct install_account {
-    char *name;
-    unsigned long uid, gid;
-    char *shell;
-    char *groups;        /* extra groups the account joins, comma separated */
-};
+/* defined below, next to the other target writers */
+static int host_wireless(void);
 
 struct install_input {
     char *root;
     char **accounts;      /* the account lines as the config wrote them */
     size_t account_count;
     char *password_file;  /* a file holding the shadow hash for every account */
+    char *locale;         /* the locale the target boots with */
+    char *timezone;       /* the zone the target boots with */
+    char *network;        /* the network profile the target uses */
+    char **network_packages;  /* the artifacts a network profile needs */
+    size_t network_count;
+    char **firmware;      /* the artifacts that carry wireless firmware */
+    size_t firmware_count;
     char **artifacts;
     size_t count;
     char **accepted_arch;
@@ -140,6 +142,39 @@ static int account_name_valid(const char *name)
     return 1;
 }
 
+/* a locale name: language[_territory][.charset][@modifier], which is what the target's
+   libc reads out of /etc/locale.conf */
+static int locale_valid(const char *text)
+{
+    size_t i, length = strlen(text);
+    if (!length || length > 32) return 0;
+    for (i = 0; i < length; ++i) {
+        char c = text[i];
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9')) continue;
+        if (c == '_' || c == '.' || c == '@' || c == '-') continue;
+        return 0;
+    }
+    return 1;
+}
+
+/* a zone name: an area and a city under the target's zoneinfo, without a step upward */
+static int timezone_valid(const char *text)
+{
+    const char *slash = strchr(text, '/');
+    size_t length = strlen(text);
+    if (!slash || slash == text || !slash[1] || length > 64) return 0;
+    if (strstr(text, "..")) return 0;
+    for (; *text; ++text) {
+        char c = *text;
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '/' || c == '_' || c == '-' || c == '+')
+            continue;
+        return 0;
+    }
+    return 1;
+}
+
 /* the account line as the plan carries it: name uid gid shell groups, with a dash for
    no extra groups, so the plan is one fixed shape */
 static int account_line(const char *name, const char *uid, const char *gid,
@@ -182,45 +217,6 @@ static int load_input(const char *path, struct holy_config *config,
     }
     input->accounts = calloc(config->count ? config->count : 1, sizeof *input->accounts);
     if (!input->accounts) return 1;
-    for (i = 0; i < config->count; ++i) {
-        const struct holy_entry *e = &config->entries[i];
-        char *line = NULL;
-        if (strcmp(e->section, "install")) continue;
-        if (!strcmp(e->key, "password-file")) {
-            if (e->count != 1 || input->password_file) {
-                fprintf(stderr, "holyinstall: password-file takes one path at %s:%zu\n",
-                        e->file, e->line);
-                return 2;
-            }
-            if (e->values[0][0] != '/') {
-                fprintf(stderr, "holyinstall: password-file needs an absolute path at %s:%zu\n",
-                        e->file, e->line);
-                return 2;
-            }
-            input->password_file = strdup(e->values[0]);
-            if (!input->password_file) return 1;
-            continue;
-        }
-        if (strcmp(e->key, "account")) continue;
-        if (e->count != 5 ||
-            !account_line(e->values[0], e->values[1], e->values[2], e->values[3],
-                          e->values[4], &line)) {
-            fprintf(stderr, "holyinstall: invalid account at %s:%zu\n", e->file, e->line);
-            return 2;
-        }
-        for (j = 0; j < input->account_count; ++j)
-            if (!strncmp(input->accounts[j], line, strlen(e->values[0]))) {
-                fprintf(stderr, "holyinstall: duplicate account at %s:%zu\n", e->file, e->line);
-                free(line);
-                return 2;
-            }
-        input->accounts[input->account_count++] = line;
-    }
-    if ((input->password_file && !input->account_count) ||
-        (!input->account_count && field(config, "install", "doas"))) {
-        fputs("holyinstall: [install] account lines are required for a password file or doas\n", stderr);
-        return 2;
-    }
     input->artifacts = calloc(config->count ? config->count : 1, sizeof *input->artifacts);
     if (!input->artifacts) return 1;
     for (i = 0; i < config->count; ++i) {
@@ -244,6 +240,106 @@ static int load_input(const char *path, struct holy_config *config,
         ++input->count;
     }
     if (!input->count) { fputs("holyinstall: [install] needs artifact entries\n", stderr); return 2; }
+    /* the network profile names artifacts of this set, so it is read after them */
+    for (i = 0; i < config->count; ++i) {
+        const struct holy_entry *e = &config->entries[i];
+        if (strcmp(e->section, "install")) continue;
+        if (!strcmp(e->key, "locale") || !strcmp(e->key, "timezone") ||
+            !strcmp(e->key, "network-profile")) {
+            char **target = !strcmp(e->key, "locale") ? &input->locale :
+                            !strcmp(e->key, "timezone") ? &input->timezone : &input->network;
+            int valid = e->count == 1 &&
+                        (!strcmp(e->key, "locale") ? locale_valid(e->values[0]) :
+                         !strcmp(e->key, "timezone") ? timezone_valid(e->values[0]) :
+                         !strcmp(e->values[0], "connman-iwd"));
+            if (!valid || *target) {
+                fprintf(stderr, "holyinstall: invalid %s at %s:%zu\n", e->key, e->file, e->line);
+                return 2;
+            }
+            *target = strdup(e->values[0]);
+            if (!*target) return 1;
+            continue;
+        }
+        if (!strcmp(e->key, "network-package") || !strcmp(e->key, "firmware")) {
+            char ***list = !strcmp(e->key, "network-package") ? &input->network_packages :
+                           &input->firmware;
+            size_t *count = !strcmp(e->key, "network-package") ? &input->network_count :
+                            &input->firmware_count;
+            size_t j;
+            if (e->count != 1 || !digest_valid(e->values[0])) {
+                fprintf(stderr, "holyinstall: %s needs one artifact SHA-256 at %s:%zu\n",
+                        e->key, e->file, e->line);
+                return 2;
+            }
+            for (j = 0; j < input->count; ++j)
+                if (!strcmp(input->artifacts[j], e->values[0])) break;
+            if (j == input->count) {
+                fprintf(stderr, "holyinstall: %s %s is not a selected artifact at %s:%zu\n",
+                        e->key, e->values[0], e->file, e->line);
+                return 2;
+            }
+            if (*count >= input->count) return 2;
+            for (j = 0; j < *count; ++j)
+                if (!strcmp((*list)[j], e->values[0])) {
+                    fprintf(stderr, "holyinstall: duplicate %s %s at %s:%zu\n", e->key,
+                            e->values[0], e->file, e->line);
+                    return 2;
+                }
+            *list = realloc(*list, (*count + 1) * sizeof **list);
+            if (!*list) return 1;
+            (*list)[*count] = strdup(e->values[0]);
+            if (!(*list)[*count]) return 1;
+            ++*count;
+            continue;
+        }
+        if (!strcmp(e->key, "account")) {
+            char *line = NULL;
+            if (e->count != 5 ||
+                !account_line(e->values[0], e->values[1], e->values[2], e->values[3],
+                              e->values[4], &line)) {
+                fprintf(stderr, "holyinstall: invalid account at %s:%zu\n", e->file, e->line);
+                return 2;
+            }
+            /* the name decides, since one name is one account whatever its ids are */
+            for (j = 0; j < input->account_count; ++j)
+                if (!strncmp(input->accounts[j], line, strlen(e->values[0]))) {
+                    fprintf(stderr, "holyinstall: duplicate account at %s:%zu\n",
+                            e->file, e->line);
+                    free(line);
+                    return 2;
+                }
+            if (input->account_count >= config->count) { free(line); return 2; }
+            input->accounts[input->account_count++] = line;
+            continue;
+        }
+        if (!strcmp(e->key, "password-file")) {
+            if (e->count != 1 || input->password_file) {
+                fprintf(stderr, "holyinstall: password-file takes one path at %s:%zu\n",
+                        e->file, e->line);
+                return 2;
+            }
+            if (e->values[0][0] != '/') {
+                fprintf(stderr, "holyinstall: password-file needs an absolute path at %s:%zu\n",
+                        e->file, e->line);
+                return 2;
+            }
+            input->password_file = strdup(e->values[0]);
+            if (!input->password_file) return 1;
+        }
+    }
+    if (input->network && !input->network_count) {
+        fputs("holyinstall: [install] network-profile needs network-package lines\n", stderr);
+        return 2;
+    }
+    if (input->password_file && !input->account_count) {
+        fputs("holyinstall: [install] password-file needs an account\n", stderr);
+        return 2;
+    }
+    if (input->network && !input->firmware_count && host_wireless()) {
+        fprintf(stderr, "holyinstall: this host has a wireless interface and %s has no"
+                        " firmware lines; name the firmware artifacts\n", input->network);
+        return 3;
+    }
     input->accepted_arch = calloc(config->count ? config->count : 1,
                                   sizeof *input->accepted_arch);
     input->accepted_privileged = calloc(config->count ? config->count : 1,
@@ -442,6 +538,7 @@ static int write_plan(const char *path, const struct install_input *input,
     stream = fdopen(fd, "w");
     if (!stream) { close(fd); unlink(path); return 1; }
     if (fprintf(stream, "[install-plan]\nformat holy-install-plan-%d\nroot ",
+                input->locale || input->timezone || input->network ? 6 :
                 input->account_count ? 5 : input->source_count ? 4 :
                 input->privileged_count ? 3 : input->accept_count ? 2 : 1) < 0 ||
         !quote(stream, input->root) ||
@@ -462,6 +559,15 @@ static int write_plan(const char *path, const struct install_input *input,
         if (fprintf(stream, "account %s\n", input->accounts[i]) < 0) ok = 0;
     if (input->password_file && fprintf(stream, "password-file %s\n",
                                         input->password_file) < 0) ok = 0;
+    /* the target's identity and its network profile follow the accounts, which is the
+       order a plan names them in */
+    if (input->locale && fprintf(stream, "locale %s\n", input->locale) < 0) ok = 0;
+    if (input->timezone && fprintf(stream, "timezone %s\n", input->timezone) < 0) ok = 0;
+    if (input->network && fprintf(stream, "network-profile %s\n", input->network) < 0) ok = 0;
+    for (i = 0; i < input->network_count && ok; ++i)
+        if (fprintf(stream, "network-package %s\n", input->network_packages[i]) < 0) ok = 0;
+    for (i = 0; i < input->firmware_count && ok; ++i)
+        if (fprintf(stream, "firmware %s\n", input->firmware[i]) < 0) ok = 0;
     if (fflush(stream) || fsync(fd)) ok = 0;
     if (fclose(stream)) ok = 0;
     if (ok) ok = sync_parent(path);
@@ -723,6 +829,127 @@ done:
     return rc;
 }
 
+/* whether this host has a wireless interface, since an install that needs Wi-Fi has to
+   name the firmware before the plan is written */
+static int host_wireless(void)
+{
+    DIR *listing = opendir("/sys/class/net");
+    struct dirent *entry;
+    int found = 0;
+    char path[256];
+    if (!listing) return 0;
+    while (!found && (entry = readdir(listing))) {
+        if (entry->d_name[0] == '.') continue;
+        if (snprintf(path, sizeof path, "/sys/class/net/%s/wireless", entry->d_name) >=
+            (int)sizeof path) continue;
+        {
+            struct stat st;
+            if (!lstat(path, &st) && S_ISDIR(st.st_mode)) found = 1;
+        }
+    }
+    closedir(listing);
+    return found;
+}
+
+/* creates one directory of the target root, with its mode when the packages left none */
+static int make_directory(int root, const char *path, mode_t mode)
+{
+    char *copy = strdup(path), *slash;
+    int fd = root, ok = 1;
+    if (!copy) return 1;
+    for (slash = copy + 1; *slash; ++slash) {
+        if (*slash != '/') continue;
+        *slash = 0;
+        if (mkdirat(fd, copy, mode) && errno != EEXIST) { ok = 0; break; }
+        *slash = '/';
+    }
+    if (ok && mkdirat(fd, path, mode) && errno != EEXIST) ok = 0;
+    free(copy);
+    return ok ? 0 : 1;
+}
+
+/* writes a symlink in the target root through a temporary name, so a crash leaves the
+   previous link whole */
+static int link_in_root(int etc, const char *name, const char *target)
+{
+    char temporary[64];
+    int attempt;
+    for (attempt = 0; attempt < 64; ++attempt) {
+        snprintf(temporary, sizeof temporary, ".holy-localtime-%ld-%d", (long)getpid(),
+                 attempt);
+        unlinkat(etc, temporary, 0);
+        if (!symlinkat(target, etc, temporary) &&
+            !renameat(etc, temporary, etc, name) && !fsync(etc)) return 0;
+        if (errno != EEXIST) return 1;
+    }
+    return 1;
+}
+
+/* the target boots with the locale, zone and network profile the plan names. these are
+   the files the packages read, so a profile is configuration and nothing more */
+static int apply_target_identity(const struct install_input *input)
+{
+    char line[512];
+    int root = -1, etc = -1, rc = 0;
+    size_t i;
+    if (!input->locale && !input->timezone && !input->network) return 0;
+    root = open(input->root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0 || (etc = openat(root, "etc", O_RDONLY | O_DIRECTORY | O_NOFOLLOW |
+                                   O_CLOEXEC)) < 0) {
+        fprintf(stderr, "holyinstall: target root has no /etc: %s\n", strerror(errno));
+        rc = 6;
+        goto done;
+    }
+    if (input->timezone) {
+        char zone[128];
+        int zoneinfo;
+        if (snprintf(zone, sizeof zone, "usr/share/zoneinfo/%s", input->timezone) >=
+            (int)sizeof zone) { rc = 1; goto done; }
+        zoneinfo = openat(root, "usr/share/zoneinfo", O_RDONLY | O_DIRECTORY | O_NOFOLLOW |
+                          O_CLOEXEC);
+        if (zoneinfo < 0) {
+            fputs("holyinstall: target has no zoneinfo; the timezone data is a package\n",
+                  stderr);
+            rc = 6;
+            goto done;
+        }
+        if (faccessat(zoneinfo, input->timezone, F_OK, 0)) {
+            fprintf(stderr, "holyinstall: timezone %s is not in the target\n", input->timezone);
+            rc = 6;
+        }
+        close(zoneinfo);
+        if (rc) goto done;
+        if (snprintf(line, sizeof line, "%s\n", input->timezone) < 0 ||
+            append_line(etc, "timezone", 0644, line, 0)) { rc = 1; goto done; }
+        snprintf(line, sizeof line, "/usr/share/zoneinfo/%s", input->timezone);
+        if (link_in_root(etc, "localtime", line)) { rc = 1; goto done; }
+        printf("timezone %s\n", input->timezone);
+    }
+    if (input->locale) {
+        if (snprintf(line, sizeof line, "LANG=%s\n", input->locale) < 0 ||
+            append_line(etc, "locale.conf", 0644, line, 0)) { rc = 1; goto done; }
+        printf("locale %s\n", input->locale);
+    }
+    if (input->network) {
+        static const char settings[] = "[Settings]\nAutoConnect=true\nOfflineMode=false\n";
+        if (strcmp(input->network, "connman-iwd")) { rc = 2; goto done; }
+        if (make_directory(root, "var/lib/connman", 0700) ||
+            make_directory(root, "var/lib/iwd", 0700) ||
+            make_directory(root, "etc/connman", 0755)) { rc = 1; goto done; }
+        if (append_line(etc, "connman/connman.conf", 0644, settings, 0)) { rc = 1; goto done; }
+        printf("network %s packages %zu firmware %zu\n", input->network,
+               input->network_count, input->firmware_count);
+        for (i = 0; i < input->network_count; ++i)
+            printf("network-package %s\n", input->network_packages[i]);
+        for (i = 0; i < input->firmware_count; ++i)
+            printf("firmware %s\n", input->firmware[i]);
+    }
+done:
+    if (etc >= 0) close(etc);
+    if (root >= 0) close(root);
+    return rc;
+}
+
 static int check_plan(const char *path, struct install_input *input,
                       char hash[65])
 {
@@ -762,10 +989,12 @@ static int check_plan(const char *path, struct install_input *input,
                  strcmp(v[1], "holy-install-plan-2") &&
                  strcmp(v[1], "holy-install-plan-3") &&
                  strcmp(v[1], "holy-install-plan-4") &&
-                 strcmp(v[1], "holy-install-plan-5"))) {
+                 strcmp(v[1], "holy-install-plan-5") &&
+                 strcmp(v[1], "holy-install-plan-6"))) {
                 holy_tokens_free(v, count); goto done;
             }
-            version = !strcmp(v[1], "holy-install-plan-5") ? 5 :
+            version = !strcmp(v[1], "holy-install-plan-6") ? 6 :
+                      !strcmp(v[1], "holy-install-plan-5") ? 5 :
                       !strcmp(v[1], "holy-install-plan-4") ? 4 :
                       !strcmp(v[1], "holy-install-plan-3") ? 3 :
                       !strcmp(v[1], "holy-install-plan-2") ? 2 : 1;
@@ -878,6 +1107,45 @@ static int check_plan(const char *path, struct install_input *input,
             phase = 5;
             input->password_file = strdup(v[1]);
             if (!input->password_file) { holy_tokens_free(v, count); goto done; }
+        } else if (!strcmp(v[0], "locale") || !strcmp(v[0], "timezone") ||
+                   !strcmp(v[0], "network-profile")) {
+            char **target = !strcmp(v[0], "locale") ? &input->locale :
+                            !strcmp(v[0], "timezone") ? &input->timezone : &input->network;
+            int valid = version < 6 ? 0 : count == 2 &&
+                        (!strcmp(v[0], "locale") ? locale_valid(v[1]) :
+                         !strcmp(v[0], "timezone") ? timezone_valid(v[1]) :
+                         !strcmp(v[1], "connman-iwd"));
+            if (!valid || *target) { holy_tokens_free(v, count); goto done; }
+            phase = 6;
+            *target = strdup(v[1]);
+            if (!*target) { holy_tokens_free(v, count); goto done; }
+        } else if (!strcmp(v[0], "network-package") || !strcmp(v[0], "firmware")) {
+            char ***list = !strcmp(v[0], "network-package") ? &input->network_packages :
+                           &input->firmware;
+            size_t *total = !strcmp(v[0], "network-package") ? &input->network_count :
+                            &input->firmware_count;
+            char **next;
+            size_t i;
+            /* the network packages come before the firmware, which is the order the
+               writer names them */
+            int wanted = !strcmp(v[0], "network-package") ? 7 : 8;
+            if (version < 6 || phase >= wanted || phase + 1 < wanted ||
+                count != 2 || !digest_valid(v[1]) || *total >= input->count + 64) {
+                holy_tokens_free(v, count); goto done;
+            }
+            phase = wanted;
+            for (i = 0; i < *total; ++i) if (!strcmp((*list)[i], v[1])) {
+                holy_tokens_free(v, count); goto done;
+            }
+            for (i = 0; i < input->count; ++i)
+                if (!strcmp(input->artifacts[i], v[1])) break;
+            if (i == input->count) { holy_tokens_free(v, count); goto done; }
+            next = realloc(*list, (*total + 1) * sizeof *next);
+            if (!next) { holy_tokens_free(v, count); goto done; }
+            *list = next;
+            (*list)[*total] = strdup(v[1]);
+            if (!(*list)[*total]) { holy_tokens_free(v, count); goto done; }
+            ++*total;
         } else {
             char **next;
             size_t i;
@@ -900,8 +1168,14 @@ static int check_plan(const char *path, struct install_input *input,
     }
     if (ferror(stream) || row != 7 + input->count + input->accept_count +
                                 input->privileged_count + input->source_count +
-                                input->account_count + (input->password_file ? 1u : 0u) ||
+                                input->account_count + (input->password_file ? 1u : 0u) +
+                                (input->locale ? 1u : 0u) + (input->timezone ? 1u : 0u) +
+                                (input->network ? 1u : 0u) + input->network_count +
+                                input->firmware_count ||
         (input->password_file && !input->account_count) ||
+        (input->network && (!input->network_count || version < 6)) ||
+        ((input->network_count || input->firmware_count) && !input->network) ||
+        (version == 6 && (!input->locale && !input->timezone && !input->network)) ||
         !input->count || (version == 1 && input->accept_count) ||
         (version == 2 && (!input->accept_count || input->privileged_count)) ||
         (version == 3 && !input->privileged_count) ||
@@ -921,6 +1195,13 @@ struct menu_state {
     char **accounts;            /* the account lines the plan carries */
     size_t account_count;
     char *password_file;
+    char *locale;
+    char *timezone;
+    char *network;
+    char **network_packages;
+    size_t network_count;
+    char **firmware;
+    size_t firmware_count;
     char **artifacts;
     size_t count;
     char **accepted_arch;
@@ -937,6 +1218,13 @@ static void free_input(struct install_input *input)
     for (i = 0; i < input->account_count; ++i) free(input->accounts[i]);
     free(input->accounts);
     free(input->password_file);
+    free(input->locale);
+    free(input->timezone);
+    free(input->network);
+    for (i = 0; i < input->network_count; ++i) free(input->network_packages[i]);
+    free(input->network_packages);
+    for (i = 0; i < input->firmware_count; ++i) free(input->firmware[i]);
+    free(input->firmware);
     for (i = 0; i < input->count; ++i) free(input->artifacts[i]);
     free(input->artifacts);
     for (i = 0; i < input->accept_count; ++i) free(input->accepted_arch[i]);
@@ -954,6 +1242,13 @@ static void free_menu(struct menu_state *menu)
     size_t j;
     for (j = 0; j < menu->account_count; ++j) free(menu->accounts[j]);
     free(menu->accounts);
+    for (j = 0; j < menu->network_count; ++j) free(menu->network_packages[j]);
+    free(menu->network_packages);
+    for (j = 0; j < menu->firmware_count; ++j) free(menu->firmware[j]);
+    free(menu->firmware);
+    free(menu->locale);
+    free(menu->timezone);
+    free(menu->network);
     free(menu->password_file);
     size_t i;
     for (i = 0; i < menu->count; ++i) free(menu->artifacts[i]);
@@ -1017,6 +1312,43 @@ static int menu_load(const char *path, struct menu_state *menu)
             }
             menu->password_file = strdup(e->values[0]);
             if (!menu->password_file) { holy_config_free(&config); return 1; }
+        } else if (!strcmp(e->key, "locale") || !strcmp(e->key, "timezone") ||
+                   !strcmp(e->key, "network-profile")) {
+            char **target = !strcmp(e->key, "locale") ? &menu->locale :
+                            !strcmp(e->key, "timezone") ? &menu->timezone : &menu->network;
+            int valid = e->count == 1 &&
+                        (!strcmp(e->key, "locale") ? locale_valid(e->values[0]) :
+                         !strcmp(e->key, "timezone") ? timezone_valid(e->values[0]) :
+                         !strcmp(e->values[0], "connman-iwd"));
+            if (!valid || *target) {
+                fprintf(stderr, "holyinstall: invalid %s at %s:%zu\n", e->key, e->file, e->line);
+                holy_config_free(&config); return 2;
+            }
+            *target = strdup(e->values[0]);
+            if (!*target) { holy_config_free(&config); return 1; }
+        } else if (!strcmp(e->key, "network-package") || !strcmp(e->key, "firmware")) {
+            char ***list = !strcmp(e->key, "network-package") ? &menu->network_packages :
+                           &menu->firmware;
+            size_t *total = !strcmp(e->key, "network-package") ? &menu->network_count :
+                            &menu->firmware_count;
+            size_t j;
+            if (e->count != 1 || !digest_valid(e->values[0]) || *total >= menu->count) {
+                fprintf(stderr, "holyinstall: %s needs one artifact SHA-256 at %s:%zu\n",
+                        e->key, e->file, e->line);
+                holy_config_free(&config); return 2;
+            }
+            for (j = 0; j < menu->count; ++j)
+                if (!strcmp(menu->artifacts[j], e->values[0])) break;
+            if (j == menu->count) {
+                fprintf(stderr, "holyinstall: %s %s is not a selected artifact at %s:%zu\n",
+                        e->key, e->values[0], e->file, e->line);
+                holy_config_free(&config); return 2;
+            }
+            *list = realloc(*list, (*total + 1) * sizeof **list);
+            if (!*list) { holy_config_free(&config); return 1; }
+            (*list)[*total] = strdup(e->values[0]);
+            if (!(*list)[*total]) { holy_config_free(&config); return 1; }
+            ++*total;
         } else if (!strcmp(e->key, "artifact")) {
             next = realloc(menu->artifacts, (menu->count + 1) * sizeof *next);
             if (!next) { holy_config_free(&config); return 1; }
@@ -1097,12 +1429,20 @@ static int menu_write(FILE *stream, const struct menu_state *menu)
     if (fputs("[install]\n", stream) == EOF) return 0;
     if (menu->root && (fputs("root ", stream) == EOF ||
                        !quote(stream, menu->root) || fputc('\n', stream) == EOF)) return 0;
-    /* the accounts come before the artifacts, since a plan names them first */
+    /* the accounts and the target's identity come before the artifacts, since a plan
+       names them first */
     for (i = 0; i < menu->account_count; ++i)
         if (fprintf(stream, "account %s\n", menu->accounts[i]) < 0) return 0;
     if (menu->password_file &&
         (fputs("password-file ", stream) == EOF ||
          !quote(stream, menu->password_file) || fputc('\n', stream) == EOF)) return 0;
+    if (menu->locale && fprintf(stream, "locale %s\n", menu->locale) < 0) return 0;
+    if (menu->timezone && fprintf(stream, "timezone %s\n", menu->timezone) < 0) return 0;
+    if (menu->network && fprintf(stream, "network-profile %s\n", menu->network) < 0) return 0;
+    for (i = 0; i < menu->network_count; ++i)
+        if (fprintf(stream, "network-package %s\n", menu->network_packages[i]) < 0) return 0;
+    for (i = 0; i < menu->firmware_count; ++i)
+        if (fprintf(stream, "firmware %s\n", menu->firmware[i]) < 0) return 0;
     for (i = 0; i < menu->count; ++i)
         if (fprintf(stream, "artifact %s\n", menu->artifacts[i]) < 0) return 0;
     for (i = 0; i < menu->accept_count; ++i)
@@ -1463,10 +1803,13 @@ static int menu_run(const char *config_path, const char *plan_path,
             if (!strcmp(confirm, "yes")) {
                 rc = run_package_manager(binary, &input, hash, &output);
                 if (!rc) { fputs(output, stdout); puts("Package transaction complete"); }
-                /* the accounts land after the packages, since the payload that carries
-                   PAM, NSS and doas is what makes them usable */
+                /* the accounts and the target's identity land after the packages, since
+                   the payload that carries PAM, NSS, doas, zoneinfo and the managers is
+                   what makes them usable */
                 if (!rc && (rc = apply_accounts(&input)))
                     printf("Accounts failed (status %d)\n", rc);
+                if (!rc && (rc = apply_target_identity(&input)))
+                    printf("Target identity failed (status %d)\n", rc);
                 prepared = 0;
             }
             free(confirm); free(output); free_input(&input);
@@ -1539,7 +1882,11 @@ int main(int argc, char **argv)
         if (rc) goto done;
         rc = run_package_manager(binary, &input, hash, &output);
         if (!rc && fputs(output, stdout) == EOF) rc = 1;
+        /* the accounts and the target's identity land after the packages, since the
+           payload that carries PAM, NSS, doas, zoneinfo and the managers is what makes
+           them usable */
         if (!rc) rc = apply_accounts(&input);
+        if (!rc) rc = apply_target_identity(&input);
     } else {
         rc = load_input(config_path, &config, &input);
         if (rc) goto done;

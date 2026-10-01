@@ -73,6 +73,11 @@ accept-privileged SHA256_OF_REVIEWED_SETUID_PACKAGE
 source SHA256_OF_SELECTED_PACKAGE REGISTERED_SOURCE_ID
 account NAME UID GID SHELL GROUPS
 password-file "/run/holy/password.hash"
+locale en_US.UTF-8
+timezone Europe/Berlin
+network-profile connman-iwd
+network-package SHA256_OF_NETWORK_MANAGER
+firmware SHA256_OF_WIRELESS_FIRMWARE
 .fi
 .RE
 .PP
@@ -134,6 +139,48 @@ those is refused. Without the line the account's shadow entry is locked. The
 plan carries the path, not the secret, so a plan may be reviewed and its hash
 approved while the file stays unread until the account is created. The text
 menu keeps both keys when saving config.
+.PP
+locale names the locale the target boots with, a language, an optional
+territory, an optional codeset and an optional modifier. timezone names a zone
+under the target's zoneinfo, an area and a city, with no step upward. Neither
+key invents data: the locale and zone files are packages, and apply refuses a
+zone the target has no data for. Plan format 6 carries both lines, and apply
+writes them after the packages land, since the payload that carries the data
+is what makes them readable:
+.RS
+.nf
+LANG=en_US.UTF-8
+Europe/Berlin
+/etc/localtime -> /usr/share/zoneinfo/Europe/Berlin
+.fi
+.RE
+.PP
+network-profile names the reference profile, connman-iwd, as ConnMan with iwd
+behind it. network-package names each selected artifact that profile needs,
+since the managers are packages and this command installs them rather than
+owning them. firmware names each selected artifact that carries wireless
+firmware. A profile with no network-package line, a network-package that is
+not a selected artifact, a firmware line without a profile and an unknown
+profile are refused before a plan exists. On a host with a wireless interface
+a profile with no firmware line is decision-required, since an install that
+needs Wi-Fi has to carry the firmware with it. The actual connection is a fact
+of the installed system, not of this transaction.
+.PP
+Plan format 6 applies the profile by writing the configuration the packages
+read and by creating the state directories they keep:
+.RS
+.nf
+/etc/connman/connman.conf
+/var/lib/connman
+/var/lib/iwd
+.fi
+.RE
+.PP
+connman.conf is 0644 and sets AutoConnect and OfflineMode, the state
+directories are 0700 and the config directory 0755. Nothing here starts or
+enables a service: a unit under etc/dinit.d still needs the consent the
+package set asks for. A profile whose name or packages were removed after
+review is refused at apply, since the reviewed document no longer holds.
 .SH DISK PREPARATION
 The disk command accepts a regular file or a block disk of at least 1 GiB. The supported
 layout is GPT with a 1 MiB BIOS boot partition, a 256 MiB FAT32 ESP and an

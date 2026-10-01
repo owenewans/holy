@@ -793,7 +793,7 @@ SEE ALSO
      holy-image(7), holypkg(8)
 
 Holy				 September 2026			    HOLY-INIT(8)
-holyinstall.8 source=holy version=development sha256=327a68f7e3c8d65e7bcafd0d66880442fbe9c0ee6df5b43dc7d6e4bc33969a71
+holyinstall.8 source=holy version=development sha256=303c2c7d8cd13b8ea2856f5d9e02671ff5229dab1f8c812681e79fc3a8af108b
 HOLYINSTALL(8)		     System Manager's Manual		  HOLYINSTALL(8)
 
 NAME
@@ -863,6 +863,11 @@ DESCRIPTION
 	    source SHA256_OF_SELECTED_PACKAGE REGISTERED_SOURCE_ID
 	    account NAME UID GID SHELL GROUPS
 	    password-file "/run/holy/password.hash"
+	    locale en_US.UTF-8
+	    timezone Europe/Berlin
+	    network-profile connman-iwd
+	    network-package SHA256_OF_NETWORK_MANAGER
+	    firmware SHA256_OF_WIRELESS_FIRMWARE
 
      SHA256 values must be lowercase. The root path cannot be /. Config comments
      do	 not change the effective-config hash. Changes to parsed values or arti-
@@ -921,10 +926,44 @@ DESCRIPTION
      viewed  and its hash approved while the file stays unread until the account
      is created. The text menu keeps both keys when saving config.
 
+     locale names the locale the target boots with, a language, an optional ter-
+     ritory, an optional codeset and an optional modifier. timezone names a zone
+     under the target's zoneinfo, an area and a city, with no step upward.  Nei-
+     ther  key	invents	 data: the locale and zone files are packages, and apply
+     refuses a zone the target has no data  for.  Plan	format	6  carries  both
+     lines,  and  apply	 writes	 them after the packages land, since the payload
+     that carries the data is what makes them readable:
+	    LANG=en_US.UTF-8
+	    Europe/Berlin
+	    /etc/localtime -> /usr/share/zoneinfo/Europe/Berlin
+
+     network-profile names the reference profile, connman-iwd, as  ConnMan  with
+     iwd  behind  it.  network-package names each selected artifact that profile
+     needs, since the managers are  packages  and  this	 command  installs  them
+     rather than owning them. firmware names each selected artifact that carries
+     wireless  firmware. A profile with no network-package line, a network-pack-
+     age that is not a selected artifact, a firmware line without a profile  and
+     an unknown profile are refused before a plan exists. On a host with a wire-
+     less  interface a profile with no firmware line is decision-required, since
+     an install that needs Wi-Fi has to carry the firmware with it.  The  actual
+     connection is a fact of the installed system, not of this transaction.
+
+     Plan format 6 applies the profile by writing the configuration the packages
+     read and by creating the state directories they keep:
+	    /etc/connman/connman.conf
+	    /var/lib/connman
+	    /var/lib/iwd
+
+     connman.conf is 0644 and sets AutoConnect and OfflineMode, the state direc-
+     tories  are  0700 and the config directory 0755. Nothing here starts or en-
+     ables a service: a unit under etc/dinit.d still needs the consent the pack-
+     age set asks for. A profile whose name or packages were removed  after  re-
+     view is refused at apply, since the reviewed document no longer holds.
+
 DISK PREPARATION
-     The disk command accepts a regular file or a block disk of at least 1  GiB.
-     The  supported  layout  is	 GPT with a 1 MiB BIOS boot partition, a 256 MiB
-     FAT32 ESP and an ext4 root partition. Image mode uses sfdisk, mkfs.fat  and
+     The  disk command accepts a regular file or a block disk of at least 1 GiB.
+     The supported layout is GPT with a 1 MiB BIOS boot	 partition,  a	256  MiB
+     FAT32  ESP and an ext4 root partition. Image mode uses sfdisk, mkfs.fat and
      mke2fs, and requires losetup to confirm that the image is not attached to a
      loop device.  A minimal image config is:
 
@@ -932,54 +971,54 @@ DISK PREPARATION
 	    image "/tmp/holy.img"
 	    layout gpt-ext4
 
-     Create  the  image	 before	 planning,  for	 example with truncate. Planning
-     prints the exact image path,  device/inode	 identity,  size  and  partition
+     Create the image before  planning,	 for  example  with  truncate.	Planning
+     prints  the  exact	 image	path,  device/inode identity, size and partition
      geometry. It hashes the first and last MiB and writes a new mode-0600 plan.
      Apply requires --confirm to equal the canonical image path in that plan. It
-     checks  the  identity  and both hashes again, then records prepared, parti-
-     tioning and formatting stages in PLAN.journal. An existing	 journal  blocks
+     checks the identity and both hashes again, then  records  prepared,  parti-
+     tioning  and  formatting stages in PLAN.journal. An existing journal blocks
      another apply.  The show command prints the saved geometry without changing
-     the  image.   After an interrupted stage, inspect the image and journal be-
+     the image.	 After an interrupted stage, inspect the image and  journal  be-
      fore starting a new plan. The command does not silently repeat a format op-
      eration.
 
-     For a block disk, use device instead of image in [disk].  Planning	 records
-     the  disk	node,  block-device  number,  size,  serial,  first and last MiB
-     hashes, and SHA-256 of  the  four	static	tools  used  by	 apply:	 sfdisk,
+     For  a  block disk, use device instead of image in [disk]. Planning records
+     the disk node, block-device  number,  size,  serial,  first  and  last  MiB
+     hashes,  and  SHA-256  of	the  four  static  tools  used by apply: sfdisk,
      mkfs.fat, mke2fs and Limine. Apply requires the exact device path as --con-
-     firm  and rechecks those inputs before mutation. It holds an exclusive disk
-     descriptor, writes the GPT, asks the kernel to reread the partition  table,
-     checks  the  partition  geometry,	formats FAT32 and ext4, and installs the
-     Limine BIOS stage. The journal records each stage. This operation	destroys
-     existing  partitions and filesystems. It does not mount the new root or in-
+     firm and rechecks those inputs before mutation. It holds an exclusive  disk
+     descriptor,  writes the GPT, asks the kernel to reread the partition table,
+     checks the partition geometry, formats FAT32 and  ext4,  and  installs  the
+     Limine  BIOS stage. The journal records each stage. This operation destroys
+     existing partitions and filesystems. It does not mount the new root or  in-
      stall packages.
 
-     Disk preparation destroys existing image contents. It does	 not  mount  the
-     partitions	 or  generate an initramfs. The finalize-plan command requires a
-     committed disk preparation journal, a valid GPT, an  exact-size  ESP  image
+     Disk  preparation	destroys  existing image contents. It does not mount the
+     partitions or generate an initramfs. The finalize-plan command  requires  a
+     committed	disk  preparation  journal, a valid GPT, an exact-size ESP image
      and an exact-size ext4 root image. It records the full SHA-256, device, in-
-     ode  and  size  of the disk, both input images and /usr/bin/limine in a new
-     mode-0600 plan. Review that plan before  applying	it.  Finalize-apply  re-
-     quires  the  exact	 disk  path  as --confirm and rechecks all inputs before
+     ode and size of the disk, both input images and /usr/bin/limine  in  a  new
+     mode-0600	plan.  Review  that  plan before applying it. Finalize-apply re-
+     quires the exact disk path as --confirm  and  rechecks  all  inputs  before
      changing the disk. It copies the two images into their partitions, verifies
      the written bytes, installs the Limine BIOS stage and verifies GPT. The ad-
-     jacent journal records each stage. A changed input requires a new plan;  an
-     existing  finalize journal requires inspection before recovery. The command
-     does not configure UEFI, mount the partitions or prove the image can  boot.
-     Boot  and	account menus and the full interactive install acceptance matrix
+     jacent  journal records each stage. A changed input requires a new plan; an
+     existing finalize journal requires inspection before recovery. The	 command
+     does  not configure UEFI, mount the partitions or prove the image can boot.
+     Boot and account menus and the full interactive install  acceptance  matrix
      remain pending.
 
-     The optional install VM fixture described in holy-image(7) gives  the  live
-     guest  a  blank  disk.  holyinstall creates the GPT and filesystems and in-
-     stalls the Limine BIOS stage inside that guest before  applying  a	 package
+     The  optional  install VM fixture described in holy-image(7) gives the live
+     guest a blank disk. holyinstall creates the GPT  and  filesystems	and  in-
+     stalls  the  Limine  BIOS stage inside that guest before applying a package
      plan to its root. The runner then boots the installed disk through BIOS and
      UEFI.
 
 EXIT STATUS
      0 means the requested step completed. 1 means an operational error. 2 means
      invalid arguments, config or plan. Disk apply returns 3 for a changed image
-     or	 missing confirmation, 5 for an existing journal or failed mutation, and
-     6 for a missing image, tool or available  capability.  holypkg  statuses  3
+     or missing confirmation, 5 for an existing journal or failed mutation,  and
+     6	for  a	missing	 image, tool or available capability. holypkg statuses 3
      through 6 propagate from the package transaction.
 
 SEE ALSO

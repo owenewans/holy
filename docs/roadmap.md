@@ -1372,7 +1372,15 @@
   packages land. The password file is read at apply and its entry reaches
   neither the plan, nor argv, nor any journal. A group the account joins must
   exist in the target and a name it already uses is reported, never
-  overwritten. Network and encryption steps stay open. The implemented blank-disk GPT/ext4/FAT path uses
+  overwritten. `locale` and `timezone` name the target's locale and zone as
+  plan lines in format 6, and apply writes `/etc/locale.conf`, `/etc/timezone`
+  and an `/etc/localtime` symlink after the packages land, refusing a zone the
+  target has no data for. `network-profile connman-iwd` names the reference
+  profile, `network-package` names the selected artifacts it needs and
+  `firmware` names the wireless firmware artifacts; on a host with a wireless
+  interface a profile without firmware is decision-required. Apply writes
+  `/etc/connman/connman.conf` and the 0700 state directories, and starts no
+  service. Encryption steps stay open. The implemented blank-disk GPT/ext4/FAT path uses
   reviewed plans and `holypkg --root`; account login has a VM fixture.
   Config and text menu now bind selected artifacts to registered source IDs
   through frozen plan format 4 and retain that provenance at install. The live
