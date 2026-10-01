@@ -3,7 +3,7 @@ set -eu
 installer=$(realpath "$1")
 holypkg=$(realpath "$2")
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+#trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 root="$tmp/root space"
 tree="$tmp/tree"
 mkdir -p "$root/usr/share" "$tree/HOLY" "$tree/DATA/usr/share"
@@ -161,4 +161,90 @@ test ! -e "$source_root/usr/share/installer-fixture"
 "$installer" --apply "$tmp/source-install.plan" --holypkg "$holypkg" > "$tmp/out"
 grep -qx "source-id $source_id" "$source_root/var/lib/holypkg/installed/$digest/state"
 "$holypkg" db check --all --root "$source_root" > /dev/null
+# the accounts a plan names land in the target root after the packages, and the password
+# entry comes from a file the caller supplies rather than from the plan
+account_root="$tmp/account-root"
+mkdir -p "$account_root/etc"
+"$holypkg" db init --root "$account_root" > /dev/null
+"$holypkg" cache stage "local:$tmp/fixture.holy" --root "$account_root" > /dev/null
+printf 'wheel:x:10:\n' > "$account_root/etc/group"
+printf '$6$holysalt$holysignature\n' > "$tmp/password.hash"
+chmod 600 "$tmp/password.hash"
+printf '[install]\nroot "%s"\naccount anna 1000 1000 /bin/sh wheel\npassword-file "%s"\nartifact %s\n' \
+    "$account_root" "$tmp/password.hash" "$digest" > "$tmp/account.conf"
+# a malformed account, a name the target cannot hold and a relative password file are
+# shape errors the prepare stage refuses before a plan exists
+printf '[install]\nroot "%s"\naccount anna 1000 1000 bin/sh -\nartifact %s\n' \
+    "$account_root" "$digest" > "$tmp/account-shell.conf"
+if "$installer" --config "$tmp/account-shell.conf" --plan "$tmp/account-shell.plan" \
+    --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+grep -qx "holyinstall: invalid account at $tmp/account-shell.conf:3" "$tmp/err"
+printf '[install]\nroot "%s"\naccount Anna 1000 1000 /bin/sh -\nartifact %s\n' \
+    "$account_root" "$digest" > "$tmp/account-name.conf"
+if "$installer" --config "$tmp/account-name.conf" --plan "$tmp/account-name.plan" \
+    --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+printf '[install]\nroot "%s"\naccount anna 1000 1000 /bin/sh -\npassword-file hash\nartifact %s\n' \
+    "$account_root" "$digest" > "$tmp/account-file.conf"
+if "$installer" --config "$tmp/account-file.conf" --plan "$tmp/account-file.plan" \
+    --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+grep -qx "holyinstall: password-file needs an absolute path at $tmp/account-file.conf:4" "$tmp/err"
+printf '[install]\nroot "%s"\naccount anna 1000 1000 /bin/sh -\naccount anna 1001 1001 /bin/sh -\nartifact %s\n' \
+    "$account_root" "$digest" > "$tmp/account-double.conf"
+if "$installer" --config "$tmp/account-double.conf" --plan "$tmp/account-double.plan" \
+    --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+"$installer" --config "$tmp/account.conf" --plan "$tmp/account.plan" --holypkg "$holypkg" > "$tmp/out"
+grep -qx 'format holy-install-plan-5' "$tmp/account.plan"
+grep -qx 'account anna 1000 1000 /bin/sh wheel' "$tmp/account.plan"
+grep -qx "password-file $tmp/password.hash" "$tmp/account.plan"
+if grep -q 'holysignature' "$tmp/account.plan"; then exit 1; fi
+test ! -e "$account_root/etc/passwd"
+"$installer" --apply "$tmp/account.plan" --holypkg "$holypkg" > "$tmp/out"
+grep -qx "accounts 1 created in $account_root" "$tmp/out"
+grep -qx 'account anna 1000 1000 /bin/sh wheel' "$tmp/out"
+grep -qx 'anna:x:1000:1000:Holy user:/root:/bin/sh' "$account_root/etc/passwd"
+grep -qx 'anna:x:1000:' "$account_root/etc/group"
+grep -qx 'wheel:x:10:anna' "$account_root/etc/group"
+grep -qx 'anna:$6$holysalt$holysignature:0:99999:7:::' "$account_root/etc/shadow"
+grep -qx 'permit persist anna' "$account_root/etc/doas.conf"
+test "$(stat -c '%a' "$account_root/etc/shadow")" = 600
+test "$(stat -c '%a' "$account_root/etc/doas.conf")" = 640
+test "$(stat -c '%a' "$account_root/etc/passwd")" = 644
+"$holypkg" db check --all --root "$account_root" > /dev/null
+# a name the target already uses is a decision, not a second install, and the packages
+# that landed before it stay
+taken_root="$tmp/taken-root"
+mkdir -p "$taken_root/etc"
+printf 'anna:x:1000:\n' > "$taken_root/etc/group"
+"$holypkg" db init --root "$taken_root" > /dev/null
+"$holypkg" cache stage "local:$tmp/fixture.holy" --root "$taken_root" > /dev/null
+printf '[install]\nroot "%s"\naccount anna 1000 1000 /bin/sh -\nartifact %s\n' \
+    "$taken_root" "$digest" > "$tmp/taken.conf"
+"$installer" --config "$tmp/taken.conf" --plan "$tmp/taken.plan" --holypkg "$holypkg" > "$tmp/out"
+if "$installer" --apply "$tmp/taken.plan" --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+grep -qx 'holyinstall: group anna already exists' "$tmp/err"
+test -f "$taken_root/usr/share/installer-fixture"
+test ! -e "$taken_root/etc/passwd"
+# a group the target does not have is not invented
+missing_root="$tmp/missing-root"
+mkdir -p "$missing_root/etc"
+printf 'wheel:x:10:\n' > "$missing_root/etc/group"
+"$holypkg" db init --root "$missing_root" > /dev/null
+"$holypkg" cache stage "local:$tmp/fixture.holy" --root "$missing_root" > /dev/null
+printf '[install]\nroot "%s"\naccount bea 1001 1001 /bin/sh wheel,absent\nartifact %s\n' \
+    "$missing_root" "$digest" > "$tmp/missing.conf"
+"$installer" --config "$tmp/missing.conf" --plan "$tmp/missing.plan" --holypkg "$holypkg" > "$tmp/out"
+if "$installer" --apply "$tmp/missing.plan" --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+grep -qx 'holyinstall: group absent is not in the target' "$tmp/err"
+# the password file holds a shadow entry, not a password
+printf 'hunter2\n' > "$tmp/word.hash"
+word_root="$tmp/word-root"
+mkdir -p "$word_root/etc"
+"$holypkg" db init --root "$word_root" > /dev/null
+"$holypkg" cache stage "local:$tmp/fixture.holy" --root "$word_root" > /dev/null
+printf '[install]\nroot "%s"\naccount cleo 1002 1002 /bin/sh -\npassword-file "%s"\nartifact %s\n' \
+    "$word_root" "$tmp/word.hash" "$digest" > "$tmp/word.conf"
+"$installer" --config "$tmp/word.conf" --plan "$tmp/word.plan" --holypkg "$holypkg" > "$tmp/out"
+if "$installer" --apply "$tmp/word.plan" --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+grep -qx 'holyinstall: password file entry is a lock marker or a hash' "$tmp/err"
+test ! -e "$word_root/etc/passwd"
 printf 'installer plan and apply fixtures passed\n'

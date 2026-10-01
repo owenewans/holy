@@ -14,8 +14,20 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+/* one account the install creates in the target root: the plan fixes the identity and
+   the shell, and the password comes from a file the caller supplies, never from argv */
+struct install_account {
+    char *name;
+    unsigned long uid, gid;
+    char *shell;
+    char *groups;        /* extra groups the account joins, comma separated */
+};
+
 struct install_input {
     char *root;
+    char **accounts;      /* the account lines as the config wrote them */
+    size_t account_count;
+    char *password_file;  /* a file holding the shadow hash for every account */
     char **artifacts;
     size_t count;
     char **accepted_arch;
@@ -98,6 +110,53 @@ static const char *field(const struct holy_config *config, const char *section,
     return NULL;
 }
 
+/* a decimal field the plan and the target files both read the same way */
+static int decimal(const char *text, unsigned long *value)
+{
+    unsigned long result = 0;
+    size_t i, length = text ? strlen(text) : 0;
+    if (!length || length > 10) return 1;
+    for (i = 0; i < length; ++i) {
+        if (text[i] < '0' || text[i] > '9') return 1;
+        result = result * 10 + (unsigned long)(text[i] - '0');
+    }
+    if (result > 65535) return 1;
+    if (value) *value = result;
+    return 0;
+}
+
+/* a user name the target's passwd can hold: no path, no colon and no whitespace */
+static int account_name_valid(const char *name)
+{
+    size_t i, length = strlen(name);
+    if (!length || length > 32 || !((name[0] >= 'a' && name[0] <= 'z') || name[0] == '_'))
+        return 0;
+    for (i = 0; i < length; ++i) {
+        char c = name[i];
+        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.' ||
+              (c == '$' && i + 1 == length))) return 0;
+    }
+    return 1;
+}
+
+/* the account line as the plan carries it: name uid gid shell groups, with a dash for
+   no extra groups, so the plan is one fixed shape */
+static int account_line(const char *name, const char *uid, const char *gid,
+                        const char *shell, const char *groups, char **line)
+{
+    char *joined = NULL;
+    if (!account_name_valid(name) || !*shell || shell[0] != '/') return 0;
+    if (decimal(uid, NULL) || decimal(gid, NULL)) return 0;
+    if (!groups || !*groups) groups = "-";
+    joined = calloc(strlen(name) + strlen(uid) + strlen(gid) + strlen(shell) +
+                    strlen(groups) + 6, 1);
+    if (!joined) return 0;
+    sprintf(joined, "%s %s %s %s %s", name, uid, gid, shell, groups);
+    *line = joined;
+    return 1;
+}
+
 static int load_input(const char *path, struct holy_config *config,
                       struct install_input *input)
 {
@@ -119,6 +178,47 @@ static int load_input(const char *path, struct holy_config *config,
     }
     if (!strcmp(input->root, "/")) {
         fputs("holyinstall: host / is not an installation target\n", stderr);
+        return 2;
+    }
+    input->accounts = calloc(config->count ? config->count : 1, sizeof *input->accounts);
+    if (!input->accounts) return 1;
+    for (i = 0; i < config->count; ++i) {
+        const struct holy_entry *e = &config->entries[i];
+        char *line = NULL;
+        if (strcmp(e->section, "install")) continue;
+        if (!strcmp(e->key, "password-file")) {
+            if (e->count != 1 || input->password_file) {
+                fprintf(stderr, "holyinstall: password-file takes one path at %s:%zu\n",
+                        e->file, e->line);
+                return 2;
+            }
+            if (e->values[0][0] != '/') {
+                fprintf(stderr, "holyinstall: password-file needs an absolute path at %s:%zu\n",
+                        e->file, e->line);
+                return 2;
+            }
+            input->password_file = strdup(e->values[0]);
+            if (!input->password_file) return 1;
+            continue;
+        }
+        if (strcmp(e->key, "account")) continue;
+        if (e->count != 5 ||
+            !account_line(e->values[0], e->values[1], e->values[2], e->values[3],
+                          e->values[4], &line)) {
+            fprintf(stderr, "holyinstall: invalid account at %s:%zu\n", e->file, e->line);
+            return 2;
+        }
+        for (j = 0; j < input->account_count; ++j)
+            if (!strncmp(input->accounts[j], line, strlen(e->values[0]))) {
+                fprintf(stderr, "holyinstall: duplicate account at %s:%zu\n", e->file, e->line);
+                free(line);
+                return 2;
+            }
+        input->accounts[input->account_count++] = line;
+    }
+    if ((input->password_file && !input->account_count) ||
+        (!input->account_count && field(config, "install", "doas"))) {
+        fputs("holyinstall: [install] account lines are required for a password file or doas\n", stderr);
         return 2;
     }
     input->artifacts = calloc(config->count ? config->count : 1, sizeof *input->artifacts);
@@ -342,7 +442,8 @@ static int write_plan(const char *path, const struct install_input *input,
     stream = fdopen(fd, "w");
     if (!stream) { close(fd); unlink(path); return 1; }
     if (fprintf(stream, "[install-plan]\nformat holy-install-plan-%d\nroot ",
-                input->source_count ? 4 : input->privileged_count ? 3 : input->accept_count ? 2 : 1) < 0 ||
+                input->account_count ? 5 : input->source_count ? 4 :
+                input->privileged_count ? 3 : input->accept_count ? 2 : 1) < 0 ||
         !quote(stream, input->root) ||
         fprintf(stream, "\ndevice %ju\ninode %ju\nconfig-sha256 %s\nset-sha256 %s\n",
                 (uintmax_t)input->root_stat.st_dev, (uintmax_t)input->root_stat.st_ino,
@@ -355,11 +456,271 @@ static int write_plan(const char *path, const struct install_input *input,
         if (fprintf(stream, "accept-privileged %s\n", input->accepted_privileged[i]) < 0) ok = 0;
     for (i = 0; i < input->source_count && ok; ++i)
         if (fprintf(stream, "source %.64s %s\n", input->sources[i], input->sources[i] + 65) < 0) ok = 0;
+    /* the accounts come after the artifact lists, since that is the order a plan names
+       them, and the password file is a path rather than a secret */
+    for (i = 0; i < input->account_count && ok; ++i)
+        if (fprintf(stream, "account %s\n", input->accounts[i]) < 0) ok = 0;
+    if (input->password_file && fprintf(stream, "password-file %s\n",
+                                        input->password_file) < 0) ok = 0;
     if (fflush(stream) || fsync(fd)) ok = 0;
     if (fclose(stream)) ok = 0;
     if (ok) ok = sync_parent(path);
     if (!ok) unlink(path);
     return ok ? 0 : 1;
+}
+
+/* the shadow entry a password file holds: a lock marker or a hashed password. the file is
+   read here and nowhere else, so the secret stays out of argv, the plan and any journal */
+static int read_password_hash(const char *path, char hash[256])
+{
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    char buffer[257];
+    ssize_t got;
+    size_t length, i;
+    if (fd < 0) {
+        fprintf(stderr, "holyinstall: password file unreadable: %s\n", strerror(errno));
+        return 6;
+    }
+    got = read(fd, buffer, sizeof buffer - 1);
+    close(fd);
+    if (got <= 0) { fputs("holyinstall: password file is empty\n", stderr); return 6; }
+    buffer[got] = 0;
+    length = strcspn(buffer, "\r\n");
+    if (!length || length > 255 || memchr(buffer, 0, length)) {
+        fputs("holyinstall: password file holds one entry of at most 255 bytes\n", stderr);
+        return 6;
+    }
+    for (i = 0; i < length; ++i)
+        if (buffer[i] == ' ' || buffer[i] == '\t' || buffer[i] == ':') {
+            fputs("holyinstall: password file entry has whitespace or a colon\n", stderr);
+            return 6;
+        }
+    if (strcmp(buffer, "!") && strcmp(buffer, "*") && buffer[0] != '$') {
+        fputs("holyinstall: password file entry is a lock marker or a hash\n", stderr);
+        return 6;
+    }
+    memcpy(hash, buffer, length);
+    hash[length] = 0;
+    return 0;
+}
+
+/* appends one line to a file of the target root, creating it with that mode when the
+   packages left none, and never following a name the target placed there */
+static int append_line(int etc, const char *name, mode_t mode,
+                       const char *line, int required)
+{
+    int fd = openat(etc, name, O_WRONLY | O_APPEND | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    size_t length = strlen(line);
+    ssize_t written;
+    if (fd < 0) {
+        if (!required && errno == ENOENT) fd = openat(etc, name, O_WRONLY | O_CREAT |
+                                                      O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode);
+        if (fd < 0) {
+            fprintf(stderr, "holyinstall: %s/%s: %s\n", "etc", name, strerror(errno));
+            return 1;
+        }
+    }
+    written = write(fd, line, length);
+    if (fsync(fd)) written = -1;
+    close(fd);
+    if (written < 0 || (size_t)written != length) {
+        fprintf(stderr, "holyinstall: %s is not writable\n", name);
+        return 1;
+    }
+    return 0;
+}
+
+/* rewrites one named line of a target file, since joining a group changes the line the
+   target already has rather than adding a new one. the file is replaced atomically, so a
+   crash leaves the previous one whole. */
+static int replace_line(int etc, const char *file, const char *name, const char *line)
+{
+    int fd = openat(etc, file, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    char temporary[43] = {0}, *text = NULL, *cursor;
+    struct stat st;
+    FILE *in = NULL, *out = NULL;
+    size_t used = 0;
+    int temp = -1, ok = 0, attempt;
+    if (fd < 0) {
+        fprintf(stderr, "holyinstall: %s is unreadable: %s\n", file, strerror(errno));
+        return 1;
+    }
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+        st.st_size > 1024 * 1024) goto done;
+    if (!(in = fdopen(fd, "r"))) goto done;
+    text = malloc((size_t)st.st_size + 2);
+    if (!text) goto done;
+    while (used <= (size_t)st.st_size &&
+           fgets(cursor = text + used, (int)((size_t)st.st_size + 2 - used), in)) {
+        size_t length = strlen(cursor);
+        used += length;
+        if (!length || length > 1024 || cursor[length - 1] != '\n') break;
+    }
+    if (ferror(in) || used > (size_t)st.st_size) goto done;
+    fclose(in); in = NULL;
+    /* a name of its own, created exclusively, so a second install cannot share it */
+    for (attempt = 0; attempt < 64; ++attempt) {
+        snprintf(temporary, sizeof temporary, ".holy-install-%ld-%d", (long)getpid(), attempt);
+        temp = openat(etc, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                      st.st_mode & 07777);
+        if (temp >= 0) break;
+        if (errno != EEXIST) break;
+    }
+    if (temp < 0 || !(out = fdopen(temp, "w"))) goto done;
+    temp = -1;
+    /* every line that names the group is replaced, and the rest is copied as it was */
+    for (cursor = text; cursor && *cursor; ) {
+        char *next = strchr(cursor, '\n');
+        int names = !strncmp(cursor, name, strlen(name)) && cursor[strlen(name)] == ':';
+        /* each line is copied as it stands, and the one the caller replaced already
+           carries its own newline */
+        if (fputs(names ? line : cursor, out) == EOF) goto done;
+        if (!next) break;
+        cursor = next + 1;
+    }
+    if (fflush(out) || fsync(fileno(out)) || fclose(out)) { out = NULL; goto done; }
+    out = NULL;
+    ok = !renameat(etc, temporary, etc, file) && !fsync(etc);
+done:
+    if (in) fclose(in);
+    if (out) fclose(out);
+    if (temp >= 0) close(temp);
+    if (!ok && temporary[0]) unlinkat(etc, temporary, 0);
+    free(text);
+    return ok ? 0 : 1;
+}
+
+/* whether the target's group file already names that group, since the install joins
+   groups it finds rather than inventing system groups */
+static int group_present(int etc, const char *name, char **members, char gid[16])
+{
+    int fd = openat(etc, "group", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    char *line = NULL;
+    size_t capacity = 0;
+    ssize_t got;
+    FILE *stream;
+    int found = 0;
+    /* a caller that only needs to know whether the group is there passes no members */
+    if (members) *members = NULL;
+    if (fd < 0) return errno == ENOENT ? 0 : -1;
+    if (!(stream = fdopen(fd, "r"))) { close(fd); return -1; }
+    /* a group line is name:password:gid:members, and an empty field is a field */
+    while (!found && (got = getline(&line, &capacity, stream)) > 0) {
+        char *fields[4] = {NULL, NULL, NULL, NULL}, *cursor = line;
+        size_t field, seen = 0;
+        if (line[got - 1] == '\n') line[got - 1] = 0;
+        for (field = 0; field < 4 && cursor; ++field) {
+            char *colon;
+            fields[field] = cursor;
+            if (field < 3 && (colon = strchr(cursor, ':'))) {
+                *colon = 0;
+                cursor = colon + 1;
+            } else {
+                cursor = NULL;
+            }
+            ++seen;
+        }
+        for (field = 0; field < seen && !found; ++field)
+            if (!strcmp(fields[field], name)) found = 1;
+        if (!found) continue;
+        if (gid && seen > 2) snprintf(gid, 16, "%s", fields[2]);
+        if (members) {
+            /* an empty membership field is a field, so the caller always gets a string */
+            *members = strdup(seen > 3 ? fields[3] : "");
+            if (!*members) { fclose(stream); free(line); return -1; }
+        }
+    }
+    fclose(stream);
+    free(line);
+    return found;
+}
+
+/* creates the accounts the plan names in the target root: an account is a passwd entry,
+   a group of its own, the groups it joins, a shadow entry and the doas permit. the
+   password entry is the hash the caller supplied, or a locked one. */
+static int apply_accounts(const struct install_input *input)
+{
+    char hash[256] = "!";
+    size_t i;
+    int root = -1, etc = -1, rc = 0;
+    if (!input->account_count) return 0;
+    if (input->password_file && (rc = read_password_hash(input->password_file, hash)))
+        return rc;
+    root = open(input->root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0 || (etc = openat(root, "etc", O_RDONLY | O_DIRECTORY | O_NOFOLLOW |
+                                   O_CLOEXEC)) < 0) {
+        fprintf(stderr, "holyinstall: target root has no /etc: %s\n", strerror(errno));
+        rc = 6;
+        goto done;
+    }
+    for (i = 0; i < input->account_count && !rc; ++i) {
+        char **fields = NULL, *error = NULL;
+        size_t count = 0, field;
+        char line[1024];
+        int written;
+        if (!holy_lex(input->accounts[i], strlen(input->accounts[i]), &fields, &count,
+                      "account", i + 1, &error) || count != 5) {
+            fprintf(stderr, "holyinstall: account %zu is malformed\n", i + 1);
+            free(error);
+            rc = 2;
+            goto done;
+        }
+        free(error);
+        /* the group of its own and the passwd entry must not exist yet, since a name the
+           target already uses is a decision rather than an install */
+        if (group_present(etc, fields[0], NULL, NULL) != 0) {
+            fprintf(stderr, "holyinstall: group %s already exists\n", fields[0]);
+            rc = 6;
+        }
+        written = snprintf(line, sizeof line, "%s:x:%s:%s:Holy user:/root:%s\n",
+                           fields[0], fields[1], fields[2], fields[3]);
+        if (!rc && (written < 0 || (size_t)written >= sizeof line)) rc = 1;
+        if (!rc) rc = append_line(etc, "passwd", 0644, line, 0);
+        if (!rc && (written = snprintf(line, sizeof line, "%s:x:%s:\n", fields[0],
+                                       fields[2])) < 0) rc = 1;
+        if (!rc) rc = append_line(etc, "group", 0644, line, 0);
+        for (field = 4; !rc && field < 5; ++field) {
+            char *cursor = fields[field], *comma;
+            if (!strcmp(fields[field], "-")) break;
+            while (!rc && cursor && *cursor) {
+                char *members = NULL, gid[16], group[65];
+                if (!(comma = strchr(cursor, ','))) comma = cursor + strlen(cursor);
+                if ((size_t)(comma - cursor) >= sizeof group) { rc = 2; break; }
+                memcpy(group, cursor, (size_t)(comma - cursor));
+                group[comma - cursor] = 0;
+                if (!account_name_valid(group)) { rc = 2; break; }
+                /* the install joins a group the target already has, so the line is that
+                   group with the account added to its members */
+                if (group_present(etc, group, &members, gid) != 1) {
+                    fprintf(stderr, "holyinstall: group %s is not in the target\n", group);
+                    free(members);
+                    rc = 6;
+                    break;
+                }
+                written = snprintf(line, sizeof line, "%s:x:%s:%s%s%s\n", group, gid, members,
+                                   *members ? "," : "", fields[0]);
+                free(members);
+                if (written < 0 || (size_t)written >= sizeof line) { rc = 1; break; }
+                rc = replace_line(etc, "group", group, line);
+                cursor = *comma ? comma + 1 : NULL;
+            }
+        }
+        if (!rc && (written = snprintf(line, sizeof line, "%s:%s:0:99999:7:::\n",
+                                       fields[0], hash)) < 0) rc = 1;
+        if (!rc) rc = append_line(etc, "shadow", 0600, line, 0);
+        if (!rc && (written = snprintf(line, sizeof line, "permit persist %s\n", fields[0])) < 0)
+            rc = 1;
+        if (!rc) rc = append_line(etc, "doas.conf", 0640, line, 0);
+        holy_tokens_free(fields, count);
+    }
+    if (!rc) {
+        printf("accounts %zu created in %s\n", input->account_count, input->root);
+        for (i = 0; i < input->account_count; ++i) printf("account %s\n", input->accounts[i]);
+    }
+done:
+    if (etc >= 0) close(etc);
+    if (root >= 0) close(root);
+    return rc;
 }
 
 static int check_plan(const char *path, struct install_input *input,
@@ -392,17 +753,20 @@ static int check_plan(const char *path, struct install_input *input,
             if (count != 1 || strcmp(v[0], "[install-plan]")) {
                 holy_tokens_free(v, count); goto done;
             }
-        } else if (count != 2 && !(count == 3 && !strcmp(v[0], "source"))) {
+        } else if (count != 2 && !(count == 3 && !strcmp(v[0], "source")) &&
+                   !(count == 6 && !strcmp(v[0], "account"))) {
             holy_tokens_free(v, count); goto done;
         } else if (row == 2) {
             if (strcmp(v[0], "format") ||
                 (strcmp(v[1], "holy-install-plan-1") &&
                  strcmp(v[1], "holy-install-plan-2") &&
                  strcmp(v[1], "holy-install-plan-3") &&
-                 strcmp(v[1], "holy-install-plan-4"))) {
+                 strcmp(v[1], "holy-install-plan-4") &&
+                 strcmp(v[1], "holy-install-plan-5"))) {
                 holy_tokens_free(v, count); goto done;
             }
-            version = !strcmp(v[1], "holy-install-plan-4") ? 4 :
+            version = !strcmp(v[1], "holy-install-plan-5") ? 5 :
+                      !strcmp(v[1], "holy-install-plan-4") ? 4 :
                       !strcmp(v[1], "holy-install-plan-3") ? 3 :
                       !strcmp(v[1], "holy-install-plan-2") ? 2 : 1;
         } else if (row == 3) {
@@ -488,6 +852,32 @@ static int check_plan(const char *path, struct install_input *input,
             }
             input->sources = next;
             input->sources[input->source_count++] = binding;
+        } else if (!strcmp(v[0], "account")) {
+            char **next;
+            size_t i;
+            char *joined = NULL;
+            if (version < 5 || phase >= 4 ||
+                !account_line(v[1], v[2], v[3], v[4], v[5], &joined) ||
+                input->account_count >= input->count + 64 ||
+                !(next = realloc(input->accounts,
+                                 (input->account_count + 1) * sizeof *next))) {
+                free(joined); holy_tokens_free(v, count); goto done;
+            }
+            phase = 4;
+            for (i = 0; i < input->account_count; ++i)
+                if (!strcmp(input->accounts[i], joined)) break;
+            if (i != input->account_count) {
+                free(joined); holy_tokens_free(v, count); goto done;
+            }
+            input->accounts = next;
+            input->accounts[input->account_count++] = joined;
+        } else if (!strcmp(v[0], "password-file")) {
+            if (version < 5 || phase >= 5 || input->password_file || v[1][0] != '/') {
+                holy_tokens_free(v, count); goto done;
+            }
+            phase = 5;
+            input->password_file = strdup(v[1]);
+            if (!input->password_file) { holy_tokens_free(v, count); goto done; }
         } else {
             char **next;
             size_t i;
@@ -509,7 +899,9 @@ static int check_plan(const char *path, struct install_input *input,
         holy_tokens_free(v, count);
     }
     if (ferror(stream) || row != 7 + input->count + input->accept_count +
-                                input->privileged_count + input->source_count ||
+                                input->privileged_count + input->source_count +
+                                input->account_count + (input->password_file ? 1u : 0u) ||
+        (input->password_file && !input->account_count) ||
         !input->count || (version == 1 && input->accept_count) ||
         (version == 2 && (!input->accept_count || input->privileged_count)) ||
         (version == 3 && !input->privileged_count) ||
@@ -526,6 +918,9 @@ done:
 struct menu_state {
     char *root;
     char *disk_image;
+    char **accounts;            /* the account lines the plan carries */
+    size_t account_count;
+    char *password_file;
     char **artifacts;
     size_t count;
     char **accepted_arch;
@@ -539,6 +934,9 @@ struct menu_state {
 static void free_input(struct install_input *input)
 {
     size_t i;
+    for (i = 0; i < input->account_count; ++i) free(input->accounts[i]);
+    free(input->accounts);
+    free(input->password_file);
     for (i = 0; i < input->count; ++i) free(input->artifacts[i]);
     free(input->artifacts);
     for (i = 0; i < input->accept_count; ++i) free(input->accepted_arch[i]);
@@ -553,6 +951,10 @@ static void free_input(struct install_input *input)
 
 static void free_menu(struct menu_state *menu)
 {
+    size_t j;
+    for (j = 0; j < menu->account_count; ++j) free(menu->accounts[j]);
+    free(menu->accounts);
+    free(menu->password_file);
     size_t i;
     for (i = 0; i < menu->count; ++i) free(menu->artifacts[i]);
     free(menu->artifacts);
@@ -595,6 +997,26 @@ static int menu_load(const char *path, struct menu_state *menu)
         if (!strcmp(e->key, "root")) {
             menu->root = strdup(e->values[0]);
             if (!menu->root) { holy_config_free(&config); return 1; }
+        } else if (!strcmp(e->key, "account")) {
+            char *line = NULL;
+            if (e->count != 5 ||
+                !account_line(e->values[0], e->values[1], e->values[2], e->values[3],
+                              e->values[4], &line)) {
+                fprintf(stderr, "holyinstall: invalid account at %s:%zu\n", e->file, e->line);
+                holy_config_free(&config); return 2;
+            }
+            next = realloc(menu->accounts, (menu->account_count + 1) * sizeof *next);
+            if (!next) { free(line); holy_config_free(&config); return 1; }
+            menu->accounts = next;
+            menu->accounts[menu->account_count++] = line;
+        } else if (!strcmp(e->key, "password-file")) {
+            if (e->count != 1 || menu->password_file || e->values[0][0] != '/') {
+                fprintf(stderr, "holyinstall: password-file takes one absolute path at %s:%zu\n",
+                        e->file, e->line);
+                holy_config_free(&config); return 2;
+            }
+            menu->password_file = strdup(e->values[0]);
+            if (!menu->password_file) { holy_config_free(&config); return 1; }
         } else if (!strcmp(e->key, "artifact")) {
             next = realloc(menu->artifacts, (menu->count + 1) * sizeof *next);
             if (!next) { holy_config_free(&config); return 1; }
@@ -675,6 +1097,12 @@ static int menu_write(FILE *stream, const struct menu_state *menu)
     if (fputs("[install]\n", stream) == EOF) return 0;
     if (menu->root && (fputs("root ", stream) == EOF ||
                        !quote(stream, menu->root) || fputc('\n', stream) == EOF)) return 0;
+    /* the accounts come before the artifacts, since a plan names them first */
+    for (i = 0; i < menu->account_count; ++i)
+        if (fprintf(stream, "account %s\n", menu->accounts[i]) < 0) return 0;
+    if (menu->password_file &&
+        (fputs("password-file ", stream) == EOF ||
+         !quote(stream, menu->password_file) || fputc('\n', stream) == EOF)) return 0;
     for (i = 0; i < menu->count; ++i)
         if (fprintf(stream, "artifact %s\n", menu->artifacts[i]) < 0) return 0;
     for (i = 0; i < menu->accept_count; ++i)
@@ -1019,6 +1447,8 @@ static int menu_run(const char *config_path, const char *plan_path,
             if (!prepared) { puts("Prepare and review a plan first"); continue; }
             rc = check_plan(plan_path, &input, hash);
             if (rc) { free_input(&input); printf("Plan failed (status %d)\n", rc); prepared = 0; continue; }
+            if (input.account_count)
+                printf("Accounts %zu\n", input.account_count);
             fputs("Root ", stdout);
             menu_path(input.root);
             printf("\nSet %s\nArtifacts %zu\nArchitecture overrides %zu\nSetuid approvals %zu\n",
@@ -1033,7 +1463,10 @@ static int menu_run(const char *config_path, const char *plan_path,
             if (!strcmp(confirm, "yes")) {
                 rc = run_package_manager(binary, &input, hash, &output);
                 if (!rc) { fputs(output, stdout); puts("Package transaction complete"); }
-                else printf("Install failed (status %d)\n", rc);
+                /* the accounts land after the packages, since the payload that carries
+                   PAM, NSS and doas is what makes them usable */
+                if (!rc && (rc = apply_accounts(&input)))
+                    printf("Accounts failed (status %d)\n", rc);
                 prepared = 0;
             }
             free(confirm); free(output); free_input(&input);
@@ -1106,6 +1539,7 @@ int main(int argc, char **argv)
         if (rc) goto done;
         rc = run_package_manager(binary, &input, hash, &output);
         if (!rc && fputs(output, stdout) == EOF) rc = 1;
+        if (!rc) rc = apply_accounts(&input);
     } else {
         rc = load_input(config_path, &config, &input);
         if (rc) goto done;

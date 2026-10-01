@@ -197,10 +197,12 @@ static int list_key(const char *section, const char *key)
     return (!strncmp(section, "source ", 7) && !strcmp(key, "repo")) ||
            (!strcmp(section, "install") && (!strcmp(key, "artifact") ||
                                             !strcmp(key, "source") ||
+                                            !strcmp(key, "account") ||
                                             !strcmp(key, "accept-arch") ||
                                             !strcmp(key, "accept-privileged"))) ||
            (!strcmp(section, "install-plan") && (!strcmp(key, "artifact") ||
                                                  !strcmp(key, "source") ||
+                                                 !strcmp(key, "account") ||
                                                  !strcmp(key, "accept-arch") ||
                                                  !strcmp(key, "accept-privileged"))) ||
            (!strcmp(section, "resolver") && !strcmp(key, "prefer"));
@@ -233,15 +235,19 @@ static int key_arity(const char *section, const char *key)
             !strcmp(key, "layout")) return 1;
     } else if (!strcmp(section, "install")) {
         if (!strcmp(key, "source")) return 2;
+        if (!strcmp(key, "account")) return 5;
         if (!strcmp(key, "root") || !strcmp(key, "artifact") ||
-            !strcmp(key, "accept-arch") || !strcmp(key, "accept-privileged")) return 1;
+            !strcmp(key, "accept-arch") || !strcmp(key, "accept-privileged") ||
+            !strcmp(key, "password-file")) return 1;
     } else if (!strcmp(section, "install-plan")) {
         if (!strcmp(key, "source")) return 2;
+        if (!strcmp(key, "account")) return 5;
         if (!strcmp(key, "format") || !strcmp(key, "root") ||
             !strcmp(key, "device") || !strcmp(key, "inode") ||
             !strcmp(key, "config-sha256") || !strcmp(key, "set-sha256") ||
             !strcmp(key, "artifact") || !strcmp(key, "accept-arch") ||
-            !strcmp(key, "accept-privileged")) return 1;
+            !strcmp(key, "accept-privileged") ||
+            !strcmp(key, "password-file")) return 1;
     } else if (!strcmp(section, "general")) {
         if (!strcmp(key, "arch") || !strcmp(key, "compat-arch") ||
             !strcmp(key, "scripts") || !strcmp(key, "trust")) return 1;

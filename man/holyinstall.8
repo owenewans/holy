@@ -71,6 +71,8 @@ artifact SHA256_OF_DEPENDENCY_CANDIDATE
 accept-arch SHA256_OF_CONFIRMED_CROSS_ARCH_PACKAGE
 accept-privileged SHA256_OF_REVIEWED_SETUID_PACKAGE
 source SHA256_OF_SELECTED_PACKAGE REGISTERED_SOURCE_ID
+account NAME UID GID SHELL GROUPS
+password-file "/run/holy/password.hash"
 .fi
 .RE
 .PP
@@ -97,6 +99,41 @@ freezes each artifact-to-source binding and passes it to holypkg during both
 planning and apply. Unknown sources, duplicate bindings and changed source
 registries fail before package mutation. The text menu can set or clear a
 source ID and keeps the binding when saving config.
+.PP
+account names one account the install creates in the target root, and GROUPS
+is a comma-separated list of groups the account joins or a dash for none. The
+name starts with a lower-case letter or an underscore and holds at most 32
+characters; the uid and gid are decimal and at most 65535; the shell is an
+absolute path. Plan format 5 freezes each account line and password-file
+path, and apply creates the passwd entry, a group of the account's own, the
+group memberships, the shadow entry and the doas permit
+.RS
+.nf
+anna:x:1000:1000:Holy user:/root:/bin/sh
+anna:x:1000:
+wheel:x:10:anna
+anna:HASH_OR_LOCK:0:99999:7:::
+permit persist anna
+.fi
+.RE
+.PP
+The accounts land after the packages, since the payload that carries PAM, NSS
+and doas is what makes them usable, so an install that refuses an account
+still leaves the packages it placed. A group the account joins must already
+exist in the target, since the install joins what it finds rather than
+inventing system groups, and a name the target already uses is reported
+rather than overwritten. An existing file is appended to with its own mode;
+the ones the install creates are passwd and group 0644, shadow 0600 and
+doas.conf 0640. A group line the install changes is replaced atomically, so a
+crash leaves the previous file whole.
+.PP
+password-file names an absolute path holding one shadow entry, a lock marker
+! or * or a hash beginning with $. The file is read at apply and its contents
+reach neither the plan, nor argv, nor any journal. An entry that is not one of
+those is refused. Without the line the account's shadow entry is locked. The
+plan carries the path, not the secret, so a plan may be reviewed and its hash
+approved while the file stays unread until the account is created. The text
+menu keeps both keys when saving config.
 .SH DISK PREPARATION
 The disk command accepts a regular file or a block disk of at least 1 GiB. The supported
 layout is GPT with a 1 MiB BIOS boot partition, a 256 MiB FAT32 ESP and an

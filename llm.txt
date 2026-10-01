@@ -793,7 +793,7 @@ SEE ALSO
      holy-image(7), holypkg(8)
 
 Holy				 September 2026			    HOLY-INIT(8)
-holyinstall.8 source=holy version=development sha256=4688af7110d201daacae2a11b7e11c935d8eb000991eed9feb9913f0583b0ddf
+holyinstall.8 source=holy version=development sha256=327a68f7e3c8d65e7bcafd0d66880442fbe9c0ee6df5b43dc7d6e4bc33969a71
 HOLYINSTALL(8)		     System Manager's Manual		  HOLYINSTALL(8)
 
 NAME
@@ -861,6 +861,8 @@ DESCRIPTION
 	    accept-arch SHA256_OF_CONFIRMED_CROSS_ARCH_PACKAGE
 	    accept-privileged SHA256_OF_REVIEWED_SETUID_PACKAGE
 	    source SHA256_OF_SELECTED_PACKAGE REGISTERED_SOURCE_ID
+	    account NAME UID GID SHELL GROUPS
+	    password-file "/run/holy/password.hash"
 
      SHA256 values must be lowercase. The root path cannot be /. Config comments
      do	 not change the effective-config hash. Changes to parsed values or arti-
@@ -888,10 +890,41 @@ DESCRIPTION
      changed source registries fail before package mutation. The text  menu  can
      set or clear a source ID and keeps the binding when saving config.
 
+     account  names  one  account  the	install	 creates in the target root, and
+     GROUPS is a comma-separated list of groups the account joins or a dash  for
+     none.  The	 name starts with a lower-case letter or an underscore and holds
+     at most 32 characters; the uid and gid are decimal and at most  65535;  the
+     shell  is	an  absolute  path.  Plan format 5 freezes each account line and
+     password-file path, and apply creates the passwd entry, a group of the  ac-
+     count's own, the group memberships, the shadow entry and the doas permit
+	    anna:x:1000:1000:Holy user:/root:/bin/sh
+	    anna:x:1000:
+	    wheel:x:10:anna
+	    anna:HASH_OR_LOCK:0:99999:7:::
+	    permit persist anna
+
+     The  accounts  land after the packages, since the payload that carries PAM,
+     NSS and doas is what makes them usable, so an install that refuses	 an  ac-
+     count  still  leaves the packages it placed. A group the account joins must
+     already exist in the target, since the install joins what it  finds  rather
+     than  inventing  system  groups,  and a name the target already uses is re-
+     ported rather than overwritten. An existing file is appended  to  with  its
+     own  mode;	 the  ones the install creates are passwd and group 0644, shadow
+     0600 and doas.conf 0640. A group line the install changes is replaced atom-
+     ically, so a crash leaves the previous file whole.
+
+     password-file names an absolute path  holding  one	 shadow	 entry,	 a  lock
+     marker ! or * or a hash beginning with $. The file is read at apply and its
+     contents  reach  neither the plan, nor argv, nor any journal. An entry that
+     is not one of those is refused. Without the line the account's shadow entry
+     is locked. The plan carries the path, not the secret, so a plan may be  re-
+     viewed  and its hash approved while the file stays unread until the account
+     is created. The text menu keeps both keys when saving config.
+
 DISK PREPARATION
-     The  disk command accepts a regular file or a block disk of at least 1 GiB.
-     The supported layout is GPT with a 1 MiB BIOS boot	 partition,  a	256  MiB
-     FAT32  ESP and an ext4 root partition. Image mode uses sfdisk, mkfs.fat and
+     The disk command accepts a regular file or a block disk of at least 1  GiB.
+     The  supported  layout  is	 GPT with a 1 MiB BIOS boot partition, a 256 MiB
+     FAT32 ESP and an ext4 root partition. Image mode uses sfdisk, mkfs.fat  and
      mke2fs, and requires losetup to confirm that the image is not attached to a
      loop device.  A minimal image config is:
 
@@ -899,54 +932,54 @@ DISK PREPARATION
 	    image "/tmp/holy.img"
 	    layout gpt-ext4
 
-     Create the image before  planning,	 for  example  with  truncate.	Planning
-     prints  the  exact	 image	path,  device/inode identity, size and partition
+     Create  the  image	 before	 planning,  for	 example with truncate. Planning
+     prints the exact image path,  device/inode	 identity,  size  and  partition
      geometry. It hashes the first and last MiB and writes a new mode-0600 plan.
      Apply requires --confirm to equal the canonical image path in that plan. It
-     checks the identity and both hashes again, then  records  prepared,  parti-
-     tioning  and  formatting stages in PLAN.journal. An existing journal blocks
+     checks  the  identity  and both hashes again, then records prepared, parti-
+     tioning and formatting stages in PLAN.journal. An existing	 journal  blocks
      another apply.  The show command prints the saved geometry without changing
-     the image.	 After an interrupted stage, inspect the image and  journal  be-
+     the  image.   After an interrupted stage, inspect the image and journal be-
      fore starting a new plan. The command does not silently repeat a format op-
      eration.
 
-     For  a  block disk, use device instead of image in [disk]. Planning records
-     the disk node, block-device  number,  size,  serial,  first  and  last  MiB
-     hashes,  and  SHA-256  of	the  four  static  tools  used by apply: sfdisk,
+     For a block disk, use device instead of image in [disk].  Planning	 records
+     the  disk	node,  block-device  number,  size,  serial,  first and last MiB
+     hashes, and SHA-256 of  the  four	static	tools  used  by	 apply:	 sfdisk,
      mkfs.fat, mke2fs and Limine. Apply requires the exact device path as --con-
-     firm and rechecks those inputs before mutation. It holds an exclusive  disk
-     descriptor,  writes the GPT, asks the kernel to reread the partition table,
-     checks the partition geometry, formats FAT32 and  ext4,  and  installs  the
-     Limine  BIOS stage. The journal records each stage. This operation destroys
-     existing partitions and filesystems. It does not mount the new root or  in-
+     firm  and rechecks those inputs before mutation. It holds an exclusive disk
+     descriptor, writes the GPT, asks the kernel to reread the partition  table,
+     checks  the  partition  geometry,	formats FAT32 and ext4, and installs the
+     Limine BIOS stage. The journal records each stage. This operation	destroys
+     existing  partitions and filesystems. It does not mount the new root or in-
      stall packages.
 
-     Disk  preparation	destroys  existing image contents. It does not mount the
-     partitions or generate an initramfs. The finalize-plan command  requires  a
-     committed	disk  preparation  journal, a valid GPT, an exact-size ESP image
+     Disk preparation destroys existing image contents. It does	 not  mount  the
+     partitions	 or  generate an initramfs. The finalize-plan command requires a
+     committed disk preparation journal, a valid GPT, an  exact-size  ESP  image
      and an exact-size ext4 root image. It records the full SHA-256, device, in-
-     ode and size of the disk, both input images and /usr/bin/limine  in  a  new
-     mode-0600	plan.  Review  that  plan before applying it. Finalize-apply re-
-     quires the exact disk path as --confirm  and  rechecks  all  inputs  before
+     ode  and  size  of the disk, both input images and /usr/bin/limine in a new
+     mode-0600 plan. Review that plan before  applying	it.  Finalize-apply  re-
+     quires  the  exact	 disk  path  as --confirm and rechecks all inputs before
      changing the disk. It copies the two images into their partitions, verifies
      the written bytes, installs the Limine BIOS stage and verifies GPT. The ad-
-     jacent  journal records each stage. A changed input requires a new plan; an
-     existing finalize journal requires inspection before recovery. The	 command
-     does  not configure UEFI, mount the partitions or prove the image can boot.
-     Boot and account menus and the full interactive install  acceptance  matrix
+     jacent journal records each stage. A changed input requires a new plan;  an
+     existing  finalize journal requires inspection before recovery. The command
+     does not configure UEFI, mount the partitions or prove the image can  boot.
+     Boot  and	account menus and the full interactive install acceptance matrix
      remain pending.
 
-     The  optional  install VM fixture described in holy-image(7) gives the live
-     guest a blank disk. holyinstall creates the GPT  and  filesystems	and  in-
-     stalls  the  Limine  BIOS stage inside that guest before applying a package
+     The optional install VM fixture described in holy-image(7) gives  the  live
+     guest  a  blank  disk.  holyinstall creates the GPT and filesystems and in-
+     stalls the Limine BIOS stage inside that guest before  applying  a	 package
      plan to its root. The runner then boots the installed disk through BIOS and
      UEFI.
 
 EXIT STATUS
      0 means the requested step completed. 1 means an operational error. 2 means
      invalid arguments, config or plan. Disk apply returns 3 for a changed image
-     or missing confirmation, 5 for an existing journal or failed mutation,  and
-     6	for  a	missing	 image, tool or available capability. holypkg statuses 3
+     or	 missing confirmation, 5 for an existing journal or failed mutation, and
+     6 for a missing image, tool or available  capability.  holypkg  statuses  3
      through 6 propagate from the package transaction.
 
 SEE ALSO

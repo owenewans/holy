@@ -1362,7 +1362,15 @@
   ConnMan+iwd network profile. Static local recovery and a private HTTPS
   recovery fixture have acceptance tests; production network recovery remains.
 - [ ] Complete C99 `holyinstall` plans for accounts, network, encryption and
-  filesystem choices. The implemented blank-disk GPT/ext4/FAT path uses
+  filesystem choices.
+  `holyinstall` now plans accounts: a fixed-shape `account NAME UID GID SHELL
+  GROUPS` line per account plus an optional absolute `password-file`, plan
+  format 5 freezes them, and apply creates the passwd entry, a group of its
+  own, the group memberships, the shadow entry and the doas permit after the
+  packages land. The password file is read at apply and its entry reaches
+  neither the plan, nor argv, nor any journal. A group the account joins must
+  exist in the target and a name it already uses is reported, never
+  overwritten. Network and encryption steps stay open. The implemented blank-disk GPT/ext4/FAT path uses
   reviewed plans and `holypkg --root`; account login has a VM fixture.
   Config and text menu now bind selected artifacts to registered source IDs
   through frozen plan format 4 and retain that provenance at install. The live
