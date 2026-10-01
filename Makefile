@@ -416,6 +416,7 @@ check-root: check-install-payload
 	sh tests/add.sh ./holypkg
 	sh tests/update-privileged.sh ./holypkg
 	sh tests/orphan.sh ./holypkg
+	sh tests/slots.sh ./holypkg
 	sh tests/dynamic.sh ./holypkg
 	sh tests/static.sh ./holypkg
 

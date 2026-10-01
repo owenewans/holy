@@ -7,6 +7,9 @@
 int holy_state_init(const char *root_path);
 /* 0 empty, 5 recognized prepared reservation, 1 invalid database. */
 int holy_state_status(const char *root_path, int json);
+
+/* the installed slots with the version family each holds, read-only */
+int holy_state_slots(const char *root_path, int json);
 /* reserve one cached object at the current generation; no payload mutation. */
 int holy_state_reserve(const char *digest, const char *root_path);
 /* discard only the recognized prepared reservation. */

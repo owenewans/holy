@@ -348,7 +348,13 @@
   installed set as it was. Each removal is then its own journalled transaction and
   publishes its own generation, since a transaction names one artifact today, and a
   crash between two of them leaves one transaction pending that recovery finishes.
-  Source-aware installed slots and version families stay unfinished.
+  `holypkg db slots` now reports the installed slots: a slot is the package name,
+  os, architecture and libc from one source, so the same name from two sources
+  and two architectures of one name are two slots, and two versions of one name
+  from one source are one version family. The report names the newest member and
+  counts the family, in a line form and as holy-db-slots-1, and it is read-only.
+  Version families across a source that has no installed member, and slot
+  selection inside a resolver choice, stay unfinished.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions.
 - [x] Accept nonempty HOLY/transform as an immutable provenance record in local

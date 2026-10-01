@@ -17,6 +17,7 @@
 #include "provides.h"
 #include "script.h"
 #include "source.h"
+#include "version.h"
 #include "change.h"
 
 #include <archive.h>
@@ -1276,6 +1277,145 @@ static int installed_source_id(int item, char source[65])
 int holy_state_instance_source(int instance, char source[65])
 {
     return instance && source && installed_source_id(instance, source);
+}
+
+/* one meta field of an installed instance, copied out so the caller can keep it. the
+   record is the archive member the install wrote, so the fields are the ones the
+   package carries. */
+static int instance_meta_field(int item, const char *key, char *out, size_t size)
+{
+    static char buffer[65536];
+    struct stat st;
+    char *cursor, *end = NULL;
+    size_t number = 0;
+    ssize_t got;
+    int fd = openat(item, "meta", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK), ok = 0;
+    if (fd < 0) return 0;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 ||
+        st.st_size >= (off_t)sizeof buffer) { close(fd); return 0; }
+    got = read(fd, buffer, (size_t)st.st_size);
+    close(fd);
+    if (got != st.st_size || buffer[got - 1] != '\n' || memchr(buffer, 0, (size_t)got)) return 0;
+    buffer[got] = 0;
+    for (cursor = buffer; *cursor; ++number) {
+        size_t used = strcspn(cursor, "\n"), wanted = strlen(key);
+        char *space = memchr(cursor, ' ', used);
+        size_t value;
+        if (!space || (size_t)(space - cursor) != wanted || strncmp(cursor, key, wanted)) {
+            cursor += used + 1;
+            continue;
+        }
+        value = used - wanted - 1;
+        if (!value || value >= size) break;
+        memcpy(out, space + 1, value);
+        out[value] = 0;
+        end = out;
+        break;
+    }
+    ok = end != NULL;
+    (void)number;
+    return ok;
+}
+
+/* one installed instance as a version family member */
+struct slot_member {
+    char digest[65], name[128], version[96], arch[32], libc[32], source[65], os[16];
+};
+
+/* two installed instances share a slot when they are the same package name, os, arch
+   and libc from one source */
+static int same_slot_fields(const struct slot_member *a, const struct slot_member *b)
+{
+    return !strcmp(a->source, b->source) && !strcmp(a->name, b->name) &&
+           !strcmp(a->os, b->os) && !strcmp(a->arch, b->arch) && !strcmp(a->libc, b->libc);
+}
+
+/* the installed slots of a root, one line per slot, with the version family it holds and
+   the newest member of it. read-only: it opens no transaction and writes nothing. */
+int holy_state_slots(const char *root_path, int json)
+{
+    unsigned long long generation;
+    struct slot_member *members = NULL;
+    size_t count = 0, capacity = 0, i, j;
+    DIR *list = NULL;
+    struct dirent *entry;
+    int database = -1, installed = -1, result = 1, first = 1;
+    database = holy_state_lock(root_path, 0, &generation, &result);
+    if (database < 0) {
+        fputs("holypkg: database status unavailable\n", stderr);
+        return result;
+    }
+    if (!installed_valid(database)) { result = 1; goto done; }
+    installed = child_dir(database, "installed", 0);
+    list = installed < 0 ? NULL : directory_stream(installed);
+    if (!list) { result = 1; goto done; }
+    errno = 0;
+    while ((entry = readdir(list))) {
+        struct slot_member member;
+        int item, ok = 1;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        item = child_dir(installed, entry->d_name, 0);
+        if (item < 0) { result = 1; goto done; }
+        memset(&member, 0, sizeof member);
+        if (strlen(entry->d_name) == 64) memcpy(member.digest, entry->d_name, 64);
+        ok = strlen(entry->d_name) == 64 && valid_digest(member.digest) &&
+             instance_meta_field(item, "name", member.name, sizeof member.name) &&
+             instance_meta_field(item, "version", member.version, sizeof member.version) &&
+             instance_meta_field(item, "arch", member.arch, sizeof member.arch) &&
+             instance_meta_field(item, "libc", member.libc, sizeof member.libc) &&
+             instance_meta_field(item, "os", member.os, sizeof member.os) &&
+             installed_source_id(item, member.source);
+        close(item);
+        if (!ok) { result = 1; goto done; }
+        if (count == capacity) {
+            size_t grown = capacity ? capacity * 2 : 16;
+            struct slot_member *next;
+            if (grown < capacity || grown > 262144) { result = 1; goto done; }
+            next = realloc(members, grown * sizeof *next);
+            if (!next) { result = 1; goto done; }
+            members = next;
+            capacity = grown;
+        }
+        members[count++] = member;
+        errno = 0;
+    }
+    if (errno) { result = 1; goto done; }
+    if (json) printf("{\"schema\":\"holy-db-slots-1\",\"slots\":[");
+    for (i = 0; i < count; ++i) {
+        const struct slot_member *newest = &members[i];
+        size_t family = 0;
+        for (j = 0; j < i; ++j)
+            if (same_slot_fields(&members[j], &members[i])) break;
+        if (j < i) continue;
+        for (j = i; j < count; ++j) {
+            int order = 0;
+            if (!same_slot_fields(&members[i], &members[j])) continue;
+            ++family;
+            if (holy_version_compare(members[j].version, newest->version, &order) && order > 0)
+                newest = &members[j];
+        }
+        if (json) {
+            if (!first) putchar(',');
+            printf("{\"name\":\"%s\",\"os\":\"%s\",\"arch\":\"%s\",\"libc\":\"%s\","
+                   "\"source\":\"%s\",\"occupied\":\"%s\",\"version\":\"%s\",\"versions\":%zu}",
+                   members[i].name, members[i].os, members[i].arch, members[i].libc,
+                   members[i].source, newest->digest, newest->version, family);
+        } else {
+            printf("%sslot %s %s %s %s source %s occupied %s version %s versions %zu",
+                   first ? "" : "\n", members[i].name, members[i].os, members[i].arch,
+                   members[i].libc, members[i].source, newest->digest, newest->version,
+                   family);
+        }
+        first = 0;
+    }
+    if (json) puts("]}");
+    result = ferror(stdout) ? 1 : 0;
+done:
+    if (database >= 0) close(database);
+    if (installed >= 0) close(installed);
+    if (list) closedir(list);
+    free(members);
+    return result;
 }
 
 int holy_state_find_slot(const char *root_path, const char *source_id,

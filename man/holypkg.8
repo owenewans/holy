@@ -276,6 +276,8 @@ db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] 
 .br
 .B holypkg db configure-recover SHA256 --retry --root DIRECTORY
 .br
+.B holypkg db slots [--root DIRECTORY] [--json]
+.br
 .B holypkg db repair-plan SHA256 --root DIRECTORY
 .br
 .B holypkg db plan-update OLD_SHA256 NEW_SHA256 [OLD_SHA256 NEW_SHA256 ...] [--accept-arch NEW_SHA256 ...] [--accept-privileged NEW_SHA256 ...] [--accept-service UNIT ...] --root DIRECTORY
@@ -1970,6 +1972,22 @@ resolves an installed source slot and prints the same read-only plan. Passing
 --plan PLAN_SHA256 applies that exact plan. An inactive source alias remains
 resolvable through its recorded source ID. When multiple arch/libc slots match,
 --arch and --libc select the intended slot.
+.PP
+db slots reports the installed slots of a root, one line per slot:
+.RS
+.nf
+slot NAME OS ARCH LIBC source SOURCE_ID occupied SHA256 version VERSION versions COUNT
+.fi
+.RE
+.PP
+A slot is the package name, os, architecture and libc from one source, so the same
+name from two sources and two architectures of one name are two slots, while two
+versions of one name from one source are one version family. occupied and
+version name the newest member of the family, versions counts the members and
+db check --all stays the authority on what those instances own. The command is
+read-only: it opens no transaction and writes nothing. --json prints
+holy-db-slots-1 with one object per slot. A root with no database is the same
+unavailable status db status reports.
 .PP
 Repair records stage repairing before writing files, verifies restored contents
 and increments the generation once. An interrupted operation remains pending.
