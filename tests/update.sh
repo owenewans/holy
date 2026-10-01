@@ -15,6 +15,10 @@ expect() {
 package() {
     label=$1 name=$2 path=$3 dependency=$4
     mkdir -p "$tree/$label/HOLY" "$tree/$label/DATA/usr/share"
+    if test "${7:-}" = unit; then
+        mkdir -p "$tree/$label/DATA/etc/dinit.d"
+        printf 'type = process\ncommand = /usr/bin/%s\n' "$name" > "$tree/$label/DATA/etc/dinit.d/$name"
+    fi
     printf 'format holy-package-1\nname %s\nversion %s\nrelease 1\nos linux\narch noarch\nlibc nolibc\nsource-name forged\n' "$name" "$label" > "$tree/$label/HOLY/meta"
     for field in deps provides hooks origin transform; do : > "$tree/$label/HOLY/$field"; done
     if test -n "$dependency"; then
@@ -57,6 +61,8 @@ package collision base extra ''
 package rename other payload ''
 package moved base relocated ''
 package linked base payload '' link
+package unit1 unit unit '' '' '' unit
+package unit2 unit unit '' '' '' unit
 old=$(hash base1) new=$(hash base2) app=$(hash app) extra=$(hash extra)
 install "$app" "$old"
 install "$extra"
@@ -390,5 +396,33 @@ expect 0 "$bin" db rm "$config_third" --root "$root"
 grep -qx 'local edit' "$root/usr/share/holy.conf"
 test ! -e "$root/usr/share/holy.conf.holy-new"
 expect 6 "$bin" db owner usr/share/holy.conf --root "$root"
+expect 0 "$bin" db check --all --root "$root"
+# a replacement that ships a unit states it, and the statement is part of the document
+# the approval covers
+unit_old=$(hash unit1) unit_new=$(hash unit2)
+expect 3 "$bin" db plan-set "$unit_old" --root "$root"
+grep -qx "holypkg: $unit_old ships the service unit /etc/dinit.d/unit; a set that starts a service needs --accept-service unit" "$tmp/err"
+expect 0 "$bin" db plan-set "$unit_old" --accept-service unit --root "$root"
+unit_set_plan=$(set_hash)
+expect 0 "$bin" db apply-set "$unit_set_plan" "$unit_old" --accept-service unit --root "$root"
+expect 0 "$bin" db plan-update "$unit_old" "$unit_new" --root "$root"
+grep -qx "service $unit_new unit path /etc/dinit.d/unit state starts-at-next-boot" "$tmp/out"
+test "$(grep -c 'state starts-at-next-boot' "$tmp/out")" -eq 1
+grep -qxF '[services]' "$tmp/out"
+grep -qx 'service etc/dinit.d/unit' "$tmp/out"
+test "$(sed -n 's/^plan-update sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")" = "$(update_hash)"
+unit_plan=$(update_hash)
+expect 0 "$bin" db apply-update "$unit_plan" "$unit_old" "$unit_new" --root "$root"
+test -f "$root/etc/dinit.d/unit"
+expect 0 "$bin" db check --all --root "$root"
+# a replacement that ships no unit states nothing, and the empty section is still there
+package unit3 unit unit ''
+unit_third=$(hash unit3)
+expect 0 "$bin" db plan-update "$unit_new" "$unit_third" --root "$root"
+test "$(grep -c 'state starts-at-next-boot' "$tmp/out")" -eq 0
+grep -qxF '[services]' "$tmp/out"
+test "$(grep -c '^service etc/' "$tmp/out")" -eq 0
+expect 0 "$bin" db apply-update "$(update_hash)" "$unit_new" "$unit_third" --root "$root"
+test ! -e "$root/etc/dinit.d/unit"
 expect 0 "$bin" db check --all --root "$root"
 printf 'update transaction fixtures passed\n'

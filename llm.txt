@@ -1212,7 +1212,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=f91e955e94b3cd154c31fd97a6c1352ecfb609f3a3d4342b5cc717ef931b2da2
+holypkg.8 source=holy version=development sha256=a82f91772afca7fac550c90fbf5967c59bdd14d61e78049fb49c94e1768ef435
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -2794,6 +2794,13 @@ DESCRIPTION
      paths with stable IDs and archive hashes. Unsupported entries remain in the
      record and prevent application. Recovery checking accepts exact old or  new
      objects and rejects unrelated changes.
+
+     A replacement that ships a unit below etc/dinit.d states it, as service AR-
+     TIFACT  NAME path /etc/dinit.d/NAME state starts-at-next-boot, and the plan
+     document carries the same units in a  [services]  section,	 so  what  would
+     start  at	the next boot is part of what the approval covers. A replacement
+     that ships none has an empty section. The consent a placed unit needs is  a
+     set decision and does not gate a replacement yet.
 
      db	 apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 --root DIRECTORY applies
      that cached replacement after reconstructing  and	comparing  the	approved

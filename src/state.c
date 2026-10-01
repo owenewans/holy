@@ -3282,6 +3282,11 @@ struct set_service {
     char *artifact;
 };
 
+struct service_list {
+    struct set_service *items;
+    size_t count;
+};
+
 struct install_set {
     struct holy_resolution resolution;
     struct set_item *items;
@@ -3296,8 +3301,7 @@ struct install_set {
     size_t binding_count;
     struct holy_override_record_info *overrides;
     size_t override_count;
-    struct set_service *services;
-    size_t service_count;
+    struct service_list services;
     char hash[65];
     char host[65];
     char catalog_index[65];
@@ -3320,6 +3324,18 @@ struct set_journal {
     size_t service_count;
 };
 
+static void service_list_free(struct service_list *list)
+{
+    size_t i;
+    for (i = 0; i < list->count; ++i) {
+        free(list->items[i].path);
+        free(list->items[i].artifact);
+    }
+    free(list->items);
+    list->items = NULL;
+    list->count = 0;
+}
+
 static void free_set(struct install_set *set)
 {
     size_t i;
@@ -3337,11 +3353,7 @@ static void free_set(struct install_set *set)
     for (i = 0; i < set->binding_count; ++i) free(set->bindings[i]);
     free(set->bindings);
     holy_override_records_free(set->overrides, set->override_count);
-    for (i = 0; i < set->service_count; ++i) {
-        free(set->services[i].path);
-        free(set->services[i].artifact);
-    }
-    free(set->services);
+    service_list_free(&set->services);
     holy_resolution_free(&set->resolution);
     memset(set, 0, sizeof *set);
 }
@@ -3379,31 +3391,29 @@ static int service_unit(const char *path)
     return tail > 0 && path[length - 1] != '/';
 }
 
-static int set_service(void *context, const char *artifact, const char *path)
+static int service_list_add(struct service_list *list, const char *artifact, const char *path)
 {
-    struct install_set *set = context;
-    struct set_service *services;
+    struct set_service *items;
     size_t i;
-    if (set->service_count >= 65536) return 0;
-    for (i = 0; i < set->service_count; ++i)
-        if (!strcmp(set->services[i].path, path)) return 1;
-    services = realloc(set->services, (set->service_count + 1) * sizeof *services);
-    if (!services) return 0;
-    set->services = services;
-    services = &set->services[set->service_count];
-    services->path = strdup(path);
-    services->artifact = strdup(artifact);
-    if (!services->path || !services->artifact) {
-        free(services->path);
-        free(services->artifact);
+    if (list->count >= 65536) return 0;
+    for (i = 0; i < list->count; ++i)
+        if (!strcmp(list->items[i].path, path)) return 1;
+    items = realloc(list->items, (list->count + 1) * sizeof *items);
+    if (!items) return 0;
+    list->items = items;
+    items[list->count].path = strdup(path);
+    items[list->count].artifact = strdup(artifact);
+    if (!items[list->count].path || !items[list->count].artifact) {
+        free(items[list->count].path);
+        free(items[list->count].artifact);
         return 0;
     }
-    ++set->service_count;
+    ++list->count;
     return 1;
 }
 
 struct service_scan {
-    struct install_set *set;
+    struct service_list *list;
     const char *artifact;
     int failed;
 };
@@ -3415,17 +3425,23 @@ static int service_entry(void *context, const struct holy_manifest_entry *entry)
     if (entry->directory || entry->link || entry->hardlink ||
         length < sizeof service_directory || entry->path[length - 1] == '/') return 1;
     if (!service_unit(entry->path)) return 1;
-    if (!set_service(scan->set, scan->artifact, entry->path)) {
+    if (!service_list_add(scan->list, scan->artifact, entry->path)) {
         scan->failed = 1;
         return 0;
     }
     return 1;
 }
 
-static int service_scan(const char *snapshot, struct install_set *set, const char *artifact)
+static int service_scan(const char *snapshot, struct service_list *list, const char *artifact)
 {
-    struct service_scan scan = {set, artifact, 0};
+    struct service_scan scan = {list, artifact, 0};
     return holy_verify_visit(snapshot, service_entry, &scan) && !scan.failed;
+}
+
+/* the unit name a manifest path carries, which is the last component */
+static const char *service_name_of(const char *path)
+{
+    return path + sizeof service_directory - 1;
 }
 
 /* placing a unit in the services directory is both enabling and starting it, so a unit
@@ -3434,27 +3450,27 @@ static int set_service_consent(const struct install_set *set,
                                const char *const *consented, size_t count)
 {
     size_t i, j;
-    for (i = 0; i < set->service_count; ++i) {
-        const char *unit = set->services[i].path + sizeof service_directory - 1;
+    for (i = 0; i < set->services.count; ++i) {
+        const char *unit = service_name_of(set->services.items[i].path);
         for (j = 0; j < count; ++j)
             if (!strcmp(unit, consented[j])) break;
         if (j == count) {
             fprintf(stderr, "holypkg: %s ships the service unit /%s; a set that starts"
                             " a service needs --accept-service %s\n",
-                    set->services[i].artifact, set->services[i].path, unit);
+                    set->services.items[i].artifact, set->services.items[i].path, unit);
             return 0;
         }
     }
     return 1;
 }
 
-static void print_set_services(const struct install_set *set)
+static void print_service_list(const struct service_list *list)
 {
     size_t i;
-    for (i = 0; i < set->service_count; ++i)
+    for (i = 0; i < list->count; ++i)
         printf("service %s %s path /%s state starts-at-next-boot\n",
-               set->services[i].artifact, set->services[i].path + sizeof service_directory - 1,
-               set->services[i].path);
+               list->items[i].artifact, service_name_of(list->items[i].path),
+               list->items[i].path);
 }
 
 static int claim_order(const void *left, const void *right)
@@ -4561,7 +4577,7 @@ static int build_set(const char *root_path, int root, int dir,
         }
         result = 1;
         if (!holy_verify_visit(item->snapshot, set_claim, set)) goto done;
-        if (!service_scan(item->snapshot, set, item->identity.digest)) goto done;
+        if (!service_scan(item->snapshot, &set->services, item->identity.digest)) goto done;
     }
     if (!set_claims_valid(set)) { result = 4; goto done; }
     for (i = 0; i < set->count; ++i)
@@ -5021,7 +5037,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
         if (set.catalog_index[0]) printf("catalog-index %s\n", set.catalog_index);
         print_set_conflicts(&set, generation);
         print_set_overrides(&set);
-        print_set_services(&set);
+        print_service_list(&set.services);
         for (i = 0; i < set.count; ++i)
             printf("selected %s %s %s\n", set.items[i].identity.digest,
                    set.items[i].identity.name,
@@ -5048,7 +5064,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
     if (strcmp(set.hash, approved)) { result = 3; goto done; }
     print_set_conflicts(&set, generation);
     print_set_overrides(&set);
-    print_set_services(&set);
+    print_service_list(&set.services);
     installed = child_dir(dir, "installed", 0);
     transactions = child_dir(dir, "transactions", 0);
     if (installed < 0 || transactions < 0) { result = 1; goto done; }
@@ -6142,6 +6158,7 @@ static int state_update(const char *old_digest, const char *new_digest,
     struct holy_file_plan changes = {0};
     struct holy_resolution resolution = {0};
     struct install_set claims = {0};
+    struct service_list services = {0};
     struct holy_override_record_info *override_records = NULL;
     size_t override_record_count = 0;
     struct plan_hash validation = {0};
@@ -6371,6 +6388,16 @@ static int state_update(const char *old_digest, const char *new_digest,
                     override_records[i].path, override_records[i].file,
                     override_records[i].patch) < 0) { record_failed = 1; break; }
     }
+    if (!service_scan(snapshots[old_index], &services, new_digest)) {
+        result = 6;
+        goto done;
+    }
+    fputs("[services]\n", out);
+    for (i = 0; i < services.count; ++i)
+        if (fprintf(out, "service %s\n", services.items[i].path) < 0) {
+            record_failed = 1;
+            break;
+        }
     pending = ferror(out) || record_failed;
     if (fclose(out)) pending = 1;
     out = NULL;
@@ -6388,7 +6415,8 @@ static int state_update(const char *old_digest, const char *new_digest,
         }
         if (printf("plan-update sha256 %s read-only\n", checksum) < 0 ||
             fwrite(record, 1, record_size, stdout) != record_size) goto done;
-        result = 0;
+        print_service_list(&services);
+        result = ferror(stdout) ? 1 : 0;
         goto done;
     }
     if (strcmp(expected, checksum) || (saved && strcmp(saved, record))) { result = 3; goto done; }
@@ -6452,6 +6480,7 @@ done:
     holy_override_records_free(override_records, override_record_count);
     holy_package_identity_free(&old); holy_package_identity_free(&next);
     holy_file_plan_free(&changes); holy_resolution_free(&resolution); free_set(&claims);
+    service_list_free(&services);
     EVP_MD_CTX_free(validation.hash);
     return result;
 }

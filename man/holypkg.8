@@ -1607,6 +1607,13 @@ with stable IDs and archive hashes. Unsupported entries remain in the record
 and prevent application. Recovery checking accepts exact old or new objects
 and rejects unrelated changes.
 .PP
+A replacement that ships a unit below etc/dinit.d states it, as
+service ARTIFACT NAME path /etc/dinit.d/NAME state starts-at-next-boot,
+and the plan document carries the same units in a [services] section, so
+what would start at the next boot is part of what the approval covers. A
+replacement that ships none has an empty section. The consent a placed
+unit needs is a set decision and does not gate a replacement yet.
+
 db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 --root DIRECTORY applies
 that cached replacement after reconstructing and comparing the approved plan
 under the writer lock. It preserves explicit/dependency reasons and source

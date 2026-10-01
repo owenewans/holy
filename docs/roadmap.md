@@ -442,9 +442,16 @@
   consent to gate here. the set journal carries it as
   holy-set-journal-7, so an interrupted set finishes the placement it was
   reviewed for and recovery refuses a journal that names no consent for a
-  unit the set ships. A replacement that ships a unit still installs it
-  without that consent, as do re-applying a record on a later version,
-  general rollback and per-phase recovery. A hook that starts a service is
+  unit the set ships. A replacement that ships a unit now states it, as
+  service ARTIFACT NAME path /etc/dinit.d/NAME state
+  starts-at-next-boot, and the update plan document carries the same units
+  in a [services] section, so what would start at the next boot is part
+  of what the approval covers. The consent itself still does not gate a
+  replacement: that needs the list threaded through
+  holy_state_update_plan, holy_state_apply_update,
+  holy_state_recover_update and holy_state_rollback with a
+  holy-update-journal-5, and it stays open with general rollback and
+  per-phase recovery. A hook that starts a service is
   a different path from a placed unit, and the specification says the
   behaviour has to be visible before the hook runs rather than that the
   manager stops it: `db configure-plan` names every service tool the body
