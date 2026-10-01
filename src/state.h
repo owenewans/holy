@@ -9,7 +9,8 @@ int holy_state_init(const char *root_path);
 int holy_state_status(const char *root_path, int json);
 
 /* the installed slots with the version family each holds, read-only */
-int holy_state_slots(const char *root_path, int json);
+int holy_state_slots(const char *root_path, int json,
+                     const char *const *sources, size_t source_count);
 /* reserve one cached object at the current generation; no payload mutation. */
 int holy_state_reserve(const char *digest, const char *root_path);
 /* discard only the recognized prepared reservation. */

@@ -89,6 +89,68 @@ expect 0 "$bin" db slots --root "$root" --json
 grep -q -F "\"occupied\":\"$newer\"" "$tmp/out"
 grep -q -F "\"occupied\":\"$tool_next\"" "$tmp/out"
 
+# a named source reports what its bound catalog offers for the slots it occupies, so a
+# version family is read against the index the source publishes
+repo="$tmp/repo"
+mkdir -p "$repo"
+offered_version() {
+    version=$1
+    rm -rf "$tree"
+    mkdir -p "$tree/HOLY" "$tree/DATA/usr/share"
+    printf 'format holy-package-1\nname offered\nversion %s\nrelease 1\nos linux\narch noarch\nlibc nolibc\n' \
+        "$version" > "$tree/HOLY/meta"
+    for field in deps provides hooks origin transform; do : > "$tree/HOLY/$field"; done
+    printf 'offered %s\n' "$version" > "$tree/DATA/usr/share/offered"
+    "$bin" manifest generate "$tree" --output "$tmp/files" > "$tmp/out"
+    mv "$tmp/files" "$tree/HOLY/files"
+    rm -f "$repo/offered.holy"
+    "$bin" pack "$tree" --output "$repo/offered.holy" > "$tmp/out"
+    "$bin" repo index "$repo" > "$tmp/out"
+    "$bin" repo seal "$repo" > "$tmp/out"
+    sed -n 's/^sha256 //p' "$repo/current"
+}
+catalog_root="$tmp/catalog-root"
+mkdir "$catalog_root"
+"$bin" db init --root "$catalog_root" > "$tmp/out"
+printf '[source offered]\ntype holy-http\nurl "https://fixture.example/holy/"\n' \
+    > "$tmp/offered.conf"
+"$bin" source plan --config "$tmp/offered.conf" --root "$catalog_root" > "$tmp/offered.plan" 2> "$tmp/offered.err"
+offered_plan=$(sha256sum "$tmp/offered.plan" | cut -d ' ' -f 1)
+offered_source=$(sed -n 's/^add-source \([0-9a-f]*\) "offered"$/\1/p' "$tmp/offered.err")
+test "${#offered_source}" -eq 64
+"$bin" source apply "$tmp/offered.plan" --sha256 "$offered_plan" --root "$catalog_root" > "$tmp/out"
+offer_index=$(offered_version 1)
+test "${#offer_index}" -eq 64
+installed_one=$(sha256sum "$repo/offered.holy" | cut -d ' ' -f 1)
+printf 'format holy-mirror-1\nurl "https://fixture.example/holy/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$offer_index" "$offered_source" > "$repo/mirror-origin"
+"$bin" source catalog bind offered "$repo" --root "$catalog_root" > "$tmp/out"
+expect 0 "$bin" add offered:offered --root "$catalog_root" --yes > "$tmp/out"
+expect 0 "$bin" db slots --root "$catalog_root"
+grep -qx "slot offered linux noarch nolibc source $offered_source occupied $installed_one version 1 versions 1" "$tmp/out"
+# the catalog offers nothing newer yet, so the report says so rather than guessing
+expect 0 "$bin" db slots --root "$catalog_root" --source "$offered_source"
+grep -qx "slot offered linux noarch nolibc source $offered_source occupied $installed_one version 1 versions 1 available - version -" "$tmp/out"
+
+# a new generation of the catalog makes a newer member of the family visible
+offer_index=$(offered_version 2)
+test "${#offer_index}" -eq 64
+printf 'format holy-mirror-1\nurl "https://fixture.example/holy/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$offer_index" "$offered_source" > "$repo/mirror-origin"
+expect 0 "$bin" source catalog bind offered "$repo" --root "$catalog_root" > "$tmp/out"
+offered_two=$(sha256sum "$repo/offered.holy" | cut -d ' ' -f 1)
+test "$offered_two" != "$installed_one"
+expect 0 "$bin" db slots --root "$catalog_root" --source "$offered_source"
+grep -qx "slot offered linux noarch nolibc source $offered_source occupied $installed_one version 1 versions 1 available $offered_two version 2" "$tmp/out"
+expect 0 "$bin" db slots --root "$catalog_root" --source "$offered_source" --json
+grep -q -F "\"available\":\"$offered_two\"" "$tmp/out"
+grep -q -F "\"available-version\":\"2\"" "$tmp/out"
+# a source that is not asked about adds nothing to the line
+expect 0 "$bin" db slots --root "$catalog_root"
+if grep -q available "$tmp/out"; then exit 1; fi
+# the installed set is untouched by the report
+expect 0 "$bin" db check --all --root "$catalog_root"
+
 # a root with no database is reported as unavailable, the same as db status
 if "$bin" db slots --root "$tmp/absent" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
 grep -qx 'holypkg: database status unavailable' "$tmp/err"

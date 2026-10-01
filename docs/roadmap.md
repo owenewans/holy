@@ -353,8 +353,11 @@
   and two architectures of one name are two slots, and two versions of one name
   from one source are one version family. The report names the newest member and
   counts the family, in a line form and as holy-db-slots-1, and it is read-only.
-  Version families across a source that has no installed member, and slot
-  selection inside a resolver choice, stay unfinished.
+  Repeated `--source SOURCE_ID` reads the named sources' bound catalogs and adds
+  `available SHA256 version VERSION` per slot, so a family is read against the
+  index the source publishes; a source with no bound catalog, a local slot or a
+  catalog with nothing newer reports a dash. Slot selection inside a resolver
+  choice stays unfinished.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions.
 - [x] Accept nonempty HOLY/transform as an immutable provenance record in local

@@ -1323,7 +1323,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=9ea181012b873e7bfaafb3658085fd9ab0fc6c1143b721f9c2131fa5d401e0e3
+holypkg.8 source=holy version=development sha256=8039c6acf8ccbd2bcab9def584ad1fba07300c302ec8bc95a267e1bfe819d034
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -3279,6 +3279,17 @@ DESCRIPTION
      stances  own.  The command is read-only: it opens no transaction and writes
      nothing. --json prints holy-db-slots-1 with one object  per  slot.	 A  root
      with no database is the same unavailable status db status reports.
+
+     Repeated  --source	 SOURCE_ID  reads  each named source's bound catalog and
+     adds what the source offers for the slots that source occupies:
+	    available SHA256 version VERSION
+
+     The digest is the newest member the catalog publishes for that  slot,  com-
+     pared  with  the ordinary version comparator, so the family is read against
+     the index the source publishes rather than against	 the  installed	 set.  A
+     source  with no bound catalog, a slot delivered locally, and a catalog that
+     offers nothing newer all report a dash rather than a guess.  A  local  slot
+     reports the same line whether or not a source is named.
 
      Repair records stage repairing before writing files, verifies restored con-
      tents  and increments the generation once. An interrupted operation remains

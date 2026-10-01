@@ -17,6 +17,7 @@
 #include "provides.h"
 #include "script.h"
 #include "source.h"
+#include "repo.h"
 #include "version.h"
 #include "change.h"
 
@@ -1330,16 +1331,62 @@ static int same_slot_fields(const struct slot_member *a, const struct slot_membe
            !strcmp(a->os, b->os) && !strcmp(a->arch, b->arch) && !strcmp(a->libc, b->libc);
 }
 
+/* the newest member a source's catalog offers for one slot, read through the bound
+   mirror. a source that has no catalog bound, or that offers nothing newer, leaves the
+   output as a dash rather than a guess */
+static void slot_available_member(const char *root_path, const struct slot_member *occupied,
+                                  char digest[65], char version[96])
+/* the version is a copy of the catalog entry, which the list owns until it is freed */
+{
+    struct holy_package_identity identity;
+    struct holy_repo_slot_list candidates;
+    char alias[128], *catalog = NULL;
+    size_t i;
+    int order = 0, best = 0;
+    /* a slot delivered locally has no source to ask, so the line keeps its dash */
+    strcpy(digest, "-");
+    strcpy(version, "-");
+    if (!strcmp(occupied->source, "-")) return;
+    if (holy_source_alias_for_id(root_path, occupied->source, alias) ||
+        holy_source_catalog_path_fast(root_path, alias, &catalog) || !catalog) {
+        free(catalog);
+        return;
+    }
+    memset(&identity, 0, sizeof identity);
+    identity.name = (char *)occupied->name;
+    identity.os = (char *)occupied->os;
+    identity.arch = (char *)occupied->arch;
+    identity.libc = (char *)occupied->libc;
+    if (holy_repo_slot_candidates(catalog, &identity, &candidates)) {
+        free(catalog);
+        return;
+    }
+    for (i = 0; i < candidates.count; ++i) {
+        const struct holy_package_identity *item = &candidates.items[i];
+        if (!strcmp(item->digest, occupied->digest)) continue;
+        if (!holy_version_compare(item->version, occupied->version, &order) || order <= 0)
+            continue;
+        if (best && !holy_version_compare(item->version, version, &order)) continue;
+        strcpy(digest, item->digest);
+        snprintf(version, 96, "%s", item->version);
+        best = 1;
+    }
+    holy_repo_slot_list_free(&candidates);
+    free(catalog);
+}
+
 /* the installed slots of a root, one line per slot, with the version family it holds and
    the newest member of it. read-only: it opens no transaction and writes nothing. */
-int holy_state_slots(const char *root_path, int json)
+int holy_state_slots(const char *root_path, int json,
+                     const char *const *sources, size_t source_count)
 {
     unsigned long long generation;
     struct slot_member *members = NULL;
     size_t count = 0, capacity = 0, i, j;
     DIR *list = NULL;
     struct dirent *entry;
-    int database = -1, installed = -1, result = 1, first = 1;
+    int database = -1, installed = -1, result = 1, first = 1, asked = 0;
+    char available[65] = "-", version[96] = "-";
     database = holy_state_lock(root_path, 0, &generation, &result);
     if (database < 0) {
         fputs("holypkg: database status unavailable\n", stderr);
@@ -1394,17 +1441,33 @@ int holy_state_slots(const char *root_path, int json)
             if (holy_version_compare(members[j].version, newest->version, &order) && order > 0)
                 newest = &members[j];
         }
+        /* a named source reports what its catalog offers for the slot, so the family is
+           read against the index the source publishes rather than the installed set */
+        asked = 0;
+        for (j = 0; j < source_count; ++j)
+            if (!strcmp(sources[j], members[i].source)) asked = 1;
+        if (asked) {
+            strcpy(available, "-");
+            strcpy(version, "-");
+            slot_available_member(root_path, newest, available, version);
+        }
         if (json) {
             if (!first) putchar(',');
             printf("{\"name\":\"%s\",\"os\":\"%s\",\"arch\":\"%s\",\"libc\":\"%s\","
-                   "\"source\":\"%s\",\"occupied\":\"%s\",\"version\":\"%s\",\"versions\":%zu}",
+                   "\"source\":\"%s\",\"occupied\":\"%s\",\"version\":\"%s\","
+                   "\"versions\":%zu",
                    members[i].name, members[i].os, members[i].arch, members[i].libc,
                    members[i].source, newest->digest, newest->version, family);
+            if (asked)
+                printf(",\"available\":\"%s\",\"available-version\":\"%s\"",
+                       available, version);
+            putchar('}');
         } else {
             printf("%sslot %s %s %s %s source %s occupied %s version %s versions %zu",
                    first ? "" : "\n", members[i].name, members[i].os, members[i].arch,
                    members[i].libc, members[i].source, newest->digest, newest->version,
                    family);
+            if (asked) printf(" available %s version %s", available, version);
         }
         first = 0;
     }

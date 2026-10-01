@@ -1989,6 +1989,21 @@ read-only: it opens no transaction and writes nothing. --json prints
 holy-db-slots-1 with one object per slot. A root with no database is the same
 unavailable status db status reports.
 .PP
+Repeated --source SOURCE_ID reads each named source's bound catalog and adds what
+the source offers for the slots that source occupies:
+.RS
+.nf
+available SHA256 version VERSION
+.fi
+.RE
+.PP
+The digest is the newest member the catalog publishes for that slot, compared with
+the ordinary version comparator, so the family is read against the index the
+source publishes rather than against the installed set. A source with no bound
+catalog, a slot delivered locally, and a catalog that offers nothing newer all
+report a dash rather than a guess. A local slot reports the same line whether or
+not a source is named.
+.PP
 Repair records stage repairing before writing files, verifies restored contents
 and increments the generation once. An interrupted operation remains pending.
 db recover --repair resumes that recorded policy after verifying cache,

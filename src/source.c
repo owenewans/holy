@@ -862,6 +862,34 @@ done:
     return result;
 }
 
+/* the alias a registered source id belongs to, since a caller that holds an id from an
+   installed record needs the name its catalog is bound under */
+int holy_source_alias_for_id(const char *root, const char *id, char alias[128])
+{
+    struct registry registry = {0};
+    unsigned long long generation;
+    char *data = NULL;
+    size_t i;
+    int dir, found = 0, result = 1;
+    if (!root || !id || !valid_hash(id) || !alias) return 2;
+    alias[0] = 0;
+    dir = holy_state_lock(root, 0, &generation, &result);
+    if (dir < 0) return result;
+    data = load_registry(dir, &registry);
+    if (!data) { close(dir); return 1; }
+    /* the lock sets result to zero when it succeeds, so the search keeps its own flag */
+    for (i = 0; i < registry.count && !found; ++i)
+        if (!strcmp(registry.items[i].id, id) &&
+            registry.items[i].alias && strlen(registry.items[i].alias) < 128) {
+            strcpy(alias, registry.items[i].alias);
+            found = 1;
+        }
+    free(data);
+    clear_registry(&registry);
+    close(dir);
+    return found ? 0 : 1;
+}
+
 int holy_source_rank_info(const char *root, const char *id,
                           char **family, int *priority)
 {
