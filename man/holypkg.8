@@ -1970,6 +1970,20 @@ installed metadata, ownership and graph. Partial files are not overwritten.
 Ordinary check remains read-only. This is not general upgrade, rollback or
 configuration-file repair.
 .PP
+A repair journal states the phase it proved as its last line: payload or
+generation. The command prints resumed-phase PHASE, and a journal that names
+generation has already written and verified its payload, so the recovery checks
+the manifest instead of restoring the same bytes again. The result reads
+.RS
+.nf
+repaired SHA256 generation GENERATION missing-only phase generation
+.fi
+.RE
+.PP
+A journal written before phases existed states none and the recovery restores the
+payload as it always did. A phase word the command does not know, or one that
+belongs to another stage, is an unreadable journal.
+.PP
 make bootstrap-musl ARCH=i686|x86_64 INPUTS=DIRECTORY OUTPUT=DIRECTORY builds
 pinned musl 1.2.5 as a native runtime package, preserving source and build hashes
 and licenses. The default target is x86_64. The i686 build requires multilib GCC

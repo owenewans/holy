@@ -522,12 +522,22 @@ static int update_replace(int dir, const char *name, const char *record);
 /* the phases a removal passes through, in order. the journal states the one it reached,
    so recovery finishes there rather than re-deriving where the crash fell. */
 static const char *const remove_phases[] = { "files", "retired", "generation" };
+/* a repair restores the packaged bytes, proves them and publishes the generation */
+static const char *const repair_phases[] = { "payload", "generation" };
 
 static int remove_phase_valid(const char *phase)
 {
     size_t i;
     for (i = 0; i < sizeof remove_phases / sizeof *remove_phases; ++i)
         if (!strcmp(phase, remove_phases[i])) return 1;
+    return 0;
+}
+
+static int repair_phase_valid(const char *phase)
+{
+    size_t i;
+    for (i = 0; i < sizeof repair_phases / sizeof *repair_phases; ++i)
+        if (!strcmp(phase, repair_phases[i])) return 1;
     return 0;
 }
 
@@ -578,7 +588,8 @@ static int journal_valid(int dir, unsigned long long generation,
         if (name_length >= sizeof name) goto done;
         memcpy(name, buffer + tail + 6, name_length);
         name[name_length] = 0;
-        if (!remove_phase_valid(name)) goto done;
+        if (is_removing == 2 ? !repair_phase_valid(name) : !remove_phase_valid(name))
+            goto done;
         if (phase) memcpy(phase, name, name_length + 1);
     } else if (phase) phase[0] = 0;
     memcpy(digest, buffer + length, 64);
@@ -2861,14 +2872,24 @@ done:
     return result;
 }
 
-/* the journal a removal writes, with the phase it reached as the last line */
+/* the journal a single-artifact transaction writes: one stage, one generation, one
+   artifact, one plan and the phase it reached as the last line */
+static size_t repair_journal_text(char *out, size_t size, const char *stage,
+                                  unsigned long long generation, const char *digest,
+                                  const char *plan, const char *phase)
+{
+    int length = snprintf(out, size,
+        "format holy-journal-1\nstage %s\ngeneration %llu\nartifact %s\nplan %s\n"
+        "phase %s\n", stage, generation, digest, plan, phase);
+    return length < 0 || (size_t)length >= size ? 0 : (size_t)length;
+}
+
 static size_t remove_journal_text(char *out, size_t size, unsigned long long generation,
                                   const char *digest, int broken, const char *phase)
 {
-    int length = snprintf(out, size,
-        "format holy-journal-1\nstage removing\ngeneration %llu\nartifact %s\nplan %064d\n"
-        "phase %s\n", generation, digest, broken ? 1 : 0, phase);
-    return length < 0 || (size_t)length >= size ? 0 : (size_t)length;
+    char plan[70];
+    snprintf(plan, sizeof plan, "%064d", broken ? 1 : 0);
+    return repair_journal_text(out, size, "removing", generation, digest, plan, phase);
 }
 
 static int finish_remove_record(int dir, int installed, int item, int transactions,
@@ -6011,6 +6032,8 @@ int holy_state_repair(const char *digest, const char *approved, const char *root
 {
     int root = -1, dir = -1, installed = -1, item = -1, files = -1, transactions = -1;
     int result = 1, stage = 0, journaled = 0, resume = digest == NULL, transformed = 0;
+    char repaired_phase[16] = {0};
+    int published = 0;
     char artifact[65], expected[65], actual[65], graph[65], manifest[65], journal[256];
     char *snapshot = NULL;
     unsigned long long generation, recorded;
@@ -6037,8 +6060,11 @@ int holy_state_repair(const char *digest, const char *approved, const char *root
     if (resume) {
         result = 5;
         if (set_journal_present(dir) ||
-            journal_valid(dir, generation, &recorded, artifact, expected, &stage, NULL) != 1 ||
+            journal_valid(dir, generation, &recorded, artifact, expected, &stage,
+                          repaired_phase) != 1 ||
             stage != 2) goto done;
+        published = !strcmp(repaired_phase, repair_phases[1]);
+        if (repaired_phase[0]) printf("resumed-phase %s\n", repaired_phase);
         {
             DIR *list;
             struct dirent *entry;
@@ -6111,18 +6137,24 @@ int holy_state_repair(const char *digest, const char *approved, const char *root
     if (transactions < 0) goto done;
     result = 5;
     if (!resume) {
-        length = (size_t)snprintf(journal, sizeof journal,
-            "format holy-journal-1\nstage repairing\ngeneration %llu\nartifact %s\nplan %s\n",
-            recorded, digest, actual);
-        if (length >= sizeof journal || !record_file(transactions, "journal", journal, length)) goto done;
+        length = repair_journal_text(journal, sizeof journal, "repairing", recorded,
+                                     digest, actual, repair_phases[0]);
+        if (!length || !record_file(transactions, "journal", journal, length)) goto done;
         journaled = 1;
     }
-    if (!(transformed ? holy_install_payload_missing_mapped(snapshot, root, files) :
-                         holy_install_payload_missing(snapshot, root)) ||
-        holy_install_check_manifest(files, root) != 1 ||
-        (generation == recorded && !set_generation(dir, recorded + 1)) || fsync(dir) ||
+    /* a journal that names the generation phase proved the payload, so the recovery
+       checks the manifest instead of restoring the same bytes again */
+    if (!published && !(transformed ? holy_install_payload_missing_mapped(snapshot, root, files) :
+                                      holy_install_payload_missing(snapshot, root)))
+        goto done;
+    if (holy_install_check_manifest(files, root) != 1) goto done;
+    length = repair_journal_text(journal, sizeof journal, "repairing", recorded,
+                                 digest, actual, repair_phases[1]);
+    if (!length || !update_replace(transactions, "journal", journal)) goto done;
+    if ((generation == recorded && !set_generation(dir, recorded + 1)) || fsync(dir) ||
         unlinkat(transactions, "journal", 0) || fsync(transactions)) goto done;
-    printf("repaired %s generation %llu missing-only\n", digest, recorded + 1);
+    printf("repaired %s generation %llu missing-only phase %s\n", digest, recorded + 1,
+           repair_phases[1]);
     result = 0;
 done:
     if (result) fprintf(stderr, "holypkg: missing-file repair failed (status %d)%s\n", result,

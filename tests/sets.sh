@@ -279,6 +279,28 @@ int openat64(int dir, const char *path, int flags, ...)
 }
 C
 gcc -shared -fPIC -o "$tmp/fault.so" "$tmp/fault.c" -ldl
+cat > "$tmp/rename-fault.c" <<'C'
+#define _POSIX_C_SOURCE 200809L
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+/* a crash between two journal writes is a rename this build never performs */
+int renameat(int olddirfd, const char *old, int newdirfd, const char *name)
+{
+    static int (*real_renameat)(int, const char *, int, const char *);
+    const char *fail = getenv("HOLY_FAIL_RENAME");
+    if (!real_renameat) {
+        void *symbol = dlsym(RTLD_NEXT, "renameat");
+        memcpy(&real_renameat, &symbol, sizeof real_renameat);
+        if (!real_renameat) abort();
+    }
+    if (fail && !strcmp(name, fail)) { errno = ENOSPC; return -1; }
+    return real_renameat(olddirfd, old, newdirfd, name);
+}
+C
+gcc -shared -fPIC -o "$tmp/rename-fault.so" "$tmp/rename-fault.c" -ldl
 expect 5 env LD_PRELOAD="$tmp/fault.so" HOLY_FAIL_PATH="$target" "$bin" db apply-set "$plan" "$app" "$lib" --root "$root"
 test -f "$db/transactions/set-journal"
 test -f "$db/installed/$first/state"
@@ -322,6 +344,7 @@ repair=$(sed -n 's/^repair-plan .* sha256 \([0-9a-f]*\) missing-only read-only$/
 test "${#repair}" -eq 64
 expect 5 env LD_PRELOAD="$tmp/fault.so" HOLY_FAIL_PATH=app "$bin" db repair "$app" --plan "$repair" --root "$root"
 grep -qx 'stage repairing' "$db/transactions/journal"
+grep -qx 'phase payload' "$db/transactions/journal"
 expect 5 "$bin" db status --root "$root"
 expect 5 "$bin" db recover --continue --root "$root"
 printf partial > "$root/usr/share/app"
@@ -329,6 +352,43 @@ expect 5 "$bin" db recover --repair --root "$root"
 grep -qx partial "$root/usr/share/app"
 rm "$root/usr/share/app"
 expect 0 "$bin" db recover --repair --root "$root"
+grep -qx 'resumed-phase payload' "$tmp/out"
+grep -qx "repaired $app generation 5 missing-only phase generation" "$tmp/out"
+# a repair journal names the phase it proved, so a crash that fell after the payload
+# publishes the generation without writing the same bytes again
+repair_root="$tmp/repair-phase"
+cp -a "$root" "$repair_root"
+rm "$repair_root/usr/share/app"
+repair_generation=$(cat "$repair_root/var/lib/holypkg/generation")
+expect 0 "$bin" db repair-plan "$app" --root "$repair_root"
+phase_repair=$(sed -n 's/^repair-plan .* sha256 \([0-9a-f]*\) missing-only read-only$/\1/p' "$tmp/out")
+expect 5 env LD_PRELOAD="$tmp/rename-fault.so" HOLY_FAIL_RENAME=journal \
+    "$bin" db repair "$app" --plan "$phase_repair" --root "$repair_root"
+grep -qx 'phase payload' "$repair_root/var/lib/holypkg/transactions/journal"
+grep -qx app "$repair_root/usr/share/app"
+# the crash fell after the payload proof, so the journal states the next phase and the
+# generation is already published
+sed -i 's/^phase payload$/phase generation/' "$repair_root/var/lib/holypkg/transactions/journal"
+printf '%s\n' "$(($repair_generation + 1))" > "$repair_root/var/lib/holypkg/generation"
+expect 0 "$bin" db recover --repair --root "$repair_root" > "$tmp/out"
+grep -qx 'resumed-phase generation' "$tmp/out"
+grep -qx "repaired $app generation $(($repair_generation + 1)) missing-only phase generation" "$tmp/out"
+test ! -e "$repair_root/var/lib/holypkg/transactions/journal"
+expect 0 "$bin" db check --all --root "$repair_root"
+# the same phase with a file the payload never restored is reported, not written again
+repair_missing="$tmp/repair-missing"
+cp -a "$tmp/repair-phase" "$repair_missing"
+expect 0 "$bin" db repair-plan "$app" --root "$repair_missing"
+missing_repair=$(sed -n 's/^repair-plan .* sha256 \([0-9a-f]*\) missing-only read-only$/\1/p' "$tmp/out")
+printf 'format holy-journal-1\nstage repairing\ngeneration %s\nartifact %s\nplan %s\nphase generation\n' \
+    "$(cat "$repair_missing/var/lib/holypkg/generation")" "$app" "$missing_repair" \
+    > "$repair_missing/var/lib/holypkg/transactions/journal"
+rm "$repair_missing/usr/share/app"
+repair_status=0
+"$bin" db recover --repair --root "$repair_missing" > "$tmp/out" 2> "$tmp/repair-err" || repair_status=$?
+test "$repair_status" -eq 5
+grep -qx 'holypkg: missing-file usr/share/app' "$tmp/repair-err"
+test ! -e "$repair_missing/usr/share/app"
 test "$(cat "$db/generation")" -eq 5
 test ! -e "$db/transactions/journal"
 grep -qx app "$root/usr/share/app"

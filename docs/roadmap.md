@@ -412,7 +412,10 @@
   generation or committed, which is one version above the journal with the same
   decisions; a group writes version 7 and a single slot versions 2 to 6. The
   recovery resumes from the phase and refuses a journal whose phase disagrees with
-  the installed records. The repair transaction stays open. `holypkg override list` now
+  the installed records. A repair journal states its phase the same way, payload
+  or generation, so a recovery that finds the generation phase checks the
+  manifest instead of restoring the same bytes again, and an unknown phase word
+  is an unreadable journal. Every transaction now states the phase it proved. `holypkg override list` now
   reads the user override store of a target root and reports every record
   against the installed set. A record is the fixed line order
   holy-override-1 form: a scope naming one artifact digest, one package

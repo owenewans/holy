@@ -1323,7 +1323,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=af4f4426a2798a3fb93d8f8ae05b6ed75fd7ce3e6bae18fe522f94fecfa5e4b5
+holypkg.8 source=holy version=development sha256=eb41ac04e805a0c2fc2a12ce691450873e2b67e12de465936a15544a4d664072
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -3269,6 +3269,17 @@ DESCRIPTION
      cache, installed metadata, ownership and graph. Partial files are not over-
      written.	Ordinary  check	 remains read-only. This is not general upgrade,
      rollback or configuration-file repair.
+
+     A repair journal states the phase it proved as its last  line:  payload  or
+     generation.  The  command	prints	resumed-phase  PHASE, and a journal that
+     names generation has already written and verified its payload, so	the  re-
+     covery  checks  the manifest instead of restoring the same bytes again. The
+     result reads
+	    repaired SHA256 generation GENERATION missing-only phase generation
+
+     A journal written before phases existed states none and  the  recovery  re-
+     stores  the  payload  as  it  always did. A phase word the command does not
+     know, or one that belongs to another stage, is an unreadable journal.
 
      make  bootstrap-musl  ARCH=i686|x86_64  INPUTS=DIRECTORY	OUTPUT=DIRECTORY
      builds pinned musl 1.2.5 as a native runtime package, preserving source and
