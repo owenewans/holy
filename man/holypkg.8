@@ -302,7 +302,7 @@ db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] 
 .br
 .B holypkg db check SHA256|--all --root DIRECTORY --json
 .br
-.B holypkg db rm SHA256 [--accept-broken] --root DIRECTORY
+.B holypkg db rm SHA256 [SHA256 ...] [--accept-broken] --root DIRECTORY
 .br
 .B holypkg db owner PATH --root DIRECTORY
 .br
@@ -1106,6 +1106,18 @@ follows the findings. db apply-set prints the same findings before it stages the
 first payload file, and a reused installed artifact states its capabilities again.
 A shared public path is not a finding, since two selected artifacts claiming one
 path are rejected before this report.
+.PP
+db rm takes one artifact or several. With several, every artifact is checked
+before the first one is removed, so a consumer, a changed file, a
+conflicting claim or an artifact that is not installed leaves the installed
+set exactly as it was, and the message names the artifact and the status.
+Each removal is then its own journalled transaction and publishes its own
+generation, since a transaction names one artifact today: a crash between
+two of them leaves one transaction pending that db recover --continue
+finishes, and the transactions before it are complete. The command reports
+each removal with the generation it published and closes with
+removed-group artifacts COUNT generation GENERATION.
+
 .PP
 The db apply-set command accepts the reviewed plan digest followed by the same
 root and candidates. It holds one writer lock, checks the plan again and writes

@@ -342,8 +342,13 @@
   explicit --accept-broken removal path now retains consumers and reports their
   broken edges, and a committed set, removal or replacement leaves the decisions it was
   reviewed with under a directory named for the plan it committed with, which
-  `holypkg db transactions` reports. Source-aware installed slots, version families,
-  grouped removal and a reverse set stay unfinished.
+  `holypkg db transactions` reports. `holypkg db rm` takes several artifacts in one
+  command and checks every one of them before the first is removed, so a consumer, a
+  changed file, a conflicting claim or an artifact that is not installed leaves the
+  installed set as it was. Each removal is then its own journalled transaction and
+  publishes its own generation, since a transaction names one artifact today, and a
+  crash between two of them leaves one transaction pending that recovery finishes.
+  Source-aware installed slots and version families stay unfinished.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions.
 - [x] Accept nonempty HOLY/transform as an immutable provenance record in local

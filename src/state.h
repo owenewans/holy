@@ -30,7 +30,12 @@ int holy_state_check(const char *digest, const char *root_path, int json);
 /* list paths from the installed manifest, independent of current payload drift. */
 int holy_state_files(const char *digest, const char *root_path);
 /* remove one intact installed instance; accepted broken edges remain visible. */
+/* one artifact, kept for the single form of db rm. */
 int holy_state_remove(const char *digest, const char *root_path, int accept_broken);
+/* several artifacts in one command: every one is checked before the first is removed,
+   each removal is its own journalled transaction. */
+int holy_state_remove_group(const char *const *digests, size_t count,
+                            const char *root_path, int accept_broken);
 /* finish a removing journal if remaining listed files are unchanged. */
 int holy_state_continue_remove(const char *root_path);
 /* clear a completed applying journal after verifying the installed instance. */

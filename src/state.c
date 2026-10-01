@@ -2960,15 +2960,50 @@ static int dependent_consumer(int installed, const char *digest)
     return result < 0 ? -1 : found;
 }
 
-int holy_state_remove(const char *digest, const char *root_path, int accept_broken)
+/* one artifact before anything is removed: its consumers, its manifest and its claims.
+   the group runs this for every artifact before the first one is touched, so a
+   conflict in the last one leaves the installed set exactly as it was. */
+static int remove_precheck(int installed, int root, const char *digest, int accept_broken,
+                           int *broken)
+{
+    int item, files, pending;
+    pending = dependent_consumer(installed, digest);
+    if (pending < 0) return 1;
+    if (pending && !accept_broken) return 3;
+    *broken = pending;
+    item = child_dir(installed, digest, 0);
+    if (item < 0) return 6;
+    files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    if (files < 0) { close(item); return 6; }
+    pending = holy_install_check_manifest(files, root);
+    if (pending == 1) pending = exclusive_claims(installed, digest, files);
+    close(files);
+    close(item);
+    if (pending == 1) return 0;
+    return pending == 0 ? 4 : 1;
+}
+
+/* several artifacts in one command. each removal is its own journalled transaction, so a
+   crash between two of them leaves one transaction pending that db recover finishes,
+   and each publishes the generation it published alone. what the group adds is that
+   every artifact is checked before the first one is removed. */
+int holy_state_remove_group(const char *const *digests, size_t count,
+                            const char *root_path, int accept_broken)
 {
     unsigned long long generation;
-    char journal[256];
-    char reserved[65], approved[65];
-    size_t length;
-    int root, dir = -1, installed = -1, item = -1, files = -1;
-    int transactions = -1, journaled = 0, result = 1, pending, broken;
-    if (!valid_digest(digest)) return 2;
+    char journal[256], reserved[65], approved[65];
+    size_t length, i;
+    int root, dir = -1, installed = -1;
+    int transactions = -1, result = 1, pending;
+    size_t removed = 0;
+    int *broken = NULL;
+    if (!count || count > 10000) return 2;
+    broken = calloc(count, sizeof *broken);
+    if (!broken) return 1;
+    for (i = 0; i < count; ++i) if (!valid_digest(digests[i])) { free(broken); return 2; }
+    for (i = 0; i < count; ++i)
+        for (size_t j = 0; j < i; ++j)
+            if (!strcmp(digests[i], digests[j])) { free(broken); return 2; }
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0) goto done;
     dir = state_dir_at(root, 0);
@@ -2985,46 +3020,66 @@ int holy_state_remove(const char *digest, const char *root_path, int accept_brok
     installed = child_dir(dir, "installed", 0);
     transactions = child_dir(dir, "transactions", 0);
     if (installed < 0 || transactions < 0) goto done;
-    pending = dependent_consumer(installed, digest);
-    if (pending < 0) goto done;
-    if (pending && !accept_broken) { result = 3; goto done; }
-    if (pending) fprintf(stderr, "holypkg: accepted broken dependents for %s\n", digest);
-    broken = pending;
-    item = child_dir(installed, digest, 0);
-    if (item < 0) { result = 6; goto done; }
-    files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
-    if (files < 0) goto done;
-    pending = holy_install_check_manifest(files, root);
-    if (pending != 1) { result = pending == 0 ? 4 : 1; goto done; }
-    pending = exclusive_claims(installed, digest, files);
-    if (pending != 1) { result = pending == 0 ? 4 : 1; goto done; }
-    length = (size_t)snprintf(journal, sizeof journal,
-        "format holy-journal-1\nstage removing\ngeneration %llu\nartifact %s\nplan %064d\n",
-        generation, digest, broken ? 1 : 0);
-    if (length >= sizeof journal || !record_file(transactions, "journal", journal, length)) {
-        result = journal_exists(dir) ? 5 : 1;
-        goto done;
+    for (i = 0; i < count; ++i) {
+        result = remove_precheck(installed, root, digests[i], accept_broken, &broken[i]);
+        if (result) {
+            fprintf(stderr, "holypkg: %s is not removable (status %d); nothing was removed\n",
+                    digests[i], result);
+            goto done;
+        }
     }
-    journaled = 1;
-    result = 5;
-    if (!remove_record(transactions, digest, generation, broken, 1)) goto done;
-    if (!holy_install_remove_manifest(files, root)) goto done;
-    if (close(files)) { files = -1; goto done; }
-    files = -1;
-    if (!finish_remove_record(dir, installed, item, transactions, digest, generation,
-                              broken, 0)) goto done;
-    printf("removed %s generation %llu\n", digest, generation + 1);
-    result = 0;
+    for (i = 0; i < count; ++i) {
+        int item = child_dir(installed, digests[i], 0);
+        int files = item < 0 ? -1 :
+            openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+        int status = 5;
+        if (item < 0 || files < 0) {
+            if (item >= 0) close(item);
+            result = 6;
+            goto done;
+        }
+        if (broken[i]) fprintf(stderr, "holypkg: accepted broken dependents for %s\n",
+                               digests[i]);
+        length = (size_t)snprintf(journal, sizeof journal,
+            "format holy-journal-1\nstage removing\ngeneration %llu\nartifact %s\nplan %064d\n",
+            generation + (unsigned long long)removed, digests[i], broken[i] ? 1 : 0);
+        if (length >= sizeof journal ||
+            !record_file(transactions, "journal", journal, length) ||
+            !remove_record(transactions, digests[i], generation + (unsigned long long)removed,
+                           broken[i], 1) ||
+            !holy_install_remove_manifest(files, root) || close(files) ||
+            !finish_remove_record(dir, installed, item, transactions, digests[i],
+                                  generation + (unsigned long long)removed, broken[i], 0)) {
+            fprintf(stderr, "holypkg: remove failed at %s (status %d); the transactions"
+                            " before it are complete\n", digests[i], status);
+            files = -1;
+            close(item);
+            result = 5;
+            goto done;
+        }
+        files = -1;
+        printf("removed %s generation %llu\n", digests[i],
+               generation + (unsigned long long)removed + 1);
+        ++removed;
+        close(item);
+    }
+    printf("removed-group artifacts %zu generation %llu\n", removed,
+           generation + (unsigned long long)removed);
+    result = ferror(stdout) ? 1 : 0;
 done:
-    if (result) fprintf(stderr, "holypkg: remove failed (status %d)%s\n", result,
-                        journaled ? "; inspect incomplete transaction" : "");
-    if (files >= 0) close(files);
-    if (item >= 0) close(item);
+    if (result) fprintf(stderr, "holypkg: remove failed (status %d)\n", result);
+    free(broken);
     if (installed >= 0) close(installed);
     if (transactions >= 0) close(transactions);
     if (dir >= 0) close(dir);
     if (root >= 0) close(root);
     return result;
+}
+
+int holy_state_remove(const char *digest, const char *root_path, int accept_broken)
+{
+    const char *digests[1] = {digest};
+    return holy_state_remove_group(digests, 1, root_path, accept_broken);
 }
 
 int holy_state_continue_remove(const char *root_path)

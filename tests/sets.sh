@@ -373,22 +373,46 @@ test -f "$root/etc/dinit.d/service-fixture"
 test ! -e "$db/transactions/set-journal"
 expect 0 "$bin" db check --all --root "$root"
 expect 0 "$bin" db rm "$service" --root "$root"
+# a group of artifacts is checked before the first one is removed, so a conflict in the
+# last one leaves the installed set as it was
+package group-provider group-provider ''
+package group-user group-user group-provider
+group_provider=$(hash group-provider) group_user=$(hash group-user)
+expect 0 "$bin" db plan-set "$group_user" "$group_provider" --root "$root"
+group_plan=$(plan_hash)
+expect 0 "$bin" db apply-set "$group_plan" "$group_user" "$group_provider" --root "$root"
+expect 2 "$bin" db rm --root "$root"
+expect 2 "$bin" db rm "$group_user" "$group_user" --root "$root"
+expect 6 "$bin" db rm "$group_user" "$(printf '%064d' 0)" --root "$root"
+grep -qx "holypkg: $(printf '%064d' 0) is not removable (status 6); nothing was removed" "$tmp/err"
+test -f "$root/usr/share/group-user"
+expect 3 "$bin" db rm "$group_provider" "$group_user" --root "$root"
+grep -qx "holypkg: provider $group_provider still required by $group_user requirement dep-1" "$tmp/err"
+test -f "$root/usr/share/group-provider"
+test -f "$root/usr/share/group-user"
+expect 0 "$bin" db rm "$group_provider" "$group_user" --accept-broken --root "$root"
+grep -qx "removed $group_provider generation $(($(cat "$db/generation") - 1))" "$tmp/out"
+grep -qx "removed-group artifacts 2 generation $(cat "$db/generation")" "$tmp/out"
+test ! -e "$root/usr/share/group-provider"
+test ! -e "$root/usr/share/group-user"
+expect 0 "$bin" db check --all --root "$root"
 # the root keeps what every committed transaction was reviewed with, and reports the
 # records as they state themselves
 expect 0 "$bin" db transactions --root "$root"
-test "$(grep -c '^transaction ' "$tmp/out")" -eq 12
-grep -qx "summary transactions 12 read-only" "$tmp/out"
-test "$(grep -c '^transaction .* kind set ' "$tmp/out")" -eq 6
-test "$(grep -c '^transaction .* kind remove ' "$tmp/out")" -eq 6
+test "$(grep -c '^transaction ' "$tmp/out")" -eq 15
+grep -qx "summary transactions 15 read-only" "$tmp/out"
+test "$(grep -c '^transaction .* kind set ' "$tmp/out")" -eq 7
+test "$(grep -c '^transaction .* kind remove ' "$tmp/out")" -eq 8
 grep -qx "transaction $fault_plan kind set generation 11 artifacts 1 decisions 2" "$tmp/out"
 grep -qx "transaction-decision $fault_plan service service-fixture" "$tmp/out"
 grep -qx "transaction-decision $service_plan artifact $service" "$tmp/out"
 grep -qx "transaction-decision $service_plan service service-fixture" "$tmp/out"
 test "$(grep -c "^transaction-decision $service_plan " "$tmp/out")" -eq 2
-test "$(grep -c '^transaction-decision .* accept-broken no$' "$tmp/out")" -eq 6
+test "$(grep -c '^transaction-decision .* accept-broken ' "$tmp/out")" -eq 8
+test "$(grep -c '^transaction-decision .* accept-broken yes$' "$tmp/out")" -eq 1
 expect 0 "$bin" db transactions --root "$root" --json
 grep -q '"schema":"holy-transactions-1","type":"summary"' "$tmp/out"
-test "$(grep -c '"type":"transaction"' "$tmp/out")" -eq 12
+test "$(grep -c '"type":"transaction"' "$tmp/out")" -eq 15
 grep -qx "{\"schema\":\"holy-transactions-1\",\"type\":\"transaction\",\"identity\":\"$service_plan\",\"kind\":\"set\",\"facts\":\"generation 9 artifacts 1\",\"decisions\":2}" "$tmp/out"
 # the reverse of a set is the list of operations it needs: every artifact it installed
 # comes out, and every artifact it removed goes back in if the cache still holds it
