@@ -1648,6 +1648,8 @@ int holy_state_configure(const char *digest, const char *approved,
             result = 5; goto done;
         }
         if (!hook_journal_clean_temps(transactions)) { result = 5; goto done; }
+        /* the hook journal names the stage the interrupted configuration reached */
+        printf("resumed-stage %s next %zu\n", stage, next);
         if (saved_generation + 1 == generation) {
             char *record = update_record(item, "hooks-state");
             int completed = record && !strncmp(record, "completed sha256 ", 17) &&

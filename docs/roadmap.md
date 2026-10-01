@@ -419,7 +419,9 @@
   instance and generation, and `db recover --finish-apply` now finishes from the
   phase: the instance phase publishes the generation, so a crash between the
   record and the publication is recoverable instead of needing manual review.
-  Every transaction now states the phase it proved. `holypkg override list` now
+  `db configure-recover --retry` prints `resumed-stage STAGE next INDEX` from the
+  hook journal it read, so the operator sees which hook the interrupted
+  configuration stopped at. Every transaction now states the phase it proved. `holypkg override list` now
   reads the user override store of a target root and reports every record
   against the installed set. A record is the fixed line order
   holy-override-1 form: a scope naming one artifact digest, one package

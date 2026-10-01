@@ -89,6 +89,7 @@ grep -qx ran "$tmp/root/hook-marker"
 grep -q '^stage running$' "$tmp/root/var/lib/holypkg/transactions/hook-journal"
 if "$bin" db status --root "$tmp/root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 5; fi
 "$bin" db configure-recover "$artifact" --retry --root "$tmp/root" > "$tmp/out"
+grep -qx 'resumed-stage running next 0' "$tmp/out"
 grep -qx "configured $artifact generation 2 hooks 1" "$tmp/out"
 test ! -e "$tmp/root/var/lib/holypkg/transactions/hook-journal"
 grep -qx "completed sha256 $(sha256sum "$tmp/payload/HOLY/hooks" | cut -d ' ' -f 1)" "$tmp/root/var/lib/holypkg/installed/$artifact/hooks-state"

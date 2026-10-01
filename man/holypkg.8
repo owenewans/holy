@@ -1169,7 +1169,15 @@ The manager does not claim isolation from arbitrary root code.
 Before each hook, configure-apply synchronizes a running record in
 transactions/hook-journal. A successful hook advances the record. A failed
 hook or crash leaves status 5 and requires db configure-recover --retry before
-that hook runs again. The user must inspect external effects before retrying.
+that hook runs again. The retry names the record it read:
+.RS
+.nf
+resumed-stage STAGE next INDEX
+.fi
+.RE
+.PP
+STAGE is ready when every hook before INDEX has succeeded and running when the
+hook at INDEX had started. The user must inspect external effects before retrying.
 After all hooks succeed, hooks-state becomes completed and the database
 generation advances. A pending hook journal blocks other package operations.
 The current command handles native postinstall hooks after installation;

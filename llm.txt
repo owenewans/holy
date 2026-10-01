@@ -1323,7 +1323,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=c3c82d29bb8d8df6e09b59ff1d1054d435a77bde78bf294b76ae6c73a605bea0
+holypkg.8 source=holy version=development sha256=616d151917e2e9bb613aefa13c9d0344389ab232ef0f5b3f45c933126346ba5e
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -2466,14 +2466,18 @@ DESCRIPTION
      Before each hook, configure-apply synchronizes a running record in transac-
      tions/hook-journal. A successful hook advances the record. A failed hook or
      crash leaves status 5 and requires db configure-recover --retry before that
-     hook runs again. The user must inspect external  effects  before  retrying.
-     After  all	 hooks	succeed,  hooks-state becomes completed and the database
-     generation advances. A pending hook journal  blocks  other	 package  opera-
-     tions.   The current command handles native postinstall hooks after instal-
-     lation; preinstall, editing and automatic configure during add remain open.
-     The consent a placed service unit needs is a set decision and is not one  a
-     hook  body gains: the review names the tools, and a hook that starts a ser-
-     vice does it with the review read.
+     hook runs again. The retry names the record it read:
+	    resumed-stage STAGE next INDEX
+
+     STAGE is ready when every hook before INDEX has succeeded and running  when
+     the  hook	at INDEX had started. The user must inspect external effects be-
+     fore retrying.  After all hooks succeed, hooks-state becomes completed  and
+     the database generation advances. A pending hook journal blocks other pack-
+     age operations.  The current command handles native postinstall hooks after
+     installation; preinstall, editing and automatic configure during add remain
+     open.  The consent a placed service unit needs is a set decision and is not
+     one a hook body gains: the review names the tools, and a hook that starts a
+     service does it with the review read.
 
      Repeated --accept-privileged SHA256 confirms installation of  regular  exe-
      cutable  files  with  setuid  in  that exact selected artifact. Without it,
