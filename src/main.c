@@ -2384,7 +2384,7 @@ key_usage:
         const char *root = "/", *approved = NULL, *arch = NULL, *privileged = NULL;
         const char **services = NULL;
         size_t service_count = 0;
-        int i, root_seen = 0, result = 2;
+        int i, root_seen = 0, broken = 0, result = 2;
         if (argc < 3) goto rollback_usage;
         services = calloc((size_t)argc, sizeof *services);
         if (!services) { result = 1; goto rollback_usage; }
@@ -2400,15 +2400,16 @@ key_usage:
                 privileged = argv[++i];
             else if (!strcmp(argv[i], "--accept-service") && i + 1 < argc)
                 services[service_count++] = argv[++i];
+            else if (!strcmp(argv[i], "--accept-broken")) broken = 1;
             else goto rollback_usage;
         }
-        result = holy_state_rollback(argv[2], approved, arch, privileged,
+        result = holy_state_rollback(argv[2], approved, broken, arch, privileged,
                                      services, service_count, root);
         free(services);
         return result;
 rollback_usage:
         free(services);
-        fputs("usage: holypkg rollback TRANSACTION [--root DIRECTORY] [--apply PLAN_SHA256] [--accept-arch ARTIFACT_SHA256] [--accept-privileged ARTIFACT_SHA256] [--accept-service UNIT ...]\n", stderr);
+        fputs("usage: holypkg rollback TRANSACTION [--root DIRECTORY] [--apply PLAN_SHA256] [--accept-arch ARTIFACT_SHA256] [--accept-privileged ARTIFACT_SHA256] [--accept-service UNIT ...] [--accept-broken]\n", stderr);
         return 2;
     }
 

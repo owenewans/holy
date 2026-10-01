@@ -107,7 +107,7 @@ int holy_state_apply_update(const char *plan, const char *old_digest,
 int holy_state_recover_update(const char *root_path);
 /* review or apply a cached reverse update from a committed transaction. a set
    transaction reports the operations its reverse needs instead. */
-int holy_state_rollback(const char *transaction, const char *approved,
+int holy_state_rollback(const char *transaction, const char *approved, int accept_broken,
                         const char *accepted_arch, const char *accepted_privileged,
                         const char *const *accepted_service, size_t service_count,
                         const char *root_path);

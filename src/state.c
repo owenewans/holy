@@ -2900,7 +2900,10 @@ done:
     return result;
 }
 
-static int dependent_consumer(int installed, const char *digest)
+/* a consumer that is removed in the same group is not a broken dependent: it goes with
+   the artifact it needs, so only a consumer outside the group blocks the removal. */
+static int dependent_consumer(int installed, const char *digest,
+                              const char *const *group, size_t group_count)
 {
     DIR *list = directory_stream(installed);
     struct dirent *entry;
@@ -2934,8 +2937,12 @@ static int dependent_consumer(int installed, const char *digest)
                 free(error); result = -1; break;
             }
             if (count && !strcmp(v[0], "edge")) {
+                size_t member;
+                int inside = 0;
+                for (member = 0; member < group_count; ++member)
+                    if (!strcmp(v[1], group[member])) { inside = 1; break; }
                 if (count != 7 || !valid_digest(v[1]) || !valid_digest(v[3])) result = -1;
-                else if (!strcmp(v[3], digest) && strcmp(v[1], digest)) {
+                else if (!strcmp(v[3], digest) && strcmp(v[1], digest) && !inside) {
                     if (!fstatat(installed, v[1], &st, AT_SYMLINK_NOFOLLOW)) {
                         if (!S_ISDIR(st.st_mode)) result = -1;
                         else {
@@ -2964,10 +2971,10 @@ static int dependent_consumer(int installed, const char *digest)
    the group runs this for every artifact before the first one is touched, so a
    conflict in the last one leaves the installed set exactly as it was. */
 static int remove_precheck(int installed, int root, const char *digest, int accept_broken,
-                           int *broken)
+                           const char *const *group, size_t group_count, int *broken)
 {
     int item, files, pending;
-    pending = dependent_consumer(installed, digest);
+    pending = dependent_consumer(installed, digest, group, group_count);
     if (pending < 0) return 1;
     if (pending && !accept_broken) return 3;
     *broken = pending;
@@ -3021,7 +3028,8 @@ int holy_state_remove_group(const char *const *digests, size_t count,
     transactions = child_dir(dir, "transactions", 0);
     if (installed < 0 || transactions < 0) goto done;
     for (i = 0; i < count; ++i) {
-        result = remove_precheck(installed, root, digests[i], accept_broken, &broken[i]);
+        result = remove_precheck(installed, root, digests[i], accept_broken, digests, count,
+                                 &broken[i]);
         if (result) {
             fprintf(stderr, "holypkg: %s is not removable (status %d); nothing was removed\n",
                     digests[i], result);
@@ -7302,12 +7310,44 @@ static int rollback_set_apply(const char *transaction, const char *approved,
     return result;
 }
 
+/* the hash a removal review is approved with: the transaction, the generation the list
+   was read at and every operation in it, so a review made against another state is
+   another review. */
+static int rollback_set_hash(const char *transaction, unsigned long long generation,
+                             const struct rollback_plan *plan, char out[65])
+{
+    unsigned char digest[32];
+    unsigned int length;
+    EVP_MD_CTX *hash = EVP_MD_CTX_new();
+    char line[512];
+    size_t i;
+    int ok = 0;
+    if (!hash || EVP_DigestInit_ex(hash, EVP_sha256(), NULL) != 1 ||
+        !hash_text(hash, "holy-rollback-remove-1") || !hash_text(hash, transaction))
+        goto done;
+    if (snprintf(line, sizeof line, "generation %llu artifacts %zu\n",
+                 generation, plan->count) < 0 || !hash_text(hash, line)) goto done;
+    for (i = 0; i < plan->count; ++i) {
+        if (snprintf(line, sizeof line, "%s %s %s %s %d\n", plan->operations[i].direction,
+                     plan->operations[i].digest, plan->operations[i].name,
+                     plan->operations[i].version, plan->operations[i].available) < 0 ||
+            !hash_text(hash, line)) goto done;
+    }
+    if (EVP_DigestFinal_ex(hash, digest, &length) != 1 || length != 32) goto done;
+    for (i = 0; i < 32; ++i) snprintf(out + 2 * i, 3, "%02x", digest[i]);
+    out[64] = 0;
+    ok = 1;
+done:
+    EVP_MD_CTX_free(hash);
+    return ok;
+}
+
 static int rollback_set_report(const char *transaction, const char *approved,
-                             const char *root_path)
+                             int accept_broken, const char *root_path)
 {
     struct rollback_plan plan = {0};
     unsigned long long generation = 0;
-    char *record = NULL;
+    char *record = NULL, review[65];
     char line[256];
     int root = -1, dir = -1, transactions = -1, child = -1, result = 1;
     size_t j, removed = 0, reinstalled = 0, unavailable = 0;
@@ -7369,21 +7409,35 @@ static int rollback_set_report(const char *transaction, const char *approved,
     if (root >= 0) { close(root); root = -1; }
     (void)line;
     if (!approved && ferror(stdout)) result = 1;
-    if (approved) {
-        /* the reverse of a set that installed artifacts is a removal of them, and a
-           grouped removal is not something this command performs. the reverse of a set
-           that removed artifacts is an ordinary set transaction, so that direction is
-           planned and applied as one. */
-        if (removed) {
-            fprintf(stderr, "holypkg: %s installed %zu artifacts that are still here;"
-                            " a reverse that removes artifacts needs a grouped removal\n",
-                    transaction, removed);
+    if (!rollback_set_hash(transaction, generation, &plan, review)) { result = 1; goto done; }
+    if (approved && removed) {
+        /* a removal review is approved with its own hash, and the removal runs as one
+           grouped transaction that checks every artifact again under its own lock. */
+        const char **digests;
+        size_t removal_count = 0, k = 0;
+        if (strcmp(approved, review)) {
+            fprintf(stderr, "holypkg: the prepared removal changed before the apply\n");
             result = 3;
             goto done;
         }
+        for (j = 0; j < plan.count; ++j)
+            if (!strcmp(plan.operations[j].direction, "remove")) ++removal_count;
+        digests = calloc(removal_count, sizeof *digests);
+        if (!digests) { result = 1; goto done; }
+        for (j = 0; j < plan.count; ++j)
+            if (!strcmp(plan.operations[j].direction, "remove"))
+                digests[k++] = plan.operations[j].digest;
+        result = holy_state_remove_group(digests, removal_count, root_path, accept_broken);
+        if (!result) printf("rollback %s removed %zu artifacts\n", transaction, removal_count);
+        free(digests);
+        goto done;
+    }
+    if (approved) {
+        /* the reinstall direction is approved with the set plan the review printed */
         if (unavailable) {
-            fprintf(stderr, "holypkg: %s removed %zu artifacts and the cache holds"
-                            " %zu of them\n", transaction, reinstalled, reinstalled - unavailable);
+            fprintf(stderr, "holypkg: %s removed %zu artifacts and the cache holds %zu"
+                            " of them\n", transaction, reinstalled,
+                    reinstalled - unavailable);
             result = 6;
             goto done;
         }
@@ -7401,10 +7455,9 @@ static int rollback_set_report(const char *transaction, const char *approved,
                !strcmp(plan.operations[j].direction, "remove") ? "installed" :
                plan.operations[j].available ? "cached" : "unavailable");
     if (removed) {
-        fprintf(stderr, "holypkg: %s installed %zu artifacts that are still here;"
-                        " a reverse that removes artifacts needs a grouped removal\n",
-                transaction, removed);
-        result = 3;
+        /* the review is the operation list and the hash under it is its approval */
+        printf("rollback-set-sha256 %s read-only\n", review);
+        result = ferror(stdout) ? 1 : 0;
         goto done;
     }
     printf("rollback-set-plan is an ordinary set plan for the artifacts it names\n");
@@ -7424,7 +7477,7 @@ done:
 /* the decisions a retained set journal holds, in the form a set transaction takes them.
    the reverse set needs the same decisions, since it installs the same artifacts. */
 
-int holy_state_rollback(const char *transaction, const char *approved,
+int holy_state_rollback(const char *transaction, const char *approved, int accept_broken,
                         const char *accepted_arch, const char *accepted_privileged,
                         const char *const *accepted_service, size_t service_count,
                         const char *root_path)
@@ -7468,7 +7521,7 @@ int holy_state_rollback(const char *transaction, const char *approved,
            is the reverse operation list with the set plan it needs behind it. */
         free(committed); free(source_plan); free(marker);
         close(work); close(transactions); close(db); close(root);
-        return rollback_set_report(transaction, approved, root_path);
+        return rollback_set_report(transaction, approved, accept_broken, root_path);
     }
     if (!committed || strlen(committed) != 65 ||
         memcmp(committed, transaction, 64) || committed[64] != '\n' ||

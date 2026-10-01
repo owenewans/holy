@@ -481,10 +481,11 @@
   unavailable counts the ones it is not. A reverse that only reinstalls
   is an ordinary set transaction with the artifacts the record names and
   the decisions it holds, so its plan hash is the approval and `--apply`
-  runs it as one transaction. A reverse that removes artifacts is 3 with
-  that reason, since a grouped removal is not implemented, and a removed
-  artifact whose cache object is gone is 6. Grouped removal and
-  per-phase recovery stay open. A hook that starts a service is
+  runs it as one transaction. A reverse that removes artifacts is a grouped
+  removal: the review states the operations and the `rollback-set-sha256` under
+  them, and `--apply` that hash removes them as one group, refusing 3 when the
+  list or the generation it was read at changed and 6 when a removed artifact's
+  cache object is gone. Per-phase recovery stays open. A hook that starts a service is
   a different path from a placed unit, and the specification says the
   behaviour has to be visible before the hook runs rather than that the
   manager stops it: `db configure-plan` names every service tool the body

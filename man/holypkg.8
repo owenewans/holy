@@ -280,7 +280,7 @@ db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] 
 .br
 .B holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] [--accept-service UNIT ...] --root DIRECTORY
 .br
-.B holypkg rollback TRANSACTION [--root DIRECTORY] [--apply PLAN_SHA256] [--accept-arch ARTIFACT_SHA256] [--accept-privileged ARTIFACT_SHA256] [--accept-service UNIT ...]
+.B holypkg rollback TRANSACTION [--root DIRECTORY] [--apply PLAN_SHA256] [--accept-arch ARTIFACT_SHA256] [--accept-privileged ARTIFACT_SHA256] [--accept-service UNIT ...] [--accept-broken]
 .br
 .B holypkg db recover --update --root DIRECTORY
 .br
@@ -1295,9 +1295,12 @@ Neither mode overwrites a partial file or repeats a partially written instance. 
 changed artifacts, ownership conflicts and drift in completed package files.
 The cache must retain the selected artifacts.
 .PP
-db rm lists installed consumers and requirements that still reference the
-provider. Without --accept-broken it returns decision-required status 3 and
-leaves the root unchanged. The explicit flag permits removal while retaining
+db rm takes several artifacts as one group: it checks every artifact before it
+removes the first, so a conflict in the last one leaves the root unchanged, and
+a consumer inside the group is removed with the provider it needs rather than
+reported. db rm lists installed consumers and requirements outside the group
+that still reference the provider. Without --accept-broken it returns
+decision-required status 3 and leaves the root unchanged. The explicit flag permits removal while retaining
 those consumers and their saved edges. db check then reports broken-provider.
 Installing the original provider from cache through a new plan-set restores
 the graph when the same requirement can be satisfied. A saved graph belonging
@@ -1308,8 +1311,9 @@ committed marker. The removed instance record is retained there as
 .B old-instance
 before the database generation changes. Recovery uses that record if removal
 stopped after the instance left the installed directory, and retains the
-decision when it completes.
-Grouped removal remains pending.
+decision when it completes. A group that completes removes its artifacts as
+one review and prints removed-group artifacts COUNT generation GENERATION;
+each removal keeps its own transaction record.
 .PP
 check without a reference inspects all installed instances. check SOURCE:PACKAGE
 finds the installed slot using its recorded source ID, including a source that
@@ -1697,11 +1701,22 @@ cached object decides whether it can and unavailable counts the ones it
 cannot. The name and version of a reinstall are dashes: the record holds a
 digest, and this command does not read the package to restate it.
 .PP
-A reverse that removes artifacts is status 3 with that reason, since a
-grouped removal is not implemented, and a removed artifact whose cache
-object is gone is 6. A reverse that only reinstalls is an ordinary set
-transaction, planned with the artifacts the record names and the
-decisions that record holds, so its plan hash is the approval:
+A reverse that removes artifacts is a grouped removal of the artifacts the
+set installed, so the review is the operation list and the hash under it
+is the approval:
+
+rollback-set-sha256 SHA256 read-only
+
+--apply SHA256 then checks every artifact again under the writer lock and
+removes them as one group, and prints rollback IDENTITY removed COUNT
+artifacts. A hash the root does not derive from the list and the
+generation the list was read at is status 3 with the reason that the
+prepared removal changed before the apply. A removed artifact whose cache
+object is gone is 6.
+.PP
+A reverse that only reinstalls is an ordinary set transaction, planned
+with the artifacts the record names and the decisions that record holds,
+so its plan hash is the approval:
 
 rollback-set-plan is an ordinary set plan for the artifacts it names
 

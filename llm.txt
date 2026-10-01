@@ -1212,7 +1212,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=c0eef70bee93edac5ee6fbab013439fdbb3ad968467dbefff3e224eda20b4ab4
+holypkg.8 source=holy version=development sha256=ac741de84f28cedaac9f1979723a740774d9deca2b363ca1fa1ef9b982f87c67
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1462,7 +1462,7 @@ SYNOPSIS
      --root DIRECTORY
      holypkg  rollback	TRANSACTION  [--root  DIRECTORY]  [--apply  PLAN_SHA256]
      [--accept-arch   ARTIFACT_SHA256]	 [--accept-privileged	ARTIFACT_SHA256]
-     [--accept-service UNIT ...]
+     [--accept-service UNIT ...] [--accept-broken]
      holypkg db recover --update --root DIRECTORY
      holypkg db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY
      holypkg db recover --repair --root DIRECTORY
@@ -2485,20 +2485,25 @@ DESCRIPTION
      journals, changed artifacts, ownership conflicts  and  drift  in  completed
      package files.  The cache must retain the selected artifacts.
 
-     db	 rm  lists installed consumers and requirements that still reference the
-     provider. Without --accept-broken it returns decision-required status 3 and
-     leaves the root unchanged. The explicit flag permits removal while	 retain-
-     ing  those	 consumers  and their saved edges. db check then reports broken-
-     provider.	Installing the original provider from cache through a new  plan-
-     set  restores the graph when the same requirement can be satisfied. A saved
-     graph belonging to a removed consumer does not keep its former dependencies
-     alive. A completed removal retains a transaction  directory  keyed	 by  the
-     SHA-256  of  its  plan, with the removed artifact, original generation, ac-
-     cept-broken decision and a committed marker. The removed instance record is
-     retained there as old-instance before the database generation changes.  Re-
-     covery  uses that record if removal stopped after the instance left the in-
-     stalled directory, and retains the decision when it completes.  Grouped re-
-     moval remains pending.
+     db rm takes several artifacts as one group: it checks every artifact before
+     it	 removes  the  first,  so a conflict in the last one leaves the root un-
+     changed, and a consumer inside the group is removed with  the  provider  it
+     needs  rather  than  reported. db rm lists installed consumers and require-
+     ments outside the group that still reference the  provider.  Without  --ac-
+     cept-broken  it  returns decision-required status 3 and leaves the root un-
+     changed. The explicit flag permits removal while retaining those  consumers
+     and  their	 saved edges. db check then reports broken-provider.  Installing
+     the original provider from cache through a new plan-set restores the  graph
+     when  the	same  requirement can be satisfied. A saved graph belonging to a
+     removed consumer does not keep its former dependencies alive.  A  completed
+     removal  retains  a transaction directory keyed by the SHA-256 of its plan,
+     with the removed artifact, original generation, accept-broken decision  and
+     a	committed  marker. The removed instance record is retained there as old-
+     instance before the database generation changes. Recovery uses that  record
+     if removal stopped after the instance left the installed directory, and re-
+     tains  the	 decision  when it completes. A group that completes removes its
+     artifacts as one review and prints removed-group artifacts COUNT generation
+     GENERATION; each removal keeps its own transaction record.
 
      check  without  a	reference  inspects  all  installed   instances.   check
      SOURCE:PACKAGE  finds  the installed slot using its recorded source ID, in-
@@ -2889,11 +2894,22 @@ DESCRIPTION
      The name and version of a reinstall are dashes: the record holds a	 digest,
      and this command does not read the package to restate it.
 
-     A	reverse	 that  removes	artifacts  is status 3 with that reason, since a
-     grouped removal is not implemented, and a removed artifact whose cache  ob-
-     ject is gone is 6. A reverse that only reinstalls is an ordinary set trans-
-     action,  planned with the artifacts the record names and the decisions that
-     record holds, so its plan hash is the approval:
+     A	reverse that removes artifacts is a grouped removal of the artifacts the
+     set installed, so the review is the operation list and the hash under it is
+     the approval:
+
+     rollback-set-sha256 SHA256 read-only
+
+     --apply SHA256 then checks every artifact again under the writer  lock  and
+     removes them as one group, and prints rollback IDENTITY removed COUNT arti-
+     facts. A hash the root does not derive from the list and the generation the
+     list  was	read  at  is  status 3 with the reason that the prepared removal
+     changed before the apply. A removed artifact whose cache object is gone  is
+     6.
+
+     A reverse that only reinstalls is an ordinary set transaction, planned with
+     the  artifacts the record names and the decisions that record holds, so its
+     plan hash is the approval:
 
      rollback-set-plan is an ordinary set plan for the artifacts it names
 
