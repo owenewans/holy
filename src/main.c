@@ -2679,6 +2679,11 @@ update_done:
     }
     if (argc == 6 && !strcmp(argv[1], "db") && !strcmp(argv[2], "recover") &&
         !strcmp(argv[3], "--update") && !strcmp(argv[4], "--root")) return holy_state_recover_update(argv[5]);
+    if (argc == 5 && !strcmp(argv[1], "db") && !strcmp(argv[2], "transactions") &&
+        !strcmp(argv[3], "--root")) return holy_state_transactions(argv[4], 0);
+    if (argc == 6 && !strcmp(argv[1], "db") && !strcmp(argv[2], "transactions") &&
+        !strcmp(argv[3], "--root") && !strcmp(argv[5], "--json"))
+        return holy_state_transactions(argv[4], 1);
     if (argc == 6 && !strcmp(argv[1], "db") && !strcmp(argv[2], "configure-plan") &&
         !strcmp(argv[4], "--root")) return holy_state_configure(argv[3], NULL, argv[5], 0);
     if (argc == 7 && !strcmp(argv[1], "db") && !strcmp(argv[2], "configure-apply") &&

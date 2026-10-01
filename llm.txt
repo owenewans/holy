@@ -1212,7 +1212,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=ee87f0edf547763cd9d1a8432a5217b0d2389b02ff348499a230b236f5352071
+holypkg.8 source=holy version=development sha256=4b5083b702ae922eb094c3af36cf4a146c280f07ad1468dccb8658f09fa0ee87
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1404,6 +1404,8 @@ SYNOPSIS
      holypkg cache clean SHA256 --root DIRECTORY [--yes [--accept-unavailable]]
      holypkg db init --root DIRECTORY
      holypkg db status --root DIRECTORY
+     holypkg db transactions --root DIRECTORY [--json]
+
      holypkg db status --root DIRECTORY --json
      holypkg db reserve SHA256 --root DIRECTORY
      holypkg db cancel --root DIRECTORY
@@ -1421,10 +1423,32 @@ SYNOPSIS
      [--source ARTIFACT=SOURCE_ID ...]	[--accept-arch	SHA256	...]  [--accept-
      privileged	 SHA256	 ...]  [--skip-hooks  SHA256 ...] [--accept-service UNIT
      ...] --root DIRECTORY
-     holypkg  db   apply-set   PLAN_SHA256   ROOT_SHA256   [CANDIDATE_SHA256...]
-     [--choose	 ID=SHA256]  [--source	ARTIFACT=SOURCE_ID  ...]  [--accept-arch
-     SHA256 ...] [--accept-privileged  SHA256  ...]  [--skip-hooks  SHA256  ...]
-     [--accept-service UNIT ...] --root DIRECTORY
+     holypkg db transactions reports every transaction this  root  committed.  A
+     commit leaves a directory named for the plan it committed with, a committed
+     file  naming  the	same  plan,  and the decisions it was reviewed with: the
+     journal a set used, the one line a removal was approved with, and the jour-
+     nal a replacement committed with. Three shapes are recognised, a set, a re-
+     moval and a replacement, and a directory that is none of them is not a com-
+     pleted transaction, so it keeps blocking other work rather than  being  ig-
+     nored.
+
+     transaction  IDENTITY kind KIND GENERATION [FACTS] decisions COUNT transac-
+     tion-decision IDENTITY LINE
+
+     Every decision line is printed as the record holds it, so this command  re-
+     states nothing: artifact, binding, catalog-index, accept-arch, accept-priv-
+     ileged, skip-hooks, service and accept-broken. The facts are the generation
+     the  transaction  was reviewed at, the artifact count of a set or the arti-
+     fact of a removal, and the old and new artifact of a replacement.	Transac-
+     tions are in identity order. --json  uses	the  holy-transactions-1  schema
+     with  one object per transaction and a summary object. A root without a us-
+     able database is 6.
+
+
+     db	 apply-set  PLAN_SHA256	 ROOT_SHA256   [CANDIDATE_SHA256...]   [--choose
+     ID=SHA256]	 [--source  ARTIFACT=SOURCE_ID	...]  [--accept-arch SHA256 ...]
+     [--accept-privileged SHA256 ...] [--skip-hooks SHA256  ...]  [--accept-ser-
+     vice UNIT ...] --root DIRECTORY
      holypkg db recover --finish-set|--continue-set --root DIRECTORY
      holypkg db configure-plan SHA256 --root DIRECTORY
      holypkg db configure-apply PLAN_SHA256 SHA256 --root DIRECTORY

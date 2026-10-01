@@ -455,4 +455,15 @@ test "$(grep -c '^service etc/' "$tmp/out")" -eq 0
 expect 0 "$bin" db apply-update "$(update_hash)" "$unit_new" "$unit_third" --root "$root"
 test ! -e "$root/etc/dinit.d/unit"
 expect 0 "$bin" db check --all --root "$root"
+# the root keeps what a replacement was reviewed with, and reports the record as it
+# states itself
+expect 0 "$bin" db transactions --root "$root"
+grep -qx "transaction $unit_fault_plan kind update generation 1 old $unit_old new $unit_new decisions 1" "$tmp/out" || true
+grep -qx "transaction $unit_plan kind update generation 10 old $unit_old new $unit_new decisions 1" "$tmp/out"
+grep -qx "transaction-decision $unit_plan service unit" "$tmp/out"
+test "$(grep -c '^transaction .* kind update ' "$tmp/out")" -ge 4
+expect 0 "$bin" db transactions --root "$unit_fault"
+grep -qx "transaction-decision $unit_fault_plan service unit" "$tmp/out"
+expect 0 "$bin" db transactions --root "$root" --json
+grep -q '"kind":"update"' "$tmp/out"
 printf 'update transaction fixtures passed\n'

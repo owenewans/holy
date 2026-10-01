@@ -45,7 +45,7 @@
 
 static int set_journal_present(int dir);
 static int update_pending(int dir);
-static int completed_update(int transactions, const char *name);
+static int completed_transaction(int transactions, const char *name);
 static int remove_record(int transactions, const char *digest,
                          unsigned long long generation, int broken, int create);
 static int remove_workdir(int transactions, const char *digest,
@@ -232,7 +232,7 @@ static int empty_child(int dir, const char *name)
     if (!entries) { close(fd); return 0; }
     errno = 0;
     while ((entry = readdir(entries)) != NULL) {
-        if (!strcmp(name, "transactions") && completed_update(fd, entry->d_name)) {
+        if (!strcmp(name, "transactions") && completed_transaction(fd, entry->d_name)) {
             errno = 0; continue;
         }
         if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..")) {
@@ -647,7 +647,7 @@ static int pending_child(int dir, unsigned long long generation, char digest[65]
     while ((entry = readdir(listing))) {
         if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
             continue;
-        if (completed_update(child, entry->d_name)) { errno = 0; continue; }
+        if (completed_transaction(child, entry->d_name)) { errno = 0; continue; }
         if (strcmp(entry->d_name, "pending") || ++count > 1) break;
         errno = 0;
     }
@@ -923,7 +923,7 @@ int holy_state_recover(const char *root_path)
     while ((entry = readdir(listing))) {
         if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, ".."))
             continue;
-        if (completed_update(transactions, entry->d_name)) { errno = 0; continue; }
+        if (completed_transaction(transactions, entry->d_name)) { errno = 0; continue; }
         if (!strcmp(entry->d_name, "pending")) {
             if (has_pending++) goto done;
         } else if (temporary_name(entry->d_name) && !temp_name[0]) {
@@ -3154,6 +3154,262 @@ static int compare_owner(const void *a, const void *b)
     return strcmp((const char *)a, (const char *)b);
 }
 
+/* one committed transaction, as the record holds it: its kind, the facts its own record
+   states, and the decisions that record keeps. */
+struct transaction {
+    char identity[65];
+    char kind[8];
+    char facts[256];
+    char **decisions;
+    size_t decision_count;
+};
+
+static void transaction_forget(struct transaction *one)
+{
+    size_t j;
+    for (j = 0; j < one->decision_count; ++j) free(one->decisions[j]);
+    free(one->decisions);
+    one->decisions = NULL;
+    one->decision_count = 0;
+}
+
+static void transaction_free(struct transaction *list, size_t count)
+{
+    size_t i;
+    for (i = 0; i < count; ++i) transaction_forget(&list[i]);
+    free(list);
+}
+
+/* the lines of a record that state a decision, in the order the record states them. a
+   set keeps the journal it used, a removal one decision line, a replacement the journal
+   it committed with. the lines are reported as the record holds them, so nothing is
+   restated by this reader. */
+static const char *const decision_keys[] = {
+    "artifact ", "binding ", "catalog-index ", "accept-arch ", "accept-privileged ",
+    "skip-hooks ", "service ", "accept-broken ", NULL
+};
+
+static size_t transaction_decisions(const char *record, char ***lines)
+{
+    size_t count = 0, capacity = 8, i;
+    const char *cursor = record;
+    char **list = malloc(capacity * sizeof *list);
+    *lines = NULL;
+    if (!list) return 0;
+    while (*cursor) {
+        const char *end = strchr(cursor, '\n');
+        size_t length = end ? (size_t)(end - cursor) : strlen(cursor), key;
+        if (!length) { cursor += length + (end ? 1 : 0); continue; }
+        for (key = 0; decision_keys[key]; ++key)
+            if (length > strlen(decision_keys[key]) &&
+                !strncmp(cursor, decision_keys[key], strlen(decision_keys[key]))) break;
+        if (decision_keys[key] && count + 1 < capacity) {
+            list[count] = strndup(cursor, length);
+            if (!list[count]) break;
+            ++count;
+        }
+        cursor += length + (end ? 1 : 0);
+    }
+    if (count) {
+        *lines = list;
+        return count;
+    }
+    for (i = 0; i < count; ++i) free(list[i]);
+    free(list);
+    return 0;
+}
+
+/* the facts a record states, in the record's own words, so this reader restates
+   nothing. the value is what follows one key on its line. */
+static void record_value(const char *record, const char *key, char *out, size_t size)
+{
+    const char *cursor = record;
+    size_t used = 0;
+    out[0] = 0;
+    while (*cursor && used + 1 < size) {
+        const char *end = strchr(cursor, '\n');
+        size_t length = end ? (size_t)(end - cursor) : strlen(cursor);
+        if (length > strlen(key) && !strncmp(cursor, key, strlen(key))) {
+            int written = snprintf(out + used, size - used, "%.*s",
+                                   (int)(length - strlen(key)), cursor + strlen(key));
+            if (written < 0 || (size_t)written >= size - used) return;
+            used += (size_t)written;
+        }
+        cursor += length + (end ? 1 : 0);
+    }
+}
+
+static void record_line(const char *record, const char *key, char *out, size_t size)
+{
+    const char *cursor = record;
+    size_t used = 0;
+    out[0] = 0;
+    while (*cursor && used + 1 < size) {
+        const char *end = strchr(cursor, '\n');
+        size_t length = end ? (size_t)(end - cursor) : strlen(cursor);
+        if (length > strlen(key) && !strncmp(cursor, key, strlen(key))) {
+            int written = snprintf(out + used, size - used, "%s%.*s", used ? " " : "",
+                                   (int)length, cursor);
+            if (written < 0 || (size_t)written >= size - used) return;
+            used += (size_t)written;
+        }
+        cursor += length + (end ? 1 : 0);
+    }
+}
+
+static size_t transaction_count_lines(const char *record, const char *key)
+{
+    size_t count = 0;
+    const char *cursor = record;
+    while (*cursor) {
+        const char *end = strchr(cursor, '\n');
+        size_t length = end ? (size_t)(end - cursor) : strlen(cursor);
+        if (length > strlen(key) && !strncmp(cursor, key, strlen(key))) ++count;
+        cursor += length + (end ? 1 : 0);
+    }
+    return count;
+}
+
+/* a transaction the root keeps is one of three shapes, and the shape is what says which
+   record holds its decisions. */
+static int transaction_load(const char *name, int transactions, struct transaction *out)
+{
+    int child = child_dir(transactions, name, 0), ok = 0;
+    char *plan = NULL, *decisions = NULL;
+    if (child < 0) return 0;
+    if (!completed_transaction(transactions, name)) { close(child); return 0; }
+    plan = update_record(child, "plan");
+    if (plan && !strncmp(plan, "format holy-remove-1\n",
+                         sizeof "format holy-remove-1\n" - 1)) {
+        snprintf(out->kind, sizeof out->kind, "remove");
+        record_line(plan, "generation ", out->facts, sizeof out->facts);
+        {
+            char artifact[65] = {0};
+            record_value(plan, "artifact ", artifact, sizeof artifact);
+            if (artifact[0])
+                snprintf(out->facts + strlen(out->facts), sizeof out->facts - strlen(out->facts),
+                         " artifact %s", artifact);
+        }
+        decisions = update_record(child, "decisions");
+        ok = 1;
+    } else if (plan && !strncmp(plan, "[update]\nformat holy-update-plan-1\n",
+                                sizeof "[update]\nformat holy-update-plan-1\n" - 1)) {
+        char old[65] = {0}, next[65] = {0};
+        snprintf(out->kind, sizeof out->kind, "update");
+        record_line(plan, "generation ", out->facts, sizeof out->facts);
+        record_value(plan, "old ", old, sizeof old);
+        record_value(plan, "new ", next, sizeof next);
+        if (old[0] && next[0])
+            snprintf(out->facts + strlen(out->facts), sizeof out->facts - strlen(out->facts),
+                     " old %s new %s", old, next);
+        decisions = update_record(child, "journal");
+        ok = 1;
+    } else {
+        char number[32] = {0};
+        decisions = update_record(child, "decisions");
+        if (decisions && !strncmp(decisions, "format holy-set-journal-",
+                                  sizeof "format holy-set-journal-" - 1)) {
+            snprintf(out->kind, sizeof out->kind, "set");
+            record_line(decisions, "generation ", out->facts, sizeof out->facts);
+            snprintf(number, sizeof number, "%zu",
+                     transaction_count_lines(decisions, "artifact "));
+            if (out->facts[0])
+                snprintf(out->facts + strlen(out->facts),
+                         sizeof out->facts - strlen(out->facts), " artifacts %s", number);
+            else
+                snprintf(out->facts, sizeof out->facts, "artifacts %s", number);
+            ok = 1;
+        }
+    }
+    if (ok) {
+        out->decision_count = decisions ? transaction_decisions(decisions, &out->decisions) : 0;
+        memcpy(out->identity, name, 65);
+    }
+    free(plan); free(decisions);
+    close(child);
+    return ok;
+}
+
+int holy_state_transactions(const char *root_path, int json)
+{
+    struct transaction *list = NULL;
+    unsigned long long generation;
+    size_t count = 0, capacity = 0, i;
+    int root = -1, dir = -1, transactions = -1, result = 1;
+    DIR *entries = NULL;
+    struct dirent *entry;
+    root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0 || (dir = state_dir_at(root, 0)) < 0) {
+        fputs("holypkg: database unavailable\n", stderr);
+        result = 6;
+        goto done;
+    }
+    if (flock(dir, LOCK_SH) || !state_layout(dir, 0) ||
+        !read_generation(dir, &generation) || !installed_valid(dir)) {
+        fputs("holypkg: database unavailable\n", stderr);
+        result = 6;
+        goto done;
+    }
+    if ((transactions = child_dir(dir, "transactions", 0)) < 0 ||
+        !(entries = directory_stream(transactions))) goto done;
+    errno = 0;
+    while ((entry = readdir(entries))) {
+        struct transaction grown;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        if (count == capacity) {
+            struct transaction *next;
+            size_t size = capacity ? capacity * 2 : 16;
+            if (size > SIZE_MAX / sizeof *list) goto done;
+            next = realloc(list, size * sizeof *list);
+            if (!next) goto done;
+            list = next;
+            capacity = size;
+        }
+        memset(&grown, 0, sizeof grown);
+        if (transaction_load(entry->d_name, transactions, &grown)) list[count++] = grown;
+        else transaction_forget(&grown);
+        errno = 0;
+    }
+    if (errno) goto done;
+    if (count > 1) qsort(list, count, sizeof *list, compare_owner);
+    if (!count && empty_child(dir, "transactions")) {
+        fprintf(stderr, "holypkg: no committed transactions\n");
+        result = 6;
+        goto done;
+    }
+    for (i = 0; i < count; ++i) {
+        size_t j;
+        if (json) {
+            printf("{\"schema\":\"holy-transactions-1\",\"type\":\"transaction\",\"identity\":");
+            print_check_string(list[i].identity);
+            printf(",\"kind\":");
+            print_check_string(list[i].kind);
+            printf(",\"facts\":");
+            print_check_string(list[i].facts);
+            printf(",\"decisions\":%zu}\n", list[i].decision_count);
+        } else {
+            printf("transaction %s kind %s %s decisions %zu\n",
+                   list[i].identity, list[i].kind, list[i].facts, list[i].decision_count);
+            for (j = 0; j < list[i].decision_count; ++j)
+                printf("transaction-decision %s %s\n", list[i].identity,
+                       list[i].decisions[j]);
+        }
+    }
+    if (json)
+        printf("{\"schema\":\"holy-transactions-1\",\"type\":\"summary\","
+               "\"generation\":%llu,\"transactions\":%zu}\n", generation, count);
+    else
+        printf("summary transactions %zu read-only\n", count);
+    result = ferror(stdout) ? 1 : 0;
+done:
+    if (entries) closedir(entries);
+    transaction_free(list, count);
+    if (transactions >= 0) close(transactions);
+    if (dir >= 0) close(dir);
+    if (root >= 0) close(root);
+    return result;
+}
+
 int holy_state_owner(const char *input, const char *root_path)
 {
     const char *path = *input == '/' ? input + 1 : input;
@@ -4690,7 +4946,7 @@ static int read_set_journal(int dir, struct set_journal *journal)
         errno = 0;
         while ((entry = readdir(list))) {
             if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-            if (completed_update(transactions, entry->d_name)) { errno = 0; continue; }
+            if (completed_transaction(transactions, entry->d_name)) { errno = 0; continue; }
             if (strcmp(entry->d_name, "set-journal")) { valid = 0; break; }
             errno = 0;
         }
@@ -4913,6 +5169,40 @@ static int write_set_journal(int transactions, unsigned long long generation,
     return ok;
 }
 
+/* a record that is already there is compared rather than written again, so the same plan
+   retried after a crash leaves the same record and not a refusal. */
+static int record_write(int dir, const char *name, const char *text)
+{
+    char *saved = update_record(dir, name);
+    int ok;
+    if (saved) { ok = !strcmp(saved, text); free(saved); return ok; }
+    if (errno != ENOENT || !record_file(dir, name, text, strlen(text))) return 0;
+    saved = update_record(dir, name);
+    ok = saved && !strcmp(saved, text);
+    free(saved);
+    return ok;
+}
+
+/* a committed set leaves the journal it used as its decisions record under its own plan
+   hash, and the same plan writes the same record twice. */
+static int retain_set_record(int transactions, const struct install_set *set)
+{
+    char line[66];
+    char *journal = update_record(transactions, "set-journal");
+    int child = -1, ok = 0;
+    if (!journal) return 0;
+    if (mkdirat(transactions, set->hash, 0700) && errno != EEXIST) { free(journal); return 0; }
+    child = child_dir(transactions, set->hash, 0);
+    if (child < 0) { free(journal); return 0; }
+    snprintf(line, sizeof line, "%s\n", set->hash);
+    ok = record_write(child, "committed", line) &&
+         record_write(child, "decisions", journal) &&
+         !fsync(child) && !fsync(transactions);
+    close(child);
+    free(journal);
+    return ok;
+}
+
 static int set_generation(int dir, unsigned long long generation)
 {
     char record[32], temp_name[43] = {0};
@@ -5091,7 +5381,12 @@ static int state_set(const char *const *digests, size_t count, const char *choic
             goto done;
         printf("applied %s\n", item->identity.digest);
     }
-    if (!set_generation(dir, generation + 1) ||
+    /* the journal the transaction used becomes its decisions record, and the directory
+       name is the plan it was made with, so the root keeps what the set was reviewed
+       with. the record is written before the journal is dropped, so a crash leaves the
+       transaction recoverable and the record already there to write again. */
+    if (!retain_set_record(transactions, &set) ||
+        !set_generation(dir, generation + 1) ||
         unlinkat(transactions, "set-journal", 0) || fsync(transactions)) goto done;
     printf("committed-set %s generation %llu artifacts %zu\n", set.hash, generation + 1, set.count);
     result = 0;
@@ -5356,6 +5651,9 @@ static int recover_set(const char *root_path, int resume)
         printf("resumed %s\n", item->identity.digest);
     }
     if (generation == journal.generation && !set_generation(dir, generation + 1)) goto done;
+    /* a recovered set leaves the same record a committed one does, with the generation
+       it resumed from, so the root keeps what both were reviewed with. */
+    if (!retain_set_record(transactions, &set)) goto done;
     if (fsync(dir) || unlinkat(transactions, "set-journal", 0) || fsync(transactions)) goto done;
     printf("recovered-set %s generation %llu artifacts %zu\n",
            set.hash, journal.generation + 1, set.count);
@@ -5517,7 +5815,7 @@ int holy_state_repair(const char *digest, const char *approved, const char *root
             errno = 0;
             while ((entry = readdir(list))) {
                 if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-                if (completed_update(journal_dir, entry->d_name)) { errno = 0; continue; }
+                if (completed_transaction(journal_dir, entry->d_name)) { errno = 0; continue; }
                 if (strcmp(entry->d_name, "journal")) { valid = 0; break; }
                 errno = 0;
             }
@@ -5731,19 +6029,13 @@ static int commit_remove_record(int transactions, const char *digest,
     return ok;
 }
 
-static int completed_update(int transactions, const char *name)
+/* a committed removal keeps the plan it was made from, whose canonical form names the
+   directory, and the one decision it was reviewed with. */
+static int remove_record_valid(int transactions, const char *name)
 {
-    int child, ok;
-    char *record, *plan;
-    if (!valid_digest(name)) return 0;
-    child = child_dir(transactions, name, 0);
-    if (child < 0) return 0;
-    record = update_record(child, "committed");
-    ok = record && strlen(record) == 65 && !memcmp(record, name, 64) && record[64] == '\n';
-    free(record);
-    plan = ok ? update_record(child, "plan") : NULL;
-    if (!plan) ok = 0;
-    else if (!strncmp(plan, "format holy-remove-1\n", 21)) {
+    int child = child_dir(transactions, name, 0), ok = 0;
+    char *plan = child < 0 ? NULL : update_record(child, "plan");
+    if (plan && !strncmp(plan, "format holy-remove-1\n", 21)) {
         unsigned long long generation;
         char artifact[65], choice[4], canonical[192], identity[65];
         char *decision = update_record(child, "decisions");
@@ -5758,7 +6050,65 @@ static int completed_update(int transactions, const char *name)
                     "accept-broken yes\n" : "accept-broken no\n");
         free(decision);
     }
-    free(plan); close(child);
+    free(plan);
+    if (child >= 0) close(child);
+    return ok;
+}
+
+/* a committed set leaves the journal it used as its decisions record, and the directory
+   name is the plan that journal states, so the pair is what the root keeps. */
+static int set_record_valid(int transactions, const char *name)
+{
+    int child = child_dir(transactions, name, 0), ok = 0;
+    char *decisions = child < 0 ? NULL : update_record(child, "decisions");
+    unsigned long long generation = 0;
+    char plan[65];
+    if (decisions &&
+        sscanf(decisions, "format holy-set-journal-%*d\ngeneration %llu\nplan %64[0-9a-f]\n",
+               &generation, plan) == 2 && generation != ULLONG_MAX &&
+        !strcmp(plan, name)) ok = 1;
+    free(decisions);
+    if (child >= 0) close(child);
+    return ok;
+}
+
+/* a committed replacement keeps the plan document whose digest names the directory. */
+static int update_record_valid(int transactions, const char *name)
+{
+    int child = child_dir(transactions, name, 0), ok = 0;
+    unsigned char digest[32];
+    unsigned int length;
+    char *plan = child < 0 ? NULL : update_record(child, "plan");
+    if (plan && !strncmp(plan, "[update]\nformat holy-update-plan-1\n",
+                         sizeof "[update]\nformat holy-update-plan-1\n" - 1) &&
+        EVP_Digest(plan, strlen(plan), digest, &length, EVP_sha256(), NULL) == 1 &&
+        length == 32) {
+        char computed[65];
+        size_t i;
+        for (i = 0; i < 32; ++i) snprintf(computed + 2 * i, 3, "%02x", digest[i]);
+        ok = !strcmp(computed, name);
+    }
+    free(plan);
+    if (child >= 0) close(child);
+    return ok;
+}
+
+/* three shapes of committed transaction live in the transactions directory: a removal,
+   a set and a replacement. a directory that is none of them is not a completed
+   transaction, so it blocks other work rather than being ignored. */
+static int completed_transaction(int transactions, const char *name)
+{
+    int child, ok;
+    char *record;
+    if (!valid_digest(name)) return 0;
+    child = child_dir(transactions, name, 0);
+    if (child < 0) return 0;
+    record = update_record(child, "committed");
+    ok = record && strlen(record) == 65 && !memcmp(record, name, 64) && record[64] == '\n';
+    free(record);
+    if (ok && !remove_record_valid(transactions, name) &&
+        !update_record_valid(transactions, name) && !set_record_valid(transactions, name)) ok = 0;
+    close(child);
     return ok;
 }
 

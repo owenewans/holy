@@ -458,7 +458,16 @@
   carries. holypkg rollback --apply carries the same consent into the
   reverse replacement, and holypkg up --prepare writes the consented
   names into its saved plan so holypkg apply needs no flag of its own.
-  General rollback and per-phase recovery stay open. A hook that starts a service is
+  A commit now leaves the decisions it was reviewed with under a
+  directory named for the plan it committed with, and `holypkg db
+  transactions --root DIRECTORY [--json]` reports every one: a set keeps
+  the journal it used, a removal keeps the line it was approved with, and
+  a replacement keeps the journal it committed with. Three shapes are
+  recognised, and a directory that is none of them keeps blocking other
+  work rather than being ignored, so an unrecognized record is still a
+  decision. The report prints every decision line as the record holds it
+  and restates nothing. General rollback and per-phase recovery stay
+  open. A hook that starts a service is
   a different path from a placed unit, and the specification says the
   behaviour has to be visible before the hook runs rather than that the
   manager stops it: `db configure-plan` names every service tool the body

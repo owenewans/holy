@@ -212,6 +212,9 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db status --root DIRECTORY
 .br
+.B holypkg db transactions --root DIRECTORY [--json]
+
+.br
 .B holypkg db status --root DIRECTORY --json
 .br
 .B holypkg db reserve SHA256 --root DIRECTORY
@@ -240,7 +243,28 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] --root DIRECTORY
 .br
-.B holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] --root DIRECTORY
+.B holypkg db transactions reports every transaction this root committed. A commit
+leaves a directory named for the plan it committed with, a committed file
+naming the same plan, and the decisions it was reviewed with: the journal a
+set used, the one line a removal was approved with, and the journal a
+replacement committed with. Three shapes are recognised, a set, a removal
+and a replacement, and a directory that is none of them is not a completed
+transaction, so it keeps blocking other work rather than being ignored.
+
+transaction IDENTITY kind KIND GENERATION [FACTS] decisions COUNT
+transaction-decision IDENTITY LINE
+
+Every decision line is printed as the record holds it, so this command
+restates nothing: artifact, binding, catalog-index, accept-arch,
+accept-privileged, skip-hooks, service and accept-broken. The facts are the
+generation the transaction was reviewed at, the artifact count of a set or
+the artifact of a removal, and the old and new artifact of a replacement.
+Transactions are in identity order. --json uses the holy-transactions-1
+schema with one object per transaction and a summary object. A root without
+a usable database is 6.
+
+.PP
+db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] --root DIRECTORY
 .br
 .B holypkg db recover --finish-set|--continue-set --root DIRECTORY
 .br

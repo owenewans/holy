@@ -106,6 +106,10 @@ int holy_state_rollback(const char *transaction, const char *approved,
                         const char *const *accepted_service, size_t service_count,
                         const char *root_path);
 /* finds one installed slot by immutable source ID and package identity. */
+/* every committed transaction the root keeps, with the decisions it was reviewed with.
+   0 reported, 5 an unfinished transaction, 6 the root has no usable database. */
+int holy_state_transactions(const char *root_path, int json);
+
 int holy_state_find_slot(const char *root_path, const char *source_id,
                          const char *name, const char *arch, const char *libc,
                          char digest[65]);

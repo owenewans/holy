@@ -365,4 +365,23 @@ test -f "$root/etc/dinit.d/service-fixture"
 test ! -e "$db/transactions/set-journal"
 expect 0 "$bin" db check --all --root "$root"
 expect 0 "$bin" db rm "$service" --root "$root"
+# the root keeps what every committed transaction was reviewed with, and reports the
+# records as they state themselves
+expect 0 "$bin" db transactions --root "$root"
+test "$(grep -c '^transaction ' "$tmp/out")" -eq 12
+grep -qx "summary transactions 12 read-only" "$tmp/out"
+test "$(grep -c '^transaction .* kind set ' "$tmp/out")" -eq 6
+test "$(grep -c '^transaction .* kind remove ' "$tmp/out")" -eq 6
+grep -qx "transaction $fault_plan kind set generation 11 artifacts 1 decisions 2" "$tmp/out"
+grep -qx "transaction-decision $fault_plan service service-fixture" "$tmp/out"
+grep -qx "transaction-decision $service_plan artifact $service" "$tmp/out"
+grep -qx "transaction-decision $service_plan service service-fixture" "$tmp/out"
+test "$(grep -c "^transaction-decision $service_plan " "$tmp/out")" -eq 2
+test "$(grep -c '^transaction-decision .* accept-broken no$' "$tmp/out")" -eq 6
+expect 0 "$bin" db transactions --root "$root" --json
+grep -q '"schema":"holy-transactions-1","type":"summary"' "$tmp/out"
+test "$(grep -c '"type":"transaction"' "$tmp/out")" -eq 12
+grep -qx "{\"schema\":\"holy-transactions-1\",\"type\":\"transaction\",\"identity\":\"$service_plan\",\"kind\":\"set\",\"facts\":\"generation 9 artifacts 1\",\"decisions\":2}" "$tmp/out"
+expect 6 "$bin" db transactions --root "$tmp/empty"
+grep -qx 'holypkg: database unavailable' "$tmp/err"
 printf 'package set fixtures passed\n'
