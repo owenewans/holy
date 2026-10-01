@@ -219,17 +219,44 @@ if "$bin" db recover --finish-apply --root "$tmp/system" > "$tmp/out" 2> "$tmp/e
 test -f "$db/transactions/journal"
 cp "$tmp/payload/DATA/usr/bin/data" "$tmp/system/usr/bin/data"
 "$bin" db recover --finish-apply --root "$tmp/system" > "$tmp/out"
-grep -qx "recovered install $digest generation 1" "$tmp/out"
+grep -qx "recovered install $digest generation 1 phase inferred" "$tmp/out"
 test ! -e "$db/transactions/pending"
 test ! -e "$db/transactions/journal"
 printf 'format holy-journal-1\nstage applying\ngeneration 0\nartifact %s\nplan %s\n' \
     "$digest" "$plan" > "$db/transactions/journal"
 "$bin" db recover --finish-apply --root "$tmp/system" > "$tmp/out"
-grep -qx "recovered install $digest generation 1" "$tmp/out"
+grep -qx "recovered install $digest generation 1 phase inferred" "$tmp/out"
 test ! -e "$db/transactions/journal"
 "$bin" db check "$digest" --root "$tmp/system" > "$tmp/out"
 grep -qx "intact $digest generation 1" "$tmp/out"
 chmod 700 "$tmp/system/usr/bin"
+# an apply journal states the phase it proved, and a crash that fell before the
+# publication is finished from the instance phase
+phase_apply="$tmp/phase-apply"
+cp -a "$tmp/system" "$phase_apply"
+# the fixture left this directory at 0700 for a permission case, and the manifest records
+# the mode the install created
+chmod 0755 "$phase_apply/usr/bin"
+(umask 077; printf 'format holy-journal-1\nstage applying\ngeneration 1\nartifact %s\nplan %s\nphase instance\n' \
+    "$digest" "$plan" > "$phase_apply/var/lib/holypkg/transactions/journal")
+expect 5 "$bin" db status --root "$phase_apply"
+expect 0 "$bin" db recover --finish-apply --root "$phase_apply" > "$tmp/out"
+grep -qx 'resumed-phase instance' "$tmp/out"
+grep -qx "recovered install $digest generation 2 phase instance" "$tmp/out"
+test ! -e "$phase_apply/var/lib/holypkg/transactions/journal"
+test "$(cat "$phase_apply/var/lib/holypkg/generation")" -eq 2
+expect 0 "$bin" db check --all --root "$phase_apply"
+# the payload phase means the instance record is not there yet, so there is nothing to
+# finish and the recovery says so
+phase_payload="$tmp/phase-payload"
+cp -a "$tmp/phase-apply" "$phase_payload"
+rm "$phase_payload/usr/bin/data"
+(umask 077; printf 'format holy-journal-1\nstage applying\ngeneration 1\nartifact %s\nplan %s\nphase payload\n' \
+    "$digest" "$plan" > "$phase_payload/var/lib/holypkg/transactions/journal")
+payload_status=0
+"$bin" db recover --finish-apply --root "$phase_payload" > "$tmp/out" 2> "$tmp/err" || payload_status=$?
+test "$payload_status" -eq 5
+grep -qx 'resumed-phase payload' "$tmp/out"
 if "$bin" db check "$digest" --root "$tmp/system" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
 grep -qx 'holypkg: changed-file usr/bin' "$tmp/err"
 if "$bin" db check "$digest" --root "$tmp/system" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
@@ -521,8 +548,8 @@ phase_files="$tmp/phase-files"
 cp -a "$tmp/failure" "$phase_files"
 expect 0 install_again "$phase_files"
 files_generation=$(cat "$phase_files/var/lib/holypkg/generation")
-printf 'format holy-journal-1\nstage removing\ngeneration %s\nartifact %s\nplan %064d\nphase files\n' \
-    "$files_generation" "$digest" 0 > "$phase_files/var/lib/holypkg/transactions/journal"
+(umask 077; printf 'format holy-journal-1\nstage removing\ngeneration %s\nartifact %s\nplan %064d\nphase files\n' \
+    "$files_generation" "$digest" 0 > "$phase_files/var/lib/holypkg/transactions/journal")
 expect 5 "$bin" db rm "$digest" --root "$phase_files"
 expect 0 "$bin" db recover --continue --root "$phase_files" > "$tmp/out"
 grep -qx 'resumed-phase files' "$tmp/out"
@@ -543,8 +570,8 @@ remove_plan "$generation_number" "$digest" \
     > "$phase_generation/var/lib/holypkg/transactions/$identity/plan"
 printf 'accept-broken no\n' > "$phase_generation/var/lib/holypkg/transactions/$identity/decisions"
 rm -rf "$phase_generation/var/lib/holypkg/installed/$digest" "$phase_generation/usr/bin/data"
-printf 'format holy-journal-1\nstage removing\ngeneration %s\nartifact %s\nplan %064d\nphase generation\n' \
-    "$generation_number" "$digest" 0 > "$phase_generation/var/lib/holypkg/transactions/journal"
+(umask 077; printf 'format holy-journal-1\nstage removing\ngeneration %s\nartifact %s\nplan %064d\nphase generation\n' \
+    "$generation_number" "$digest" 0 > "$phase_generation/var/lib/holypkg/transactions/journal")
 printf '%s\n' "$(($generation_number + 1))" > "$phase_generation/var/lib/holypkg/generation"
 expect 0 "$bin" db recover --continue --root "$phase_generation" > "$tmp/out"
 grep -qx 'resumed-phase generation' "$tmp/out"
@@ -556,8 +583,8 @@ phase_unknown="$tmp/phase-unknown"
 cp -a "$tmp/failure" "$phase_unknown"
 expect 0 install_again "$phase_unknown"
 unknown_generation=$(cat "$phase_unknown/var/lib/holypkg/generation")
-printf 'format holy-journal-1\nstage removing\ngeneration %s\nartifact %s\nplan %064d\nphase erasing\n' \
-    "$unknown_generation" "$digest" 0 > "$phase_unknown/var/lib/holypkg/transactions/journal"
+(umask 077; printf 'format holy-journal-1\nstage removing\ngeneration %s\nartifact %s\nplan %064d\nphase erasing\n' \
+    "$unknown_generation" "$digest" 0 > "$phase_unknown/var/lib/holypkg/transactions/journal")
 if "$bin" db status --root "$phase_unknown" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
 if "$bin" db recover --continue --root "$phase_unknown" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
 test -f "$phase_unknown/var/lib/holypkg/transactions/journal"

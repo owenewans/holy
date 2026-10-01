@@ -1970,6 +1970,13 @@ installed metadata, ownership and graph. Partial files are not overwritten.
 Ordinary check remains read-only. This is not general upgrade, rollback or
 configuration-file repair.
 .PP
+An apply journal states the phase it proved as its last line: payload, instance
+or generation. db recover --finish-apply prints resumed-phase PHASE and finishes
+from it: the instance phase publishes the generation the record was written
+against, and the generation phase only drops the records it left behind. A
+payload phase means the instance record is not there yet, so there is nothing
+to finish. A phase word that belongs to another stage is an unreadable journal.
+.PP
 A repair journal states the phase it proved as its last line: payload or
 generation. The command prints resumed-phase PHASE, and a journal that names
 generation has already written and verified its payload, so the recovery checks

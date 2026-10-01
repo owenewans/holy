@@ -415,7 +415,11 @@
   the installed records. A repair journal states its phase the same way, payload
   or generation, so a recovery that finds the generation phase checks the
   manifest instead of restoring the same bytes again, and an unknown phase word
-  is an unreadable journal. Every transaction now states the phase it proved. `holypkg override list` now
+  is an unreadable journal. A single-artifact apply does the same with payload,
+  instance and generation, and `db recover --finish-apply` now finishes from the
+  phase: the instance phase publishes the generation, so a crash between the
+  record and the publication is recoverable instead of needing manual review.
+  Every transaction now states the phase it proved. `holypkg override list` now
   reads the user override store of a target root and reports every record
   against the installed set. A record is the fixed line order
   holy-override-1 form: a scope naming one artifact digest, one package

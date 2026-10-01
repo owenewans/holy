@@ -522,6 +522,17 @@ static int update_replace(int dir, const char *name, const char *record);
 /* the phases a removal passes through, in order. the journal states the one it reached,
    so recovery finishes there rather than re-deriving where the crash fell. */
 static const char *const remove_phases[] = { "files", "retired", "generation" };
+
+/* the phases a single-artifact apply passes through, in order */
+static const char *const apply_phases[] = { "payload", "instance", "generation" };
+
+static int apply_phase_valid(const char *phase)
+{
+    size_t i;
+    for (i = 0; i < sizeof apply_phases / sizeof *apply_phases; ++i)
+        if (!strcmp(phase, apply_phases[i])) return 1;
+    return 0;
+}
 /* a repair restores the packaged bytes, proves them and publishes the generation */
 static const char *const repair_phases[] = { "payload", "generation" };
 
@@ -588,8 +599,9 @@ static int journal_valid(int dir, unsigned long long generation,
         if (name_length >= sizeof name) goto done;
         memcpy(name, buffer + tail + 6, name_length);
         name[name_length] = 0;
-        if (is_removing == 2 ? !repair_phase_valid(name) : !remove_phase_valid(name))
-            goto done;
+        /* the phase words belong to the stage that wrote them */
+        if (is_removing == 2 ? !repair_phase_valid(name) :
+            is_removing ? !remove_phase_valid(name) : !apply_phase_valid(name)) goto done;
         if (phase) memcpy(phase, name, name_length + 1);
     } else if (phase) phase[0] = 0;
     memcpy(digest, buffer + length, 64);
@@ -2154,9 +2166,41 @@ done:
     return ok;
 }
 
+/* the journal a single-artifact transaction writes: one stage, one generation, one
+   artifact, one plan and the phase it reached as the last line */
+static size_t repair_journal_text(char *out, size_t size, const char *stage,
+                                  unsigned long long generation, const char *digest,
+                                  const char *plan, const char *phase)
+{
+    int length = snprintf(out, size,
+        "format holy-journal-1\nstage %s\ngeneration %llu\nartifact %s\nplan %s\n"
+        "phase %s\n", stage, generation, digest, plan, phase);
+    return length < 0 || (size_t)length >= size ? 0 : (size_t)length;
+}
+
+/* the generation a finished transaction publishes, written through a temporary name so
+   a crash leaves the previous generation whole */
+static int publish_generation(int dir, unsigned long long generation)
+{
+    char record[32], temp_name[43] = {0};
+    size_t length = (size_t)snprintf(record, sizeof record, "%llu\n", generation + 1);
+    int temp;
+    if (length >= sizeof record) return 0;
+    temp = holy_temporary_at(dir, temp_name);
+    if (temp < 0 || !write_all(temp, record, length) || fsync(temp)) goto done;
+    if (close(temp)) { temp = -1; goto done; }
+    temp = -1;
+    if (renameat(dir, temp_name, dir, "generation") || fsync(dir)) goto done;
+    return 1;
+done:
+    if (temp >= 0) close(temp);
+    if (temp_name[0]) unlinkat(dir, temp_name, 0);
+    return 0;
+}
+
 int holy_state_apply(const char *root_path)
 {
-    char digest[65], approved[65], actual[65], journal[256], generation_record[32];
+    char digest[65], approved[65], actual[65], journal[256];
     char temp_name[43] = {0};
     char *snapshot = NULL, *graph = NULL;
     size_t graph_length = 0;
@@ -2187,10 +2231,9 @@ int holy_state_apply(const char *root_path)
     if (installed < 0 || transactions < 0 ||
         !fstatat(installed, digest, &st, AT_SYMLINK_NOFOLLOW) ||
         errno != ENOENT) { result = 4; goto done; }
-    length = (size_t)snprintf(journal, sizeof journal,
-        "format holy-journal-1\nstage applying\ngeneration %llu\nartifact %s\nplan %s\n",
-        generation, digest, approved);
-    if (length >= sizeof journal || !record_file(transactions, "journal", journal, length)) {
+    length = repair_journal_text(journal, sizeof journal, "applying", generation,
+                                 digest, approved, apply_phases[0]);
+    if (!length || !record_file(transactions, "journal", journal, length)) {
         result = journal_exists(dir) ? 5 : 1;
         goto done;
     }
@@ -2198,14 +2241,13 @@ int holy_state_apply(const char *root_path)
     result = 5;
     if (!holy_install_payload(snapshot, root, 0) ||
         !save_instance(installed, digest, snapshot, generation, graph, graph_length, "explicit", NULL, NULL, 0, 0)) goto done;
-    length = (size_t)snprintf(generation_record, sizeof generation_record,
-                              "%llu\n", generation + 1);
-    if (length >= sizeof generation_record) goto done;
-    temp = holy_temporary_at(dir, temp_name);
-    if (temp < 0 || !write_all(temp, generation_record, length) || fsync(temp)) goto done;
-    if (close(temp)) { temp = -1; goto done; }
-    temp = -1;
-    if (renameat(dir, temp_name, dir, "generation") || fsync(dir) ||
+    length = repair_journal_text(journal, sizeof journal, "applying", generation,
+                                 digest, approved, apply_phases[1]);
+    if (!length || !update_replace(transactions, "journal", journal)) goto done;
+    if (!publish_generation(dir, generation)) goto done;
+    length = repair_journal_text(journal, sizeof journal, "applying", generation,
+                                 digest, approved, apply_phases[2]);
+    if (!length || !update_replace(transactions, "journal", journal) ||
         unlinkat(transactions, "pending", 0) || fsync(transactions) ||
         unlinkat(transactions, "journal", 0) || fsync(transactions)) goto done;
     printf("installed %s generation %llu paths %zu\n", digest, generation + 1, paths);
@@ -2872,16 +2914,14 @@ done:
     return result;
 }
 
-/* the journal a single-artifact transaction writes: one stage, one generation, one
-   artifact, one plan and the phase it reached as the last line */
-static size_t repair_journal_text(char *out, size_t size, const char *stage,
-                                  unsigned long long generation, const char *digest,
-                                  const char *plan, const char *phase)
+/* the journal an apply keeps in transactions, with the phase it reaches */
+static int record_phase(int transactions, unsigned long long generation,
+                        const char *digest, const char *plan, const char *phase)
 {
-    int length = snprintf(out, size,
-        "format holy-journal-1\nstage %s\ngeneration %llu\nartifact %s\nplan %s\n"
-        "phase %s\n", stage, generation, digest, plan, phase);
-    return length < 0 || (size_t)length >= size ? 0 : (size_t)length;
+    char journal[256];
+    size_t length = repair_journal_text(journal, sizeof journal, "applying", generation,
+                                        digest, plan, phase);
+    return length && update_replace(transactions, "journal", journal);
 }
 
 static size_t remove_journal_text(char *out, size_t size, unsigned long long generation,
@@ -3237,34 +3277,44 @@ done:
 int holy_state_finish_apply(const char *root_path)
 {
     unsigned long long generation, recorded, instance_generation;
-    char digest[65], plan[65], reserved[65], approved[65];
+    char digest[65], plan[65], reserved[65], approved[65], phase[16] = {0};
     int root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     int dir = root < 0 ? -1 : state_dir_at(root, 0);
     int transactions = -1, installed = -1, item = -1, files = -1;
-    int result = 5, removing = 0, found;
+    int result = 5, removing = 0, found, unpublished = 0;
     if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 1) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation)) {
         result = 1;
         goto done;
     }
-    found = journal_valid(dir, generation, &recorded, digest, plan, &removing, NULL);
+    found = journal_valid(dir, generation, &recorded, digest, plan, &removing, phase);
     if (found < 0) { result = 1; goto done; }
-    if (!found || removing || !generation || recorded != generation - 1 ||
-        !installed_valid(dir)) goto done;
+    if (!found || removing || !generation || !installed_valid(dir)) goto done;
+    if (phase[0]) printf("resumed-phase %s\n", phase);
     transactions = child_dir(dir, "transactions", 0);
     installed = child_dir(dir, "installed", 0);
     if (transactions < 0 || installed < 0) { result = 1; goto done; }
+    /* the instance phase proved the payload and the record, so the generation is what
+       the recovery publishes; the generation phase leaves only the records to drop */
+    unpublished = phase[0] && !strcmp(phase, apply_phases[1]);
+    if (!unpublished && recorded != generation - 1) goto done;
     found = read_reservation(transactions, "pending", recorded, reserved, approved);
     if (found < 0 || (found && (strcmp(reserved, digest) || strcmp(approved, plan))))
         goto done;
     item = child_dir(installed, digest, 0);
+    /* the record names the generation it was written against, which is the recorded one
+       until the transaction publishes the next */
     if (item < 0 || !instance_state_generation(item, digest, &instance_generation) ||
-        instance_generation != generation) goto done;
+        instance_generation != (unpublished ? recorded : recorded + 1)) goto done;
     files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     if (files < 0 || holy_install_check_manifest(files, root) != 1) goto done;
+    if (unpublished && (!publish_generation(dir, recorded) ||
+        !record_phase(transactions, recorded, digest, plan, apply_phases[2])))
+        goto done;
     if (found && (unlinkat(transactions, "pending", 0) || fsync(transactions))) goto done;
     if (unlinkat(transactions, "journal", 0) || fsync(transactions)) goto done;
-    printf("recovered install %s generation %llu\n", digest, generation);
+    printf("recovered install %s generation %llu phase %s\n", digest,
+           unpublished ? recorded + 1 : generation, phase[0] ? phase : "inferred");
     result = 0;
 done:
     if (result) fprintf(stderr, "holypkg: install recovery requires manual inspection (status %d)\n", result);

@@ -1323,7 +1323,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=eb41ac04e805a0c2fc2a12ce691450873e2b67e12de465936a15544a4d664072
+holypkg.8 source=holy version=development sha256=c3c82d29bb8d8df6e09b59ff1d1054d435a77bde78bf294b76ae6c73a605bea0
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -3269,6 +3269,14 @@ DESCRIPTION
      cache, installed metadata, ownership and graph. Partial files are not over-
      written.	Ordinary  check	 remains read-only. This is not general upgrade,
      rollback or configuration-file repair.
+
+     An apply journal states the phase it proved as its last line: payload,  in-
+     stance  or generation. db recover --finish-apply prints resumed-phase PHASE
+     and finishes from it: the	instance  phase	 publishes  the	 generation  the
+     record was written against, and the generation phase only drops the records
+     it left behind. A payload phase means the instance record is not there yet,
+     so	 there	is nothing to finish. A phase word that belongs to another stage
+     is an unreadable journal.
 
      A repair journal states the phase it proved as its last  line:  payload  or
      generation.  The  command	prints	resumed-phase  PHASE, and a journal that
