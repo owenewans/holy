@@ -485,7 +485,13 @@
   removal: the review states the operations and the `rollback-set-sha256` under
   them, and `--apply` that hash removes them as one group, refusing 3 when the
   list or the generation it was read at changed and 6 when a removed artifact's
-  cache object is gone. Per-phase recovery stays open. A hook that starts a service is
+  cache object is gone. A replacement now takes a group of slots: `db plan-update`
+  and `db apply-update` name pairs, `--accept-arch` and `--accept-privileged` name
+  one artifact of the group, and journal v6 with plan v2 carry `replacement COUNT`
+  and a `pair` line per slot. One pair keeps the single-slot formats, so a root
+  that holds either shape recovers as before. A group publishes one generation,
+  and `holypkg rollback` on it reverses every slot in one transaction after
+  stating each one. Signed catalogs and per-phase recovery stay open. A hook that starts a service is
   a different path from a placed unit, and the specification says the
   behaviour has to be visible before the hook runs rather than that the
   manager stops it: `db configure-plan` names every service tool the body
@@ -1174,6 +1180,8 @@
   architecture.
 - [ ] Implement `holypkg run`, context-specific provider paths, grouped `up --prepare`,
   isolated root/VM trials and full `check` reports.
+  The replacement transaction now takes a group of slots, so `up --prepare` can
+  prepare several slots as one reviewed plan.
   The existing run launcher now derives private PATH directories from the
   selected installed manifest, so a public executable can invoke its own
   private helper by name. Explicit directory views bind package-owned private

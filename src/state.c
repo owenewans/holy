@@ -3222,7 +3222,8 @@ static int compare_owner(const void *a, const void *b)
 struct transaction {
     char identity[65];
     char kind[8];
-    char facts[256];
+    /* a grouped replacement names every slot it replaced, so the facts carry them all */
+    char facts[1024];
     char **decisions;
     size_t decision_count;
 };
@@ -3338,7 +3339,7 @@ static size_t transaction_count_lines(const char *record, const char *key)
 static int transaction_load(const char *name, int transactions, struct transaction *out)
 {
     int child = child_dir(transactions, name, 0), ok = 0;
-    char *plan = NULL, *decisions = NULL;
+    char *plan = NULL, *decisions = NULL, *cursor;
     if (child < 0) return 0;
     if (!completed_transaction(transactions, name)) { close(child); return 0; }
     plan = update_record(child, "plan");
@@ -3355,16 +3356,38 @@ static int transaction_load(const char *name, int transactions, struct transacti
         }
         decisions = update_record(child, "decisions");
         ok = 1;
-    } else if (plan && !strncmp(plan, "[update]\nformat holy-update-plan-1\n",
-                                sizeof "[update]\nformat holy-update-plan-1\n" - 1)) {
-        char old[65] = {0}, next[65] = {0};
+    } else if (plan && (!strncmp(plan, "[update]\nformat holy-update-plan-1\n",
+                                 sizeof "[update]\nformat holy-update-plan-1\n" - 1) ||
+                        !strncmp(plan, "[update]\nformat holy-update-plan-2\n",
+                                 sizeof "[update]\nformat holy-update-plan-2\n" - 1))) {
+        char old[65] = {0}, next[65] = {0}, number[32] = {0};
         snprintf(out->kind, sizeof out->kind, "update");
         record_line(plan, "generation ", out->facts, sizeof out->facts);
-        record_value(plan, "old ", old, sizeof old);
-        record_value(plan, "new ", next, sizeof next);
-        if (old[0] && next[0])
-            snprintf(out->facts + strlen(out->facts), sizeof out->facts - strlen(out->facts),
-                     " old %s new %s", old, next);
+        if (!strncmp(plan, "[update]\nformat holy-update-plan-2\n",
+                     sizeof "[update]\nformat holy-update-plan-2\n" - 1)) {
+            /* a group states every slot it replaces, so the report names them all */
+            record_value(plan, "replacement ", number, sizeof number);
+            if (number[0])
+                snprintf(out->facts + strlen(out->facts),
+                         sizeof out->facts - strlen(out->facts), " replacements %s", number);
+            for (cursor = strstr(plan, "\npair "); cursor;) {
+                size_t length;
+                ++cursor;
+                length = strcspn(cursor, "\n");
+                if (length && strlen(out->facts) + length + 2 < sizeof out->facts)
+                    snprintf(out->facts + strlen(out->facts),
+                             sizeof out->facts - strlen(out->facts), " %.*s",
+                             (int)length, cursor);
+                cursor = strstr(cursor, "\npair ");
+            }
+        } else {
+            record_value(plan, "old ", old, sizeof old);
+            record_value(plan, "new ", next, sizeof next);
+            if (old[0] && next[0])
+                snprintf(out->facts + strlen(out->facts),
+                         sizeof out->facts - strlen(out->facts),
+                         " old %s new %s", old, next);
+        }
         decisions = update_record(child, "journal");
         ok = 1;
     } else {
@@ -6149,8 +6172,10 @@ static int update_record_valid(int transactions, const char *name)
     unsigned char digest[32];
     unsigned int length;
     char *plan = child < 0 ? NULL : update_record(child, "plan");
-    if (plan && !strncmp(plan, "[update]\nformat holy-update-plan-1\n",
-                         sizeof "[update]\nformat holy-update-plan-1\n" - 1) &&
+    if (plan && (!strncmp(plan, "[update]\nformat holy-update-plan-1\n",
+                          sizeof "[update]\nformat holy-update-plan-1\n" - 1) ||
+                 !strncmp(plan, "[update]\nformat holy-update-plan-2\n",
+                          sizeof "[update]\nformat holy-update-plan-2\n" - 1)) &&
         EVP_Digest(plan, strlen(plan), digest, &length, EVP_sha256(), NULL) == 1 &&
         length == 32) {
         char computed[65];
@@ -6245,8 +6270,8 @@ static int read_update_group_journal(const char *record, unsigned long long gene
         }
         if (number == 3) {
             errno = 0;
-            declared = strtoul(line + 13, &end, 10);
-            if (strncmp(line, "replacement ", 13) || errno || *end || !declared ||
+            declared = strtoul(line + 12, &end, 10);
+            if (strncmp(line, "replacement ", 12) || errno || *end || !declared ||
                 declared > 4096) break;
             journal->olds = calloc(declared, sizeof *journal->olds);
             journal->news = calloc(declared, sizeof *journal->news);
@@ -6259,9 +6284,9 @@ static int read_update_group_journal(const char *record, unsigned long long gene
         }
         /* the plan digest closes the journal, so nothing follows it */
         if (planned) break;
-        if (!strncmp(line, "pair ", 5) && strlen(line) == 74 && count < declared) {
+        if (!strncmp(line, "pair ", 5) && strlen(line) == 134 && count < declared) {
             memcpy(journal->olds[count], line + 5, 64);
-            memcpy(journal->news[count], line + 69, 64);
+            memcpy(journal->news[count], line + 70, 64);
             ++count;
             continue;
         }
@@ -7965,20 +7990,22 @@ done:
         return result;
     }
     result = holy_state_update_prepare(&request, root_path, hash, &record);
-    free(reverse_olds); free(reverse_news);
-    update_journal_forget(&journal);
-    if (result) return result;
-    if (grouped) {
+    if (!result && grouped) {
+        /* the journal is the record of what the transaction did, so the review names it
+           before the request it built is released */
         for (k = 0; k < journal.pair_count; ++k)
             printf("rollback-pair transaction %s current %s target %s\n", transaction,
                    journal.news[k], journal.olds[k]);
         if (printf("rollback-plan transaction %s slots %zu generation %llu sha256 %s read-only\n",
                    transaction, journal.pair_count, journal.generation, hash) < 0) result = 1;
-    } else if (printf("rollback-plan transaction %s current %s target %s sha256 %s read-only\n",
+    } else if (!result &&
+               printf("rollback-plan transaction %s current %s target %s sha256 %s read-only\n",
                       transaction, journal.next, journal.old, hash) < 0) {
         result = 1;
     }
     if (!result && fputs(record, stdout) == EOF) result = 1;
     free(record);
+    free(reverse_olds); free(reverse_news);
+    update_journal_forget(&journal);
     return result;
 }

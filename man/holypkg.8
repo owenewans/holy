@@ -276,9 +276,9 @@ db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] 
 .br
 .B holypkg db repair-plan SHA256 --root DIRECTORY
 .br
-.B holypkg db plan-update OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] [--accept-service UNIT ...] --root DIRECTORY
+.B holypkg db plan-update OLD_SHA256 NEW_SHA256 [OLD_SHA256 NEW_SHA256 ...] [--accept-arch NEW_SHA256 ...] [--accept-privileged NEW_SHA256 ...] [--accept-service UNIT ...] --root DIRECTORY
 .br
-.B holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] [--accept-service UNIT ...] --root DIRECTORY
+.B holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 [OLD_SHA256 NEW_SHA256 ...] [--accept-arch NEW_SHA256 ...] [--accept-privileged NEW_SHA256 ...] [--accept-service UNIT ...] --root DIRECTORY
 .br
 .B holypkg rollback TRANSACTION [--root DIRECTORY] [--apply PLAN_SHA256] [--accept-arch ARTIFACT_SHA256] [--accept-privileged ARTIFACT_SHA256] [--accept-service UNIT ...] [--accept-broken]
 .br
@@ -1596,7 +1596,15 @@ are not implemented. The command is not an installer for
 arbitrary .holy packages.
 .PP
 db plan-update OLD_SHA256 NEW_SHA256 --root DIRECTORY previews one explicit
-cached replacement. It keeps the installed source-id, name, OS, architecture
+cached replacement. It names further pairs the same way, and a group of them
+is one review, one journal, one database swap and one generation. Each
+--accept-arch and --accept-privileged names one artifact of the group, once.
+A pair that replaces an artifact with itself is decision-required 3, a pair
+list that names an artifact twice or leaves a pair half-named is 2, and an
+old artifact the root does not have is 6. A group whose plans name disjoint
+paths applies in one transaction; one replacement dropping a file another
+replacement still claims is 4 rather than a partial apply.
+Each slot keeps the installed source-id, name, OS, architecture
 and libc slot; a different slot or an already active target artifact conflicts.
 For a non-native target, plan-update requires --accept-arch NEW_SHA256 even
 when the old installed package had approval. The plan records host and target,
@@ -1607,7 +1615,11 @@ If the new artifact contains a setuid executable, plan-update requires
 --accept-privileged NEW_SHA256. The old installed decision only authorizes
 checking and replacing the old file; it does not approve the new hash. Apply
 must repeat the same flag. Update journal versions 2, 3 and 4 bind privilege,
-architecture and both decisions, respectively, to the new artifact.
+architecture and both decisions, respectively, to the new artifact. A group
+writes journal version 6 and plan version 2, which carry
+replacement COUNT and a pair OLD_SHA256 NEW_SHA256 line per slot, then the
+decisions that name an artifact. One pair keeps the single-slot formats, so a
+root that holds either shape recovers the same way.
 Setgid, sticky and privileged hardlink groups remain unsupported.
 It requires the old archive, the proposed archive and archives for every other
 installed package in the cache. It does not select versions or download missing
@@ -1670,8 +1682,10 @@ the plan document already carries the units and the consent travels with
 the plan.
 
 db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 --root DIRECTORY applies
-that cached replacement after reconstructing and comparing the approved plan
-under the writer lock. It preserves explicit/dependency reasons and source
+that cached replacement, or the group the pairs name, after reconstructing and
+comparing the approved plan under the writer lock. A group publishes
+updated OLD to NEW generation N plan HASH per slot and then
+updated-group slots COUNT generation N plan HASH. It preserves explicit/dependency reasons and source
 identity, rewrites each installed consumer's own provider edges, and increments
 the database generation once. A changed root, registry, generation, artifact
 or installed state requires a new preview.
@@ -1732,6 +1746,16 @@ replacement using the cached old artifact and the current dependency graph.
 The rollback-plan line gives the SHA-256 of the following update plan.
 --apply requires that exact hash; a stale plan or changed root fails before
 mutation. The reverse replacement gets its own update journal and recovery path.
+A transaction that replaced a group reverses every slot it named, so the
+review states each one before the plan it belongs to:
+
+rollback-pair transaction IDENTITY current ARTIFACT target ARTIFACT
+rollback-plan transaction IDENTITY slots COUNT generation N sha256 SHA256 read-only
+
+--apply then restores the whole group as one transaction and prints
+rollback IDENTITY restored COUNT artifacts. Every slot the transaction's plan
+names must appear in its header, so a record that lost a pair is 2 rather than
+a shorter reverse.
 --accept-arch and --accept-privileged are artifact-scoped decisions for the
 restored artifact. Rollback is limited to one committed update whose new
 artifact still occupies the installed slot. Missing cache objects return 6.

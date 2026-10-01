@@ -321,7 +321,7 @@ check-init: holy-init
 check-hooks: holypkg
 	CC="$(CC)" sh tests/hooks.sh ./holypkg
 
-check: check-pacman check-deb check-apt check-slackware check-apk check-xbps-import check-xbps-version check-xbps-index check-appimage check-snap check-run check-recipe check-split check-debug check-pkgbuild check-void check-aports check-slackbuild check-rpmspec check-debsrc check-gentoo check-pacstall check-flatpak check-brew check-guix check-scoop check-winget check-nix check-eopkg check-conflict check-index check-closure check-loader-search check-qemu-copy check-plan-test check-override check-cc check-hooks check-apk-version check-apk-index check-apk-fetch check-native-version $(if $(RPM_LIBS),check-rpm) holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
+check: check-pacman check-deb check-apt check-slackware check-apk check-xbps-import check-xbps-version check-xbps-index check-appimage check-snap check-run check-recipe check-split check-debug check-pkgbuild check-void check-aports check-slackbuild check-rpmspec check-debsrc check-gentoo check-pacstall check-flatpak check-brew check-guix check-scoop check-winget check-nix check-eopkg check-conflict check-index check-closure check-loader-search check-update-group check-qemu-copy check-plan-test check-override check-cc check-hooks check-apk-version check-apk-index check-apk-fetch check-native-version $(if $(RPM_LIBS),check-rpm) holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg
@@ -338,6 +338,7 @@ check: check-pacman check-deb check-apt check-slackware check-apk check-xbps-imp
 	sh tests/update.sh ./holypkg
 	sh tests/up.sh ./holypkg
 	sh tests/update-privileged.sh ./holypkg
+	sh tests/update-group.sh ./holypkg
 	sh tests/directories.sh ./holypkg
 	python3 tests/hardlinks.py ./holypkg ./tests/install-helper
 	python3 tests/hardlink-updates.py ./holypkg
@@ -442,6 +443,10 @@ check-plan-test:
 .PHONY: check-override
 check-override:
 	sh tests/override.sh ./holypkg
+
+.PHONY: check-update-group
+check-update-group: holypkg
+	sh tests/update-group.sh ./holypkg
 
 .PHONY: check-root-trial
 check-root-trial:

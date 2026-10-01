@@ -1212,7 +1212,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=ac741de84f28cedaac9f1979723a740774d9deca2b363ca1fa1ef9b982f87c67
+holypkg.8 source=holy version=development sha256=a57e1ead3075b546754e71795d95dda0d13c09f846df42783d43ff4b8cffc581
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -1454,12 +1454,12 @@ SYNOPSIS
      holypkg db configure-apply PLAN_SHA256 SHA256 --root DIRECTORY
      holypkg db configure-recover SHA256 --retry --root DIRECTORY
      holypkg db repair-plan SHA256 --root DIRECTORY
-     holypkg  db  plan-update  OLD_SHA256  NEW_SHA256 [--accept-arch NEW_SHA256]
-     [--accept-privileged NEW_SHA256] [--accept-service UNIT ...] --root  DIREC-
-     TORY
-     holypkg  db  apply-update	PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-arch
-     NEW_SHA256] [--accept-privileged NEW_SHA256]  [--accept-service  UNIT  ...]
-     --root DIRECTORY
+     holypkg  db  plan-update  OLD_SHA256 NEW_SHA256 [OLD_SHA256 NEW_SHA256 ...]
+     [--accept-arch NEW_SHA256 ...] [--accept-privileged NEW_SHA256 ...]  [--ac-
+     cept-service UNIT ...] --root DIRECTORY
+     holypkg  db  apply-update	PLAN_SHA256  OLD_SHA256	 NEW_SHA256  [OLD_SHA256
+     NEW_SHA256	 ...]  [--accept-arch	NEW_SHA256   ...]   [--accept-privileged
+     NEW_SHA256 ...] [--accept-service UNIT ...] --root DIRECTORY
      holypkg  rollback	TRANSACTION  [--root  DIRECTORY]  [--apply  PLAN_SHA256]
      [--accept-arch   ARTIFACT_SHA256]	 [--accept-privileged	ARTIFACT_SHA256]
      [--accept-service UNIT ...] [--accept-broken]
@@ -2785,88 +2785,102 @@ DESCRIPTION
      .holy packages.
 
      db plan-update OLD_SHA256 NEW_SHA256 --root DIRECTORY previews one explicit
-     cached  replacement.  It keeps the installed source-id, name, OS, architec-
-     ture and libc slot; a different slot or an already active	target	artifact
-     conflicts.	  For  a  non-native  target, plan-update requires --accept-arch
-     NEW_SHA256 even when the old  installed  package  had  approval.  The  plan
-     records  host  and	 target,  and  the new installed instance retains target
-     metadata with an unverified execution status. Apply repeats the  flag;  re-
-     covery reads it from the journal.	This authorizes placement, not execution
-     by	 the  current kernel.  If the new artifact contains a setuid executable,
-     plan-update requires --accept-privileged NEW_SHA256. The old installed  de-
-     cision only authorizes checking and replacing the old file; it does not ap-
-     prove  the	 new  hash. Apply must repeat the same flag. Update journal ver-
-     sions 2, 3 and 4 bind privilege, architecture and both  decisions,	 respec-
-     tively, to the new artifact.  Setgid, sticky and privileged hardlink groups
-     remain  unsupported.  It requires the old archive, the proposed archive and
-     archives for every other installed package in the cache. It does not select
-     versions or download missing dependencies. The caller  explicitly	proposes
-     local  delivery  in  the  installed  source's slot; metadata inside the new
-     archive cannot assign a source-id or provide signature evidence.
+     cached  replacement.  It  names  further pairs the same way, and a group of
+     them is one review, one journal, one database swap and one generation. Each
+     --accept-arch and --accept-privileged names  one  artifact	 of  the  group,
+     once.  A pair that replaces an artifact with itself is decision-required 3,
+     a	pair list that names an artifact twice or leaves a pair half-named is 2,
+     and an old artifact the root does not have is 6. A group whose  plans  name
+     disjoint  paths applies in one transaction; one replacement dropping a file
+     another replacement still claims is 4 rather than a  partial  apply.   Each
+     slot keeps the installed source-id, name, OS, architecture and libc slot; a
+     different	slot or an already active target artifact conflicts.  For a non-
+     native target, plan-update requires --accept-arch NEW_SHA256 even when  the
+     old  installed  package had approval. The plan records host and target, and
+     the new installed instance retains target metadata with an unverified  exe-
+     cution  status. Apply repeats the flag; recovery reads it from the journal.
+     This authorizes placement, not execution by the current kernel.  If the new
+     artifact contains a setuid executable, plan-update requires --accept-privi-
+     leged NEW_SHA256. The old installed decision only authorizes  checking  and
+     replacing the old file; it does not approve the new hash. Apply must repeat
+     the same flag. Update journal versions 2, 3 and 4 bind privilege, architec-
+     ture  and both decisions, respectively, to the new artifact. A group writes
+     journal version 6 and plan version 2, which carry replacement COUNT  and  a
+     pair  OLD_SHA256  NEW_SHA256 line per slot, then the decisions that name an
+     artifact. One pair keeps the single-slot formats, so a root that holds  ei-
+     ther  shape  recovers the same way.  Setgid, sticky and privileged hardlink
+     groups remain unsupported.	 It  requires  the  old	 archive,  the	proposed
+     archive  and  archives  for  every other installed package in the cache. It
+     does not select versions or download missing dependencies. The  caller  ex-
+     plicitly  proposes	 local delivery in the installed source's slot; metadata
+     inside the new archive cannot assign a source-id or provide signature  evi-
+     dence.
 
-     The command takes the database's shared lock, refuses pending  transactions
-     and  checks  installed metadata, file ownership, payload and saved provider
-     edges.  It verifies the entire proposed set with the old artifact	replaced
+     The  command takes the database's shared lock, refuses pending transactions
+     and checks installed metadata, file ownership, payload and	 saved	provider
+     edges.   It verifies the entire proposed set with the old artifact replaced
      by the new one. A broken dependent outside the updated package's own depen-
-     dency  graph therefore prevents a valid plan. New dependencies must already
-     be satisfiable by that proposed set; ambiguous  edges  return  decision-re-
-     quired.  Installed reasons and all current state hashes remain bound to the
+     dency graph therefore prevents a valid plan. New dependencies must	 already
+     be	 satisfiable  by  that proposed set; ambiguous edges return decision-re-
+     quired. Installed reasons and all current state hashes remain bound to  the
      plan.
 
-     The first output line reports the SHA-256 of the  following  UTF-8	 record.
-     The  holy-update-plan-1  record has update, installed, files and graph sec-
-     tions.  It includes database generation, root/database  device  and  inode,
-     old/new  hashes, source registry digest and current source alias, every in-
-     stalled state hash, the canonical file delta and the  proposed  graph.  Re-
-     peating  a	 preview  with	the  same  inputs produces the same bytes. Alias
-     changes keep source identity but invalidate the plan; a deactivated  regis-
-     tered  source  returns unavailable (6).  Unassociated local packages retain
+     The  first	 output	 line reports the SHA-256 of the following UTF-8 record.
+     The holy-update-plan-1 record has update, installed, files and  graph  sec-
+     tions.   It  includes  database generation, root/database device and inode,
+     old/new hashes, source registry digest and current source alias, every  in-
+     stalled  state  hash,  the canonical file delta and the proposed graph. Re-
+     peating a preview with the same  inputs  produces	the  same  bytes.  Alias
+     changes  keep source identity but invalidate the plan; a deactivated regis-
+     tered source returns unavailable (6).  Unassociated local	packages  retain
      source-id "-".
 
-     This preview writes no installed state or payload and executes  no	 package
-     code.   Missing  or  modified ordinary installed files conflict. A modified
-     regular file marked config in both artifacts stays at its public path;  the
-     incoming  payload	is planned at PATH.holy-new. The plan binds the observed
-     content hash and mode.  An existing PATH.holy-new must match the old  arti-
+     This  preview  writes no installed state or payload and executes no package
+     code.  Missing or modified ordinary installed files  conflict.  A	modified
+     regular  file marked config in both artifacts stays at its public path; the
+     incoming payload is planned at PATH.holy-new. The plan binds  the	observed
+     content  hash and mode.  An existing PATH.holy-new must match the old arti-
      fact  exactly;  the  update  then	replaces  it.  A  changed  or  colliding
-     PATH.holy-new conflicts. Directory metadata changes,  hooks,  new	provider
-     selection	and  multi-package  replacement are not implemented. The printed
-     record is not accepted by db apply or db apply-set. JSON output is not  im-
+     PATH.holy-new  conflicts.	Directory  metadata changes, hooks, new provider
+     selection and multi-package replacement are not  implemented.  The	 printed
+     record  is not accepted by db apply or db apply-set. JSON output is not im-
      plemented.
 
-     The  internal  file  planner  records retained, added, replaced and removed
+     The internal file planner records retained,  added,  replaced  and	 removed
      paths with stable IDs and archive hashes. Unsupported entries remain in the
-     record and prevent application. Recovery checking accepts exact old or  new
+     record  and prevent application. Recovery checking accepts exact old or new
      objects and rejects unrelated changes.
 
      A replacement that ships a unit below etc/dinit.d states it, as service AR-
-     TIFACT  NAME path /etc/dinit.d/NAME state starts-at-next-boot, and the plan
-     document carries the same units in a  [services]  section,	 so  what  would
-     start  at	the next boot is part of what the approval covers. A replacement
-     that ships none has an empty section. Such a replacement  is  refused  with
+     TIFACT NAME path /etc/dinit.d/NAME state starts-at-next-boot, and the  plan
+     document  carries	the  same  units  in a [services] section, so what would
+     start at the next boot is part of what the approval covers.  A  replacement
+     that  ships  none	has an empty section. Such a replacement is refused with
      status 3 until the user names the unit with --accept-service UNIT, the same
      consent a set needs for the same reason.
 
-     The  consent  travels in the update journal as holy-update-journal-5, which
-     carries the accepted architecture, the accepted setuid  placement	and  the
-     consented	unit names, so an interrupted replacement finishes the placement
+     The consent travels in the update journal as  holy-update-journal-5,  which
+     carries  the  accepted  architecture, the accepted setuid placement and the
+     consented unit names, so an interrupted replacement finishes the  placement
      it was reviewed for. db recover --update takes the consent from the journal
      and needs no flag. A journal that claims a decision it does not hold is re-
-     fused, and so is one whose generation is neither the recorded one	nor  the
-     one  before  it. holypkg rollback --apply carries the same consent into the
+     fused,  and  so is one whose generation is neither the recorded one nor the
+     one before it. holypkg rollback --apply carries the same consent  into  the
      reverse replacement.
 
-     holypkg up --prepare writes the consented unit names into	its  saved  plan
-     after  the	 accepted  decisions, so holypkg apply needs no flag of its own:
-     the plan document already carries the units and the  consent  travels  with
+     holypkg  up  --prepare  writes the consented unit names into its saved plan
+     after the accepted decisions, so holypkg apply needs no flag  of  its  own:
+     the  plan	document  already carries the units and the consent travels with
      the plan.
 
-     db	 apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 --root DIRECTORY applies
-     that cached replacement after reconstructing  and	comparing  the	approved
-     plan  under  the  writer lock. It preserves explicit/dependency reasons and
-     source identity, rewrites each installed consumer's own provider edges, and
-     increments the database generation once. A changed root, registry,	 genera-
-     tion, artifact or installed state requires a new preview.
+     db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 --root DIRECTORY	 applies
+     that  cached replacement, or the group the pairs name, after reconstructing
+     and comparing the approved plan under the writer lock.  A	group  publishes
+     updated  OLD  to NEW generation N plan HASH per slot and then updated-group
+     slots COUNT generation N plan HASH. It preserves  explicit/dependency  rea-
+     sons  and	source identity, rewrites each installed consumer's own provider
+     edges, and increments the database generation once. A  changed  root,  reg-
+     istry, generation, artifact or installed state requires a new preview.
 
      Before  changing  target  files,  apply checks reserved sibling names, pub-
      lishes an immutable journal and plan  under  transactions/update,	prepares
@@ -2925,11 +2939,21 @@ DESCRIPTION
      dency graph.  The rollback-plan line gives the SHA-256 of the following up-
      date  plan.  --apply requires that exact hash; a stale plan or changed root
      fails before mutation. The reverse replacement gets its own update	 journal
-     and  recovery  path.   --accept-arch  and --accept-privileged are artifact-
-     scoped decisions for the restored artifact. Rollback is limited to one com-
-     mitted update whose new artifact still occupies the installed slot. Missing
-     cache objects return 6.  This operation restores package files  and  depen-
-     dencies.  It  does	 not  reverse  external hook effects, migrations or user
+     and recovery path.	 A transaction that replaced a group reverses every slot
+     it named, so the review states each one before the plan it belongs to:
+
+     rollback-pair  transaction	 IDENTITY current ARTIFACT target ARTIFACT roll-
+     back-plan transaction IDENTITY slots COUNT generation N sha256 SHA256 read-
+     only
+
+     --apply then restores the whole group as one transaction and  prints  roll-
+     back  IDENTITY  restored COUNT artifacts. Every slot the transaction's plan
+     names must appear in its header, so a record that lost a pair is  2  rather
+     than  a  shorter  reverse.	 --accept-arch and --accept-privileged are arti-
+     fact-scoped decisions for the restored artifact. Rollback is limited to one
+     committed update whose new artifact  still	 occupies  the	installed  slot.
+     Missing  cache objects return 6.  This operation restores package files and
+     dependencies. It does not reverse external hook effects, migrations or user
      data.
 
      When an update preserves a modified config, the installed	instance  stores
