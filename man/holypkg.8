@@ -2034,6 +2034,22 @@ every remaining file without mutation, then completes removal. Changed files or 
 records require manual inspection. --abort-empty applies only to an installing
 journal, never to removal. This command does not remove dependents.
 .PP
+A removal journal states the phase it reached as its last line: files, retired or
+generation. The command prints resumed-phase PHASE and finishes from that phase:
+retired publishes the generation without retiring a second time, and generation
+commits the record and drops the journal without touching the payload. A
+recovery that finished a phase reports it in
+.RS
+.nf
+recovered removal SHA256 generation GENERATION phase PHASE
+.fi
+.RE
+.PP
+A journal written before phases existed states none, the recovery keeps
+inferring the phase from the installed record and the generation, and the
+report says phase inferred. A phase word the command does not know is an
+unreadable journal and both the status and the recovery return 1.
+.PP
 The local info command reads an LZ4-frame-compressed tar archive and prints the seven
 required fields from HOLY/meta. It reads archive data without extracting or
 executing it. It checks for repeated metadata and unsupported format versions.

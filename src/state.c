@@ -517,9 +517,24 @@ static int journal_exists(int dir)
     return present;
 }
 
+static int update_replace(int dir, const char *name, const char *record);
+
+/* the phases a removal passes through, in order. the journal states the one it reached,
+   so recovery finishes there rather than re-deriving where the crash fell. */
+static const char *const remove_phases[] = { "files", "retired", "generation" };
+
+static int remove_phase_valid(const char *phase)
+{
+    size_t i;
+    for (i = 0; i < sizeof remove_phases / sizeof *remove_phases; ++i)
+        if (!strcmp(phase, remove_phases[i])) return 1;
+    return 0;
+}
+
 static int journal_valid(int dir, unsigned long long generation,
                          unsigned long long *original,
-                         char artifact[65], char plan_digest[65], int *removing)
+                         char artifact[65], char plan_digest[65], int *removing,
+                         char phase[16])
 {
     int transactions = child_dir(dir, "transactions", 0), fd = -1, result = -1;
     struct stat st;
@@ -547,10 +562,25 @@ static int journal_valid(int dir, unsigned long long generation,
         if (!memcmp(buffer, prefix, length)) break;
     }
     if (attempt == 6 || (attempt >= 3 && !generation)) goto done;
-    if (st.st_size != (off_t)(length + 65 + 5 + 65) ||
+    if (st.st_size < (off_t)(length + 65 + 5 + 65) ||
         buffer[length + 64] != '\n' ||
         memcmp(buffer + length + 65, "plan ", 5) ||
         buffer[length + 65 + 5 + 64] != '\n') goto done;
+    /* a removal journal states its phase as a last line; one written before phases
+       existed ends at the plan and leaves the phase for the recovery to infer */
+    if (st.st_size != (off_t)(length + 65 + 5 + 65)) {
+        size_t tail = length + 65 + 5 + 65;
+        size_t name_length = (size_t)st.st_size - tail;
+        char name[16];
+        if (name_length < 8 || name_length > 22 ||
+            memcmp(buffer + tail, "phase ", 6)) goto done;
+        name_length -= 7;                       /* the phrase and the newline */
+        if (name_length >= sizeof name) goto done;
+        memcpy(name, buffer + tail + 6, name_length);
+        name[name_length] = 0;
+        if (!remove_phase_valid(name)) goto done;
+        if (phase) memcpy(phase, name, name_length + 1);
+    } else if (phase) phase[0] = 0;
     memcpy(digest, buffer + length, 64);
     digest[64] = '\0';
     memcpy(plan, buffer + length + 70, 64);
@@ -582,7 +612,7 @@ static int transaction_pending(int dir, unsigned long long generation)
     int result = update_pending(dir);
     if (result) return result;
     result = set_journal_present(dir);
-    return result ? result : journal_valid(dir, generation, NULL, NULL, NULL, NULL);
+    return result ? result : journal_valid(dir, generation, NULL, NULL, NULL, NULL, NULL);
 }
 
 static int read_reservation(int transactions, const char *name,
@@ -2194,7 +2224,7 @@ int holy_state_abort_empty(const char *root_path)
     int transactions = -1, installed = -1, result = 1, removing = 0;
     if (dir < 0 || fstat(root, &root_st) || flock(dir, LOCK_EX) || !state_layout(dir, 1) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation)) goto done;
-    result = journal_valid(dir, generation, &recorded, digest, plan, &removing);
+    result = journal_valid(dir, generation, &recorded, digest, plan, &removing, NULL);
     if (result < 0) { result = 1; goto done; }
     if (!result) { result = 5; goto done; }
     result = 5;
@@ -2831,11 +2861,21 @@ done:
     return result;
 }
 
+/* the journal a removal writes, with the phase it reached as the last line */
+static size_t remove_journal_text(char *out, size_t size, unsigned long long generation,
+                                  const char *digest, int broken, const char *phase)
+{
+    int length = snprintf(out, size,
+        "format holy-journal-1\nstage removing\ngeneration %llu\nartifact %s\nplan %064d\n"
+        "phase %s\n", generation, digest, broken ? 1 : 0, phase);
+    return length < 0 || (size_t)length >= size ? 0 : (size_t)length;
+}
+
 static int finish_remove_record(int dir, int installed, int item, int transactions,
                                 const char *digest, unsigned long long generation,
                                 int broken, int retired)
 {
-    char generation_record[32], temp_name[43] = {0};
+    char generation_record[32], journal[256], temp_name[43] = {0};
     size_t length;
     int temp = -1, work = -1, ok = 0;
     struct stat old, observed;
@@ -2850,6 +2890,11 @@ static int finish_remove_record(int dir, int installed, int item, int transactio
         !S_ISDIR(observed.st_mode) || old.st_dev != observed.st_dev ||
         old.st_ino != observed.st_ino || fsync(work) || fsync(installed) ||
         fsync(transactions)) goto done;
+    /* the instance is retired, so a crash from here leaves the journal naming that phase
+       and recovery publishes the generation instead of retiring a second time */
+    length = remove_journal_text(journal, sizeof journal, generation, digest, broken,
+                                 remove_phases[1]);
+    if (!length || !update_replace(transactions, "journal", journal)) goto done;
     length = (size_t)snprintf(generation_record, sizeof generation_record,
                               "%llu\n", generation + 1);
     if (length >= sizeof generation_record) goto done;
@@ -2857,8 +2902,13 @@ static int finish_remove_record(int dir, int installed, int item, int transactio
     if (temp < 0 || !write_all(temp, generation_record, length) || fsync(temp)) goto done;
     if (close(temp)) { temp = -1; goto done; }
     temp = -1;
-    if (renameat(dir, temp_name, dir, "generation") || fsync(dir) ||
-        !commit_remove_record(transactions, digest, generation, broken) ||
+    if (renameat(dir, temp_name, dir, "generation") || fsync(dir)) goto done;
+    /* the generation is published, so the journal says so before the record is
+       committed and the journal is dropped */
+    length = remove_journal_text(journal, sizeof journal, generation, digest, broken,
+                                 remove_phases[2]);
+    if (!length || !update_replace(transactions, "journal", journal)) goto done;
+    if (!commit_remove_record(transactions, digest, generation, broken) ||
         unlinkat(transactions, "journal", 0) || fsync(transactions)) goto done;
     ok = 1;
 done:
@@ -3048,10 +3098,10 @@ int holy_state_remove_group(const char *const *digests, size_t count,
         }
         if (broken[i]) fprintf(stderr, "holypkg: accepted broken dependents for %s\n",
                                digests[i]);
-        length = (size_t)snprintf(journal, sizeof journal,
-            "format holy-journal-1\nstage removing\ngeneration %llu\nartifact %s\nplan %064d\n",
-            generation + (unsigned long long)removed, digests[i], broken[i] ? 1 : 0);
-        if (length >= sizeof journal ||
+        length = remove_journal_text(journal, sizeof journal,
+                                     generation + (unsigned long long)removed,
+                                     digests[i], broken[i], remove_phases[0]);
+        if (!length ||
             !record_file(transactions, "journal", journal, length) ||
             !remove_record(transactions, digests[i], generation + (unsigned long long)removed,
                            broken[i], 1) ||
@@ -3097,12 +3147,13 @@ int holy_state_continue_remove(const char *root_path)
     int root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     int dir = root < 0 ? -1 : state_dir_at(root, 0);
     int installed = -1, item = -1, transactions = -1, files = -1;
-    int result = 5, removing = 0, found, retired = 0, work = -1;
+    char phase[16] = {0};
+    int result = 5, removing = 0, found, retired = 0, work = -1, phased;
     struct stat removed_st;
     if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 1) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation) ||
         generation == ULLONG_MAX) { result = 1; goto done; }
-    found = journal_valid(dir, generation, &recorded, digest, plan, &removing);
+    found = journal_valid(dir, generation, &recorded, digest, plan, &removing, phase);
     if (found < 0) { result = 1; goto done; }
     if (!found || removing != 1 ||
         (strspn(plan, "0") != 64 && strcmp(plan,
@@ -3113,12 +3164,17 @@ int holy_state_continue_remove(const char *root_path)
     if (transactions < 0 || installed < 0) { result = 1; goto done; }
     if (read_reservation(transactions, "pending", generation, reserved, approved) != 0)
         goto done;
-    if (recorded != generation) {
+    /* a journal that states a phase is finished from that phase, and one that does not
+       keeps the inference the recovery has always made */
+    phased = phase[0] != 0;
+    if (phased) printf("resumed-phase %s\n", phase);
+    if ((phased && !strcmp(phase, "generation")) || recorded != generation) {
         if (generation != recorded + 1 || !remove_record(transactions, digest, recorded,
             plan[63] == '1', 0) || fstatat(installed, digest, &removed_st, AT_SYMLINK_NOFOLLOW) == 0 ||
             errno != ENOENT || !commit_remove_record(transactions, digest, recorded,
             plan[63] == '1') || unlinkat(transactions, "journal", 0) || fsync(transactions)) goto done;
-        printf("recovered removal %s generation %llu\n", digest, generation);
+        printf("recovered removal %s generation %llu phase %s\n", digest, generation,
+               phase[0] ? phase : "inferred");
         result = 0;
         goto done;
     }
@@ -3132,12 +3188,18 @@ int holy_state_continue_remove(const char *root_path)
         retired = 1;
     }
     files = openat(item, "files", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
-    if (files < 0 || exclusive_claims(installed, digest, files) != 1 ||
-        !remove_record(transactions, digest, generation, plan[63] == '1', 1) ||
-        !holy_install_finish_remove_manifest(files, root) ||
-        !finish_remove_record(dir, installed, item, transactions, digest, generation,
-                              plan[63] == '1', retired)) goto done;
-    printf("recovered removal %s generation %llu\n", digest, generation + 1);
+    if (files < 0 || exclusive_claims(installed, digest, files) != 1) goto done;
+    /* a journal that names the retired phase has the record and the payload done, so
+       recovery publishes the generation instead of removing a second time */
+    if (phased && !strcmp(phase, "retired")) {
+        if (!finish_remove_record(dir, installed, item, transactions, digest, generation,
+                                  plan[63] == '1', 1)) goto done;
+    } else if (!remove_record(transactions, digest, generation, plan[63] == '1', 1) ||
+               !holy_install_finish_remove_manifest(files, root) ||
+               !finish_remove_record(dir, installed, item, transactions, digest, generation,
+                                     plan[63] == '1', retired)) goto done;
+    printf("recovered removal %s generation %llu phase %s\n", digest, generation + 1,
+           phase[0] ? phase : "inferred");
     result = 0;
 done:
     if (result) fprintf(stderr, "holypkg: removal recovery requires manual inspection (status %d)\n", result);
@@ -3164,7 +3226,7 @@ int holy_state_finish_apply(const char *root_path)
         result = 1;
         goto done;
     }
-    found = journal_valid(dir, generation, &recorded, digest, plan, &removing);
+    found = journal_valid(dir, generation, &recorded, digest, plan, &removing, NULL);
     if (found < 0) { result = 1; goto done; }
     if (!found || removing || !generation || recorded != generation - 1 ||
         !installed_valid(dir)) goto done;
@@ -5016,8 +5078,6 @@ static int set_choice_valid(const char *choice)
     return 1;
 }
 
-static int update_replace(int dir, const char *name, const char *record);
-
 /* the phases a set transaction passes through, in order. the journal states the one it
    reached, so recovery resumes there instead of re-deriving where the crash fell. */
 static const char *const set_phases[] = { "applying", "instances", "record", "generation" };
@@ -5977,7 +6037,7 @@ int holy_state_repair(const char *digest, const char *approved, const char *root
     if (resume) {
         result = 5;
         if (set_journal_present(dir) ||
-            journal_valid(dir, generation, &recorded, artifact, expected, &stage) != 1 ||
+            journal_valid(dir, generation, &recorded, artifact, expected, &stage, NULL) != 1 ||
             stage != 2) goto done;
         {
             DIR *list;

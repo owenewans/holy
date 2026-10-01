@@ -401,7 +401,12 @@
   rather than repeating one. The record a commit keeps drops that line, since it
   is progress rather than a decision, and a record directory the crash caught
   between its two writes is recognised as the plan's own record instead of
-  blocking the root. Per-phase recovery for the other transactions stays open. `holypkg override list` now
+  blocking the root. A removal transaction states its phase as the last line of its
+  journal, files, retired or generation, so recovery resumes at the phase the crash
+  proved and the report names it in `recovered removal ... phase PHASE`; a journal
+  written before phases existed reports `phase inferred`, and a phase word the
+  recovery does not know is an unreadable journal. Per-phase recovery for the update
+  and repair transactions stays open. `holypkg override list` now
   reads the user override store of a target root and reports every record
   against the installed set. A record is the fixed line order
   holy-override-1 form: a scope naming one artifact digest, one package

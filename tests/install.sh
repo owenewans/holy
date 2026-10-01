@@ -4,6 +4,17 @@ helper=$1
 bin=$2
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+
+expect() {
+    wanted=$1
+    shift
+    if "$@" > "$tmp/out" 2> "$tmp/err"; then status=0; else status=$?; fi
+    if [ "$status" -ne "$wanted" ]; then
+        printf 'expected status %s, got %s from %s\n' "$wanted" "$status" "$*" >&2
+        cat "$tmp/err" >&2
+        exit 1
+    fi
+}
 mkdir -p "$tmp/payload/HOLY" "$tmp/payload/DATA/usr/bin" "$tmp/root/usr/bin"
 cat > "$tmp/payload/HOLY/meta" <<'EOF'
 format holy-package-1
@@ -489,11 +500,67 @@ if "$bin" db recover --continue --root "$tmp/failure" > "$tmp/out" 2> "$tmp/err"
 test -f "$tmp/failure/var/lib/holypkg/transactions/journal"
 rm "$tmp/failure/usr/bin/data"
 "$bin" db recover --continue --root "$tmp/failure" > "$tmp/out"
-grep -qx "recovered removal $digest generation 2" "$tmp/out"
+grep -qx "recovered removal $digest generation 2 phase inferred" "$tmp/out"
 test ! -e "$tmp/failure/usr/bin/data"
 test ! -e "$tmp/failure/var/lib/holypkg/transactions/journal"
 "$bin" db status --root "$tmp/failure" > "$tmp/out"
 grep -qx 'generation 2' "$tmp/out"
+# a removal journal states the phase it reached, and recovery finishes from that phase
+# rather than re-deriving where the crash fell
+install_again() {
+    "$bin" db reserve "$digest" --root "$1" > "$tmp/out"
+    "$bin" db plan --root "$1" > "$tmp/out"
+    phase_plan=$(sed -n 's/.* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+    "$bin" db approve "$phase_plan" --root "$1" > "$tmp/out"
+    "$bin" db apply --root "$1" > "$tmp/out"
+}
+remove_plan() {
+    printf 'format holy-remove-1\ngeneration %s\nartifact %s\naccept-broken no\n' "$1" "$2"
+}
+phase_files="$tmp/phase-files"
+cp -a "$tmp/failure" "$phase_files"
+expect 0 install_again "$phase_files"
+files_generation=$(cat "$phase_files/var/lib/holypkg/generation")
+printf 'format holy-journal-1\nstage removing\ngeneration %s\nartifact %s\nplan %064d\nphase files\n' \
+    "$files_generation" "$digest" 0 > "$phase_files/var/lib/holypkg/transactions/journal"
+expect 5 "$bin" db rm "$digest" --root "$phase_files"
+expect 0 "$bin" db recover --continue --root "$phase_files" > "$tmp/out"
+grep -qx 'resumed-phase files' "$tmp/out"
+grep -qx "recovered removal $digest generation $(($files_generation + 1)) phase files" "$tmp/out"
+test ! -e "$phase_files/var/lib/holypkg/transactions/journal"
+test "$(cat "$phase_files/var/lib/holypkg/generation")" -eq "$(($files_generation + 1))"
+expect 0 "$bin" db check --all --root "$phase_files"
+# a journal that names the generation phase is finished without touching the payload,
+# so the fixture writes the record the removal would have committed
+phase_generation="$tmp/phase-generation"
+cp -a "$tmp/failure" "$phase_generation"
+expect 0 install_again "$phase_generation"
+generation_number=$(cat "$phase_generation/var/lib/holypkg/generation")
+identity=$(remove_plan "$generation_number" "$digest" | sha256sum)
+identity=${identity%% *}
+mkdir "$phase_generation/var/lib/holypkg/transactions/$identity"
+remove_plan "$generation_number" "$digest" \
+    > "$phase_generation/var/lib/holypkg/transactions/$identity/plan"
+printf 'accept-broken no\n' > "$phase_generation/var/lib/holypkg/transactions/$identity/decisions"
+rm -rf "$phase_generation/var/lib/holypkg/installed/$digest" "$phase_generation/usr/bin/data"
+printf 'format holy-journal-1\nstage removing\ngeneration %s\nartifact %s\nplan %064d\nphase generation\n' \
+    "$generation_number" "$digest" 0 > "$phase_generation/var/lib/holypkg/transactions/journal"
+printf '%s\n' "$(($generation_number + 1))" > "$phase_generation/var/lib/holypkg/generation"
+expect 0 "$bin" db recover --continue --root "$phase_generation" > "$tmp/out"
+grep -qx 'resumed-phase generation' "$tmp/out"
+grep -qx "recovered removal $digest generation $(($generation_number + 1)) phase generation" "$tmp/out"
+test ! -e "$phase_generation/var/lib/holypkg/transactions/journal"
+expect 0 "$bin" db check --all --root "$phase_generation"
+# a phase the recovery does not know is an unreadable journal, not a guess
+phase_unknown="$tmp/phase-unknown"
+cp -a "$tmp/failure" "$phase_unknown"
+expect 0 install_again "$phase_unknown"
+unknown_generation=$(cat "$phase_unknown/var/lib/holypkg/generation")
+printf 'format holy-journal-1\nstage removing\ngeneration %s\nartifact %s\nplan %064d\nphase erasing\n' \
+    "$unknown_generation" "$digest" 0 > "$phase_unknown/var/lib/holypkg/transactions/journal"
+if "$bin" db status --root "$phase_unknown" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+if "$bin" db recover --continue --root "$phase_unknown" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
+test -f "$phase_unknown/var/lib/holypkg/transactions/journal"
 mkdir "$tmp/transitions"
 "$helper" --transitions "$tmp/transitions"
 cat > "$tmp/transition-fault.c" <<'C'
