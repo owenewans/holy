@@ -254,6 +254,8 @@ transaction, so it keeps blocking other work rather than being ignored.
 transaction IDENTITY kind KIND GENERATION [FACTS] decisions COUNT
 transaction-decision IDENTITY LINE
 
+The record a set keeps is its journal without the phase line, since that line
+is where the transaction stopped rather than a decision it was reviewed with.
 Every decision line is printed as the record holds it, so this command
 restates nothing: artifact, binding, catalog-index, accept-arch,
 accept-privileged, skip-hooks, service and accept-broken. The facts are the
@@ -1286,11 +1288,28 @@ does not automatically rewrite ELF files or resolve loader aliases.
 .PP
 An interrupted set leaves generation unchanged unless final commit already
 published it. db status returns 5 for a recognized set journal.
-db recover --finish-set verifies cached artifacts, the original plan hash,
-installed metadata/graphs and actual payloads before completing generation
-publication and removing the journal. --continue-set additionally installs
-packages that have no installed instance yet, after checking the whole remaining
-set. Already written payload must match exactly; missing entries are restored.
+A set transaction states the mutation phase it reached as the last line of its
+journal:
+
+phase applying|instances|record|generation
+
+The transaction rewrites the journal at each phase, so a crash leaves the root
+the phase the transaction had proved. applying is payload and instances, after
+which the decisions record is retained, then the generation is published.
+Recovery reads that phase and states it:
+
+resumed-phase PHASE
+recovered-set SHA256 generation GENERATION artifacts COUNT phase PHASE
+
+A phase past applying means every instance the set installs is already there,
+so recovery writes no payload again and refuses an artifact that is missing
+rather than repeating one. --finish-set verifies cached artifacts, the original
+plan hash, installed metadata/graphs and actual payloads before completing
+generation publication and removing the journal. --continue-set additionally
+installs packages that have no installed instance yet, after checking the whole
+remaining set. The phase is where the transaction stopped, not a proof about
+the generation, since a crash between publication and the phase line leaves the
+root one generation ahead. Already written payload must match exactly; missing entries are restored.
 Neither mode overwrites a partial file or repeats a partially written instance. Those cases require inspection. Recovery rejects mixed journals,
 changed artifacts, ownership conflicts and drift in completed package files.
 The cache must retain the selected artifacts.

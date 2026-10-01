@@ -3653,6 +3653,7 @@ struct set_journal {
     unsigned long long generation;
     char hash[65], root[65];
     char catalog_index[65];
+    char phase[32];              /* the mutation phase this transaction reached */
     char *choice;
     char **digests, **bindings;
     size_t count, binding_count;
@@ -5015,6 +5016,87 @@ static int set_choice_valid(const char *choice)
     return 1;
 }
 
+static int update_replace(int dir, const char *name, const char *record);
+
+/* the phases a set transaction passes through, in order. the journal states the one it
+   reached, so recovery resumes there instead of re-deriving where the crash fell. */
+static const char *const set_phases[] = { "applying", "instances", "record", "generation" };
+
+static int phase_valid(const char *phase)
+{
+    size_t i;
+    for (i = 0; i < sizeof set_phases / sizeof *set_phases; ++i)
+        if (!strcmp(phase, set_phases[i])) return 1;
+    return 0;
+}
+
+static size_t phase_index(const char *phase)
+{
+    size_t i;
+    for (i = 0; i < sizeof set_phases / sizeof *set_phases; ++i)
+        if (!strcmp(phase, set_phases[i])) return i;
+    return sizeof set_phases / sizeof *set_phases;
+}
+
+/* the phase is the last line of the journal, so the version states it as well as the
+   decisions the review named */
+static int write_set_journal(int transactions, unsigned long long generation,
+                             const struct install_set *set, const char *choice,
+                             const char *const *accepted_arch, size_t accepted_count,
+                             const char *const *accepted_privileged, size_t privileged_count,
+                             const char *const *skipped_hooks, size_t skipped_count,
+                             const char *const *accepted_service, size_t service_count,
+                             const char *phase)
+{
+    char *record = NULL;
+    size_t length = 0, i;
+    FILE *stream = open_memstream(&record, &length);
+    int ok = 1;
+    if (!stream || !phase_valid(phase)) return 0;
+    if (fprintf(stream, "format holy-set-journal-%d\ngeneration %llu\nplan %s\nroot %s\nchoice %s\n",
+                service_count ? 7 : skipped_count ? 6 : set->catalog_index[0] ? 5 :
+                privileged_count ? 4 : accepted_count ? 3 : set->binding_count ? 2 : 1,
+                generation, set->hash, set->resolution.root, choice ? choice : "-") < 0) ok = 0;
+    if ((accepted_count || privileged_count || skipped_count || service_count ||
+         set->catalog_index[0]) &&
+        fprintf(stream, "host %s\n", set->host) < 0) ok = 0;
+    if (set->catalog_index[0] &&
+        fprintf(stream, "catalog-index %s\n", set->catalog_index) < 0) ok = 0;
+    for (i = 0; i < set->count && ok; ++i)
+        if (fprintf(stream, "artifact %s\n", set->items[i].identity.digest) < 0) ok = 0;
+    for (i = 0; i < set->binding_count && ok; ++i)
+        if (fprintf(stream, "binding %s\n", set->bindings[i]) < 0) ok = 0;
+    for (i = 0; i < accepted_count && ok; ++i)
+        if (fprintf(stream, "accept-arch %s\n", accepted_arch[i]) < 0) ok = 0;
+    for (i = 0; i < privileged_count && ok; ++i)
+        if (fprintf(stream, "accept-privileged %s\n", accepted_privileged[i]) < 0) ok = 0;
+    for (i = 0; i < skipped_count && ok; ++i)
+        if (fprintf(stream, "skip-hooks %s\n", skipped_hooks[i]) < 0) ok = 0;
+    for (i = 0; i < service_count && ok; ++i)
+        if (fprintf(stream, "service %s\n", accepted_service[i]) < 0) ok = 0;
+    if (fprintf(stream, "phase %s\n", phase) < 0) ok = 0;
+    if (fclose(stream)) ok = 0;
+    /* the journal is rewritten as the transaction advances, so it is replaced rather
+       than created, and a replacement that fails leaves the earlier phase in place */
+    if (ok) ok = update_replace(transactions, "set-journal", record);
+    free(record);
+    return ok;
+}
+
+/* a record the transaction had already started when the crash came: the committed
+   marker names its own directory, so it is that plan's record rather than an entry this
+   root does not recognise. recovery writes the rest of it from the journal. */
+static int record_started(int transactions, const char *name)
+{
+    int child = child_dir(transactions, name, 0), ok = 0;
+    char *record = child < 0 ? NULL : update_record(child, "committed");
+    if (record && strlen(record) == 65 && !memcmp(record, name, 64) && record[64] == '\n')
+        ok = 1;
+    free(record);
+    if (child >= 0) close(child);
+    return ok;
+}
+
 static int read_set_journal(int dir, struct set_journal *journal)
 {
     int transactions = child_dir(dir, "transactions", 0), fd = -1, result = -1, version = 1;
@@ -5032,7 +5114,8 @@ static int read_set_journal(int dir, struct set_journal *journal)
         errno = 0;
         while ((entry = readdir(list))) {
             if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-            if (completed_transaction(transactions, entry->d_name)) { errno = 0; continue; }
+            if (completed_transaction(transactions, entry->d_name) ||
+                record_started(transactions, entry->d_name)) { errno = 0; continue; }
             if (strcmp(entry->d_name, "set-journal")) { valid = 0; break; }
             errno = 0;
         }
@@ -5154,6 +5237,12 @@ static int read_set_journal(int dir, struct set_journal *journal)
             next[journal->service_count] = strdup(line + 8);
             if (!next[journal->service_count]) goto done;
             ++journal->service_count;
+        } else if (!strncmp(line, "phase ", 6)) {
+            /* the phase closes the journal, so a record that named one twice or named
+               an unknown one is not a journal this root wrote */
+            if (journal->phase[0] || strlen(line) < 7 || strlen(line) >= sizeof journal->phase ||
+                !phase_valid(line + 6)) goto done;
+            memcpy(journal->phase, line + 6, strlen(line + 6) + 1);
         } else if (version >= 2 && !strncmp(line, "binding ", 8)) {
             char **next;
             size_t i;
@@ -5216,45 +5305,6 @@ static int set_journal_present(int dir)
     return result;
 }
 
-static int write_set_journal(int transactions, unsigned long long generation,
-                             const struct install_set *set, const char *choice,
-                             const char *const *accepted_arch, size_t accepted_count,
-                             const char *const *accepted_privileged, size_t privileged_count,
-                             const char *const *skipped_hooks, size_t skipped_count,
-                             const char *const *accepted_service, size_t service_count)
-{
-    char *record = NULL;
-    size_t length = 0, i;
-    FILE *stream = open_memstream(&record, &length);
-    int ok = 1;
-    if (!stream) return 0;
-    if (fprintf(stream, "format holy-set-journal-%d\ngeneration %llu\nplan %s\nroot %s\nchoice %s\n",
-                service_count ? 7 : skipped_count ? 6 : set->catalog_index[0] ? 5 :
-                privileged_count ? 4 : accepted_count ? 3 : set->binding_count ? 2 : 1,
-                generation, set->hash, set->resolution.root, choice ? choice : "-") < 0) ok = 0;
-    if ((accepted_count || privileged_count || skipped_count || service_count ||
-         set->catalog_index[0]) &&
-        fprintf(stream, "host %s\n", set->host) < 0) ok = 0;
-    if (set->catalog_index[0] &&
-        fprintf(stream, "catalog-index %s\n", set->catalog_index) < 0) ok = 0;
-    for (i = 0; i < set->count && ok; ++i)
-        if (fprintf(stream, "artifact %s\n", set->items[i].identity.digest) < 0) ok = 0;
-    for (i = 0; i < set->binding_count && ok; ++i)
-        if (fprintf(stream, "binding %s\n", set->bindings[i]) < 0) ok = 0;
-    for (i = 0; i < accepted_count && ok; ++i)
-        if (fprintf(stream, "accept-arch %s\n", accepted_arch[i]) < 0) ok = 0;
-    for (i = 0; i < privileged_count && ok; ++i)
-        if (fprintf(stream, "accept-privileged %s\n", accepted_privileged[i]) < 0) ok = 0;
-    for (i = 0; i < skipped_count && ok; ++i)
-        if (fprintf(stream, "skip-hooks %s\n", skipped_hooks[i]) < 0) ok = 0;
-    for (i = 0; i < service_count && ok; ++i)
-        if (fprintf(stream, "service %s\n", accepted_service[i]) < 0) ok = 0;
-    if (fclose(stream)) ok = 0;
-    if (ok) ok = record_file(transactions, "set-journal", record, length);
-    free(record);
-    return ok;
-}
-
 /* a record that is already there is compared rather than written again, so the same plan
    retried after a crash leaves the same record and not a refusal. */
 static int record_write(int dir, const char *name, const char *text)
@@ -5274,17 +5324,28 @@ static int record_write(int dir, const char *name, const char *text)
 static int retain_set_record(int transactions, const struct install_set *set)
 {
     char line[66];
-    char *journal = update_record(transactions, "set-journal");
+    char *journal = update_record(transactions, "set-journal"), *decisions = NULL;
     int child = -1, ok = 0;
     if (!journal) return 0;
-    if (mkdirat(transactions, set->hash, 0700) && errno != EEXIST) { free(journal); return 0; }
+    /* the record keeps the decisions the set was reviewed with. the phase line is where
+       the transaction stopped, not a decision, so it does not belong to the record and
+       a transaction that advances past it still finds the same record. */
+    decisions = strdup(journal);
+    if (!decisions) { free(journal); return 0; }
+    {
+        char *phase = strstr(decisions, "\nphase ");
+        if (phase) *phase = 0;
+    }
+    if (mkdirat(transactions, set->hash, 0700) && errno != EEXIST) goto done;
     child = child_dir(transactions, set->hash, 0);
-    if (child < 0) { free(journal); return 0; }
+    if (child < 0) goto done;
     snprintf(line, sizeof line, "%s\n", set->hash);
     ok = record_write(child, "committed", line) &&
-         record_write(child, "decisions", journal) &&
+         record_write(child, "decisions", decisions) &&
          !fsync(child) && !fsync(transactions);
-    close(child);
+done:
+    if (child >= 0) close(child);
+    free(decisions);
     free(journal);
     return ok;
 }
@@ -5448,7 +5509,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
                            accepted_arch, accepted_count,
                            accepted_privileged, privileged_count,
                            skipped_hooks, skipped_count,
-                           accepted_service, service_count)) {
+                           accepted_service, service_count, "applying")) {
         struct stat st;
         result = fstatat(transactions, "set-journal", &st, AT_SYMLINK_NOFOLLOW) ? 1 : 5;
         goto done;
@@ -5467,12 +5528,29 @@ static int state_set(const char *const *digests, size_t count, const char *choic
             goto done;
         printf("applied %s\n", item->identity.digest);
     }
+    /* every instance is in place, which is the phase a crash after this point resumes
+       from: recovery checks them and finishes the transaction */
+    if (!write_set_journal(transactions, generation, &set, choice,
+                           accepted_arch, accepted_count,
+                           accepted_privileged, privileged_count,
+                           skipped_hooks, skipped_count,
+                           accepted_service, service_count, "instances")) goto done;
     /* the journal the transaction used becomes its decisions record, and the directory
        name is the plan it was made with, so the root keeps what the set was reviewed
        with. the record is written before the journal is dropped, so a crash leaves the
        transaction recoverable and the record already there to write again. */
     if (!retain_set_record(transactions, &set) ||
+        !write_set_journal(transactions, generation, &set, choice,
+                           accepted_arch, accepted_count,
+                           accepted_privileged, privileged_count,
+                           skipped_hooks, skipped_count,
+                           accepted_service, service_count, "record") ||
         !set_generation(dir, generation + 1) ||
+        !write_set_journal(transactions, generation, &set, choice,
+                           accepted_arch, accepted_count,
+                           accepted_privileged, privileged_count,
+                           skipped_hooks, skipped_count,
+                           accepted_service, service_count, "generation") ||
         unlinkat(transactions, "set-journal", 0) || fsync(transactions)) goto done;
     printf("committed-set %s generation %llu artifacts %zu\n", set.hash, generation + 1, set.count);
     result = 0;
@@ -5644,9 +5722,9 @@ static int recover_set(const char *root_path, int resume)
     unsigned long long generation, recorded;
     const char **digests = NULL;
     unsigned char *present = NULL;
-    size_t i, j;
+    size_t i, j, phase = 0;
     struct utsname host;
-    int root = -1, dir = -1, installed = -1, transactions = -1, result = 5;
+    int root = -1, dir = -1, installed = -1, transactions = -1, result = 5, phased = 0;
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     dir = root < 0 ? -1 : state_dir_at(root, 0);
     if (dir >= 0 && holy_override_records(root_path, &override_records,
@@ -5656,6 +5734,13 @@ static int recover_set(const char *root_path, int resume)
     if (read_set_journal(dir, &journal) != 1 ||
         (generation != journal.generation && generation != journal.generation + 1) ||
         !installed_valid(dir)) goto done;
+    /* a journal written before phases existed states none, and the phase it names is
+       where the transaction stopped: the root may already carry the generation the
+       publication would have written, since that is the phase before the journal line */
+    phased = journal.phase[0] != 0;
+    if (!phased) strcpy(journal.phase, "applying");
+    phase = phase_index(journal.phase);
+    printf("resumed-phase %s\n", journal.phase);
     if (journal.host[0] && (uname(&host) || strcmp(host.machine, journal.host))) goto done;
     digests = calloc(journal.count, sizeof *digests);
     present = calloc(journal.count, 1);
@@ -5727,7 +5812,9 @@ static int recover_set(const char *root_path, int resume)
     }
     for (i = 0; i < set.count; ++i) if (!present[i]) {
         const struct set_item *item = &set.items[i];
-        if (!holy_install_payload_missing(item->snapshot, root) ||
+        /* a phase past the instances cannot be missing one, since the phase line is
+           written after the last instance the transaction saved */
+        if (phase >= 1 || !holy_install_payload_missing(item->snapshot, root) ||
             !save_instance(installed, item->identity.digest, item->snapshot, journal.generation,
                            set.graph, set.graph_length,
                            strcmp(item->identity.digest, set.resolution.root) ? "dependency" : "explicit",
@@ -5736,13 +5823,14 @@ static int recover_set(const char *root_path, int resume)
             goto done;
         printf("resumed %s\n", item->identity.digest);
     }
-    if (generation == journal.generation && !set_generation(dir, generation + 1)) goto done;
     /* a recovered set leaves the same record a committed one does, with the generation
-       it resumed from, so the root keeps what both were reviewed with. */
+       it resumed from, so the root keeps what both were reviewed with. a phase that got
+       past the record has it already, and writing it again must find the same text. */
     if (!retain_set_record(transactions, &set)) goto done;
+    if (generation == journal.generation && !set_generation(dir, generation + 1)) goto done;
     if (fsync(dir) || unlinkat(transactions, "set-journal", 0) || fsync(transactions)) goto done;
-    printf("recovered-set %s generation %llu artifacts %zu\n",
-           set.hash, journal.generation + 1, set.count);
+    printf("recovered-set %s generation %llu artifacts %zu phase %s\n",
+           set.hash, journal.generation + 1, set.count, journal.phase);
     result = 0;
 done:
     if (result) fprintf(stderr, "holypkg: set recovery requires inspection (status %d)\n", result);

@@ -393,7 +393,15 @@
   alias owners for a later script installation using root-confined lookup,
   including chains split between installed and new packages.
 - [ ] Handle hooks, service consent, overrides, general rollback and
-  recovery of each interrupted mutation phase. `holypkg override list` now
+  recovery of each interrupted mutation phase.
+  A set transaction now states the mutation phase it reached as the last line of
+  its journal, applying, instances, record or generation, and rewrites it at each
+  one, so a crash leaves the phase the transaction had proved. Recovery reports
+  `resumed-phase PHASE` and refuses an artifact the phase says is already there
+  rather than repeating one. The record a commit keeps drops that line, since it
+  is progress rather than a decision, and a record directory the crash caught
+  between its two writes is recognised as the plan's own record instead of
+  blocking the root. Per-phase recovery for the other transactions stays open. `holypkg override list` now
   reads the user override store of a target root and reports every record
   against the installed set. A record is the fixed line order
   holy-override-1 form: a scope naming one artifact digest, one package

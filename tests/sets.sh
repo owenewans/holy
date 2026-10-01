@@ -2,7 +2,7 @@
 set -eu
 bin=$(realpath "$1")
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+#trap 'rm -rf "$tmp"' EXIT HUP INT TERM
 root="$tmp/root"
 tree="$tmp/tree"
 mkdir -p "$root/usr/share" "$tree"
@@ -200,9 +200,12 @@ expect 0 "$bin" db apply-set "$broken_plan" "$lib" --root "$tmp/broken-root"
 expect 0 "$bin" db check --all --root "$tmp/broken-root"
 expect 0 "$bin" db rm "$app" --root "$tmp/broken-root"
 grep -Rqx 'accept-broken no' "$tmp/broken-root/var/lib/holypkg/transactions"/*/decisions
+# the journal a set transaction leaves behind names the phase it reached, and the
+# decisions record a commit keeps is that same text
 journal() {
     printf 'format holy-set-journal-1\ngeneration 0\nplan %s\nroot %s\nchoice -\n' "$plan" "$app"
     printf '%s\n' "$app" "$lib" | sort | sed 's/^/artifact /'
+    printf 'phase instances\n'
 }
 journal > "$db/transactions/set-journal"
 chmod 600 "$db/transactions/set-journal"
@@ -292,10 +295,27 @@ expect 5 "$bin" db recover --continue-set --root "$root"
 grep -qx partial "$root/usr/share/$target"
 rm "$root/usr/share/$target"
 expect 0 "$bin" db recover --continue-set --root "$root"
+grep -qx "resumed-phase applying" "$tmp/out"
 grep -qx "resumed $second" "$tmp/out"
+grep -qx "recovered-set $plan generation 4 artifacts 2 phase applying" "$tmp/out"
 test "$(cat "$db/generation")" -eq 4
 expect 0 "$bin" db check --all --root "$root"
 test ! -e "$db/transactions/set-journal"
+# a crash after every instance is saved resumes at the phase the journal names: the
+# payload is not written again, only the record and the generation are finished
+cp -a "$root" "$tmp/phase-root"
+expect 0 "$bin" db rm "$app" --root "$tmp/phase-root"
+expect 0 "$bin" db plan-set "$app" --root "$tmp/phase-root"
+phase_plan=$(plan_hash)
+expect 5 env LD_PRELOAD="$tmp/fault.so" HOLY_FAIL_PATH=decisions \
+    "$bin" db apply-set "$phase_plan" "$app" --root "$tmp/phase-root"
+grep -qx "phase instances" "$tmp/phase-root/var/lib/holypkg/transactions/set-journal"
+expect 0 "$bin" db recover --continue-set --root "$tmp/phase-root"
+grep -qx "resumed-phase instances" "$tmp/out"
+if grep -qx 'resumed .*' "$tmp/out"; then exit 1; fi
+grep -qx "recovered-set $phase_plan generation $(cat "$tmp/phase-root/var/lib/holypkg/generation") artifacts 2 phase instances" "$tmp/out"
+expect 0 "$bin" db check --all --root "$tmp/phase-root"
+test ! -e "$tmp/phase-root/var/lib/holypkg/transactions/set-journal"
 rm "$root/usr/share/app"
 expect 0 "$bin" db repair-plan "$app" --root "$root"
 repair=$(sed -n 's/^repair-plan .* sha256 \([0-9a-f]*\) missing-only read-only$/\1/p' "$tmp/out")
