@@ -1212,7 +1212,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=07fb50f915af6b4831ccf80001358cc04030f506144acc36e629a10ff1f4b9d6
+holypkg.8 source=holy version=development sha256=97cff569fee672e7ae1674ff718113cc3f5595b0b49d4ec0e2fd5003ec4b5265
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -2701,26 +2701,36 @@ DESCRIPTION
      UNIT state-plan SHA256 [update]
 
      The  two decisions and the unit consents belong to the slot above them, and
-     one state-plan carries the update plan for the  whole  group.  A  reference
-     with  nothing  newer  prints  up-to-date and is left out of the group, so a
-     plan has at least one slot. --choose takes one candidate: a bare digest  is
-     the  only	reference's  choice,  and SOURCE:PACKAGE=SHA256 is the choice of
-     that one slot, which a group needs when another slot's candidates	need  no
-     help. A bare digest with several references is 2. The file changes only the
-     target  cache.  Review  the  file, then run apply PLAN --sha256 PLAN_SHA256
-     with its whole-file SHA-256. Apply snapshots and verifies the file,  checks
-     its embedded update-plan digest, active source and unchanged catalog gener-
-     ation.  It checks every slot the document names, source id, catalog genera-
-     tion and candidate alike, and it holds every catalog the  group  names,  in
-     path  order,  until  the  transaction  ends.  A group that lost a slot is 2
-     rather than a shorter review. Each new artifact  must  belong  to	the  in-
-     stalled slot in that exact index, even when a cached artifact would satisfy
-     the  embedded  database  plan.  It	 then rebuilds the plan under the writer
-     lock. A changed database, source or payload needs a  new  plan.  Successful
-     apply  uses  the existing journaled cached-update engine; its recovery com-
-     mand is db recover --update. up prepares one slot or a group of them as one
-     document, and apply runs the group as one transaction. Signed catalogs  and
-     root/VM trials remain open.
+     one state-plan carries the update plan for the whole group.  The  signature
+     line states what the source proved about the generation it fixed:
+
+     signature signed|unsigned
+
+     A	source	that  registered  a  public  key must have that exact generation
+     signed by it, since a catalog that verifies its current  generation  proves
+     nothing  about  an older one a plan names. A signature that does not verify
+     is 6, a generation that is not the one the	 catalog  serves  is  6,  and  a
+     source  with  no  key  is	unsigned, which a plan records. apply proves the
+     state again and refuses a catalog whose signature state  differs  from  the
+     document  with  3.	 A reference with nothing newer prints up-to-date and is
+     left out of the group, so a plan has at least one slot. --choose takes  one
+     candidate:	 a  bare digest is the only reference's choice, and SOURCE:PACK-
+     AGE=SHA256 is the choice of that one slot, which a group needs when another
+     slot's candidates need no help. A bare digest with several references is 2.
+     The file changes only the target cache. Review the	 file,	then  run  apply
+     PLAN  --sha256 PLAN_SHA256 with its whole-file SHA-256. Apply snapshots and
+     verifies the file, checks its embedded update-plan	 digest,  active  source
+     and  unchanged catalog generation. It checks every slot the document names,
+     source id, catalog generation and candidate alike, and it holds every cata-
+     log the group names, in path order, until the  transaction	 ends.	A  group
+     that  lost a slot is 2 rather than a shorter review. Each new artifact must
+     belong to the installed slot in that exact index, even when a cached  arti-
+     fact  would  satisfy  the embedded database plan. It then rebuilds the plan
+     under the writer lock. A changed database, source or payload  needs  a  new
+     plan.  Successful	apply  uses the existing journaled cached-update engine;
+     its recovery command is db recover --update. up  prepares	one  slot  or  a
+     group of them as one document, and apply runs the group as one transaction.
+     Signed catalogs and root/VM trials remain open.
 
      The  db plan command reads the prepared reservation at the current database
      generation. It verifies a private snapshot of the cached  artifact,  checks

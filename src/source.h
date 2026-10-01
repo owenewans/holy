@@ -38,6 +38,10 @@ int holy_source_rpm_md(const char *root, const char *alias,
 /* checks one explicit sealed mirror against the active source definition. */
 int holy_source_catalog(const char *root, const char *alias,
                         const char *catalog, char source_id[65]);
+/* states whether the catalog generation a plan fixed is signed by its source's key:
+   signed, unsigned without a key, 6 when the generation is not signed by that key. */
+int holy_source_catalog_signature(const char *root, const char *alias, const char *catalog,
+                                  const char *index, char state[16]);
 /* records a verified local mirror for later source queries. */
 int holy_source_bind_catalog(const char *root, const char *alias,
                              const char *catalog);

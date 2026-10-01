@@ -1628,6 +1628,67 @@ done:
     return result;
 }
 
+/* the signature state of the exact catalog generation a plan fixed. a source with a
+   registered key must have that generation signed by it, since a catalog that verifies
+   the current generation proves nothing about an older one the plan names. */
+int holy_source_catalog_signature(const char *root, const char *alias, const char *catalog,
+                                  const char *index, char state[16])
+{
+    struct registry registry = {0};
+    char source_id[65] = {0}, current[65], key_spec[69], key_hash[65];
+    const char *public_key = NULL;
+    char *data = NULL;
+    unsigned long long generation = 0;
+    size_t i;
+    int dir = -1, result = 1, verified = 0;
+    if (!alias || !*alias || !catalog || !*catalog || !index || !valid_hash(index)) return 2;
+    if (state) memcpy(state, "unsigned", sizeof "unsigned");
+    dir = holy_state_lock(root, 0, &generation, &result);
+    if (dir < 0) return result;
+    result = 1;
+    data = load_registry(dir, &registry);
+    if (!data) goto done;
+    result = 6;
+    for (i = 0; i < registry.count; ++i)
+        if (registry.items[i].active && !strcmp(registry.items[i].alias, alias)) break;
+    if (i == registry.count) goto done;
+    public_key = source_public_key(&registry.items[i], key_spec);
+    if (!public_key) {
+        if (!strcmp(registry.items[i].trust, "require")) {
+            fputs("holypkg: source trust require needs a registered public key\n", stderr);
+            goto done;
+        }
+        memcpy(source_id, registry.items[i].id, 65);
+        result = 0;
+        goto done;
+    }
+    {
+        int catalog_dir;
+        if (!holy_repo_catalog_index(catalog, current) || strcmp(current, index)) {
+            fprintf(stderr, "holypkg: catalog generation %s is not the one this plan fixed\n",
+                    index);
+            goto done;
+        }
+        catalog_dir = open(catalog, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (catalog_dir < 0) goto done;
+        if (flock(catalog_dir, LOCK_SH)) { close(catalog_dir); goto done; }
+        verified = holy_verify_index_keyhash(catalog_dir, index, public_key, key_hash) != 0;
+        close(catalog_dir);
+    }
+    if (!verified) {
+        fprintf(stderr, "holypkg: catalog generation %s of source %s is not signed by its key\n",
+                index, registry.items[i].id);
+        goto done;
+    }
+    if (state) memcpy(state, "signed", sizeof "signed");
+    result = 0;
+done:
+    free(data);
+    if (dir >= 0) close(dir);
+    clear_registry(&registry);
+    return result;
+}
+
 int holy_source_record(int database, const char *id, char **record, char registry[65])
 {
     struct registry r = {0};

@@ -1520,7 +1520,17 @@ state-plan SHA256
 [update]
 
 The two decisions and the unit consents belong to the slot above them, and
-one state-plan carries the update plan for the whole group. A reference with
+one state-plan carries the update plan for the whole group. The signature line
+states what the source proved about the generation it fixed:
+
+signature signed|unsigned
+
+A source that registered a public key must have that exact generation signed
+by it, since a catalog that verifies its current generation proves nothing
+about an older one a plan names. A signature that does not verify is 6, a
+generation that is not the one the catalog serves is 6, and a source with no
+key is unsigned, which a plan records. apply proves the state again and
+refuses a catalog whose signature state differs from the document with 3. A reference with
 nothing newer prints up-to-date and is left out of the group, so a plan has at
 least one slot. --choose takes one candidate: a bare digest is the only
 reference's choice, and SOURCE:PACKAGE=SHA256 is the choice of that one slot,

@@ -13,6 +13,7 @@ struct holy_up_slot {
     char *alias;
     char *catalog;
     char index[65];
+    char signature[16];           /* signed, or unsigned for a source without a key */
     char old_digest[65];
     char new_digest[65];
     char *accept_arch;             /* or a dash, when the review named none */

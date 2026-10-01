@@ -149,6 +149,7 @@ struct up_slot {
     char old_digest[65];
     char new_digest[65];
     char index[65];
+    char signature[16];   /* signed, or unsigned for a source without a key */
     char *catalog;        /* the canonical catalog path the index came from */
     int dir;
 };
@@ -301,6 +302,10 @@ static int up_select_slot(struct up_slot *slot, const char *name, const char *ro
         work->staged.count != 1 ||
         strcmp(work->staged.digests[0], work->selected->digest)) { result = 3; goto done; }
     memcpy(slot->index, work->staged.index, 65);
+    /* a source that registered a key must have signed the generation this plan fixes */
+    result = holy_source_catalog_signature(root, slot->alias, canonical, slot->index,
+                                           slot->signature);
+    if (result) goto done;
     result = 0;
 done:
     free(bound);
@@ -418,10 +423,12 @@ int holy_up_command(int argc, char **argv)
         quoted(stream, slot->alias);
         fputs("\ncatalog ", stream);
         quoted(stream, slot->catalog);
-        fprintf(stream, "\nindex %s\nold %s\nnew %s\naccept-arch %s\naccept-privileged %s\n",
+        fprintf(stream, "\nindex %s\nold %s\nnew %s\naccept-arch %s\naccept-privileged %s\n"
+                "signature %s\n",
                 slot->index, slot->old_digest, slot->new_digest,
                 accepted_arch ? accepted_arch : "-",
-                accepted_privileged ? accepted_privileged : "-");
+                accepted_privileged ? accepted_privileged : "-",
+                slot->signature);
         for (s = 0; s < service_count; ++s)
             fprintf(stream, "service %s\n", services[s]);
     }
@@ -646,6 +653,10 @@ static int up_plan_take_slots(char **cursor, struct holy_up_plan *plan, int grou
         if (!take_field(cursor, "accept-privileged", &value)) return 0;
         free(slot->accept_privileged);
         slot->accept_privileged = value;
+        if (!take_field(cursor, "signature", &value)) return 0;
+        memcpy(slot->signature, value, strlen(value) + 1);
+        free(value); value = NULL;
+        if (strcmp(slot->signature, "signed") && strcmp(slot->signature, "unsigned")) return 0;
         if ((strcmp(slot->accept_arch, "-") && strcmp(slot->accept_arch, slot->new_digest)) ||
             (strcmp(slot->accept_privileged, "-") &&
              strcmp(slot->accept_privileged, slot->new_digest)) ||
@@ -792,6 +803,20 @@ int holy_apply_command(int argc, char **argv)
         if (strcmp(slot->source_id, source_id)) { result = 3; break; }
         result = holy_source_catalog(root, slot->alias, slot->catalog, source_id);
         if (result) break;
+        {
+            char state[16] = {0};
+            result = holy_source_catalog_signature(root, slot->alias, slot->catalog,
+                                                   slot->index, state);
+            if (result) break;
+            /* a document that names a generation signed must still be signed by the key
+               its source registered, since the plan is the approval */
+            if (strcmp(state, slot->signature)) {
+                fprintf(stderr, "holypkg: catalog signature for %s is %s, the plan says %s\n",
+                        slot->alias, state, slot->signature);
+                result = 3;
+                break;
+            }
+        }
         snapshots[i] = holy_cache_snapshot(slot->old_digest, root);
         if (!snapshots[i] || !holy_package_identity(snapshots[i], &old_identity) ||
             strcmp(old_identity.digest, slot->old_digest)) {

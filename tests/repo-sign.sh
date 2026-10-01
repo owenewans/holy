@@ -68,3 +68,76 @@ if "$bin" repo verify "$tmp/repo" --key "$tmp/pub.pem" > "$tmp/out" 2> "$tmp/err
 "$bin" repo index "$tmp/unsigned" > "$tmp/out"
 "$bin" repo seal "$tmp/unsigned" > "$tmp/out"
 if "$bin" repo verify "$tmp/unsigned" --key "$tmp/pub.pem" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 4; fi
+# a source that registered a key proves the generation a plan fixes: the plan names the
+# signature, and the apply proves it again against the same catalog
+openssl genpkey -algorithm ED25519 -out "$tmp/update-key.pem" > /dev/null 2> "$tmp/err"
+openssl pkey -in "$tmp/update-key.pem" -pubout -out "$tmp/update-pub.pem" > /dev/null 2> "$tmp/err"
+printf '[source fixture]\ntype holy-http\nurl https://fixture.example/holy/\ntrust require\npublic-key "%s"\n' \
+    "$tmp/update-pub.pem" > "$tmp/update-source.conf"
+cp -a "$tmp/repo" "$tmp/update-repo"
+rm -rf "$tmp/update-repo/index" "$tmp/update-repo"/index.* "$tmp/update-repo"/signature.* \
+    "$tmp/update-repo/current" "$tmp/update-repo"/*.holy "$tmp/update-repo/mirror-origin"
+mkdir -p "$tmp/update-tree/HOLY" "$tmp/update-tree/DATA/usr/share"
+printf 'format holy-package-1\nname signed-update\nversion 1\nrelease 1\nos linux\narch noarch\nlibc nolibc\n' > "$tmp/update-tree/HOLY/meta"
+printf 'x-version-family holy\n' >> "$tmp/update-tree/HOLY/meta"
+for member in deps provides hooks origin transform; do : > "$tmp/update-tree/HOLY/$member"; done
+printf 'signed one\n' > "$tmp/update-tree/DATA/usr/share/signed-update"
+"$bin" manifest generate "$tmp/update-tree" --output "$tmp/update-files" > "$tmp/out"
+mv "$tmp/update-files" "$tmp/update-tree/HOLY/files"
+"$bin" pack "$tmp/update-tree" --output "$tmp/update-repo/signed-update.holy" > "$tmp/out"
+"$bin" repo index "$tmp/update-repo" > "$tmp/out"
+"$bin" repo seal "$tmp/update-repo" --key "$tmp/update-key.pem" > "$tmp/out"
+update_index=$(sed -n 's/^sha256 //p' "$tmp/update-repo/current")
+test "${#update_index}" -eq 64
+mkdir "$tmp/update-root"
+"$bin" db init --root "$tmp/update-root" > "$tmp/out"
+"$bin" source plan --config "$tmp/update-source.conf" --root "$tmp/update-root" > "$tmp/source.plan"
+update_source_plan=$(sha256sum "$tmp/source.plan" | cut -d ' ' -f 1)
+"$bin" source apply "$tmp/source.plan" --sha256 "$update_source_plan" \
+    --root "$tmp/update-root" > "$tmp/out"
+"$bin" source show fixture --root "$tmp/update-root" > "$tmp/out"
+update_key_hash=$(sed -n 's/^public-key-sha256 //p' "$tmp/out")
+test "${#update_key_hash}" -eq 64
+printf 'format holy-mirror-1\nurl "https://fixture.example/holy/"\nindex-sha256 %s\nverification ed25519-pinned-key\npublic-key-sha256 %s\nsource-id %s\n' \
+    "$update_index" "$update_key_hash" "$source_id" > "$tmp/update-repo/mirror-origin"
+"$bin" source catalog bind fixture "$tmp/update-repo" --root "$tmp/update-root" > "$tmp/out"
+"$bin" add fixture:signed-update --root "$tmp/update-root" --yes > "$tmp/out"
+grep -qx 'signed one' "$tmp/update-root/usr/share/signed-update"
+cp -a "$tmp/update-tree" "$tmp/update-tree-2"
+sed -i 's/^version 1$/version 2/' "$tmp/update-tree-2/HOLY/meta"
+printf 'signed two\n' > "$tmp/update-tree-2/DATA/usr/share/signed-update"
+"$bin" manifest generate "$tmp/update-tree-2" --output "$tmp/update-files-2" > "$tmp/out"
+mv "$tmp/update-files-2" "$tmp/update-tree-2/HOLY/files"
+"$bin" pack "$tmp/update-tree-2" --output "$tmp/signed-update-2.holy" > "$tmp/out"
+rm "$tmp/update-repo/signed-update.holy"
+mv "$tmp/signed-update-2.holy" "$tmp/update-repo/signed-update.holy"
+"$bin" repo index "$tmp/update-repo" > "$tmp/out"
+"$bin" repo seal "$tmp/update-repo" --key "$tmp/update-key.pem" > "$tmp/out"
+new_index=$(sed -n 's/^sha256 //p' "$tmp/update-repo/current")
+test "$new_index" != "$update_index"
+printf 'format holy-mirror-1\nurl "https://fixture.example/holy/"\nindex-sha256 %s\nverification ed25519-pinned-key\npublic-key-sha256 %s\nsource-id %s\n' \
+    "$new_index" "$update_key_hash" "$source_id" > "$tmp/update-repo/mirror-origin"
+"$bin" source catalog bind fixture "$tmp/update-repo" --root "$tmp/update-root" > "$tmp/out"
+up_plan() {
+    rm -f "$tmp/signed.plan"
+    if "$bin" up fixture:signed-update --prepare --output "$tmp/signed.plan" \
+        --root "$tmp/update-root" > "$tmp/out" 2> "$tmp/err"; then test "$1" -eq 0; else test "$?" -eq "$1"; fi
+}
+up_plan 0
+grep -qx 'signature signed' "$tmp/signed.plan"
+signed_plan=$(sha256sum "$tmp/signed.plan" | cut -d ' ' -f 1)
+# the signature that verified while the plan was prepared must verify at the apply
+cp "$tmp/update-repo/signature.$new_index" "$tmp/signed-signature"
+printf '\001' | dd of="$tmp/update-repo/signature.$new_index" bs=1 seek=0 conv=notrunc status=none
+up_plan 6
+grep -q 'bound catalog unavailable' "$tmp/err"
+if "$bin" apply "$tmp/signed.plan" --sha256 "$signed_plan" --root "$tmp/update-root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
+cp "$tmp/signed-signature" "$tmp/update-repo/signature.$new_index"
+up_plan 0
+"$bin" apply "$tmp/signed.plan" --sha256 "$signed_plan" --root "$tmp/update-root" > "$tmp/out" 2> "$tmp/err"
+grep -qx 'signed two' "$tmp/update-root/usr/share/signed-update"
+"$bin" db check --all --root "$tmp/update-root" > "$tmp/out"
+# a plan that claims a state the catalog cannot prove is refused
+sed 's/^signature signed$/signature unsigned/' "$tmp/signed.plan" > "$tmp/forged.plan"
+forged_plan=$(sha256sum "$tmp/forged.plan" | cut -d ' ' -f 1)
+if "$bin" apply "$tmp/forged.plan" --sha256 "$forged_plan" --root "$tmp/update-root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi

@@ -1193,7 +1193,11 @@
   while holding every catalog, so a group is one reviewed decision and one
   transaction. A reference with nothing newer is reported and left out, and
   `--choose` names the candidate of one slot as SOURCE:PACKAGE=SHA256 when a
-  group needs it. Signed catalogs and root/VM trials stay open.
+  group needs it. A source that registered a key must have the generation a
+  plan fixes signed by it, the plan carries `signature signed|unsigned` per
+  slot, and apply proves that state again against the same catalog. An
+  unsigned generation still needs the explicit decision `sync` already asks
+  for, and root/VM trials stay open.
   The existing run launcher now derives private PATH directories from the
   selected installed manifest, so a public executable can invoke its own
   private helper by name. Explicit directory views bind package-owned private
