@@ -1212,7 +1212,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=92ed3b6f6be06675ed400aba74d7a7e8602a53300a2f89c7de2f6f5ab4c6d930
+holypkg.8 source=holy version=development sha256=0a53721f281d0adedab86b7695be31c8495f6d2b85370cd63ce634468519afc6
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -2863,24 +2863,32 @@ DESCRIPTION
      These  records  can  supply a reviewed reverse update through holypkg roll-
      back.
 
-     A committed set names a different record, so rollback on  one  states  what
-     its reverse needs instead of a plan document:
+     A committed set names a different record, so rollback on one states the op-
+     erations its reverse needs and then plans that reverse:
 
-     rollback-set-plan	transaction  IDENTITY generation GENERATION remove COUNT
-     reinstall COUNT unavailable  COUNT	 sha256	 SHA256	 read-only  rollback-set
-     IDENTITY remove ARTIFACT NAME VERSION installed rollback-set IDENTITY rein-
-     stall ARTIFACT - - cached|unavailable rollback-set-sha256 SHA256 read-only
+     rollback-set-plan transaction IDENTITY generation GENERATION  remove  COUNT
+     reinstall	COUNT  unavailable  COUNT  rollback-set IDENTITY remove ARTIFACT
+     NAME  VERSION  installed  rollback-set  IDENTITY  reinstall  ARTIFACT  -  -
+     cached|unavailable
 
      An artifact the set installed and that is still installed comes out, and an
      artifact  it  touched  that is not installed goes back in, where the cached
      object decides whether it can and unavailable counts the  ones  it	 cannot.
      The  name and version of a reinstall are dashes: the record holds a digest,
-     and this command does not read the package to restate it. The  hash  covers
-     the  transaction, the generation it is read at and the operations, so a re-
-     verse plan made against another state is another plan.  --apply  on  a  set
-     transaction  is  3	 with that reason, since a reverse set and a grouped re-
-     moval are not implemented by this command. A transaction the root does  not
-     keep is 6.
+     and this command does not read the package to restate it.
+
+     A reverse that removes artifacts is status 3  with	 that  reason,	since  a
+     grouped  removal is not implemented, and a removed artifact whose cache ob-
+     ject is gone is 6. A reverse that only reinstalls is an ordinary set trans-
+     action, planned with the artifacts the record names and the decisions  that
+     record holds, so its plan hash is the approval:
+
+     rollback-set-plan is an ordinary set plan for the artifacts it names
+
+     --apply  PLAN_SHA256 then runs that set as one transaction and prints roll-
+     back IDENTITY restored COUNT artifacts. The set re-derives its  plan  under
+     the writer lock and compares the approved hash, so the review and the apply
+     are one decision. A transaction the root does not keep is 6.
 
 
      holypkg  rollback	accepts	 the  hash of a committed update transaction. It

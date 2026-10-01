@@ -7031,17 +7031,20 @@ static int rollback_member(void *context, const char *line, size_t length)
     return 1;
 }
 
-static int rollback_record_lines(const char *record, int (*take)(void *, const char *, size_t),
-                                 void *context)
+/* one line of a record, given to the caller with the key that named it and the value
+   that follows. a key the caller does not ask about is skipped. */
+static int record_each(const char *record, const char *key,
+                       int (*take)(void *, const char *, size_t), void *context)
 {
+    size_t length = strlen(key);
     const char *cursor = record;
     int ok = 1;
     while (*cursor && ok) {
         const char *end = strchr(cursor, '\n');
-        size_t length = end ? (size_t)(end - cursor) : strlen(cursor);
-        if (length > 9 && !strncmp(cursor, "artifact ", 9))
-            if (!take(context, cursor + 9, length - 9)) ok = 0;
-        cursor += length + (end ? 1 : 0);
+        size_t used = end ? (size_t)(end - cursor) : strlen(cursor);
+        if (used > length && !strncmp(cursor, key, length) && cursor[length] == ' ')
+            if (!take(context, cursor + length + 1, used - length - 1)) ok = 0;
+        cursor += used + (end ? 1 : 0);
     }
     return ok;
 }
@@ -7078,16 +7081,180 @@ static int rollback_installed(void *context, int root, int instance, const char 
     return 0;
 }
 
-static int rollback_set_report(const char *transaction, const char *root_path)
+struct rollback_decisions {
+    char choice[65537];
+    char arch[65];
+    char privileged[65];
+    char **hooks;
+    size_t hook_count;
+    char **services;
+    size_t service_count;
+};
+
+static void rollback_decisions_free(struct rollback_decisions *decisions)
+{
+    size_t i;
+    for (i = 0; i < decisions->hook_count; ++i) free(decisions->hooks[i]);
+    for (i = 0; i < decisions->service_count; ++i) free(decisions->services[i]);
+    free(decisions->hooks);
+    free(decisions->services);
+    memset(decisions, 0, sizeof *decisions);
+}
+
+static int rollback_push(char ***list, size_t *count, const char *value, size_t length)
+{
+    char **grown = realloc(*list, (*count + 1) * sizeof *grown);
+    char *copy;
+    if (!grown) return 0;
+    *list = grown;
+    copy = malloc(length + 1);
+    if (!copy) return 0;
+    memcpy(copy, value, length);
+    copy[length] = 0;
+    (*list)[*count] = copy;
+    ++*count;
+    return 1;
+}
+
+static int rollback_digest_line(const char *line, size_t length, size_t key, char out[65])
+{
+    if (length - key != 64) return 0;
+    memcpy(out, line + key, 64);
+    out[64] = 0;
+    return valid_digest(out);
+}
+
+static int rollback_decisions_read(const char *record, struct rollback_decisions *decisions)
+{
+    const char *cursor = record;
+    char value[256];
+    snprintf(decisions->choice, sizeof decisions->choice, "-");
+    while (*cursor) {
+        const char *end = strchr(cursor, '\n');
+        size_t length = end ? (size_t)(end - cursor) : strlen(cursor);
+        if (length > 7 && !strncmp(cursor, "choice ", 7)) {
+            if (length - 7 >= sizeof decisions->choice) return 0;
+            memcpy(decisions->choice, cursor + 7, length - 7);
+            decisions->choice[length - 7] = 0;
+            if (!set_choice_valid(decisions->choice)) return 0;
+        } else if (length > 12 && !strncmp(cursor, "accept-arch ", 12)) {
+            if (!rollback_digest_line(cursor, length, 12, decisions->arch)) return 0;
+        } else if (length > 18 && !strncmp(cursor, "accept-privileged ", 18)) {
+            if (!rollback_digest_line(cursor, length, 18, decisions->privileged)) return 0;
+        } else if (length > 11 && !strncmp(cursor, "skip-hooks ", 11)) {
+            char digest[65];
+            if (!rollback_digest_line(cursor, length, 11, digest) ||
+                !rollback_push(&decisions->hooks, &decisions->hook_count, digest, 64)) return 0;
+        } else if (length > 8 && !strncmp(cursor, "service ", 8)) {
+            size_t name = length - 8;
+            if (name >= sizeof value) return 0;
+            memcpy(value, cursor + 8, name);
+            value[name] = 0;
+            if (!holy_unit_name_valid(value) ||
+                !rollback_push(&decisions->services, &decisions->service_count, value, name))
+                return 0;
+        }
+        cursor += length + (end ? 1 : 0);
+    }
+    return 1;
+}/* the reverse of a set that removed artifacts is an ordinary set transaction with the
+   artifacts the record names and the decisions that record holds, so it is planned and
+   applied through the same path as any other set. the approval is that plan hash. */
+static int rollback_set_review(const char *transaction, char **digests, size_t count,
+                               const char *record, const char *root_path)
+{
+    struct rollback_decisions decisions = {0};
+    const char **hooks = NULL, **services = NULL;
+    const char *arch, *privileged;
+    size_t i;
+    char plan[65];
+    int result;
+    if (!rollback_decisions_read(record, &decisions)) {
+        rollback_decisions_free(&decisions);
+        fprintf(stderr, "holypkg: %s is not a set record this command can reverse\n",
+                transaction);
+        return 2;
+    }
+    for (i = 0; i < decisions.hook_count; ++i) {
+        const char **grown = realloc(hooks, (i + 1) * sizeof *grown);
+        if (!grown) { free(hooks); rollback_decisions_free(&decisions); return 1; }
+        hooks = grown;
+        hooks[i] = decisions.hooks[i];
+    }
+    for (i = 0; i < decisions.service_count; ++i) {
+        const char **grown = realloc(services, (i + 1) * sizeof *grown);
+        if (!grown) { free(hooks); free(services); rollback_decisions_free(&decisions); return 1; }
+        services = grown;
+        services[i] = decisions.services[i];
+    }
+    const char *arch_list[1] = {NULL}, *privileged_list[1] = {NULL};
+    arch = decisions.arch[0] ? decisions.arch : NULL;
+    privileged = decisions.privileged[0] ? decisions.privileged : NULL;
+    arch_list[0] = arch;
+    privileged_list[0] = privileged;
+    result = holy_state_set((const char *const *)digests, count,
+                            strcmp(decisions.choice, "-") ? decisions.choice : NULL,
+                            NULL, root_path, NULL, 0,
+                            arch_list, arch ? 1 : 0, privileged_list, privileged ? 1 : 0,
+                            hooks, decisions.hook_count,
+                            services, decisions.service_count, plan);
+    free(hooks);
+    free(services);
+    rollback_decisions_free(&decisions);
+    return result;
+}
+
+static int rollback_set_apply(const char *transaction, const char *approved,
+                              char **digests, size_t count, const char *record,
+                              const char *root_path)
+{
+    struct rollback_decisions decisions = {0};
+    const char **hooks = NULL, **services = NULL;
+    const char *arch, *privileged;
+    size_t i;
+    int result;
+    if (!rollback_decisions_read(record, &decisions)) {
+        rollback_decisions_free(&decisions);
+        return 2;
+    }
+    for (i = 0; i < decisions.hook_count; ++i) {
+        const char **grown = realloc(hooks, (i + 1) * sizeof *grown);
+        if (!grown) { free(hooks); rollback_decisions_free(&decisions); return 1; }
+        hooks = grown;
+        hooks[i] = decisions.hooks[i];
+    }
+    for (i = 0; i < decisions.service_count; ++i) {
+        const char **grown = realloc(services, (i + 1) * sizeof *grown);
+        if (!grown) { free(hooks); free(services); rollback_decisions_free(&decisions); return 1; }
+        services = grown;
+        services[i] = decisions.services[i];
+    }
+    const char *arch_list[1] = {NULL}, *privileged_list[1] = {NULL};
+    arch = decisions.arch[0] ? decisions.arch : NULL;
+    privileged = decisions.privileged[0] ? decisions.privileged : NULL;
+    arch_list[0] = arch;
+    privileged_list[0] = privileged;
+    result = holy_state_set((const char *const *)digests, count,
+                            strcmp(decisions.choice, "-") ? decisions.choice : NULL,
+                            approved, root_path, NULL, 0,
+                            arch_list, arch ? 1 : 0, privileged_list, privileged ? 1 : 0,
+                            hooks, decisions.hook_count,
+                            services, decisions.service_count, NULL);
+    free(hooks);
+    free(services);
+    rollback_decisions_free(&decisions);
+    if (!result) printf("rollback %s restored %zu artifacts\n", transaction, count);
+    return result;
+}
+
+static int rollback_set_report(const char *transaction, const char *approved,
+                             const char *root_path)
 {
     struct rollback_plan plan = {0};
     unsigned long long generation = 0;
-    unsigned char digest[32];
-    unsigned int length;
-    EVP_MD_CTX *hash = EVP_MD_CTX_new();
-    char *record = NULL, computed[65];
+    char *record = NULL;
     char line[256];
-    int root = -1, dir = -1, transactions = -1, child = -1, result = 1, i;
+    int root = -1, dir = -1, transactions = -1, child = -1, result = 1;
     size_t j, removed = 0, reinstalled = 0, unavailable = 0;
 
     if (!valid_digest(transaction)) return 2;
@@ -7105,7 +7272,7 @@ static int rollback_set_report(const char *transaction, const char *root_path)
     record = update_record(child, "decisions");
     if (!record || strncmp(record, "format holy-set-journal-",
                            sizeof "format holy-set-journal-" - 1) ||
-        !rollback_record_lines(record, rollback_member, &plan) || !plan.member_count) {
+        !record_each(record, "artifact", rollback_member, &plan) || !plan.member_count) {
         fprintf(stderr, "holypkg: %s is not a set transaction\n", transaction);
         result = 2;
         goto done;
@@ -7138,25 +7305,39 @@ static int rollback_set_report(const char *transaction, const char *root_path)
         if (!strcmp(plan.operations[j].direction, "remove")) ++removed;
         else { ++reinstalled; if (!plan.operations[j].available) ++unavailable; }
     }
-    if (!hash || EVP_DigestInit_ex(hash, EVP_sha256(), NULL) != 1 ||
-        !hash_text(hash, "holy-rollback-set-1") || !hash_text(hash, transaction) ||
-        !hash_text(hash, generation == ULLONG_MAX ? "-" : "generation")) {
-        result = 1;
+    /* the set transaction takes its own lock, an exclusive one for an apply, so the read
+       lock this held is dropped first. the apply re-derives the set plan under that lock
+       and compares the approved hash, which is what keeps the two steps one decision. */
+    if (child >= 0) { close(child); child = -1; }
+    if (transactions >= 0) { close(transactions); transactions = -1; }
+    if (dir >= 0) { close(dir); dir = -1; }
+    if (root >= 0) { close(root); root = -1; }
+    (void)line;
+    if (!approved && ferror(stdout)) result = 1;
+    if (approved) {
+        /* the reverse of a set that installed artifacts is a removal of them, and a
+           grouped removal is not something this command performs. the reverse of a set
+           that removed artifacts is an ordinary set transaction, so that direction is
+           planned and applied as one. */
+        if (removed) {
+            fprintf(stderr, "holypkg: %s installed %zu artifacts that are still here;"
+                            " a reverse that removes artifacts needs a grouped removal\n",
+                    transaction, removed);
+            result = 3;
+            goto done;
+        }
+        if (unavailable) {
+            fprintf(stderr, "holypkg: %s removed %zu artifacts and the cache holds"
+                            " %zu of them\n", transaction, reinstalled, reinstalled - unavailable);
+            result = 6;
+            goto done;
+        }
+        result = rollback_set_apply(transaction, approved, plan.members,
+                                    plan.member_count, record, root_path);
         goto done;
     }
-    snprintf(line, sizeof line, " %llu", generation);
-    if (!hash_text(hash, line)) { result = 1; goto done; }
-    for (j = 0; j < plan.count; ++j) {
-        snprintf(line, sizeof line, "%s %s %s %d\n", plan.operations[j].direction,
-                 plan.operations[j].digest, plan.operations[j].name,
-                 plan.operations[j].available);
-        if (!hash_text(hash, line)) { result = 1; goto done; }
-    }
-    if (EVP_DigestFinal_ex(hash, digest, &length) != 1 || length != 32) { result = 1; goto done; }
-    for (i = 0; i < 32; ++i) snprintf(computed + 2 * i, 3, "%02x", digest[i]);
     printf("rollback-set-plan transaction %s generation %llu remove %zu reinstall %zu"
-           " unavailable %zu sha256 %s read-only\n",
-           transaction, generation, removed, reinstalled, unavailable, computed);
+           " unavailable %zu\n", transaction, generation, removed, reinstalled, unavailable);
     for (j = 0; j < plan.count; ++j)
         printf("rollback-set %s %s %s %s %s %s\n", transaction,
                plan.operations[j].direction, plan.operations[j].digest,
@@ -7164,10 +7345,18 @@ static int rollback_set_report(const char *transaction, const char *root_path)
                plan.operations[j].version[0] ? plan.operations[j].version : "-",
                !strcmp(plan.operations[j].direction, "remove") ? "installed" :
                plan.operations[j].available ? "cached" : "unavailable");
-    printf("rollback-set-sha256 %s read-only\n", computed);
-    result = ferror(stdout) ? 1 : 0;
+    if (removed) {
+        fprintf(stderr, "holypkg: %s installed %zu artifacts that are still here;"
+                        " a reverse that removes artifacts needs a grouped removal\n",
+                transaction, removed);
+        result = 3;
+        goto done;
+    }
+    printf("rollback-set-plan is an ordinary set plan for the artifacts it names\n");
+    result = rollback_set_review(transaction, plan.members, plan.member_count, record,
+                                 root_path);
+    goto done;
 done:
-    if (hash) EVP_MD_CTX_free(hash);
     free(record);
     if (child >= 0) close(child);
     if (transactions >= 0) close(transactions);
@@ -7176,6 +7365,9 @@ done:
     rollback_plan_free(&plan);
     return result;
 }
+
+/* the decisions a retained set journal holds, in the form a set transaction takes them.
+   the reverse set needs the same decisions, since it installs the same artifacts. */
 
 int holy_state_rollback(const char *transaction, const char *approved,
                         const char *accepted_arch, const char *accepted_privileged,
@@ -7218,15 +7410,10 @@ int holy_state_rollback(const char *transaction, const char *approved,
     if (committed && strlen(committed) == 65 && !memcmp(committed, transaction, 64) &&
         committed[64] == '\n' && !source_plan) {
         /* a set keeps no plan document, so its transaction names a set and the review
-           is the reverse operation list. */
+           is the reverse operation list with the set plan it needs behind it. */
         free(committed); free(source_plan); free(marker);
         close(work); close(transactions); close(db); close(root);
-        if (approved) {
-            fprintf(stderr, "holypkg: %s is a set transaction; a reverse set is not"
-                            " performed by this command\n", transaction);
-            return 3;
-        }
-        return rollback_set_report(transaction, root_path);
+        return rollback_set_report(transaction, approved, root_path);
     }
     if (!committed || strlen(committed) != 65 ||
         memcmp(committed, transaction, 64) || committed[64] != '\n' ||

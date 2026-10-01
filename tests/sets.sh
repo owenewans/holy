@@ -79,13 +79,14 @@ test ! -e "$root/usr/share/app"
 printf '0\n' > "$db/generation"
 expect 0 "$bin" db apply-set "$plan" "$app" "$lib" "$unused" --root "$root"
 grep -qx "committed-set $plan generation 1 artifacts 2" "$tmp/out"
-# the reverse of that set is the list of operations it needs: what it installed comes
-# out, and what it removed goes back in when the cache still holds that artifact
-expect 0 "$bin" rollback "$plan" --root "$root"
-grep -qx "rollback-set-plan transaction $plan generation 1 remove 2 reinstall 0 unavailable 0 sha256 $(sed -n 's/^rollback-set-sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out") read-only" "$tmp/out"
+# the reverse of that set would remove artifacts, and a grouped removal is not
+# implemented, so the review states the operations and refuses with that reason
+expect 3 "$bin" rollback "$plan" --root "$root"
+grep -qx "rollback-set-plan transaction $plan generation 1 remove 2 reinstall 0 unavailable 0" "$tmp/out"
 grep -qx "rollback-set $plan remove $app app 1 installed" "$tmp/out"
 grep -qx "rollback-set $plan remove $lib lib 1 installed" "$tmp/out"
 test "$(grep -c "^rollback-set $plan " "$tmp/out")" -eq 2
+grep -qx "holypkg: $plan installed 2 artifacts that are still here; a reverse that removes artifacts needs a grouped removal" "$tmp/err"
 test "$(cat "$db/generation")" -eq 1
 grep -qx app "$root/usr/share/app"
 grep -qx lib "$root/usr/share/lib"
@@ -391,15 +392,23 @@ test "$(grep -c '"type":"transaction"' "$tmp/out")" -eq 12
 grep -qx "{\"schema\":\"holy-transactions-1\",\"type\":\"transaction\",\"identity\":\"$service_plan\",\"kind\":\"set\",\"facts\":\"generation 9 artifacts 1\",\"decisions\":2}" "$tmp/out"
 # the reverse of a set is the list of operations it needs: every artifact it installed
 # comes out, and every artifact it removed goes back in if the cache still holds it
-# the service set was removed later, so its reverse puts it back from the cache
+# the service set was removed later, so its reverse is an ordinary set plan that puts it
+# back from the cache, and applying that plan is one set transaction
 expect 0 "$bin" rollback "$service_plan" --root "$root"
-grep -qx "rollback-set-plan transaction $service_plan generation $(cat "$db/generation") remove 0 reinstall 1 unavailable 0 sha256 $(sed -n 's/^rollback-set-sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out") read-only" "$tmp/out"
+grep -qx "rollback-set-plan transaction $service_plan generation $(cat "$db/generation") remove 0 reinstall 1 unavailable 0" "$tmp/out"
 grep -qx "rollback-set $service_plan reinstall $service - - cached" "$tmp/out"
-test "$(grep -c '^rollback-set-sha256 ' "$tmp/out")" -eq 1
-expect 3 "$bin" rollback "$service_plan" --root "$root" --apply "$(sed -n 's/^rollback-set-sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")"
-grep -qx "holypkg: $service_plan is a set transaction; a reverse set is not performed by this command" "$tmp/err"
+grep -qx 'rollback-set-plan is an ordinary set plan for the artifacts it names' "$tmp/out"
+reverse_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+test "${#reverse_plan}" -eq 64
+grep -qx "selected $service service-fixture explicit" "$tmp/out"
+expect 0 "$bin" rollback "$service_plan" --root "$root" --apply "$reverse_plan"
+test -f "$root/etc/dinit.d/service-fixture"
+grep -qx "rollback $service_plan restored 1 artifacts" "$tmp/out"
+expect 0 "$bin" db check --all --root "$root"
+expect 0 "$bin" db rm "$service" --root "$root"
+test ! -e "$root/etc/dinit.d/service-fixture"
 expect 0 "$bin" rollback "$fault_plan" --root "$root"
-grep -qx "rollback-set-plan transaction $fault_plan generation $(cat "$db/generation") remove 0 reinstall 1 unavailable 0 sha256 $(sed -n 's/^rollback-set-sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out") read-only" "$tmp/out"
+grep -qx "rollback-set-plan transaction $fault_plan generation $(cat "$db/generation") remove 0 reinstall 1 unavailable 0" "$tmp/out"
 grep -qx "rollback-set $fault_plan reinstall $service - - cached" "$tmp/out"
 expect 6 "$bin" rollback "$(printf '%064d' 0)" --root "$root"
 grep -qx "holypkg: no transaction $(printf '%064d' 0) in this root" "$tmp/err"
