@@ -19,6 +19,8 @@ struct holy_up_plan {
     char *state_plan;
     char *accept_arch;
     char *accept_privileged;
+    char **services;         /* the unit names this plan was prepared with */
+    size_t service_count;
     char *body;
     size_t body_length;
 };

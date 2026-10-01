@@ -405,14 +405,44 @@ grep -qx "holypkg: $unit_old ships the service unit /etc/dinit.d/unit; a set tha
 expect 0 "$bin" db plan-set "$unit_old" --accept-service unit --root "$root"
 unit_set_plan=$(set_hash)
 expect 0 "$bin" db apply-set "$unit_set_plan" "$unit_old" --accept-service unit --root "$root"
-expect 0 "$bin" db plan-update "$unit_old" "$unit_new" --root "$root"
+expect 3 "$bin" db plan-update "$unit_old" "$unit_new" --root "$root"
+grep -qx "holypkg: $unit_new ships the service unit /etc/dinit.d/unit; a replacement that starts a service needs --accept-service unit" "$tmp/err"
+expect 2 "$bin" db plan-update "$unit_old" "$unit_new" --accept-service ../escape --root "$root"
+expect 2 "$bin" db plan-update "$unit_old" "$unit_new" --accept-service unit --accept-service unit --root "$root"
+expect 0 "$bin" db plan-update "$unit_old" "$unit_new" --accept-service unit --root "$root"
 grep -qx "service $unit_new unit path /etc/dinit.d/unit state starts-at-next-boot" "$tmp/out"
 test "$(grep -c 'state starts-at-next-boot' "$tmp/out")" -eq 1
 grep -qxF '[services]' "$tmp/out"
 grep -qx 'service etc/dinit.d/unit' "$tmp/out"
 test "$(sed -n 's/^plan-update sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")" = "$(update_hash)"
 unit_plan=$(update_hash)
-expect 0 "$bin" db apply-update "$unit_plan" "$unit_old" "$unit_new" --root "$root"
+expect 3 "$bin" db apply-update "$unit_plan" "$unit_old" "$unit_new" --root "$root"
+# the consent travels in the update journal, so an interrupted replacement finishes the
+# placement it was reviewed for
+if test "$fault_client" != skip; then
+    unit_fault="$tmp/fault-service"
+    mkdir "$unit_fault"
+    cp -a "$root/." "$unit_fault/"
+    expect 0 "$bin" db plan-update "$unit_old" "$unit_new" --accept-service unit --root "$unit_fault"
+    unit_fault_plan=$(update_hash)
+    if test "$fault_client" = dynamic; then
+        if env LD_PRELOAD="$tmp/update-fault.so" HOLY_UPDATE_FAULT=payload-after HOLY_UPDATE_NEW="$unit_new" \
+            "$bin" db apply-update "$unit_fault_plan" "$unit_old" "$unit_new" --accept-service unit \
+            --root "$unit_fault" > "$tmp/out" 2> "$tmp/err"; then exit 1; else code=$?; fi
+    else
+        if env HOLY_UPDATE_FAULT=payload-after HOLY_UPDATE_NEW="$unit_new" \
+            "$bin" db apply-update "$unit_fault_plan" "$unit_old" "$unit_new" --accept-service unit \
+            --root "$unit_fault" > "$tmp/out" 2> "$tmp/err"; then exit 1; else code=$?; fi
+    fi
+    test "$code" -eq 137
+    grep -qxF 'format holy-update-journal-5' "$unit_fault/var/lib/holypkg/transactions/update/journal"
+    grep -qx 'service unit' "$unit_fault/var/lib/holypkg/transactions/update/journal"
+    expect 5 "$bin" db status --root "$unit_fault"
+    expect 0 "$bin" db recover --update --root "$unit_fault"
+    expect 0 "$bin" db check --all --root "$unit_fault"
+    test -f "$unit_fault/etc/dinit.d/unit"
+fi
+expect 0 "$bin" db apply-update "$unit_plan" "$unit_old" "$unit_new" --accept-service unit --root "$root"
 test -f "$root/etc/dinit.d/unit"
 expect 0 "$bin" db check --all --root "$root"
 # a replacement that ships no unit states nothing, and the empty section is still there

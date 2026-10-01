@@ -146,6 +146,8 @@ int holy_up_command(int argc, char **argv)
     const char *separator, *root = "/", *catalog = NULL, *output = NULL;
     const char *choice = NULL, *arch = NULL, *libc = NULL;
     const char *accepted_arch = NULL, *accepted_privileged = NULL;
+    const char **services = NULL;
+    size_t service_count = 0, s;
     char *alias = NULL, *bound = NULL, *canonical = NULL, *old_snapshot = NULL;
     char *inner = NULL, *plan = NULL, *temporary_dir = NULL, *temporary_plan = NULL;
     struct holy_package_identity old = {0}, *selected = NULL;
@@ -158,6 +160,8 @@ int holy_up_command(int argc, char **argv)
     FILE *stream = NULL;
     if (argc < 3 || !(separator = strchr(argv[2], ':')) ||
         separator == argv[2] || !separator[1] || strchr(separator + 1, ':')) goto done;
+    services = calloc((size_t)argc, sizeof *services);
+    if (!services) { result = 1; goto done; }
     alias = malloc((size_t)(separator - argv[2]) + 1);
     if (!alias) { result = 1; goto done; }
     memcpy(alias, argv[2], (size_t)(separator - argv[2]));
@@ -179,6 +183,8 @@ int holy_up_command(int argc, char **argv)
             accepted_arch = argv[++i];
         else if (!strcmp(argv[i], "--accept-privileged") && !accepted_privileged && i + 1 < (size_t)argc)
             accepted_privileged = argv[++i];
+        else if (!strcmp(argv[i], "--accept-service") && i + 1 < (size_t)argc)
+            services[service_count++] = argv[++i];
         else if (!strcmp(argv[i], "--yes") && !yes) yes = 1;
         else if (!strcmp(argv[i], "--noninteractive") && !noninteractive) noninteractive = 1;
         else if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < (size_t)argc) {
@@ -271,6 +277,7 @@ int holy_up_command(int argc, char **argv)
         strcmp(staged.digests[0], selected->digest)) { result = 3; goto done; }
     result = holy_state_update_prepare(old_hash, selected->digest,
                                        accepted_arch, accepted_privileged,
+                                       services, service_count,
                                        root, inner_hash, &inner);
     if (result) goto done;
     if (!output) {
@@ -291,6 +298,7 @@ int holy_up_command(int argc, char **argv)
             staged.index, old_hash, selected->digest, inner_hash,
             accepted_arch ? accepted_arch : "-",
             accepted_privileged ? accepted_privileged : "-");
+    for (s = 0; s < service_count; ++s) fprintf(stream, "service %s\n", services[s]);
     fputs(inner, stream);
     {
         int failed = ferror(stream);
@@ -332,7 +340,7 @@ int holy_up_command(int argc, char **argv)
     result = 0;
 done:
     if (result == 2)
-        fputs("usage: holypkg up SOURCE:PACKAGE [--prepare] [--output NEW_FILE] [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
+        fputs("usage: holypkg up SOURCE:PACKAGE [--prepare] [--output NEW_FILE] [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--accept-service UNIT ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
     if (stream) fclose(stream);
     if (dir >= 0) close(dir);
     if (old_snapshot) { unlink(old_snapshot); free(old_snapshot); }
@@ -341,7 +349,7 @@ done:
     holy_repo_set_free(&staged);
     if (temporary_dir && !plan_written) rmdir(temporary_dir);
     free(alias); free(bound); free(canonical); free(inner); free(plan);
-    free(temporary_plan); free(temporary_dir);
+    free(temporary_plan); free(temporary_dir); free(services);
     return result;
 }
 
@@ -366,6 +374,15 @@ static char *read_plan(int fd, size_t *size)
     }
     data[*size] = 0;
     return data;
+}
+
+/* one line of the saved plan, since the unit consents are a list rather than a field */
+static char *next_line(char *cursor)
+{
+    char *end = strchr(cursor, '\n');
+    if (!end || end - cursor > 4096) return NULL;
+    *end = 0;
+    return end + 1;
 }
 
 static int take_field(char **cursor, const char *key, char **value)
@@ -394,7 +411,8 @@ int holy_up_plan_read(const char *path, const char *approved, struct holy_up_pla
     char actual[65], recorded[65], *data = NULL, *cursor, *snapshot = NULL, *body = NULL;
     char *source = NULL, *alias = NULL, *catalog = NULL, *index = NULL;
     char *old = NULL, *next = NULL, *inner = NULL, *arch = NULL, *privileged = NULL;
-    size_t size = 0;
+    char **services = NULL;
+    size_t size = 0, service_count = 0, i;
     int input = -1, staged = -1, result = 6;
     memset(plan, 0, sizeof *plan);
     if (!path || !*path || (approved && !digest_valid(approved))) return 2;
@@ -405,7 +423,7 @@ int holy_up_plan_read(const char *path, const char *approved, struct holy_up_pla
         st.st_size > 64 * 1024 * 1024) { result = 2; goto done; }
     snapshot = holy_stage_fd(input, "holy-up-plan");
     staged = snapshot ? open(snapshot, O_RDONLY | O_NOFOLLOW | O_CLOEXEC) : -1;
-    if (staged < 0 || !(data = read_plan(staged, &size))) { result = 2; goto done; }
+        if (staged < 0 || !(data = read_plan(staged, &size))) { result = 2; goto done; }
     if (!digest_bytes(data, size, actual)) { result = 1; goto done; }
     memcpy(recorded, actual, 65);
     if (approved && strcmp(actual, approved)) { result = 3; goto done; }
@@ -419,8 +437,29 @@ int holy_up_plan_read(const char *path, const char *approved, struct holy_up_pla
         !take_field(&cursor, "new", &next) ||
         !take_field(&cursor, "state-plan", &inner) ||
         !take_field(&cursor, "accept-arch", &arch) ||
-        !take_field(&cursor, "accept-privileged", &privileged) ||
-        strncmp(cursor, "[update]\n", 9)) { result = 2; goto done; }
+        !take_field(&cursor, "accept-privileged", &privileged)) { result = 2; goto done; }
+    /* a unit name ends at the newline, and the rest of the document is not part of it */
+    while (!strncmp(cursor, "service ", 8)) {
+        char unit[256], **grown, *name = cursor + 8;
+        size_t k, length = 0;
+        while (name[length] && name[length] != '\n' && length < sizeof unit) ++length;
+        if (!length || length >= sizeof unit) { result = 2; goto done; }
+        memcpy(unit, name, length);
+        unit[length] = 0;
+        if (!holy_unit_name_valid(unit)) { result = 2; goto done; }
+        for (k = 0; k < service_count; ++k) {
+            if (!strcmp(unit, services[k])) { result = 2; goto done; }
+        }
+        if (service_count >= 65536) { result = 2; goto done; }
+        grown = realloc(services, (service_count + 1) * sizeof *grown);
+        if (!grown) { result = 1; goto done; }
+        services = grown;
+        services[service_count] = strdup(unit);
+        if (!services[service_count]) { result = 1; goto done; }
+        ++service_count;
+        if (!(cursor = next_line(cursor))) { result = 2; goto done; }
+    }
+    if (strncmp(cursor, "[update]\n", 9)) { result = 2; goto done; }
     body = cursor;
     if (!digest_valid(source) || !*alias || catalog[0] != '/' ||
         !digest_valid(index) || !digest_valid(old) || !digest_valid(next) ||
@@ -442,10 +481,18 @@ int holy_up_plan_read(const char *path, const char *approved, struct holy_up_pla
     plan->state_plan = inner; inner = NULL;
     plan->accept_arch = arch; arch = NULL;
     plan->accept_privileged = privileged; privileged = NULL;
+    plan->services = services;
+    plan->service_count = service_count;
+    services = NULL;
+    service_count = 0;
     /* the plan digest is the document digest, which the body digest check reuses */
     memcpy(plan->hash, recorded, 65);
     result = 0;
 done:
+    if (result) {
+        for (i = 0; i < service_count; ++i) free(services[i]);
+        free(services);
+    }
     if (staged >= 0) close(staged);
     if (input >= 0) close(input);
     if (snapshot) { unlink(snapshot); free(snapshot); }
@@ -457,10 +504,13 @@ done:
 
 void holy_up_plan_free(struct holy_up_plan *plan)
 {
+    size_t i;
     if (!plan) return;
     free(plan->source_id); free(plan->alias); free(plan->catalog);
     free(plan->index); free(plan->old_digest); free(plan->new_digest);
     free(plan->state_plan); free(plan->accept_arch); free(plan->accept_privileged);
+    for (i = 0; i < plan->service_count; ++i) free(plan->services[i]);
+    free(plan->services);
     free(plan->body);
     memset(plan, 0, sizeof *plan);
 }
@@ -504,6 +554,7 @@ int holy_apply_command(int argc, char **argv)
                                      plan.new_digest,
                                      strcmp(plan.accept_arch, "-") ? plan.accept_arch : NULL,
                                      strcmp(plan.accept_privileged, "-") ? plan.accept_privileged : NULL,
+                                     (const char *const *)plan.services, plan.service_count,
                                      root);
 done:
     if (result == 2)

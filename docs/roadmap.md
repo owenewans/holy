@@ -446,12 +446,19 @@
   service ARTIFACT NAME path /etc/dinit.d/NAME state
   starts-at-next-boot, and the update plan document carries the same units
   in a [services] section, so what would start at the next boot is part
-  of what the approval covers. The consent itself still does not gate a
-  replacement: that needs the list threaded through
-  holy_state_update_plan, holy_state_apply_update,
-  holy_state_recover_update and holy_state_rollback with a
-  holy-update-journal-5, and it stays open with general rollback and
-  per-phase recovery. A hook that starts a service is
+  of what the approval covers, and such a replacement is refused with
+  status 3 until the user names the unit with --accept-service UNIT, the
+  same consent a set needs. The consent travels in the update journal as
+  holy-update-journal-5, which carries the accepted architecture, the
+  accepted setuid placement and the consented unit names, so
+  db recover --update finishes the placement the plan was reviewed for
+  without a flag and a journal that claims a decision it does not hold is
+  refused. The journal reader is line based now, since a list of names has
+  no fixed length, and each version states exactly which decisions it
+  carries. holypkg rollback --apply carries the same consent into the
+  reverse replacement, and holypkg up --prepare writes the consented
+  names into its saved plan so holypkg apply needs no flag of its own.
+  General rollback and per-phase recovery stay open. A hook that starts a service is
   a different path from a placed unit, and the specification says the
   behaviour has to be visible before the hook runs rather than that the
   manager stops it: `db configure-plan` names every service tool the body

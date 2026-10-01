@@ -87,19 +87,23 @@ int holy_state_repair(const char *digest, const char *approved, const char *root
 /* read-only replacement preview, preserving the installed source and slot. */
 int holy_state_update_plan(const char *old_digest, const char *new_digest,
                            const char *accepted_arch, const char *accepted_privileged,
+                           const char *const *accepted_service, size_t service_count,
                            const char *root_path);
 /* returns owned canonical plan text and its digest without printing it. */
 int holy_state_update_prepare(const char *old_digest, const char *new_digest,
                               const char *accepted_arch, const char *accepted_privileged,
+                              const char *const *accepted_service, size_t service_count,
                               const char *root_path, char hash[65], char **record);
 int holy_state_apply_update(const char *plan, const char *old_digest,
                             const char *new_digest, const char *accepted_arch,
                             const char *accepted_privileged,
+                            const char *const *accepted_service, size_t service_count,
                             const char *root_path);
 int holy_state_recover_update(const char *root_path);
 /* review or apply a cached reverse update from a committed transaction. */
 int holy_state_rollback(const char *transaction, const char *approved,
                         const char *accepted_arch, const char *accepted_privileged,
+                        const char *const *accepted_service, size_t service_count,
                         const char *root_path);
 /* finds one installed slot by immutable source ID and package identity. */
 int holy_state_find_slot(const char *root_path, const char *source_id,
@@ -114,6 +118,9 @@ int holy_state_visit(const char *root_path, holy_instance_visit visit, void *con
 /* one field of an installed instance meta record, which is the package meta the
    instance was installed from; 0 when the record is absent, unreadable or lacks it. */
 int holy_state_instance_field(int instance, const char *key, char *out, size_t size);
+/* a consented service unit is named, not a path: letters, digits, dot, dash,
+   underscore and at. */
+int holy_unit_name_valid(const char *name);
 /* the source an installed instance came from, or 0 when it states none. */
 int holy_state_instance_source(int instance, char source[65]);
 /* returns a locked database fd, caller closes it; status uses CLI codes. */

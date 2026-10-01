@@ -2382,8 +2382,13 @@ key_usage:
 
     if (argc > 1 && !strcmp(argv[1], "rollback")) {
         const char *root = "/", *approved = NULL, *arch = NULL, *privileged = NULL;
-        int i, root_seen = 0;
+        const char **services = NULL;
+        size_t service_count = 0;
+        int i, root_seen = 0, result = 2;
         if (argc < 3) goto rollback_usage;
+        services = calloc((size_t)argc, sizeof *services);
+        if (!services) { result = 1; goto rollback_usage; }
+        (void)0;
         for (i = 3; i < argc; ++i) {
             if (!strcmp(argv[i], "--root") && !root_seen && i + 1 < argc) {
                 root = argv[++i]; root_seen = 1;
@@ -2393,11 +2398,17 @@ key_usage:
                 arch = argv[++i];
             else if (!strcmp(argv[i], "--accept-privileged") && !privileged && i + 1 < argc)
                 privileged = argv[++i];
+            else if (!strcmp(argv[i], "--accept-service") && i + 1 < argc)
+                services[service_count++] = argv[++i];
             else goto rollback_usage;
         }
-        return holy_state_rollback(argv[2], approved, arch, privileged, root);
+        result = holy_state_rollback(argv[2], approved, arch, privileged,
+                                     services, service_count, root);
+        free(services);
+        return result;
 rollback_usage:
-        fputs("usage: holypkg rollback TRANSACTION [--root DIRECTORY] [--apply PLAN_SHA256] [--accept-arch ARTIFACT_SHA256] [--accept-privileged ARTIFACT_SHA256]\n", stderr);
+        free(services);
+        fputs("usage: holypkg rollback TRANSACTION [--root DIRECTORY] [--apply PLAN_SHA256] [--accept-arch ARTIFACT_SHA256] [--accept-privileged ARTIFACT_SHA256] [--accept-service UNIT ...]\n", stderr);
         return 2;
     }
 
@@ -2634,38 +2645,38 @@ rollback_usage:
         fputs("usage: holypkg cache stage local:FILE --root DIRECTORY | cache verify SHA256 --root DIRECTORY | cache list --root DIRECTORY | cache clean SHA256 --root DIRECTORY [--yes [--accept-unavailable]]\n", stderr);
         return 2;
     }
-    if (argc == 7 && !strcmp(argv[1], "db") && !strcmp(argv[2], "plan-update") &&
-        !strcmp(argv[5], "--root")) return holy_state_update_plan(argv[3], argv[4], NULL, NULL, argv[6]);
-    if (argc == 9 && !strcmp(argv[1], "db") && !strcmp(argv[2], "plan-update") &&
-        !strcmp(argv[5], "--accept-privileged") && !strcmp(argv[7], "--root"))
-        return holy_state_update_plan(argv[3], argv[4], NULL, argv[6], argv[8]);
-    if (argc == 9 && !strcmp(argv[1], "db") && !strcmp(argv[2], "plan-update") &&
-        !strcmp(argv[5], "--accept-arch") && !strcmp(argv[7], "--root"))
-        return holy_state_update_plan(argv[3], argv[4], argv[6], NULL, argv[8]);
-    if (argc == 11 && !strcmp(argv[1], "db") && !strcmp(argv[2], "plan-update") &&
-        !strcmp(argv[5], "--accept-arch") && !strcmp(argv[7], "--accept-privileged") &&
-        !strcmp(argv[9], "--root"))
-        return holy_state_update_plan(argv[3], argv[4], argv[6], argv[8], argv[10]);
-    if (argc == 11 && !strcmp(argv[1], "db") && !strcmp(argv[2], "plan-update") &&
-        !strcmp(argv[5], "--accept-privileged") && !strcmp(argv[7], "--accept-arch") &&
-        !strcmp(argv[9], "--root"))
-        return holy_state_update_plan(argv[3], argv[4], argv[8], argv[6], argv[10]);
-    if (argc == 8 && !strcmp(argv[1], "db") && !strcmp(argv[2], "apply-update") &&
-        !strcmp(argv[6], "--root")) return holy_state_apply_update(argv[3], argv[4], argv[5], NULL, NULL, argv[7]);
-    if (argc == 10 && !strcmp(argv[1], "db") && !strcmp(argv[2], "apply-update") &&
-        !strcmp(argv[6], "--accept-privileged") && !strcmp(argv[8], "--root"))
-        return holy_state_apply_update(argv[3], argv[4], argv[5], NULL, argv[7], argv[9]);
-    if (argc == 10 && !strcmp(argv[1], "db") && !strcmp(argv[2], "apply-update") &&
-        !strcmp(argv[6], "--accept-arch") && !strcmp(argv[8], "--root"))
-        return holy_state_apply_update(argv[3], argv[4], argv[5], argv[7], NULL, argv[9]);
-    if (argc == 12 && !strcmp(argv[1], "db") && !strcmp(argv[2], "apply-update") &&
-        !strcmp(argv[6], "--accept-arch") && !strcmp(argv[8], "--accept-privileged") &&
-        !strcmp(argv[10], "--root"))
-        return holy_state_apply_update(argv[3], argv[4], argv[5], argv[7], argv[9], argv[11]);
-    if (argc == 12 && !strcmp(argv[1], "db") && !strcmp(argv[2], "apply-update") &&
-        !strcmp(argv[6], "--accept-privileged") && !strcmp(argv[8], "--accept-arch") &&
-        !strcmp(argv[10], "--root"))
-        return holy_state_apply_update(argv[3], argv[4], argv[5], argv[9], argv[7], argv[11]);
+    /* a replacement names its unit consents one by one, so the shapes are parsed */
+    if (argc > 4 && !strcmp(argv[1], "db") &&
+        (!strcmp(argv[2], "plan-update") || !strcmp(argv[2], "apply-update"))) {
+        int apply = !strcmp(argv[2], "apply-update");
+        int start = apply ? 6 : 5, end = argc - 2, i;
+        const char *arch = NULL, *privileged = NULL;
+        const char **services = calloc((size_t)argc, sizeof *services);
+        size_t service_count = 0;
+        int result = 2;
+        if (strcmp(argv[argc - 2], "--root") || argc < (apply ? 8 : 7) || !services) {
+            free(services);
+            return 2;
+        }
+        for (i = start; i < end; ++i) {
+            if (!strcmp(argv[i], "--accept-arch") && !arch && i + 1 < end) {
+                arch = argv[++i];
+            } else if (!strcmp(argv[i], "--accept-privileged") && !privileged &&
+                       i + 1 < end) {
+                privileged = argv[++i];
+            } else if (!strcmp(argv[i], "--accept-service") && i + 1 < end) {
+                services[service_count++] = argv[++i];
+            } else { result = 2; goto update_done; }
+        }
+        result = apply ?
+            holy_state_apply_update(argv[3], argv[4], argv[5], arch, privileged,
+                                    services, service_count, argv[argc - 1]) :
+            holy_state_update_plan(argv[3], argv[4], arch, privileged,
+                                   services, service_count, argv[argc - 1]);
+update_done:
+        free(services);
+        return result;
+    }
     if (argc == 6 && !strcmp(argv[1], "db") && !strcmp(argv[2], "recover") &&
         !strcmp(argv[3], "--update") && !strcmp(argv[4], "--root")) return holy_state_recover_update(argv[5]);
     if (argc == 6 && !strcmp(argv[1], "db") && !strcmp(argv[2], "configure-plan") &&

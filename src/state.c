@@ -4642,7 +4642,7 @@ static void free_set_journal(struct set_journal *journal)
 }
 
 /* a consented unit is named, not a path: the consent names what dinit would start */
-static int service_name_valid(const char *name)
+int holy_unit_name_valid(const char *name)
 {
     size_t i, length;
     if (!name || !*name) return 0;
@@ -4801,7 +4801,7 @@ static int read_set_journal(int dir, struct set_journal *journal)
             char **next;
             size_t i;
             if (journal->accepted_count || journal->privileged_count || journal->skipped_count ||
-                !service_name_valid(line + 8) || journal->service_count >= journal->count)
+                !holy_unit_name_valid(line + 8) || journal->service_count >= journal->count)
                 goto done;
             for (i = 0; i < journal->service_count; ++i)
                 if (!strcmp(line + 8, journal->accepted_service[i])) goto done;
@@ -5002,7 +5002,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
     if (service_count > 10000) return 2;
     for (i = 0; i < service_count; ++i) {
         size_t j;
-        if (!service_name_valid(accepted_service[i])) return 2;
+        if (!holy_unit_name_valid(accepted_service[i])) return 2;
         for (j = 0; j < i; ++j)
             if (!strcmp(accepted_service[i], accepted_service[j])) return 2;
     }
@@ -5611,7 +5611,17 @@ struct update_journal {
     unsigned long long generation;
     char old[65], next[65], plan[65];
     int architecture, privileged;
+    char **services;      /* the unit names the plan was reviewed with */
+    size_t service_count;
 };
+
+static void update_journal_forget(struct update_journal *journal)
+{
+    size_t i;
+    for (i = 0; i < journal->service_count; ++i) free(journal->services[i]);
+    free(journal->services);
+    memset(journal, 0, sizeof *journal);
+}
 
 static char *update_record(int dir, const char *name)
 {
@@ -5779,44 +5789,114 @@ done:
     return ok;
 }
 
-static int read_update_journal(int work, unsigned long long current, struct update_journal *journal)
+/* the journal states the decisions the plan was reviewed with. version 1 is none,
+   2 adds accept-privileged, 3 adds accept-arch, 4 both, and 5 carries the consented
+   unit names after them. a generation one back is the journal of an operation that had
+   already published when the crash came. */
+static int read_update_journal(int work, unsigned long long current,
+                               struct update_journal *journal)
 {
-    char *record = update_record(work, "journal"), prefix[128];
-    size_t length, record_length;
-    int attempt, version, ok = 0;
+    char *record = update_record(work, "journal"), *line = NULL;
+    size_t capacity = 0, number = 0;
+    int version = 0, ok = 0, attempt;
     if (!record) return 0;
-    record_length = strlen(record);
-    for (attempt = 0; attempt < 2 && !ok; ++attempt) for (version = 1; version <= 4; ++version) {
-        const char *p;
-        size_t tail = version >= 3 ? 77 : 0;
-        if (version == 2 || version == 4) tail += 83;
+    for (attempt = 0; attempt < 2 && !ok; ++attempt) {
         if (attempt && !current) break;
         journal->generation = current - (unsigned)attempt;
-        length = (size_t)snprintf(prefix, sizeof prefix,
-            "format holy-update-journal-%d\ngeneration %llu\nold ",
-            version, journal->generation);
-        if (length >= sizeof prefix || record_length != length + 204 + tail ||
-            memcmp(record, prefix, length)) continue;
-        p = record + length;
-        if (p[64] != '\n' || memcmp(p + 65, "new ", 4) || p[133] != '\n' ||
-            memcmp(p + 134, "plan ", 5) || p[203] != '\n') continue;
-        memcpy(journal->old, p, 64); journal->old[64] = 0;
-        memcpy(journal->next, p + 69, 64); journal->next[64] = 0;
-        memcpy(journal->plan, p + 139, 64); journal->plan[64] = 0;
-        journal->architecture = version >= 3;
-        journal->privileged = version == 2 || version == 4;
-        if (journal->architecture &&
-            (memcmp(p + 204, "accept-arch ", 12) ||
-             memcmp(p + 216, journal->next, 64) || p[280] != '\n')) continue;
-        if (journal->privileged &&
-            (memcmp(p + 204 + (journal->architecture ? 77 : 0), "accept-privileged ", 18) ||
-             memcmp(p + 222 + (journal->architecture ? 77 : 0), journal->next, 64) ||
-             p[286 + (journal->architecture ? 77 : 0)] != '\n')) continue;
-        ok = valid_digest(journal->old) && valid_digest(journal->next) &&
-             valid_digest(journal->plan) && strcmp(journal->old, journal->next) &&
-             journal->generation != ULLONG_MAX;
-        if (ok) break;
+        free(line);
+        line = NULL;
+        capacity = 0;
+        number = 0;
+        version = 0;
+        if (journal->generation == ULLONG_MAX) continue;
+        {
+            FILE *stream = fmemopen(record, strlen(record), "r");
+            ssize_t got;
+            if (!stream) break;
+            while ((got = getline(&line, &capacity, stream)) >= 0) {
+                char *end;
+                if (++number > 4 + 65536 || got < 2 || line[got - 1] != '\n' ||
+                    memchr(line, 0, (size_t)got)) break;
+                line[got - 1] = 0;
+                if (number == 1) {
+                    if (sscanf(line, "format holy-update-journal-%d", &version) != 1 ||
+                        version < 1 || version > 5) break;
+                    continue;
+                }
+                if (number == 2) {
+                    unsigned long long stated;
+                    errno = 0;
+                    stated = strtoull(line + 11, &end, 10);
+                    if (strncmp(line, "generation ", 11) || errno || *end ||
+                        stated == ULLONG_MAX) break;
+                    journal->generation = stated;
+                    continue;
+                }
+                if (number == 3 && !strncmp(line, "old ", 4) && strlen(line) == 68) {
+                    memcpy(journal->old, line + 4, 65);
+                    continue;
+                }
+                if (number == 4 && !strncmp(line, "new ", 4) && strlen(line) == 68) {
+                    memcpy(journal->next, line + 4, 65);
+                    continue;
+                }
+                if (number == 5 && !strncmp(line, "plan ", 5) && strlen(line) == 69) {
+                    memcpy(journal->plan, line + 5, 65);
+                    continue;
+                }
+                if (version >= 3 && !journal->architecture &&
+                    !strncmp(line, "accept-arch ", 12) && strlen(line) == 76 &&
+                    !memcmp(line + 12, journal->next, 64)) {
+                    journal->architecture = 1;
+                    continue;
+                }
+                if (version >= 2 && !journal->privileged &&
+                    !strncmp(line, "accept-privileged ", 18) && strlen(line) == 82 &&
+                    !memcmp(line + 18, journal->next, 64)) {
+                    journal->privileged = 1;
+                    continue;
+                }
+                if (version == 5 && !strncmp(line, "service ", 8)) {
+                    char **next;
+                    size_t i;
+                    if (!holy_unit_name_valid(line + 8)) break;
+                    for (i = 0; i < journal->service_count; ++i)
+                        if (!strcmp(line + 8, journal->services[i])) break;
+                    if (i != journal->service_count) break;
+                    if (journal->service_count >= 65536) break;
+                    next = realloc(journal->services,
+                                   (journal->service_count + 1) * sizeof *next);
+                    if (!next) break;
+                    journal->services = next;
+                    next[journal->service_count] = strdup(line + 8);
+                    if (!next[journal->service_count]) break;
+                    ++journal->service_count;
+                    continue;
+                }
+                break;
+            }
+            fclose(stream);
+        }
+        /* the generation is the one this root can still be in: the recorded one, or
+           the one before it for an operation that had already published */
+        /* each version states exactly which decisions it carries, so a journal cannot
+           claim one it does not hold */
+        ok = version >= 1 && number >= 5 && valid_digest(journal->old) &&
+             valid_digest(journal->next) && valid_digest(journal->plan) &&
+             strcmp(journal->old, journal->next) &&
+             journal->generation == current - (unsigned)attempt &&
+             (version == 1 ? !journal->architecture && !journal->privileged &&
+                              !journal->service_count :
+              version == 2 ? !journal->architecture && journal->privileged &&
+                              !journal->service_count :
+              version == 3 ? journal->architecture && !journal->privileged &&
+                              !journal->service_count :
+              version == 4 ? journal->architecture && journal->privileged &&
+                              !journal->service_count :
+              journal->service_count != 0);
+        if (!ok) update_journal_forget(journal);
     }
+    free(line);
     free(record);
     return ok;
 }
@@ -6136,6 +6216,7 @@ done:
 static int state_update(const char *old_digest, const char *new_digest,
                          const char *expected, const char *accepted_arch,
                          const char *accepted_privileged,
+                         const char *const *accepted_service, size_t service_count,
                          const char *root_path, int resume,
                          char prepared_hash[65], char **prepared_record)
 {
@@ -6169,6 +6250,12 @@ static int state_update(const char *old_digest, const char *new_digest,
     unsigned length;
     if (prepared_record) *prepared_record = NULL;
     if (prepared_hash) prepared_hash[0] = 0;
+    for (i = 0; i < service_count && !resume; ++i) {
+        size_t j;
+        if (!holy_unit_name_valid(accepted_service[i])) return 2;
+        for (j = 0; j < i; ++j)
+            if (!strcmp(accepted_service[i], accepted_service[j])) return 2;
+    }
     if (!resume && (!valid_digest(old_digest) || !valid_digest(new_digest) ||
                     (expected && !valid_digest(expected)) ||
                     (accepted_arch && (!valid_digest(accepted_arch) ||
@@ -6198,6 +6285,8 @@ static int state_update(const char *old_digest, const char *new_digest,
         old_digest = journal.old; new_digest = journal.next; expected = journal.plan;
         accepted_arch = journal.architecture ? journal.next : NULL;
         accepted_privileged = journal.privileged ? journal.next : NULL;
+        accepted_service = (const char *const *)journal.services;
+        service_count = journal.service_count;
         generation = journal.generation;
         saved = update_record(work, "plan");
         if (!saved && errno != ENOENT) goto done;
@@ -6398,6 +6487,19 @@ static int state_update(const char *old_digest, const char *new_digest,
             record_failed = 1;
             break;
         }
+    for (i = 0; i < services.count && !record_failed; ++i) {
+        const char *unit = service_name_of(services.items[i].path);
+        size_t j;
+        for (j = 0; j < service_count; ++j)
+            if (!strcmp(unit, accepted_service[j])) break;
+        if (j == service_count) {
+            fprintf(stderr, "holypkg: %s ships the service unit /%s; a replacement that"
+                            " starts a service needs --accept-service %s\n",
+                    services.items[i].artifact, services.items[i].path, unit);
+            result = 3;
+            goto done;
+        }
+    }
     pending = ferror(out) || record_failed;
     if (fclose(out)) pending = 1;
     out = NULL;
@@ -6422,8 +6524,9 @@ static int state_update(const char *old_digest, const char *new_digest,
     if (strcmp(expected, checksum) || (saved && strcmp(saved, record))) { result = 3; goto done; }
     if (generation == ULLONG_MAX || record_size > 64 * 1024 * 1024) { result = 6; goto done; }
     if (!resume) {
-        char header[512];
-        int header_size;
+        char *header = NULL;
+        size_t header_size = 0;
+        FILE *header_stream = open_memstream(&header, &header_size);
         result = holy_file_plan_reservations(&changes, root);
         if (result) goto done;
         result = 1;
@@ -6433,18 +6536,25 @@ static int state_update(const char *old_digest, const char *new_digest,
         if (fsync(transactions) || (work = child_dir(transactions, "update", 0)) < 0) goto done;
         journal.generation = generation;
         memcpy(journal.old, old_digest, 65); memcpy(journal.next, new_digest, 65); memcpy(journal.plan, checksum, 65);
-        header_size = snprintf(header, sizeof header,
-            "format holy-update-journal-%d\ngeneration %llu\nold %s\nnew %s\nplan %s\n%s%s%s%s%s%s",
-            accepted_arch ? (new_privileged ? 4 : 3) : (new_privileged ? 2 : 1),
-            generation, old_digest, new_digest, checksum,
-            accepted_arch ? "accept-arch " : "", accepted_arch ? new_digest : "",
-            accepted_arch ? "\n" : "",
-            new_privileged ? "accept-privileged " : "",
-            new_privileged ? new_digest : "", new_privileged ? "\n" : "");
-        if (header_size < 0 || (size_t)header_size >= sizeof header) goto done;
         journal.architecture = !!accepted_arch;
         journal.privileged = new_privileged;
-        if (!update_replace(work, "journal", header)) goto done;
+        if (!header_stream) goto done;
+        fprintf(header_stream, "format holy-update-journal-%d\ngeneration %llu\nold %s\nnew %s\nplan %s\n",
+                service_count ? 5 : accepted_arch ? (new_privileged ? 4 : 3) :
+                (new_privileged ? 2 : 1),
+                generation, old_digest, new_digest, checksum);
+        if (accepted_arch)
+            fprintf(header_stream, "accept-arch %s\n", new_digest);
+        if (new_privileged)
+            fprintf(header_stream, "accept-privileged %s\n", new_digest);
+        for (i = 0; i < service_count; ++i)
+            fprintf(header_stream, "service %s\n", accepted_service[i]);
+        if (ferror(header_stream) || fclose(header_stream) ||
+            !update_replace(work, "journal", header)) {
+            free(header);
+            goto done;
+        }
+        free(header);
     }
     if (!saved && !update_replace(work, "plan", record)) goto done;
     result = finish_update(root, dir, transactions, work, installed, names, snapshots,
@@ -6481,43 +6591,48 @@ done:
     holy_package_identity_free(&old); holy_package_identity_free(&next);
     holy_file_plan_free(&changes); holy_resolution_free(&resolution); free_set(&claims);
     service_list_free(&services);
+    update_journal_forget(&journal);
     EVP_MD_CTX_free(validation.hash);
     return result;
 }
 
 int holy_state_update_plan(const char *old_digest, const char *new_digest,
                            const char *accepted_arch, const char *accepted_privileged,
+                           const char *const *accepted_service, size_t service_count,
                            const char *root_path)
 {
-    return state_update(old_digest, new_digest, NULL, accepted_arch,
-                        accepted_privileged, root_path, 0, NULL, NULL);
+    return state_update(old_digest, new_digest, NULL, accepted_arch, accepted_privileged,
+                        accepted_service, service_count, root_path, 0, NULL, NULL);
 }
 
 int holy_state_update_prepare(const char *old_digest, const char *new_digest,
                               const char *accepted_arch, const char *accepted_privileged,
+                              const char *const *accepted_service, size_t service_count,
                               const char *root_path, char hash[65], char **record)
 {
     if (!hash || !record) return 2;
-    return state_update(old_digest, new_digest, NULL, accepted_arch,
-                        accepted_privileged, root_path, 0, hash, record);
+    return state_update(old_digest, new_digest, NULL, accepted_arch, accepted_privileged,
+                        accepted_service, service_count, root_path, 0, hash, record);
 }
 
 int holy_state_apply_update(const char *plan, const char *old_digest,
                             const char *new_digest, const char *accepted_arch,
                             const char *accepted_privileged,
+                            const char *const *accepted_service, size_t service_count,
                             const char *root_path)
 {
-    return state_update(old_digest, new_digest, plan, accepted_arch,
-                        accepted_privileged, root_path, 0, NULL, NULL);
+    return state_update(old_digest, new_digest, plan, accepted_arch, accepted_privileged,
+                        accepted_service, service_count, root_path, 0, NULL, NULL);
 }
 
 int holy_state_recover_update(const char *root_path)
 {
-    return state_update(NULL, NULL, NULL, NULL, NULL, root_path, 1, NULL, NULL);
+    return state_update(NULL, NULL, NULL, NULL, NULL, NULL, 0, root_path, 1, NULL, NULL);
 }
 
 int holy_state_rollback(const char *transaction, const char *approved,
                         const char *accepted_arch, const char *accepted_privileged,
+                        const char *const *accepted_service, size_t service_count,
                         const char *root_path)
 {
     struct update_journal journal = {0};
@@ -6532,6 +6647,12 @@ int holy_state_rollback(const char *transaction, const char *approved,
     if (!valid_digest(transaction) || (approved && !valid_digest(approved)) ||
         (accepted_arch && !valid_digest(accepted_arch)) ||
         (accepted_privileged && !valid_digest(accepted_privileged))) return 2;
+    for (i = 0; i < service_count; ++i) {
+        size_t j;
+        if (!holy_unit_name_valid(accepted_service[i])) return 2;
+        for (j = 0; j < i; ++j)
+            if (!strcmp(accepted_service[i], accepted_service[j])) return 2;
+    }
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0 || (db = state_dir_at(root, 0)) < 0 || flock(db, LOCK_SH) ||
         !state_layout(db, 0) || (transactions = child_dir(db, "transactions", 0)) < 0 ||
@@ -6576,12 +6697,14 @@ done:
     if (result) return result;
     if (approved) {
         result = holy_state_apply_update(approved, journal.next, journal.old,
-                                         accepted_arch, accepted_privileged, root_path);
+                                         accepted_arch, accepted_privileged,
+                                         accepted_service, service_count, root_path);
         if (!result) printf("rollback %s restored %s\n", transaction, journal.old);
         return result;
     }
     result = holy_state_update_prepare(journal.next, journal.old,
                                        accepted_arch, accepted_privileged,
+                                       accepted_service, service_count,
                                        root_path, hash, &record);
     if (result) return result;
     if (printf("rollback-plan transaction %s current %s target %s sha256 %s read-only\n",

@@ -27,6 +27,11 @@ package() {
         printf 'record payload normalized before pack\n' > "$tree/HOLY/transform"
     fi
     printf 'version %s\n' "$version" > "$tree/DATA/usr/share/update-fixture"
+    if test "${3:-}" = unit; then
+        mkdir -p "$tree/DATA/etc/dinit.d"
+        printf 'type = process\ncommand = /usr/bin/update-fixture\n' \
+            > "$tree/DATA/etc/dinit.d/update-fixture"
+    fi
     expect 0 "$bin" manifest generate "$tree" --output "$tmp/files-$version"
     mv "$tmp/files-$version" "$tree/HOLY/files"
     expect 0 "$bin" pack "$tree" --output "$repo/update-$version.holy"
@@ -268,4 +273,23 @@ for family in apk xbps; do
     grep -qx 'version 1.1' "$root/usr/share/update-fixture"
     expect 0 "$bin" db check --all --root "$root"
 done
+# a replacement that ships a unit needs the same consent a set does, and the prepared
+# plan carries it so the apply needs no flag of its own
+package 3 pacman unit
+third=$(sha256sum "$repo/update-3.holy" | cut -d ' ' -f 1)
+seal
+expect 0 "$bin" source catalog bind fixture "$repo" --root "$root"
+expect 3 "$bin" up fixture:update-fixture --prepare --choose "$third" --output "$tmp/unit.plan" --root "$root"
+test ! -e "$tmp/unit.plan"
+expect 0 "$bin" up fixture:update-fixture --prepare --choose "$third" \
+    --accept-service update-fixture --output "$tmp/unit.plan" --root "$root"
+grep -qx 'service update-fixture' "$tmp/unit.plan"
+grep -qx 'service etc/dinit.d/update-fixture' "$tmp/unit.plan"
+grep -qxF '[services]' "$tmp/unit.plan"
+prepared=$(sha256sum "$tmp/unit.plan" | cut -d ' ' -f 1)
+expect 3 "$bin" apply "$tmp/unit.plan" --sha256 "$(printf '%064d' 0)" --root "$root"
+expect 0 "$bin" apply "$tmp/unit.plan" --sha256 "$prepared" --root "$root"
+test -f "$root/etc/dinit.d/update-fixture"
+grep -qx 'version 3' "$root/usr/share/update-fixture"
+expect 0 "$bin" db check --all --root "$root"
 printf 'source update preparation and apply fixtures passed\n'

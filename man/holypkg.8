@@ -252,11 +252,11 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db repair-plan SHA256 --root DIRECTORY
 .br
-.B holypkg db plan-update OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY
+.B holypkg db plan-update OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] [--accept-service UNIT ...] --root DIRECTORY
 .br
-.B holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY
+.B holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] [--accept-service UNIT ...] --root DIRECTORY
 .br
-.B holypkg rollback TRANSACTION [--root DIRECTORY] [--apply PLAN_SHA256] [--accept-arch ARTIFACT_SHA256] [--accept-privileged ARTIFACT_SHA256]
+.B holypkg rollback TRANSACTION [--root DIRECTORY] [--apply PLAN_SHA256] [--accept-arch ARTIFACT_SHA256] [--accept-privileged ARTIFACT_SHA256] [--accept-service UNIT ...]
 .br
 .B holypkg db recover --update --root DIRECTORY
 .br
@@ -1611,8 +1611,23 @@ A replacement that ships a unit below etc/dinit.d states it, as
 service ARTIFACT NAME path /etc/dinit.d/NAME state starts-at-next-boot,
 and the plan document carries the same units in a [services] section, so
 what would start at the next boot is part of what the approval covers. A
-replacement that ships none has an empty section. The consent a placed
-unit needs is a set decision and does not gate a replacement yet.
+replacement that ships none has an empty section. Such a replacement is
+refused with status 3 until the user names the unit with
+--accept-service UNIT, the same consent a set needs for the same reason.
+.PP
+The consent travels in the update journal as holy-update-journal-5, which
+carries the accepted architecture, the accepted setuid placement and the
+consented unit names, so an interrupted replacement finishes the placement
+it was reviewed for. db recover --update takes the consent from the
+journal and needs no flag. A journal that claims a decision it does not
+hold is refused, and so is one whose generation is neither the recorded
+one nor the one before it. holypkg rollback --apply carries the same
+consent into the reverse replacement.
+.PP
+holypkg up --prepare writes the consented unit names into its saved plan
+after the accepted decisions, so holypkg apply needs no flag of its own:
+the plan document already carries the units and the consent travels with
+the plan.
 
 db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 --root DIRECTORY applies
 that cached replacement after reconstructing and comparing the approved plan
