@@ -1195,9 +1195,11 @@
   `--choose` names the candidate of one slot as SOURCE:PACKAGE=SHA256 when a
   group needs it. A source that registered a key must have the generation a
   plan fixes signed by it, the plan carries `signature signed|unsigned` per
-  slot, and apply proves that state again against the same catalog. An
-  unsigned generation still needs the explicit decision `sync` already asks
-  for, and root/VM trials stay open.
+  slot, the prepared-slot line states it before the review, and apply proves
+  that state again against the same catalog. An unsigned generation is the
+  decision the reviewed document is, since its digest is the approval, while
+  `sync`, which has no plan document, asks for --accept-unsigned as before.
+  Root/VM trials stay open.
   The existing run launcher now derives private PATH directories from the
   selected installed manifest, so a public executable can invoke its own
   private helper by name. Explicit directory views bind package-owned private

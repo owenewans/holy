@@ -441,10 +441,13 @@ int holy_up_command(int argc, char **argv)
         if (failed || !digest_bytes(plan, size, plan_hash) ||
             !write_plan(output, plan, size)) { result = 1; goto done; }
     }
+    /* the review states what each source proved about the generation it fixed, since a
+       plan document is where that decision lives */
     for (i = 0; i < chosen_count; ++i) {
         const struct up_slot *slot = &slots[chosen[i]];
-        printf("prepared-slot %zu source-id %s old %s new %s index %s\n", i,
-               slot->source_id, slot->old_digest, slot->new_digest, slot->index);
+        printf("prepared-slot %zu source-id %s old %s new %s index %s signature %s\n", i,
+               slot->source_id, slot->old_digest, slot->new_digest, slot->index,
+               slot->signature);
     }
     if (chosen_count > 1)
         printf("prepared %s %s slots %zu\n", plan_hash, output, chosen_count);

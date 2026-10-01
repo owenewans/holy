@@ -309,11 +309,12 @@ index=$(awk '$1 == "sha256" {print $2}' "$repo/current")
 expect 0 "$bin" up fixture:update-fixture fixture:other --prepare \
     --choose "fixture:update-fixture=$newer" --output "$tmp/group.plan" --root "$root"
 group=$(sha256sum "$tmp/group.plan" | cut -d ' ' -f 1)
-grep -qx "prepared-slot 0 source-id $source_id old $third new $newer index $index" "$tmp/out"
-grep -qx "prepared-slot 1 source-id $source_id old $other_old new $other_new index $index" "$tmp/out"
+grep -qx "prepared-slot 0 source-id $source_id old $third new $newer index $index signature unsigned" "$tmp/out"
+grep -qx "prepared-slot 1 source-id $source_id old $other_old new $other_new index $index signature unsigned" "$tmp/out"
 grep -qx "prepared $group $tmp/group.plan slots 2" "$tmp/out"
 grep -qx 'slot 0' "$tmp/group.plan"
 grep -qx 'slot 1' "$tmp/group.plan"
+grep -qx 'signature unsigned' "$tmp/group.plan"
 grep -qx 'replacement 2' "$tmp/group.plan"
 grep -qx 'format holy-update-plan-2' "$tmp/group.plan"
 grep -qxF '[update]' "$tmp/group.plan"
