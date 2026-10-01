@@ -7108,6 +7108,20 @@ static int state_update_group(const struct holy_update_request *request,
         if (work < 0) goto done;
         journaled = 1; result = 5;
         if (!read_update_journal(work, generation, &journal) || !journal.pair_count) goto done;
+        /* the progress record names the stage the apply reached, so the recovery states
+           it rather than leaving the operator to read the journal */
+        {
+            char *stage = update_record(work, "progress");
+            if (stage) {
+                size_t length = strlen(stage);
+                if (!strncmp(stage, "stage ", 6) && length > 12 && stage[length - 1] == '\n' &&
+                    !memchr(stage, '\n', length - 1)) {
+                    stage[length - 1] = 0;
+                    printf("resumed-stage %s\n", stage + 6);
+                }
+                free(stage);
+            }
+        }
         pair_count = journal.pair_count;
         owned_olds = calloc(pair_count, sizeof *owned_olds);
         owned_news = calloc(pair_count, sizeof *owned_news);

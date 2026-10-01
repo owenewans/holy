@@ -1849,7 +1849,15 @@ split or merge. External hardlinks to replaced files keep the old inode.
 db recover --update revalidates the immutable plan, cached inputs and old/new
 file states before continuing the interrupted operation. It recognizes a
 completed database exchange or generation publication and does not repeat
-them. Other state operations refuse the active update with status 5.
+them. An apply that kept its progress record states the stage it had reached:
+.RS
+.nf
+resumed-stage STAGE
+.fi
+.RE
+.PP
+The stages are prepared, publishing and committed. A transaction that committed
+before the interruption has no progress record left to report. Other state operations refuse the active update with status 5.
 Recovery preserves unexpected or partly written reserved staging objects
 and returns 5 for inspection; it does not delete them automatically. Missing
 cached inputs must be restored. Interruption before publishing the immutable

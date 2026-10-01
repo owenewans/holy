@@ -260,6 +260,11 @@ if test "$fault_client" != skip; then
             find "$copy_root/usr/share" -name '.holy-update-*' -type f -delete
         fi
         expect 0 "$bin" db recover --update --root "$copy_root"
+        # an interrupted apply kept its progress record, and the recovery names the
+        # stage it had reached
+        if test -f "$copy_root/var/lib/holypkg/transactions/update/progress"; then
+            grep -q '^resumed-stage ' "$tmp/out"
+        fi
         expect 0 "$bin" db status --root "$copy_root"
         expect 0 "$bin" db check --all --root "$copy_root"
         expect 0 "$bin" orphan --root "$copy_root" --json
