@@ -1380,7 +1380,16 @@
   `firmware` names the wireless firmware artifacts; on a host with a wireless
   interface a profile without firmware is decision-required. Apply writes
   `/etc/connman/connman.conf` and the 0700 state directories, and starts no
-  service. Encryption steps stay open. The implemented blank-disk GPT/ext4/FAT path uses
+  service. The disk stage now takes a filesystem profile and a LUKS2 root:
+  `layout gpt-ext4|gpt-btrfs|gpt-xfs|gpt-f2fs` with the `-luks2` form of each
+  on a block device, an optional `swap` size in mebibytes, and `volume` plus
+  `key-file` for encryption. Plan format 3 records the profile, the swap
+  sectors and the SHA-256 of every tool the apply runs, including cryptsetup,
+  whose major version must be 2. Apply formats the root inside the mapper,
+  closes it after, and journals formatting-luks, opening-luks and
+  closing-luks. An image file keeps ext4, since a mapper needs a partition
+  device. Btrfs, XFS and F2FS boots in QEMU and an encrypted install remain
+  open. The implemented blank-disk GPT/ext4/FAT path uses
   reviewed plans and `holypkg --root`; account login has a VM fixture.
   Config and text menu now bind selected artifacts to registered source IDs
   through frozen plan format 4 and retain that provenance at install. The live

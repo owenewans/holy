@@ -226,17 +226,24 @@ static int key_arity(const char *section, const char *key)
                 if (!strcmp(key, expected)) return 1;
             }
     } else if (!strcmp(section, "disk-plan")) {
+        /* a plan names the tools it ran, so the tool keys follow the chosen profile */
         if (!strcmp(key, "format") || !strcmp(key, "image") ||
             !strcmp(key, "device") || !strcmp(key, "inode") ||
             !strcmp(key, "size") || !strcmp(key, "head-sha256") ||
             !strcmp(key, "tail-sha256") || !strcmp(key, "root-sectors") ||
-            !strcmp(key, "kind") || !strcmp(key, "serial") ||
-            !strcmp(key, "rdev") || !strcmp(key, "sfdisk-sha256") ||
-            !strcmp(key, "mkfs-fat-sha256") || !strcmp(key, "mke2fs-sha256") ||
-            !strcmp(key, "limine-sha256")) return 1;
+            !strcmp(key, "swap-sectors") || !strcmp(key, "filesystem") ||
+            !strcmp(key, "encryption") || !strcmp(key, "volume") ||
+            !strcmp(key, "key-file") || !strcmp(key, "kind") ||
+            !strcmp(key, "serial") || !strcmp(key, "rdev") ||
+            !strcmp(key, "sfdisk-sha256") || !strcmp(key, "mkfs-fat-sha256") ||
+            !strcmp(key, "mke2fs-sha256") || !strcmp(key, "limine-sha256") ||
+            !strcmp(key, "cryptsetup-sha256") ||
+            (!strncmp(key, "mkfs-", 5) && strlen(key) > 12 &&
+             !strcmp(key + strlen(key) - 7, "-sha256"))) return 1;
     } else if (!strcmp(section, "disk")) {
         if (!strcmp(key, "image") || !strcmp(key, "device") ||
-            !strcmp(key, "layout")) return 1;
+            !strcmp(key, "layout") || !strcmp(key, "swap") ||
+            !strcmp(key, "key-file") || !strcmp(key, "volume")) return 1;
     } else if (!strcmp(section, "install")) {
         if (!strcmp(key, "source")) return 2;
         if (!strcmp(key, "account")) return 5;
@@ -287,7 +294,10 @@ static int known_value(const char *section, const char *key, const char *v)
         return *v && !errno && !*end && number >= INT_MIN && number <= INT_MAX;
     }
     if (!strcmp(section, "disk") && !strcmp(key, "layout"))
-        return !strcmp(v, "gpt-ext4");
+        return !strcmp(v, "gpt-ext4") || !strcmp(v, "gpt-btrfs") ||
+               !strcmp(v, "gpt-xfs") || !strcmp(v, "gpt-f2fs") ||
+               !strcmp(v, "gpt-ext4-luks2") || !strcmp(v, "gpt-btrfs-luks2") ||
+               !strcmp(v, "gpt-xfs-luks2") || !strcmp(v, "gpt-f2fs-luks2");
     if (!strcmp(key, "scripts") && !strcmp(section, "general"))
         return !strcmp(v, "ask") || !strcmp(v, "run") || !strcmp(v, "skip");
     if (!strcmp(key, "trust"))

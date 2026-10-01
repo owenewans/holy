@@ -41,7 +41,10 @@ Abort and end-of-input leave the target unchanged before apply. Without a TTY,
 --menu exits with status 3. The text menu accepts [install] and [disk]; it
 rejects other sections to avoid silently discarding them on save.
 .PP
-The menu saves [disk] in the same config as [install]. It creates a separate
+The menu saves [disk] in the same config as [install]. Its disk entry selects a
+path, its filesystem entry picks the layout word, a swap size in mebibytes,
+the luks2 volume name and the key file path, and an encrypted layout without
+a key file is refused. It creates a separate
 disk plan at PACKAGE_PLAN.disk, shows the exact image path, GPT geometry and
 the plan's first and last MiB hashes. It asks for that full path before
 formatting. Disk selection may be left
@@ -182,11 +185,13 @@ enables a service: a unit under etc/dinit.d still needs the consent the
 package set asks for. A profile whose name or packages were removed after
 review is refused at apply, since the reviewed document no longer holds.
 .SH DISK PREPARATION
-The disk command accepts a regular file or a block disk of at least 1 GiB. The supported
-layout is GPT with a 1 MiB BIOS boot partition, a 256 MiB FAT32 ESP and an
-ext4 root partition. Image mode uses sfdisk, mkfs.fat and mke2fs, and requires
-losetup to confirm that the image is not attached to a loop device.
-A minimal image config is:
+The disk command accepts a regular file or a block disk of at least 1 GiB. Every
+layout is GPT with a 1 MiB BIOS boot partition, a 256 MiB FAT32 ESP, an
+optional swap partition and a root partition. The layout word names the root
+filesystem and whether the root is a LUKS2 container: gpt-ext4, gpt-btrfs,
+gpt-xfs, gpt-f2fs and the luks2 form of each. An image file takes gpt-ext4
+only, since a mapper needs a partition device and only mke2fs writes into a
+region of a file. A minimal image config is:
 .PP
 .RS
 .nf
@@ -195,6 +200,41 @@ image "/tmp/holy.img"
 layout gpt-ext4
 .fi
 .RE
+.PP
+A block device config names the profile, an optional swap size in mebibytes, a
+multiple of 128 that leaves the root at least 128 MiB, and for a luks2 root the
+volume label and an absolute key-file path:
+.PP
+.RS
+.nf
+[disk]
+device "/dev/sda"
+layout gpt-btrfs-luks2
+swap 8192
+volume holy-root
+key-file "/run/holy/luks.key"
+.fi
+.RE
+.PP
+The key file is a regular file of at most 64 KiB. Planning opens it to prove
+it is readable and records its path, never its contents, so a review approves
+which file the apply reads rather than a secret. A key file or a volume
+without a luks2 layout, a luks2 layout without both, a swap on an image and a
+volume name outside the mapper alphabet are refused before a plan exists.
+.PP
+Each tool is checked before the plan is written: the partitioner, the boot
+filesystem, the mkfs of the chosen profile, the boot stage, and cryptsetup for
+a luks2 root, whose reported major version must be 2. Plan format 3 records
+the filesystem, any swap sectors, the encryption lines and the SHA-256 of
+every one of those tools. Apply rechecks each hash and refuses a changed tool,
+a changed device or an existing journal.
+.PP
+Apply formats the root inside the mapper when the plan names one, so a luks2
+container never receives a raw mkfs, and closes the mapper once the
+filesystem is written. The journal records formatting-esp, formatting-luks,
+opening-luks, formatting-root and closing-luks beside the partition stages,
+so an interrupted run states how far it reached. An existing journal blocks
+another apply: a resumed install needs a new plan, which is a new decision.
 .PP
 Create the image before planning, for example with truncate. Planning prints
 the exact image path, device/inode identity, size and partition geometry. It
@@ -207,19 +247,21 @@ After an interrupted stage, inspect the image and journal before starting a
 new plan. The command does not silently repeat a format operation.
 .PP
 For a block disk, use device instead of image in [disk]. Planning records
-the disk node, block-device number, size, serial, first and last MiB hashes,
-and SHA-256 of the four static tools used by apply: sfdisk, mkfs.fat,
-mke2fs and Limine. Apply requires the exact device path as --confirm and
-rechecks those inputs before mutation. It holds an exclusive disk descriptor,
-writes the GPT, asks the kernel to reread the partition table, checks the
-partition geometry, formats FAT32 and ext4, and installs the Limine BIOS
+the disk node, block-device number, size, serial and the first and last MiB
+hashes, next to the tool hashes named above. Apply requires the exact device
+path as --confirm and rechecks those inputs before mutation. It holds an
+exclusive disk descriptor, writes the GPT, asks the kernel to reread the
+partition table, checks the partition geometry, formats FAT32, the swap when
+the plan names one, the root filesystem the plan names and the Limine BIOS
 stage. The journal records each stage. This operation destroys existing
 partitions and filesystems. It does not mount the new root or install packages.
 .PP
 Disk preparation destroys existing image contents. It does not mount the
 partitions or generate an initramfs. The finalize-plan command requires a
 committed disk preparation journal, a valid GPT, an exact-size ESP image and
-an exact-size ext4 root image. It records the full SHA-256, device, inode and
+an exact-size root image of the filesystem that layout names. An encrypted
+root is refused here, since the partition holds a container rather than a
+filesystem image. It records the full SHA-256, device, inode and
 size of the disk, both input images and /usr/bin/limine in a new mode-0600
 plan. Review that plan before applying it. Finalize-apply requires the exact
 disk path as --confirm and rechecks all inputs before changing the disk. It

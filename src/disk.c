@@ -22,24 +22,93 @@
 #include <unistd.h>
 
 enum { sector = 512, sample = 1048576, esp_start = 4096,
-       esp_sectors = 524288, root_start = 528384 };
+       esp_sectors = 524288, root_base = 528384, min_root_sectors = 262144 };
+
+/* the root filesystem the target reads, the tool that formats it and the plan key
+   holding that tool's hash. a profile names a mkfs the installer runs, so the choice is
+   visible before any mutation */
+struct fs_profile {
+    const char *name;         /* the layout word in [disk] layout */
+    const char *luks_name;    /* the same profile with a luks2 root */
+    const char *filesystem;   /* what the plan records */
+    const char *tool;
+    const char *tool_key;
+    const char *const args[5];
+    size_t arg_count;
+};
+
+static const struct fs_profile profiles[] = {
+    { "gpt-ext4", "gpt-ext4-luks2", "ext4", "/usr/bin/mke2fs", "mke2fs-sha256",
+      { "mke2fs", "-q", "-t", "ext4", NULL }, 4 },
+    { "gpt-btrfs", "gpt-btrfs-luks2", "btrfs", "/usr/bin/mkfs.btrfs", "mkfs-btrfs-sha256",
+      { "mkfs.btrfs", "-q", "-f", NULL, NULL }, 3 },
+    { "gpt-xfs", "gpt-xfs-luks2", "xfs", "/usr/sbin/mkfs.xfs", "mkfs-xfs-sha256",
+      { "mkfs.xfs", "-q", "-f", NULL, NULL }, 3 },
+    { "gpt-f2fs", "gpt-f2fs-luks2", "f2fs", "/usr/sbin/mkfs.f2fs", "mkfs-f2fs-sha256",
+      { "mkfs.f2fs", "-q", "-f", NULL, NULL }, 3 }
+};
+
+static const char *const luks_tool = "/usr/sbin/cryptsetup";
+static const char *const luks_tool_key = "cryptsetup-sha256";
 
 struct disk_plan {
     char *image;
-    uintmax_t device, inode, size, root_sectors;
+    uintmax_t device, inode, size, root_sectors, swap_sectors, root_start;
     char head[65], tail[65];
     int block;
     uintmax_t rdev;
     char serial[128];
-    char tools[4][65];
+    char tools[5][65];
+    size_t tool_count;
+    const struct fs_profile *profile;
+    char *key_file;   /* the luks2 key, read at apply and never recorded */
+    char *volume;     /* the luks2 label and the mapper name */
 };
 
-static const char *const block_tools[] = {
-    "/usr/bin/sfdisk", "/usr/bin/mkfs.fat", "/usr/bin/mke2fs", "/usr/bin/limine"
+/* the tools every block plan records: the partitioner, the boot filesystem, the root
+   filesystem and the boot stage */
+static const char *const block_tools[3] = {
+    "/usr/bin/sfdisk", "/usr/bin/mkfs.fat", "/usr/bin/limine"
 };
-static const char *const block_tool_keys[] = {
-    "sfdisk-sha256", "mkfs-fat-sha256", "mke2fs-sha256", "limine-sha256"
+static const char *const block_tool_keys[3] = {
+    "sfdisk-sha256", "mkfs-fat-sha256", "limine-sha256"
 };
+
+/* the layout word names a profile and whether the root is a luks2 container. the image
+   path formats one profile, since mkfs of a region needs the partition device */
+static int layout_read(const char *layout, const struct fs_profile **profile, int *encrypted)
+{
+    size_t i;
+    if (!layout) return 0;
+    for (i = 0; i < sizeof profiles / sizeof profiles[0]; ++i) {
+        if (!strcmp(layout, profiles[i].name)) {
+            *profile = &profiles[i];
+            *encrypted = 0;
+            return 1;
+        }
+        if (!strcmp(layout, profiles[i].luks_name)) {
+            *profile = &profiles[i];
+            *encrypted = 1;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* the layout words the menu offers, in the order a review reads them */
+const char *holy_disk_layout_word(size_t index)
+{
+    size_t i = index / 2;
+    if (i >= sizeof profiles / sizeof profiles[0]) return NULL;
+    return index % 2 ? profiles[i].luks_name : profiles[i].name;
+}
+
+/* an image file carries no partition device for a mapper, so only a block device takes
+   an encrypted or a non-ext4 profile */
+static int image_profile(const struct fs_profile *profile)
+{
+    return profile == &profiles[0];
+}
 
 static const char *value(const struct holy_config *c, const char *section,
                          const char *key)
@@ -114,6 +183,13 @@ static int hash_span(int fd, uintmax_t offset, uintmax_t size, char out[65])
     return 1;
 }
 
+/* the root follows the boot partition, the esp and any swap, in whole mebibytes */
+static void geometry(struct disk_plan *p)
+{
+    p->root_start = root_base + p->swap_sectors;
+    p->root_sectors = ((p->size / sector - p->root_start - 34) / 2048) * 2048;
+}
+
 static int image_facts(int fd, struct disk_plan *p)
 {
     struct stat st;
@@ -122,7 +198,7 @@ static int image_facts(int fd, struct disk_plan *p)
     p->device = (uintmax_t)st.st_dev;
     p->inode = (uintmax_t)st.st_ino;
     p->size = (uintmax_t)st.st_size;
-    p->root_sectors = ((p->size / sector - root_start - 34) / 2048) * 2048;
+    geometry(p);
     return p->root_sectors && hash_region(fd, 0, p->head) &&
            hash_region(fd, st.st_size - sample, p->tail);
 }
@@ -176,7 +252,7 @@ static int block_facts(int fd, struct disk_plan *p)
     p->inode = (uintmax_t)st.st_ino;
     p->rdev = (uintmax_t)st.st_rdev;
     p->size = (uintmax_t)bytes;
-    p->root_sectors = ((p->size / sector - root_start - 34) / 2048) * 2048;
+    geometry(p);
     return p->root_sectors && sysfs_serial(st.st_rdev, p->serial) &&
            hash_region(fd, 0, p->head) &&
            hash_region(fd, (off_t)(p->size - sample), p->tail);
@@ -233,18 +309,29 @@ static int write_plan(const char *path, const struct disk_plan *p)
     if (fd < 0) { perror("holyinstall: plan"); return 1; }
     f = fdopen(fd, "w");
     if (!f) { close(fd); unlink(path); return 1; }
-    ok = fprintf(f, "[disk-plan]\nformat %d\nimage ", p->block ? 2 : 1) >= 0 &&
+    /* format 3 records the chosen profile, any swap and any luks2 key file, so the
+       review names every tool the apply will run */
+    ok = fprintf(f, "[disk-plan]\nformat %d\nimage ",
+                 p->profile && !image_profile(p->profile) ? 3 : p->block ? 2 : 1) >= 0 &&
          quote(f, p->image) &&
          fprintf(f, "\ndevice %" PRIuMAX "\ninode %" PRIuMAX
                  "\nsize %" PRIuMAX "\nroot-sectors %" PRIuMAX
                  "\nhead-sha256 %s\ntail-sha256 %s\n", p->device, p->inode,
                  p->size, p->root_sectors, p->head, p->tail) >= 0;
+    if (ok && p->swap_sectors)
+        ok = fprintf(f, "swap-sectors %" PRIuMAX "\n", p->swap_sectors) >= 0;
     if (ok && p->block) {
         size_t i;
         ok = fputs("kind block\nserial ", f) >= 0 && quote(f, p->serial) &&
              fprintf(f, "\nrdev %" PRIuMAX "\n", p->rdev) >= 0;
-        for (i = 0; ok && i < 4; ++i)
-            ok = fprintf(f, "%s %s\n", block_tool_keys[i], p->tools[i]) >= 0;
+        if (ok && p->profile && !image_profile(p->profile))
+            ok = fprintf(f, "filesystem %s\n", p->profile->filesystem) >= 0;
+        if (ok && p->volume)
+            ok = fputs("encryption luks2\nvolume ", f) >= 0 && quote(f, p->volume) &&
+                 fputs("\nkey-file ", f) >= 0 && quote(f, p->key_file) && fputc('\n', f) >= 0;
+        for (i = 0; ok && i < p->tool_count; ++i)
+            ok = fprintf(f, "%s %s\n", i == 2 ? p->profile->tool_key :
+                            block_tool_keys[i > 2 ? i - 1 : i], p->tools[i]) >= 0;
     }
     if (fflush(f) || fsync(fd)) ok = 0;
     if (fclose(f)) ok = 0;
@@ -253,18 +340,59 @@ static int write_plan(const char *path, const struct disk_plan *p)
     return 0;
 }
 
+/* the recorded tool order is the partitioner, the boot filesystem, the root filesystem,
+   the boot stage and the luks2 tool, so a plan names them in the order apply runs them */
+static const char *tool_key_at(const struct disk_plan *p, size_t i)
+{
+    if (i == 2) return p->profile->tool_key;
+    if (i == 3) return block_tool_keys[2];
+    if (i == 4) return luks_tool_key;
+    return block_tool_keys[i];
+}
+
+static const char *tool_at(const struct disk_plan *p, size_t i)
+{
+    if (i == 2) return p->profile->tool;
+    if (i == 3) return block_tools[2];
+    if (i == 4) return luks_tool;
+    return block_tools[i];
+}
+
+static const struct fs_profile *profile_for(const char *filesystem)
+{
+    size_t i;
+    for (i = 0; i < sizeof profiles / sizeof profiles[0]; ++i)
+        if (!strcmp(profiles[i].filesystem, filesystem)) return &profiles[i];
+    return NULL;
+}
+
+/* a volume label is a mapper name, so it stays inside what /dev/mapper accepts */
+static int volume_valid(const char *text)
+{
+    size_t i, length = text ? strlen(text) : 0;
+    if (!length || length >= 64) return 0;
+    for (i = 0; i < length; ++i)
+        if (!((text[i] >= 'a' && text[i] <= 'z') ||
+              (text[i] >= 'A' && text[i] <= 'Z') ||
+              (text[i] >= '0' && text[i] <= '9') ||
+              text[i] == '-' || text[i] == '_')) return 0;
+    return 1;
+}
+
 static int read_plan(const char *path, struct disk_plan *p)
 {
     struct holy_config c = {0};
-    const char *s;
+    const char *s, *format;
     char *error = NULL;
-    size_t i;
+    size_t i, expected;
     int ok = holy_config_load_plan(path, &c, &error);
     if (!ok) { fprintf(stderr, "holyinstall: %s\n", error ? error : "invalid plan"); free(error); return 2; }
-    s = value(&c, "disk-plan", "format");
-    p->block = s && !strcmp(s, "2");
-    ok = s && (!strcmp(s, "1") || p->block) &&
-         c.count == (size_t)(p->block ? 15 : 8);
+    format = value(&c, "disk-plan", "format");
+    p->profile = &profiles[0];         /* formats 1 and 2 name no profile */
+    p->tool_count = 4;
+    ok = format && (!strcmp(format, "1") || !strcmp(format, "2") ||
+                    !strcmp(format, "3"));
+    p->block = ok && strcmp(format, "1");
     for (i = 0; i < c.count; ++i) if (strcmp(c.entries[i].section, "disk-plan")) ok = 0;
     s = value(&c, "disk-plan", "image");
     if (ok && s) p->image = strdup(s); else ok = 0;
@@ -273,11 +401,14 @@ static int read_plan(const char *path, struct disk_plan *p)
          number(value(&c, "disk-plan", "inode"), &p->inode) &&
          number(value(&c, "disk-plan", "size"), &p->size) &&
          number(value(&c, "disk-plan", "root-sectors"), &p->root_sectors);
+    s = value(&c, "disk-plan", "swap-sectors");
+    if (ok && s) ok = number(s, &p->swap_sectors) && p->swap_sectors % 2048 == 0;
+    p->root_start = root_base + p->swap_sectors;
     s = value(&c, "disk-plan", "head-sha256");
     if (ok && s && strlen(s) == 64) memcpy(p->head, s, 65); else ok = 0;
     s = value(&c, "disk-plan", "tail-sha256");
     if (ok && s && strlen(s) == 64) memcpy(p->tail, s, 65); else ok = 0;
-    for (i = 0; ok && i < 64; ++i)
+    for (i = 0; i < 64; ++i)
         if (!((p->head[i] >= '0' && p->head[i] <= '9') ||
               (p->head[i] >= 'a' && p->head[i] <= 'f')) ||
             !((p->tail[i] >= '0' && p->tail[i] <= '9') ||
@@ -294,9 +425,34 @@ static int read_plan(const char *path, struct disk_plan *p)
             for (i = 0; i < strlen(s); ++i)
                 if ((unsigned char)s[i] < 32 || (unsigned char)s[i] > 126) ok = 0;
         }
-        for (i = 0; i < 4; ++i) {
+        if (ok) {
+            const char *filesystem = value(&c, "disk-plan", "filesystem");
+            const struct fs_profile *profile = NULL;
+            if (filesystem) {
+                profile = profile_for(filesystem);
+                if (!profile) ok = 0;
+            } else if (format && !strcmp(format, "3")) ok = 0;
+            if (ok) {
+                const char *encryption = value(&c, "disk-plan", "encryption");
+                if (encryption && strcmp(encryption, "luks2")) ok = 0;
+                if (ok && encryption) {
+                    const char *volume = value(&c, "disk-plan", "volume");
+                    const char *key = value(&c, "disk-plan", "key-file");
+                    if (profile && image_profile(profile)) ok = 0;
+                    if (!volume || !volume_valid(volume) || !key || key[0] != '/') ok = 0;
+                    else {
+                        p->volume = strdup(volume);
+                        p->key_file = strdup(key);
+                        if (!p->volume || !p->key_file) ok = 0;
+                    }
+                    p->tool_count = 5;
+                }
+                if (ok && profile) p->profile = profile;
+            }
+        }
+        for (i = 0; ok && i < p->tool_count; ++i) {
             size_t j;
-            s = value(&c, "disk-plan", block_tool_keys[i]);
+            s = value(&c, "disk-plan", tool_key_at(p, i));
             if (!s || strlen(s) != 64) { ok = 0; continue; }
             memcpy(p->tools[i], s, 65);
             for (j = 0; j < 64; ++j)
@@ -304,10 +460,23 @@ static int read_plan(const char *path, struct disk_plan *p)
                       (s[j] >= 'a' && s[j] <= 'f'))) ok = 0;
         }
     }
-    if (ok) ok = p->size >= (1ULL << 30) && p->size % sector == 0 &&
-                 p->root_sectors == ((p->size / sector - root_start - 34) / 2048) * 2048;
+    expected = (size_t)(p->block ? 15 : 8) + (p->swap_sectors ? 1 : 0) +
+               (p->block && !image_profile(p->profile) ? 1 : 0) + (p->volume ? 4 : 0);
+    if (ok) ok = c.count == expected;
+    if (ok) ok = p->size >= (1ULL << 30) && p->size % sector == 0 && p->swap_sectors < p->size / sector;
+    if (ok) {
+        uintmax_t rest = ((p->size / sector - p->root_start - 34) / 2048) * 2048;
+        ok = p->root_sectors == rest && p->root_sectors >= min_root_sectors;
+    }
+    if (ok && !p->block) ok = !p->swap_sectors && !p->volume;
     holy_config_free(&c);
-    if (!ok) { fputs("holyinstall: invalid disk plan\n", stderr); return 2; }
+    if (!ok) {
+        fputs("holyinstall: invalid disk plan\n", stderr);
+        free(p->image); p->image = NULL;
+        free(p->volume); p->volume = NULL;
+        free(p->key_file); p->key_file = NULL;
+        return 2;
+    }
     return 0;
 }
 
@@ -380,13 +549,46 @@ static int journal(const char *path, const char *stage, int first)
     return ok;
 }
 
+/* the major version a tool reports, since luks2 needs cryptsetup 2 and a luks1 header
+   is a different decision than the one a plan names */
+static int tool_major(const char *program)
+{
+    char text[64];
+    int pipefd[2], status;
+    pid_t pid;
+    ssize_t got;
+    char *program_name = strrchr(program, '/');
+    if (pipe(pipefd)) return 0;
+    pid = fork();
+    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return 0; }
+    if (!pid) {
+        char *child_args[3];
+        close(pipefd[0]);
+        if (dup2(pipefd[1], STDOUT_FILENO) < 0) _exit(127);
+        close(pipefd[1]);
+        child_args[0] = program_name ? program_name + 1 : (char *)program;
+        child_args[1] = (char *)"--version";
+        child_args[2] = NULL;
+        execv(program, child_args);
+        _exit(127);
+    }
+    close(pipefd[1]);
+    do { got = read(pipefd[0], text, sizeof text - 1); } while (got < 0 && errno == EINTR);
+    close(pipefd[0]);
+    while (waitpid(pid, &status, 0) < 0) if (errno != EINTR) return 0;
+    if (got <= 0 || !WIFEXITED(status) || WEXITSTATUS(status)) return 0;
+    text[got] = 0;
+    return *text >= '0' && *text <= '9' ? atoi(text) : 0;
+}
+
 static int disk_plan(const char *config_path, const char *plan_path)
 {
     struct holy_config c = {0};
     struct disk_plan p = {0};
-    const char *image, *device, *layout;
+    const char *image, *device, *layout, *swap, *key, *volume;
+    const struct fs_profile *profile = NULL;
     char *error = NULL;
-    int fd, rc = 1;
+    int fd, rc = 1, encrypted = 0;
     if (!holy_config_load(config_path, &c, &error)) {
         fprintf(stderr, "holyinstall: %s\n", error ? error : "invalid config");
         free(error); return 2;
@@ -394,10 +596,57 @@ static int disk_plan(const char *config_path, const char *plan_path)
     image = value(&c, "disk", "image");
     device = value(&c, "disk", "device");
     layout = value(&c, "disk", "layout");
-    if (!!image == !!device || !layout || strcmp(layout, "gpt-ext4")) {
+    swap = value(&c, "disk", "swap");
+    key = value(&c, "disk", "key-file");
+    volume = value(&c, "disk", "volume");
+    if (!!image == !!device || !layout || (swap && !device)) { rc = 2; goto done; }
+    if (!layout_read(layout, &profile, &encrypted)) {
+        fputs("holyinstall: unknown disk layout\n", stderr);
         rc = 2; goto done;
     }
+    p.profile = profile;
     p.block = device != NULL;
+    /* an image file has no partition device for a mapper or for a mkfs that cannot
+       write into a region, so it carries the default profile only */
+    if (!p.block && (!image_profile(profile) || encrypted)) { rc = 2; goto done; }
+    if (encrypted) {
+        struct stat st;
+        int fd_key;
+        if (!volume_valid(volume) || !key || key[0] != '/') { rc = 2; goto done; }
+        fd_key = open(key, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (fd_key < 0 || fstat(fd_key, &st) || !S_ISREG(st.st_mode) ||
+            !st.st_size || (uintmax_t)st.st_size > 65536) {
+            if (fd_key >= 0) close(fd_key);
+            fputs("holyinstall: key-file must be a readable regular file\n", stderr);
+            rc = 6; goto done;
+        }
+        close(fd_key);
+        p.key_file = strdup(key);
+        if (!p.key_file) { rc = 1; goto done; }
+        /* the plan carries the path, never the key, so a review approves which file the
+           apply reads rather than a secret */
+        p.volume = strdup(volume);
+        if (!p.volume) { rc = 1; goto done; }
+    } else if (key || volume) { rc = 2; goto done; }
+    if (swap) {
+        uintmax_t mebibytes;
+        if (!number(swap, &mebibytes) || !mebibytes || mebibytes > 65536 ||
+            mebibytes % 128) { rc = 2; goto done; }
+        p.swap_sectors = mebibytes * 2048;
+    }
+    if (p.block) {
+        size_t i;
+        p.tool_count = encrypted ? 5 : 4;
+        for (i = 0; i < p.tool_count; ++i)
+            if (!tool_hash(tool_at(&p, i), p.tools[i])) {
+                fprintf(stderr, "holyinstall: missing tool %s\n", tool_at(&p, i));
+                rc = 6; goto done;
+            }
+        if (encrypted && tool_major(luks_tool) < 2) {
+            fputs("holyinstall: cryptsetup 2 is required for luks2\n", stderr);
+            rc = 6; goto done;
+        }
+    }
     p.image = realpath(p.block ? device : image, NULL);
     if (!p.image) { perror("holyinstall: disk path"); rc = 6; goto done; }
     if (p.block && strncmp(p.image, "/dev/", 5)) { rc = 2; goto done; }
@@ -409,27 +658,28 @@ static int disk_plan(const char *config_path, const char *plan_path)
         rc = 6; goto done;
     }
     close(fd);
+    if (p.root_sectors < min_root_sectors) {
+        fputs("holyinstall: the disk leaves no room for the root filesystem\n", stderr);
+        rc = 6; goto done;
+    }
     if (!p.block && loop_status(p.image)) {
         fputs("holyinstall: image is attached to a loop device or losetup is unavailable\n", stderr);
         rc = 6; goto done;
     }
-    if (p.block) {
-        size_t i;
-        for (i = 0; i < 4; ++i)
-            if (!tool_hash(block_tools[i], p.tools[i])) {
-                fprintf(stderr, "holyinstall: missing tool %s\n", block_tools[i]);
-                rc = 6; goto done;
-            }
-    }
-    printf("disk %s %s\nidentity %" PRIuMAX ":%" PRIuMAX " size %" PRIuMAX
-           "\nGPT: BIOS 2048+2048; ESP %d+%d FAT32; root %d+%" PRIuMAX
-           " ext4\nall existing data on this %s will be destroyed\n",
-           p.block ? "device" : "image", p.image, p.device, p.inode, p.size, esp_start, esp_sectors,
-           root_start, p.root_sectors, p.block ? "device" : "image");
+    printf("disk %s %s\nidentity %" PRIuMAX ":%" PRIuMAX " size %" PRIuMAX "\n",
+           p.block ? "device" : "image", p.image, p.device, p.inode, p.size);
+    printf("GPT: BIOS 2048+2048; ESP %d+%d FAT32", esp_start, esp_sectors);
+    if (p.swap_sectors)
+        printf("; swap %d+%" PRIuMAX, root_base, p.swap_sectors);
+    printf("; root %" PRIuMAX "+%" PRIuMAX " %s", p.root_start, p.root_sectors,
+           p.profile->filesystem);
+    if (encrypted) printf(" luks2 %s", p.volume);
+    printf("\nall existing data on this %s will be destroyed\n",
+           p.block ? "device" : "image");
     if (p.block) printf("serial %s\nrdev %" PRIuMAX "\n", p.serial, p.rdev);
     rc = write_plan(plan_path, &p);
 done:
-    free(p.image); holy_config_free(&c);
+    free(p.image); free(p.key_file); free(p.volume); holy_config_free(&c);
     return rc;
 }
 
@@ -437,21 +687,30 @@ static int disk_show(const char *plan_path)
 {
     struct disk_plan p = {0};
     int rc = read_plan(plan_path, &p);
-    if (!rc)
-        printf("disk %s %s\nidentity %" PRIuMAX ":%" PRIuMAX
-               " size %" PRIuMAX "\nGPT: BIOS 2048+2048; ESP %d+%d FAT32; "
-               "root %d+%" PRIuMAX " ext4\nhead-sha256 %s\n"
-               "tail-sha256 %s\nall existing data on this %s will be destroyed\n",
-               p.block ? "device" : "image", p.image, p.device, p.inode,
-               p.size, esp_start, esp_sectors, root_start, p.root_sectors,
-               p.head, p.tail, p.block ? "device" : "image");
+    if (!rc) {
+        printf("disk %s %s\nidentity %" PRIuMAX ":%" PRIuMAX " size %" PRIuMAX "\n",
+               p.block ? "device" : "image", p.image, p.device, p.inode, p.size);
+        printf("GPT: BIOS 2048+2048; ESP %d+%d FAT32", esp_start, esp_sectors);
+        if (p.swap_sectors)
+            printf("; swap %d+%" PRIuMAX, root_base, p.swap_sectors);
+        printf("; root %" PRIuMAX "+%" PRIuMAX " %s", p.root_start, p.root_sectors,
+               p.profile->filesystem);
+        if (p.volume) printf(" luks2 %s", p.volume);
+        printf("\nhead-sha256 %s\ntail-sha256 %s\n", p.head, p.tail);
+        printf("all existing data on this %s will be destroyed\n",
+               p.block ? "device" : "image");
+    }
     if (!rc && p.block) {
         size_t i;
         printf("serial %s\nrdev %" PRIuMAX "\n", p.serial, p.rdev);
-        for (i = 0; i < 4; ++i)
-            printf("%s %s\n", block_tool_keys[i], p.tools[i]);
+        if (p.swap_sectors) printf("swap-sectors %" PRIuMAX "\n", p.swap_sectors);
+        for (i = 0; i < p.tool_count; ++i)
+            printf("%s %s\n", tool_key_at(&p, i), p.tools[i]);
     }
-    free(p.image);
+    if (!rc && p.volume) {
+        printf("encryption luks2\nvolume %s\nkey-file %s\n", p.volume, p.key_file);
+    }
+    free(p.image); free(p.volume); free(p.key_file);
     return rc;
 }
 
@@ -528,17 +787,46 @@ static int wait_partition(const char *path, dev_t disk_device,
     return 0;
 }
 
+/* the partition table a plan fixes: boot, esp, any swap and the root, each in the
+   sectors the plan recorded */
+static char *partition_script(const struct disk_plan *p)
+{
+    char head[] = "label: gpt\nunit: sectors\nfirst-lba: 2048\n"
+                  "start=2048, size=2048, type=21686148-6449-6E6F-744E-656564454649\n"
+                  "start=4096, size=524288, type=U\n";
+    char swap[64] = "", tail[128];
+    char *script;
+    int length;
+    if (p->swap_sectors)
+        snprintf(swap, sizeof swap, "start=%d, size=%" PRIuMAX ", type=swap\n",
+                 root_base, p->swap_sectors);
+    snprintf(tail, sizeof tail, "start=%" PRIuMAX ", size=%" PRIuMAX ", type=L\n",
+             p->root_start, p->root_sectors);
+    length = snprintf(NULL, 0, "%s%s%s", head, swap, tail);
+    if (length < 0) return NULL;
+    script = malloc((size_t)length + 1);
+    if (!script) return NULL;
+    snprintf(script, (size_t)length + 1, "%s%s%s", head, swap, tail);
+    return script;
+}
+
 static int disk_apply_block(const char *plan_path, const char *confirm,
                             const struct disk_plan *expected)
 {
     struct disk_plan actual = {0};
-    char *journal_path = NULL, *script = NULL, *esp = NULL, *root = NULL;
-    int fd = -1, rc = 1, n;
+    char *journal_path = NULL, *script = NULL, *esp = NULL, *swap = NULL, *root = NULL;
+    char *mapper = NULL, *device;
+    int fd = -1, rc = 1;
     size_t i;
     char *const partition[] = {"sfdisk", "--no-reread", "--no-tell-kernel", "/proc/self/fd/9", NULL};
     char *const verify[] = {"sfdisk", "--verify", "/proc/self/fd/9", NULL};
     char *fat[] = {"mkfs.fat", "-F", "32", "-s", "4", "-n", "HOLYBOOT", NULL, NULL};
-    char *ext[] = {"mke2fs", "-q", "-t", "ext4", "-F", "-b", "4096", NULL, NULL};
+    char *root_format[8];
+    char *luks_format[] = {"cryptsetup", "luksFormat", "--type", "luks2", "--batch-mode",
+                           "--key-file", NULL, "--label", NULL, NULL};
+    char *luks_open[] = {"cryptsetup", "open", "--key-file", NULL, NULL, NULL};
+    char *luks_close[] = {"cryptsetup", "close", NULL};
+    char *swap_format[] = {"mkswap", NULL, NULL};
     char *const boot[] = {"limine", "bios-install", "/proc/self/fd/9", "1", NULL};
     if (strcmp(confirm, expected->image)) {
         fputs("holyinstall: confirmation must match device path\n", stderr);
@@ -556,10 +844,11 @@ static int disk_apply_block(const char *plan_path, const char *confirm,
         fputs("holyinstall: device changed since plan\n", stderr);
         rc = 3; goto done;
     }
-    for (i = 0; i < 4; ++i) {
+    for (i = 0; i < expected->tool_count; ++i) {
         char hash[65];
-        if (!tool_hash(block_tools[i], hash) || strcmp(hash, expected->tools[i])) {
-            fprintf(stderr, "holyinstall: tool changed since plan: %s\n", block_tools[i]);
+        if (!tool_hash(tool_at(expected, i), hash) || strcmp(hash, expected->tools[i])) {
+            fprintf(stderr, "holyinstall: tool changed since plan: %s\n",
+                    tool_at(expected, i));
             rc = 3; goto done;
         }
     }
@@ -571,50 +860,78 @@ static int disk_apply_block(const char *plan_path, const char *confirm,
         rc = 5; goto done;
     }
     esp = partition_path(expected->image, 2);
-    root = partition_path(expected->image, 3);
+    root = partition_path(expected->image, expected->swap_sectors ? 4 : 3);
     if (!esp || !root) goto done;
+    if (expected->swap_sectors && !(swap = partition_path(expected->image, 3))) goto done;
+    /* the root filesystem is written to the mapper when the plan names one, so a
+       luks2 container never receives a raw mkfs */
+    device = root;
+    if (expected->volume) {
+        int length = snprintf(NULL, 0, "/dev/mapper/%s", expected->volume);
+        if (length < 0) goto done;
+        mapper = malloc((size_t)length + 1);
+        if (!mapper) goto done;
+        snprintf(mapper, (size_t)length + 1, "/dev/mapper/%s", expected->volume);
+        device = mapper;
+    }
+    for (i = 0; i < expected->profile->arg_count; ++i)
+        root_format[i] = (char *)expected->profile->args[i];
+    root_format[expected->profile->arg_count] = device;
+    root_format[expected->profile->arg_count + 1] = NULL;
     fat[7] = esp;
-    ext[7] = root;
-    n = snprintf(NULL, 0,
-        "label: gpt\nunit: sectors\nfirst-lba: 2048\n"
-        "start=2048, size=2048, type=21686148-6449-6E6F-744E-656564454649\n"
-        "start=4096, size=524288, type=U\n"
-        "start=528384, size=%" PRIuMAX ", type=L\n", expected->root_sectors);
-    if (n < 0) goto done;
-    script = malloc((size_t)n + 1);
+    swap_format[1] = swap;
+    script = partition_script(expected);
     if (!script) goto done;
-    snprintf(script, (size_t)n + 1,
-        "label: gpt\nunit: sectors\nfirst-lba: 2048\n"
-        "start=2048, size=2048, type=21686148-6449-6E6F-744E-656564454649\n"
-        "start=4096, size=524288, type=U\n"
-        "start=528384, size=%" PRIuMAX ", type=L\n", expected->root_sectors);
     if (!journal(journal_path, "prepared", 1)) goto done;
     rc = 5;
     if (!journal(journal_path, "partitioning", 0) ||
         child(block_tools[0], partition, script, fd) ||
         fsync(fd) || ioctl(fd, BLKRRPART) ||
         child(block_tools[0], verify, NULL, fd) ||
-        !wait_partition(esp, (dev_t)expected->rdev, 2, esp_start, esp_sectors) ||
-        !wait_partition(root, (dev_t)expected->rdev, 3, root_start, expected->root_sectors) ||
+        !wait_partition(esp, (dev_t)expected->rdev, 2, esp_start, esp_sectors)) goto done;
+    if (expected->swap_sectors &&
+        (!wait_partition(swap, (dev_t)expected->rdev, 3, root_base, expected->swap_sectors) ||
+         child("/usr/sbin/mkswap", swap_format, NULL, -1))) goto done;
+    if (!wait_partition(root, (dev_t)expected->rdev, expected->swap_sectors ? 4 : 3,
+                       expected->root_start, expected->root_sectors) ||
         !journal(journal_path, "partitioned", 0)) goto done;
     close(fd);
     fd = -1;
     if (!journal(journal_path, "formatting-esp", 0) ||
         child(block_tools[1], fat, NULL, -1) ||
-        !journal(journal_path, "formatted-esp", 0) ||
-        !journal(journal_path, "formatting-root", 0) ||
-        child(block_tools[2], ext, NULL, -1) ||
+        !journal(journal_path, "formatted-esp", 0)) goto done;
+    if (expected->volume) {
+        luks_format[6] = expected->key_file;
+        luks_format[8] = expected->volume;
+        luks_open[3] = expected->key_file;
+        luks_open[4] = root;
+        luks_open[5] = expected->volume;
+        luks_close[2] = expected->volume;
+        if (!journal(journal_path, "formatting-luks", 0) ||
+            child(luks_tool, luks_format, NULL, -1) ||
+            !journal(journal_path, "formatted-luks", 0)) goto done;
+        if (!journal(journal_path, "opening-luks", 0) ||
+            child(luks_tool, luks_open, NULL, -1) ||
+            !journal(journal_path, "opened-luks", 0)) goto done;
+    }
+    if (!journal(journal_path, "formatting-root", 0) ||
+        child(expected->profile->tool, root_format, NULL, -1) ||
         !journal(journal_path, "formatted-root", 0)) goto done;
+    if (expected->volume &&
+        (!journal(journal_path, "closing-luks", 0) ||
+         child(luks_tool, luks_close, NULL, -1) ||
+         !journal(journal_path, "closed-luks", 0))) goto done;
     fd = open(expected->image, O_RDWR | O_EXCL | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0 || !journal(journal_path, "installing-bios", 0) ||
-        child(block_tools[3], boot, NULL, fd) || fsync(fd) ||
+        child(block_tools[2], boot, NULL, fd) || fsync(fd) ||
         !journal(journal_path, "committed", 0)) goto done;
-    puts("block device prepared with GPT, FAT32, ext4 and Limine BIOS stage");
+    printf("block device prepared with GPT, FAT32, %s%s and the Limine BIOS stage\n",
+           expected->profile->filesystem, expected->volume ? " in a luks2 container" : "");
     rc = 0;
 done:
     if (rc == 5) fputs("holyinstall: device mutation may be partial; inspect journal and device\n", stderr);
     if (fd >= 0) close(fd);
-    free(journal_path); free(script); free(esp); free(root);
+    free(journal_path); free(script); free(esp); free(swap); free(root); free(mapper);
     return rc;
 }
 
@@ -623,7 +940,7 @@ static int disk_apply(const char *plan_path, const char *confirm)
     struct disk_plan p = {0}, actual = {0};
     char *journal_path = NULL, *script = NULL;
     char root_blocks[32], offset[64];
-    int fd = -1, rc = read_plan(plan_path, &p), n;
+    int fd = -1, rc = read_plan(plan_path, &p);
     char *const partition[] = {"sfdisk", "--no-reread", "--no-tell-kernel", "/proc/self/fd/9", NULL};
     char *const verify[] = {"sfdisk", "--verify", "/proc/self/fd/9", NULL};
     char *const fat[] = {"mkfs.fat", "-F", "32", "-s", "4", "--offset=4096", "-n", "HOLYBOOT", "/proc/self/fd/9", "262144", NULL};
@@ -653,20 +970,10 @@ static int disk_apply(const char *plan_path, const char *confirm)
         fputs("holyinstall: sfdisk, mkfs.fat and mke2fs are required\n", stderr);
         rc = 6; goto done;
     }
-    n = snprintf(NULL, 0,
-        "label: gpt\nunit: sectors\nfirst-lba: 2048\n"
-        "start=2048, size=2048, type=21686148-6449-6E6F-744E-656564454649\n"
-        "start=4096, size=524288, type=U\n"
-        "start=528384, size=%" PRIuMAX ", type=L\n", p.root_sectors);
-    script = malloc((size_t)n + 1);
+    script = partition_script(&p);
     if (!script) { rc = 1; goto done; }
-    snprintf(script, (size_t)n + 1,
-        "label: gpt\nunit: sectors\nfirst-lba: 2048\n"
-        "start=2048, size=2048, type=21686148-6449-6E6F-744E-656564454649\n"
-        "start=4096, size=524288, type=U\n"
-        "start=528384, size=%" PRIuMAX ", type=L\n", p.root_sectors);
     snprintf(root_blocks, sizeof root_blocks, "%" PRIuMAX, p.root_sectors / 8);
-    snprintf(offset, sizeof offset, "offset=%" PRIuMAX, (uintmax_t)root_start * sector);
+    snprintf(offset, sizeof offset, "offset=%" PRIuMAX, (uintmax_t)p.root_start * sector);
     if (!journal(journal_path, "prepared", 1)) { rc = 1; goto done; }
     rc = 5;
     if (!journal(journal_path, "partitioning", 0) ||
@@ -809,7 +1116,7 @@ static int final_read(const char *path, struct final_plan *p)
          final_read_file(&c, "limine", &p->limine) &&
          number(value(&c, "disk-finalize-plan", "root-sectors"), &p->root_sectors);
     if (ok) ok = p->disk.size >= (1ULL << 30) && p->disk.size % sector == 0 &&
-        p->root_sectors == ((p->disk.size / sector - root_start - 34) / 2048) * 2048 &&
+        p->root_sectors == ((p->disk.size / sector - root_base - 34) / 2048) * 2048 &&
         p->esp.size == (uintmax_t)esp_sectors * sector &&
         p->root.size == p->root_sectors * sector &&
         p->limine.size > 0 && !strcmp(p->limine.path, "/usr/bin/limine");
@@ -859,7 +1166,7 @@ static uint64_t little64(const unsigned char *p)
 static int final_layout(int fd, uintmax_t root_sectors)
 {
     unsigned char header[512], entries[384];
-    uint64_t start[3] = {2048, esp_start, root_start};
+    uint64_t start[3] = {2048, esp_start, root_base};
     uint64_t count[3] = {2048, esp_sectors, root_sectors};
     size_t i;
     if (pread(fd, header, sizeof header, sector) != (ssize_t)sizeof header ||
@@ -883,6 +1190,10 @@ static int final_plan_make(const char *disk_plan_path, const char *esp,
     int fd = -1, rc = read_plan(disk_plan_path, &base);
     char *const verify[] = {"sfdisk", "--verify", "/proc/self/fd/9", NULL};
     if (rc) goto done;
+    if (base.volume) {
+        fputs("holyinstall: an encrypted root is not finalized by an image copy\n", stderr);
+        rc = 3; goto done;
+    }
     journal_path = malloc(strlen(disk_plan_path) + 9);
     if (!journal_path) { rc = 1; goto done; }
     sprintf(journal_path, "%s.journal", disk_plan_path);
@@ -923,7 +1234,8 @@ static int final_plan_make(const char *disk_plan_path, const char *esp,
 done:
     if (journal_file) fclose(journal_file);
     if (fd >= 0) close(fd);
-    free(journal_path); free(base.image); final_free(&p);
+    free(journal_path); free(base.image); free(base.volume); free(base.key_file);
+    final_free(&p);
     return rc;
 }
 
@@ -964,8 +1276,8 @@ static int final_apply(const char *path, const char *confirm)
         fsync(disk) || !hash_span(disk, (uintmax_t)esp_start * sector, p.esp.size, check) ||
         strcmp(check, p.esp.digest) || !journal(journal_path, "copied-esp", 0)) goto done;
     if (!journal(journal_path, "copying-root", 0) ||
-        !final_copy(root, disk, (uintmax_t)root_start * sector, p.root.size) ||
-        fsync(disk) || !hash_span(disk, (uintmax_t)root_start * sector, p.root.size, check) ||
+        !final_copy(root, disk, (uintmax_t)root_base * sector, p.root.size) ||
+        fsync(disk) || !hash_span(disk, (uintmax_t)root_base * sector, p.root.size, check) ||
         strcmp(check, p.root.digest) || !journal(journal_path, "copied-root", 0)) goto done;
     if (!journal(journal_path, "installing-limine", 0) ||
         child("/usr/bin/limine", install, NULL, disk) ||

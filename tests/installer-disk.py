@@ -41,6 +41,10 @@ def main(binary):
             raise SystemExit(f"required tool missing: {tool}")
     with tempfile.TemporaryDirectory(prefix="holy-installer-disk-") as directory:
         image = os.path.join(directory, "disk image.img")
+        key = os.path.join(directory, "luks.key")
+        missing_key = os.path.join(directory, "absent.key")
+        with open(key, "w") as stream:
+            stream.write("a review fixture key\n")
         config = os.path.join(directory, "config")
         plan = os.path.join(directory, "plan")
         with open(image, "wb") as stream:
@@ -150,7 +154,92 @@ def main(binary):
         run("/usr/sbin/sfdisk", "--verify", image)
         run(binary, "disk", "finalize-apply", "--plan", final_plan,
             "--confirm", image, code=3)
-        print("installer disk image: plan, identity, journal, GPT, FAT32, ext4, finalize passed")
+
+        # a profile, a swap and a luks2 container are the caller's decisions, and each
+        # one is refused before a plan exists when it does not fit the target
+        with open(config, "w") as stream:
+            stream.write(f'[disk]\nimage "{image}"\nlayout gpt-xfs\n')
+        run(binary, "disk", "plan", "--config", config, "--output", plan + "2", code=2)
+        with open(config, "w") as stream:
+            stream.write(f'[disk]\nimage "{image}"\nlayout gpt-ext4\nswap 8192\n')
+        run(binary, "disk", "plan", "--config", config, "--output", plan + "2", code=2)
+        with open(config, "w") as stream:
+            stream.write(f'[disk]\nimage "{image}"\nlayout gpt-ext4-luks2\n'
+                         f'volume root\nkey-file "{key}"\n')
+        run(binary, "disk", "plan", "--config", config, "--output", plan + "2", code=2)
+        with open(config, "w") as stream:
+            stream.write(f'[disk]\nimage "{image}"\nlayout gpt-ext4\nvolume root\n')
+        run(binary, "disk", "plan", "--config", config, "--output", plan + "2", code=2)
+        with open(config, "w") as stream:
+            stream.write(f'[disk]\nimage "{image}"\nlayout gpt-ext4\nswap 100\n')
+        run(binary, "disk", "plan", "--config", config, "--output", plan + "2", code=2)
+        with open(config, "w") as stream:
+            stream.write(f'[disk]\ndevice "/dev/holy-missing"\nlayout gpt-ext4\n')
+        run(binary, "disk", "plan", "--config", config, "--output", plan + "2", code=6)
+        with open(config, "w") as stream:
+            stream.write(f'[disk]\ndevice "/dev/holy-missing"\nlayout gpt-ext4-luks2\n'
+                         f'volume root\nkey-file "{missing_key}"\n')
+        run(binary, "disk", "plan", "--config", config, "--output", plan + "2", code=6)
+        with open(config, "w") as stream:
+            stream.write(f'[disk]\ndevice "/dev/holy-missing"\nlayout gpt-ext4-luks2\n'
+                         f'volume "bad name"\nkey-file "{key}"\n')
+        run(binary, "disk", "plan", "--config", config, "--output", plan + "2", code=2)
+        assert not os.path.exists(plan + "2")
+
+        # the profile a plan names is what show prints and what apply would run
+        block_plan = os.path.join(directory, "block-plan")
+        block_size = 8 << 30
+        block_root = ((block_size // 512 - 530432 - 34) // 2048) * 2048
+        def block_document(swap=True, encryption=False):
+            return ("[disk-plan]\nformat 3\nimage \"/dev/sdz\"\ndevice 1\ninode 2\n"
+                    f"size {block_size}\nroot-sectors {block_root}\n"
+                    + (f"swap-sectors {2048}\n" if swap else "")
+                    + "head-sha256 " + "0" * 64 + "\ntail-sha256 " + "1" * 64 + "\n"
+                    "kind block\nserial test-disk\nrdev 2048\nfilesystem f2fs\n"
+                    + ("encryption luks2\nvolume root\nkey-file \"/run/holy/luks.key\"\n"
+                       "cryptsetup-sha256 " + "2" * 64 + "\n" if encryption else "")
+                    + "sfdisk-sha256 " + "3" * 64 + "\n"
+                    "mkfs-fat-sha256 " + "4" * 64 + "\nlimine-sha256 " + "5" * 64 + "\n"
+                    "mkfs-f2fs-sha256 " + "6" * 64 + "\n")
+        with open(block_plan, "w") as stream:
+            stream.write(block_document())
+        shown = run(binary, "disk", "show", "--plan", block_plan)
+        assert "swap 528384+2048" in shown
+        assert f"root 530432+{block_root} f2fs\n" in shown
+        assert "mkfs-f2fs-sha256 " + "6" * 64 + "\n" in shown
+        assert "cryptsetup-sha256" not in shown
+        # a plan that dropped its swap line is not a shorter plan
+        with open(block_plan + "2", "w") as stream:
+            stream.write(block_document(swap=False))
+        run(binary, "disk", "show", "--plan", block_plan + "2", code=2)
+        # a profile the plan does not name has no tool hash to check
+        with open(block_plan + "3", "w") as stream:
+            stream.write(block_document().replace("filesystem f2fs", "filesystem zfs"))
+        run(binary, "disk", "show", "--plan", block_plan + "3", code=2)
+        # an encrypted plan names the volume and the key file, never the key
+        with open(block_plan + "4", "w") as stream:
+            stream.write(block_document(encryption=True))
+        shown = run(binary, "disk", "show", "--plan", block_plan + "4")
+        assert f"root 530432+{block_root} f2fs luks2 root" in shown
+        assert "key-file /run/holy/luks.key" in shown
+        assert "cryptsetup-sha256 " + "2" * 64 + "\n" in shown
+        with open(block_plan + "5", "w") as stream:
+            stream.write(block_document(encryption=True).replace("encryption luks2",
+                                                                 "encryption luks1"))
+        run(binary, "disk", "show", "--plan", block_plan + "5", code=2)
+        with open(block_plan + "6", "w") as stream:
+            stream.write(block_document(encryption=True).replace(
+                "key-file \"/run/holy/luks.key\"", "key-file relative.key"))
+        run(binary, "disk", "show", "--plan", block_plan + "6", code=2)
+        # an image plan carries no profile, swap or container
+        with open(block_plan + "7", "w") as stream:
+            stream.write(block_document().replace("/dev/sdz", image).replace(
+                "kind block\nserial test-disk\nrdev 2048\n", "").replace(
+                "filesystem f2fs\n", ""))
+        run(binary, "disk", "show", "--plan", block_plan + "7", code=2)
+        run(binary, "disk", "apply", "--plan", block_plan + "4", "--confirm", "/dev/sdz",
+            code=6)
+        print("installer disk: image, GPT, FAT32, ext4, finalize, profile, swap, luks2 passed")
 
 
 if __name__ == "__main__":

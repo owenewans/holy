@@ -1192,6 +1192,10 @@ done:
 struct menu_state {
     char *root;
     char *disk_image;
+    char *disk_layout;      /* the filesystem profile the disk stage will format */
+    char *disk_swap;        /* the swap size in mebibytes, or unset */
+    char *disk_key_file;    /* the luks2 key file, never its contents */
+    char *disk_volume;      /* the luks2 label and mapper name */
     char **accounts;            /* the account lines the plan carries */
     size_t account_count;
     char *password_file;
@@ -1261,6 +1265,10 @@ static void free_menu(struct menu_state *menu)
     free(menu->sources);
     free(menu->root);
     free(menu->disk_image);
+    free(menu->disk_layout);
+    free(menu->disk_swap);
+    free(menu->disk_key_file);
+    free(menu->disk_volume);
 }
 
 static int menu_load(const char *path, struct menu_state *menu)
@@ -1281,12 +1289,17 @@ static int menu_load(const char *path, struct menu_state *menu)
             holy_config_free(&config); return 2;
         }
         if (!strcmp(e->section, "disk")) {
-            if (!strcmp(e->key, "image")) {
-                menu->disk_image = strdup(e->values[0]);
-                if (!menu->disk_image) { holy_config_free(&config); return 1; }
-            } else if (strcmp(e->key, "layout") || strcmp(e->values[0], "gpt-ext4")) {
+            char **target = !strcmp(e->key, "image") ? &menu->disk_image :
+                            !strcmp(e->key, "layout") ? &menu->disk_layout :
+                            !strcmp(e->key, "swap") ? &menu->disk_swap :
+                            !strcmp(e->key, "key-file") ? &menu->disk_key_file :
+                            !strcmp(e->key, "device") ? &menu->disk_image : NULL;
+            if (!target || *target || e->count != 1 ||
+                (!strcmp(e->key, "key-file") && e->values[0][0] != '/')) {
                 holy_config_free(&config); return 2;
             }
+            *target = strdup(e->values[0]);
+            if (!*target) { holy_config_free(&config); return 1; }
             continue;
         }
         if (!strcmp(e->key, "root")) {
@@ -1358,12 +1371,21 @@ static int menu_load(const char *path, struct menu_state *menu)
             ++menu->count;
         }
     }
-    if (menu->disk_image && !field(&config, "disk", "layout")) {
-        fputs("holyinstall: [disk] layout is required\n", stderr);
+    if (menu->disk_image && !menu->disk_layout) menu->disk_layout = strdup("gpt-ext4");
+    if (menu->disk_image && !menu->disk_layout) { holy_config_free(&config); return 1; }
+    if (menu->disk_image && (menu->disk_swap || menu->disk_key_file || menu->disk_volume) &&
+        strncmp(menu->disk_image, "/dev/", 5)) {
+        /* an image file carries no swap device and no mapper */
+        fputs("holyinstall: swap and encryption need a block device\n", stderr);
         holy_config_free(&config); return 2;
     }
-    if (!menu->disk_image && field(&config, "disk", "layout")) {
-        fputs("holyinstall: [disk] image is required\n", stderr);
+    if (!!menu->disk_key_file != !!menu->disk_volume) {
+        fputs("holyinstall: encryption needs a volume and a key file\n", stderr);
+        holy_config_free(&config); return 2;
+    }
+    if (!menu->disk_image && (menu->disk_layout || menu->disk_swap ||
+                              menu->disk_key_file || menu->disk_volume)) {
+        fputs("holyinstall: [disk] needs an image or a device\n", stderr);
         holy_config_free(&config); return 2;
     }
     for (i = 0; i < config.count; ++i) {
@@ -1453,7 +1475,12 @@ static int menu_write(FILE *stream, const struct menu_state *menu)
         if (fprintf(stream, "source %.64s %s\n", menu->sources[i], menu->sources[i] + 65) < 0) return 0;
     if (menu->disk_image && (fputs("[disk]\nimage ", stream) == EOF ||
                              !quote(stream, menu->disk_image) ||
-                             fputs("\nlayout gpt-ext4\n", stream) == EOF)) return 0;
+                             fprintf(stream, "\nlayout %s\n", menu->disk_layout) < 0)) return 0;
+    if (menu->disk_swap && fprintf(stream, "swap %s\n", menu->disk_swap) < 0) return 0;
+    if (menu->disk_volume && fprintf(stream, "volume %s\n", menu->disk_volume) < 0) return 0;
+    if (menu->disk_key_file && (fputs("key-file ", stream) == EOF ||
+                                !quote(stream, menu->disk_key_file) ||
+                                fputc('\n', stream) == EOF)) return 0;
     return 1;
 }
 
@@ -1738,12 +1765,17 @@ static int menu_run(const char *config_path, const char *plan_path,
         char *answer = NULL;
         fputs("\nHoly installer: prepared root package stage\n1 Target root: ", stdout);
         menu_path(menu.root ? menu.root : "unset");
-        printf("\n2 Packages: %zu\nDisk image: ", menu.count);
+        printf("\n2 Packages: %zu\nDisk: ", menu.count);
         menu_path(menu.disk_image ? menu.disk_image : "unset");
-        printf("\nConfig: %s\n"
+        printf(" profile %s swap %s encryption %s\n",
+               menu.disk_layout ? menu.disk_layout : "unset",
+               menu.disk_swap ? menu.disk_swap : "none",
+               menu.disk_volume ? menu.disk_volume : "none");
+        printf("Config: %s\n"
                "3 Preview packages\n4 Save config\n5 Prepare package plan\n"
                "6 Install prepared packages\n7 Abort\n"
-               "8 Select disk image\n9 Prepare disk plan\n10 Apply disk plan\n",
+               "8 Select disk image\n9 Prepare disk plan\n10 Apply disk plan\n"
+               "11 Disk filesystem, swap and encryption\n",
                dirty ? "modified" : "saved");
         if (!menu_line("Choice > ", &answer)) { free(answer); rc = 0; break; }
         if (!strcmp(answer, "1")) {
@@ -1825,6 +1857,54 @@ static int menu_run(const char *config_path, const char *plan_path,
             free(menu.disk_image);
             menu.disk_image = *image ? image : NULL;
             if (!*image) free(image);
+            /* a selected disk carries a profile, and the default one is ext4 */
+            if (menu.disk_image && !menu.disk_layout) menu.disk_layout = strdup("gpt-ext4");
+            if (menu.disk_image && !menu.disk_layout) { rc = 1; break; }
+            dirty = 1;
+            prepared = 0;
+            continue;
+        }
+        if (!strcmp(answer, "11")) {
+            char *line = NULL;
+            size_t index;
+            free(answer);
+            for (index = 0; holy_disk_layout_word(index); ++index)
+                printf("%zu %s\n", index + 1, holy_disk_layout_word(index));
+            printf("Number of the disk layout, 0 to keep > ");
+            fflush(stdout);
+            if (!menu_line("", &line)) { free(line); rc = 0; break; }
+            index = (size_t)atoi(line);
+            free(line);
+            if (index) {
+                if (index > 8) { puts("Choose 1 through 8"); continue; }
+                free(menu.disk_layout);
+                menu.disk_layout = strdup(holy_disk_layout_word(index - 1));
+                if (!menu.disk_layout) { rc = 1; break; }
+                if (strstr(menu.disk_layout, "luks2") && !menu.disk_key_file) {
+                    puts("An encrypted layout needs a key file, set with option 11 again");
+                    menu.disk_layout = strdup("gpt-ext4");
+                    if (!menu.disk_layout) { rc = 1; break; }
+                }
+                dirty = 1;
+                prepared = 0;
+            }
+            if (!menu_line("Swap in mebibytes, 0 for none > ", &line)) { free(line); rc = 0; break; }
+            free(menu.disk_swap);
+            menu.disk_swap = *line && strcmp(line, "0") ? line : NULL;
+            if (!menu.disk_swap && *line) free(line);
+            dirty = 1;
+            prepared = 0;
+            if (!menu_line("Luks2 volume name, blank for none > ", &line)) { free(line); rc = 0; break; }
+            free(menu.disk_volume);
+            menu.disk_volume = *line ? line : NULL;
+            if (!*line) free(line);
+            dirty = 1;
+            prepared = 0;
+            if (!menu_line("Luks2 key file path, blank for none > ", &line)) { free(line); rc = 0; break; }
+            if (*line && line[0] != '/') { puts("The key file path is absolute"); free(line); continue; }
+            free(menu.disk_key_file);
+            menu.disk_key_file = *line ? line : NULL;
+            if (!*line) free(line);
             dirty = 1;
             prepared = 0;
             continue;
@@ -1843,7 +1923,7 @@ static int menu_run(const char *config_path, const char *plan_path,
             else puts("Disk image prepared");
             continue;
         }
-        puts("Choose 1 through 10, or 7 to abort");
+        puts("Choose 1 through 11, or 7 to abort");
         free(answer);
     }
 done:

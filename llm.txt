@@ -793,7 +793,7 @@ SEE ALSO
      holy-image(7), holypkg(8)
 
 Holy				 September 2026			    HOLY-INIT(8)
-holyinstall.8 source=holy version=development sha256=303c2c7d8cd13b8ea2856f5d9e02671ff5229dab1f8c812681e79fc3a8af108b
+holyinstall.8 source=holy version=development sha256=e99643befe66292107beadc782f64a8abd3323e83aae0f404cf0f11010b7184b
 HOLYINSTALL(8)		     System Manager's Manual		  HOLYINSTALL(8)
 
 NAME
@@ -833,12 +833,15 @@ DESCRIPTION
      menu  accepts  [install]  and  [disk];  it	 rejects other sections to avoid
      silently discarding them on save.
 
-     The menu saves [disk] in the same config as [install]. It creates	a  sepa-
-     rate disk plan at PACKAGE_PLAN.disk, shows the exact image path, GPT geome-
-     try  and  the  plan's first and last MiB hashes. It asks for that full path
-     before formatting. Disk selection may be left unset while working on  pack-
-     ages. Disk planning and package installation remain separate steps; select-
-     ing an image does not mount it as the package target.
+     The menu saves [disk] in the same config as [install]. Its disk  entry  se-
+     lects  a  path,  its filesystem entry picks the layout word, a swap size in
+     mebibytes, the luks2 volume name and the key file path,  and  an  encrypted
+     layout  without  a	 key file is refused. It creates a separate disk plan at
+     PACKAGE_PLAN.disk, shows the exact image path, GPT geometry and the  plan's
+     first  and	 last  MiB hashes. It asks for that full path before formatting.
+     Disk selection may be left unset while working on packages.  Disk	planning
+     and package installation remain separate steps; selecting an image does not
+     mount it as the package target.
 
      Planning  runs  holypkg  db  plan-set  read-only.	It  prints  the selected
      providers and requirements, then creates a new plan file  with  mode  0600.
@@ -962,63 +965,99 @@ DESCRIPTION
 
 DISK PREPARATION
      The  disk command accepts a regular file or a block disk of at least 1 GiB.
-     The supported layout is GPT with a 1 MiB BIOS boot	 partition,  a	256  MiB
-     FAT32  ESP and an ext4 root partition. Image mode uses sfdisk, mkfs.fat and
-     mke2fs, and requires losetup to confirm that the image is not attached to a
-     loop device.  A minimal image config is:
+     Every layout is GPT with a 1 MiB BIOS boot partition, a 256 MiB FAT32  ESP,
+     an	 optional swap partition and a root partition. The layout word names the
+     root filesystem and whether the root is a LUKS2 container:	 gpt-ext4,  gpt-
+     btrfs,  gpt-xfs,  gpt-f2fs	 and the luks2 form of each. An image file takes
+     gpt-ext4 only, since a mapper needs a  partition  device  and  only  mke2fs
+     writes into a region of a file. A minimal image config is:
 
 	    [disk]
 	    image "/tmp/holy.img"
 	    layout gpt-ext4
 
-     Create the image before  planning,	 for  example  with  truncate.	Planning
-     prints  the  exact	 image	path,  device/inode identity, size and partition
+     A	block  device  config  names  the  profile,  an	 optional  swap	 size in
+     mebibytes, a multiple of 128 that leaves the root at least 128 MiB, and for
+     a luks2 root the volume label and an absolute key-file path:
+
+	    [disk]
+	    device "/dev/sda"
+	    layout gpt-btrfs-luks2
+	    swap 8192
+	    volume holy-root
+	    key-file "/run/holy/luks.key"
+
+     The key file is a regular file of at most 64  KiB.	 Planning  opens  it  to
+     prove  it is readable and records its path, never its contents, so a review
+     approves which file the apply reads rather than a secret. A key file  or  a
+     volume  without  a	 luks2 layout, a luks2 layout without both, a swap on an
+     image and a volume name outside the mapper alphabet are  refused  before  a
+     plan exists.
+
+     Each  tool is checked before the plan is written: the partitioner, the boot
+     filesystem, the mkfs of the chosen profile, the boot stage, and  cryptsetup
+     for  a  luks2  root,  whose reported major version must be 2. Plan format 3
+     records the filesystem, any swap sectors,	the  encryption	 lines	and  the
+     SHA-256 of every one of those tools. Apply rechecks each hash and refuses a
+     changed tool, a changed device or an existing journal.
+
+     Apply  formats  the  root	inside	the mapper when the plan names one, so a
+     luks2 container never receives a raw mkfs, and closes the mapper  once  the
+     filesystem is written. The journal records formatting-esp, formatting-luks,
+     opening-luks, formatting-root and closing-luks beside the partition stages,
+     so an interrupted run states how far it reached. An existing journal blocks
+     another apply: a resumed install needs a new plan, which is a new decision.
+
+     Create  the  image	 before	 planning,  for	 example with truncate. Planning
+     prints the exact image path,  device/inode	 identity,  size  and  partition
      geometry. It hashes the first and last MiB and writes a new mode-0600 plan.
      Apply requires --confirm to equal the canonical image path in that plan. It
-     checks the identity and both hashes again, then  records  prepared,  parti-
-     tioning  and  formatting stages in PLAN.journal. An existing journal blocks
+     checks  the  identity  and both hashes again, then records prepared, parti-
+     tioning and formatting stages in PLAN.journal. An existing	 journal  blocks
      another apply.  The show command prints the saved geometry without changing
-     the image.	 After an interrupted stage, inspect the image and  journal  be-
+     the  image.   After an interrupted stage, inspect the image and journal be-
      fore starting a new plan. The command does not silently repeat a format op-
      eration.
 
-     For  a  block disk, use device instead of image in [disk]. Planning records
-     the disk node, block-device  number,  size,  serial,  first  and  last  MiB
-     hashes,  and  SHA-256  of	the  four  static  tools  used by apply: sfdisk,
-     mkfs.fat, mke2fs and Limine. Apply requires the exact device path as --con-
-     firm and rechecks those inputs before mutation. It holds an exclusive  disk
-     descriptor,  writes the GPT, asks the kernel to reread the partition table,
-     checks the partition geometry, formats FAT32 and  ext4,  and  installs  the
-     Limine  BIOS stage. The journal records each stage. This operation destroys
-     existing partitions and filesystems. It does not mount the new root or  in-
-     stall packages.
+     For a block disk, use device instead of image in [disk].  Planning	 records
+     the disk node, block-device number, size, serial and the first and last MiB
+     hashes,  next  to the tool hashes named above. Apply requires the exact de-
+     vice path as --confirm and rechecks those inputs before mutation. It  holds
+     an exclusive disk descriptor, writes the GPT, asks the kernel to reread the
+     partition	table,	checks	the  partition geometry, formats FAT32, the swap
+     when the plan names one, the root filesystem the plan names and the  Limine
+     BIOS  stage. The journal records each stage. This operation destroys exist-
+     ing partitions and filesystems. It does not mount the new root  or	 install
+     packages.
 
      Disk  preparation	destroys  existing image contents. It does not mount the
      partitions or generate an initramfs. The finalize-plan command  requires  a
      committed	disk  preparation  journal, a valid GPT, an exact-size ESP image
-     and an exact-size ext4 root image. It records the full SHA-256, device, in-
-     ode and size of the disk, both input images and /usr/bin/limine  in  a  new
-     mode-0600	plan.  Review  that  plan before applying it. Finalize-apply re-
-     quires the exact disk path as --confirm  and  rechecks  all  inputs  before
-     changing the disk. It copies the two images into their partitions, verifies
-     the written bytes, installs the Limine BIOS stage and verifies GPT. The ad-
-     jacent  journal records each stage. A changed input requires a new plan; an
-     existing finalize journal requires inspection before recovery. The	 command
-     does  not configure UEFI, mount the partitions or prove the image can boot.
-     Boot and account menus and the full interactive install  acceptance  matrix
-     remain pending.
+     and an exact-size root image of the filesystem that layout	 names.	 An  en-
+     crypted  root is refused here, since the partition holds a container rather
+     than a filesystem image. It records the full  SHA-256,  device,  inode  and
+     size  of the disk, both input images and /usr/bin/limine in a new mode-0600
+     plan. Review that plan before applying it. Finalize-apply requires the  ex-
+     act  disk	path  as  --confirm  and rechecks all inputs before changing the
+     disk. It copies the two images into their partitions, verifies the	 written
+     bytes,  installs the Limine BIOS stage and verifies GPT. The adjacent jour-
+     nal records each stage. A changed input requires a new  plan;  an	existing
+     finalize  journal requires inspection before recovery. The command does not
+     configure UEFI, mount the partitions or prove the image can boot. Boot  and
+     account  menus  and  the  full interactive install acceptance matrix remain
+     pending.
 
-     The  optional  install VM fixture described in holy-image(7) gives the live
-     guest a blank disk. holyinstall creates the GPT  and  filesystems	and  in-
-     stalls  the  Limine  BIOS stage inside that guest before applying a package
+     The optional install VM fixture described in holy-image(7) gives  the  live
+     guest  a  blank  disk.  holyinstall creates the GPT and filesystems and in-
+     stalls the Limine BIOS stage inside that guest before  applying  a	 package
      plan to its root. The runner then boots the installed disk through BIOS and
      UEFI.
 
 EXIT STATUS
      0 means the requested step completed. 1 means an operational error. 2 means
      invalid arguments, config or plan. Disk apply returns 3 for a changed image
-     or missing confirmation, 5 for an existing journal or failed mutation,  and
-     6	for  a	missing	 image, tool or available capability. holypkg statuses 3
+     or	 missing confirmation, 5 for an existing journal or failed mutation, and
+     6 for a missing image, tool or available  capability.  holypkg  statuses  3
      through 6 propagate from the package transaction.
 
 SEE ALSO
