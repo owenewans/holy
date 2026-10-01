@@ -340,7 +340,10 @@
 - [ ] Complete source-aware installed slots and version families; extend transactions to
   replacements, complete dynamic-library contexts and grouped removal. The
   explicit --accept-broken removal path now retains consumers and reports their
-  broken edges; durable completed-transaction decisions remain unfinished.
+  broken edges, and a committed set, removal or replacement leaves the decisions it was
+  reviewed with under a directory named for the plan it committed with, which
+  `holypkg db transactions` reports. Source-aware installed slots, version families,
+  grouped removal and a reverse set stay unfinished.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions.
 - [x] Accept nonempty HOLY/transform as an immutable provenance record in local
