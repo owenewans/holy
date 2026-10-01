@@ -469,8 +469,14 @@
   recognised, and a directory that is none of them keeps blocking other
   work rather than being ignored, so an unrecognized record is still a
   decision. The report prints every decision line as the record holds it
-  and restates nothing. General rollback and per-phase recovery stay
-  open. A hook that starts a service is
+  and restates nothing. `holypkg rollback` on a committed set states what
+  its reverse needs instead of a plan document: every artifact the set
+  installed that is still installed comes out, every artifact it touched
+  that is not installed goes back in when the cached object is there, and
+  unavailable counts the ones it is not. The hash covers the transaction,
+  the generation and the operations. Applying a reverse set is 3 with
+  that reason, and a reverse set, a grouped removal and per-phase
+  recovery stay open. A hook that starts a service is
   a different path from a placed unit, and the specification says the
   behaviour has to be visible before the hook runs rather than that the
   manager stops it: `db configure-plan` names every service tool the body
