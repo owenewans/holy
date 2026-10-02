@@ -1,11 +1,17 @@
+#define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include "private.h"
 #include "config.h"
+#include "elf.h"
 
+#include <archive.h>
+#include <archive_entry.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 
 #define PRIVATE_PLACES 65536
 #define PRIVATE_PATH 4096
@@ -223,6 +229,7 @@ static int parent_add(struct parent_list *list, const char *target)
     size_t i;
     int ok = 0;
     if (!copy) return 0;
+
     /* every strict ancestor of the target, from the shallowest down. an ancestor the
        source already states ends the walk, since the ones above it are stated too */
     while ((slash = strrchr(copy, '/'))) {
@@ -381,4 +388,127 @@ int holy_private_place_parse(const char *text, char artifact[65], char **path)
     if (!length || !safe_path(equals + 1)) return 0;
     *path = strndup(equals + 1, length);
     return *path != NULL;
+}
+/* the ELF reader takes a descriptor, so one payload is handed to it through an
+   anonymous file rather than a temporary name a second process could reach */
+static int read_elf(struct archive *archive, struct archive_entry *entry,
+                    struct holy_elf_info *info)
+{
+    char buffer[65536];
+    la_ssize_t got;
+    la_int64_t total = 0, size = archive_entry_size(entry);
+    int fd = -1, ok = 0;
+    if (archive_entry_filetype(entry) != AE_IFREG || size < 4 || size > 64 * 1024 * 1024)
+        return 1;
+    /* memfd_create is reached through the syscall, the same way the directory staging
+       reaches renameat2, so this file stays C99 with the feature macros the rest of the
+       tree uses */
+    fd = (int)syscall(SYS_memfd_create, "holy-elf", 0x0001U);
+    if (fd < 0) return 1;
+    while (total < size) {
+        got = archive_read_data(archive, buffer, sizeof buffer);
+        if (got < 0) goto done;
+        if (!got) break;
+        if (total > size - got) goto done;
+        {
+            size_t used = 0;
+            while (used < (size_t)got) {
+                ssize_t sent = write(fd, buffer + used, (size_t)got - used);
+                if (sent < 0 && errno == EINTR) continue;
+                if (sent <= 0) goto done;
+                used += (size_t)sent;
+            }
+        }
+        total += got;
+    }
+    if (total != size || lseek(fd, 0, SEEK_SET)) goto done;
+    ok = !holy_elf_read_fd(fd, info);
+done:
+    close(fd);
+    return ok ? 0 : 1;
+}
+
+struct entry_scan {
+    const char *wanted;              /* the payload path to inspect, NULL for all */
+    const char *soname;              /* the SONAME a consumer has to name */
+    holy_private_consumer visit;
+    void *context;
+    char *found;
+    int found_ok;
+};
+
+static int scan_entry(struct archive *archive, struct archive_entry *entry, void *opaque)
+{
+    struct entry_scan *scan = opaque;
+    struct holy_elf_info info = {0};
+    const char *path = archive_entry_pathname(entry);
+    size_t i;
+    int result = 1;
+    if (!path || strncmp(path, "DATA/", 5) || !path[5]) return 1;
+    if (scan->wanted) {
+        if (strcmp(path + 5, scan->wanted)) return 1;
+    } else if (!scan->soname) {
+        return 1;
+    }
+    if (read_elf(archive, entry, &info)) return 1;
+    if (scan->wanted) {
+        if (info.soname) {
+            if (!(scan->found = strdup(info.soname))) goto done;
+            scan->found_ok = 1;
+            result = 0;
+        }
+        goto done;
+    }
+    for (i = 0; i < info.needed_count; ++i) {
+        if (strcmp(info.needed[i], scan->soname)) continue;
+        if (!scan->visit(scan->context, path + 5, info.needed[i])) goto done;
+        result = 0;
+        break;
+    }
+done:
+    holy_elf_free(&info);
+    return result;
+}
+
+static int walk(const char *snapshot, struct entry_scan *scan)
+{
+    struct archive *archive = archive_read_new();
+    struct archive_entry *entry;
+    int status, ok = 0;
+    if (!archive) return 0;
+    if (archive_read_support_filter_lz4(archive) != ARCHIVE_OK ||
+        archive_read_support_format_tar(archive) != ARCHIVE_OK ||
+        archive_read_open_filename(archive, snapshot, 8192) != ARCHIVE_OK) goto done;
+    while ((status = archive_read_next_header(archive, &entry)) == ARCHIVE_OK)
+        if (!scan_entry(archive, entry, scan)) break;
+    /* a walk that stopped on the entry it wanted is complete; one that ran out of
+       entries is complete too, since the wanted payload was not in the package */
+    ok = status == ARCHIVE_EOF || status == ARCHIVE_OK;
+done:
+    archive_read_free(archive);
+    return ok;
+}
+
+int holy_private_soname(const char *snapshot, const char *path, char **soname)
+{
+    struct entry_scan scan;
+    int ok;
+    *soname = NULL;
+    memset(&scan, 0, sizeof scan);
+    scan.wanted = path;
+    ok = walk(snapshot, &scan);
+    *soname = scan.found;
+    return ok;
+}
+
+int holy_private_consumers(const char *snapshot, const char *soname,
+                           holy_private_consumer visit, void *context)
+{
+    struct entry_scan scan;
+    if (!snapshot || !soname || !*soname || !visit) return 0;
+    memset(&scan, 0, sizeof scan);
+    scan.soname = soname;
+    scan.visit = visit;
+    scan.context = context;
+    return walk(snapshot, &scan);
 }

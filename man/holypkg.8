@@ -2962,6 +2962,25 @@ the record it actually installed as files, with a holy-private-transform-1 recor
 naming both digests, which keeps the source artifact, the modified package and
 what reached the root three separate facts.
 .PP
+A placed shared library is reachable only through a search path nobody has changed
+yet, so the plan walks every ELF of every other artifact in the set and of every
+installed artifact, reading the placed file's SONAME and looking for it in each
+DT_NEEDED. The spec asks for the nested consumers and not only the main executable,
+so a program that needs two libraries is found for the one that moved. Each hit is
+one consumer line, consumer ARTIFACT PATH needs SONAME from PLACED unreachable
+scope soname, and a hit ends the plan with status 3 and names the command that
+settles it. A consumer whose cached archive is gone returns 6 rather than being
+left out of the count, since the walk would then report a fact about a smaller set
+than the one installed.
+.PP
+That check cannot be exercised end to end through db plan-set yet. The local
+resolver requires a provider in the set for every DT_NEEDED and every PT_INTERP a
+payload carries, so a set of application packages that link glibc does not resolve
+without the runtime packages in the same set. The consumer walk itself is covered
+by tests/private-consumer.sh against real archives; the set-level refusal is
+implemented and states the same facts, but its acceptance waits on the resolver
+carrying runtime requirements.
+.PP
 Changing the search paths of the consumers of a displaced file needs patchelf and
 is not part of this decision. The private file is reachable through
 "holypkg run SOURCE:PACKAGE -- COMMAND", which puts the private bin directory

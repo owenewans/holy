@@ -85,6 +85,22 @@
   nested private path, a duplicate pair and one private target claimed twice.
   Consumer search-path rewriting is done; ABI-matched private library sets remain
   open.
+- [x] Name every program a placed library would strand. The plan reads the placed
+  file's SONAME and walks every ELF of every other artifact in the set and of every
+  installed artifact, looking for that name in DT_NEEDED, so a program that needs
+  two libraries is found for the one that moved and a program installed before the
+  colliding package arrived is found too. Each hit is a consumer line and the plan
+  stops with status 3 naming the command that settles it; a consumer whose cached
+  archive is gone returns 6 rather than being left out of the count.
+  `tests/private-consumer.sh` builds a library with a SONAME, a program that needs
+  it and one that needs two, and covers the SONAME a payload carries, a payload that
+  carries none, a path the package does not ship, one consumer, a consumer of two
+  libraries, the displaced library not being its own consumer, a SONAME nothing
+  names and an archive that is not one. The set-level refusal cannot be exercised
+  through `db plan-set` yet: the local resolver requires a provider in the set for
+  every DT_NEEDED and every PT_INTERP, so a set of glibc packages does not resolve
+  without the runtime in the same set. That gap is recorded under resolution and
+  the refusal waits on it.
 - [x] Rewrite the interpreter, RPATH or RUNPATH, SONAME and DT_NEEDED of one file
   through patchelf, with no second rewriter in this repository. `holypkg patch`
   reads the facts the file states, states the argv patchelf would run and runs it
@@ -407,11 +423,12 @@
   candidates stays unfinished and refused.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions. The
-  private placement of a colliding file and the patchelf rewrite of a consumer's
-  search path are both done and their limits are stated in man/holypkg.8. What is
-  not done is the manager choosing those decisions itself: building a consistent
-  private library set for one ABI, selecting the consumers to rewrite, and carrying
-  both through one set transaction instead of as a follow-up command.
+  private placement of a colliding file, the patchelf rewrite of a consumer's
+  search path and the consumer walk that refuses to strand a program are all done
+  and their limits are stated in man/holypkg.8. What is not done is the manager
+  choosing those decisions itself: building a consistent private library set for
+  one ABI and carrying placement and rewrite through one set transaction instead of
+  as two commands.
 - [x] Accept nonempty HOLY/transform as an immutable provenance record in local
   solve, single-package planning, set installation and removal. The installer
   verifies the already transformed payload and does not execute the record.

@@ -101,3 +101,4 @@ expect 4 "$bin" check --root "$root"
 grep -q "broken-provider consumer=$root_artifact" "$tmp/out" "$tmp/err"
 
 echo "private placement set fixtures passed"
+

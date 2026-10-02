@@ -4249,6 +4249,144 @@ static int claim_order(const void *left, const void *right)
                   ((const struct set_claim *)right)->path);
 }
 
+/* one ELF of a package that names a placed library, so the review can see which
+   programs the placement would cut off */
+struct stranded_consumer {
+    const char *consumer;
+    const char *provider;
+    const char *soname;
+    char *path;
+};
+
+struct consumer_scan {
+    struct stranded_consumer **item;
+    size_t count, limit;
+    const char *consumer;
+    const char *provider;
+    const char *soname;
+    int failed;
+};
+
+static int record_consumer(void *context, const char *path, const char *needed)
+{
+    struct consumer_scan *scan = context;
+    struct stranded_consumer **grown;
+    struct stranded_consumer *entry;
+    (void)needed;
+    if (scan->count >= 100000) { scan->failed = 1; return 0; }
+    grown = realloc(scan->item, (scan->count + 1) * sizeof *grown);
+    if (!grown) { scan->failed = 1; return 0; }
+    scan->item = grown;
+    entry = calloc(1, sizeof *entry);
+    if (!entry || !(entry->path = strdup(path))) {
+        free(entry);
+        scan->failed = 1;
+        return 0;
+    }
+    entry->consumer = scan->consumer;
+    entry->provider = scan->provider;
+    entry->soname = scan->soname;
+    scan->item[scan->count++] = entry;
+    return 1;
+}
+
+static void free_consumers(struct consumer_scan *scan)
+{
+    size_t i;
+    for (i = 0; i < scan->count; ++i) {
+        free(scan->item[i]->path);
+        free(scan->item[i]);
+    }
+    free(scan->item);
+}
+
+/* a placed library is only reachable through a search path the manager has not
+   changed yet, so every program that needs it is a decision rather than a fact. the
+   spec asks for the nested consumers to be checked, not only the main executable,
+   so this walks every ELF payload of every other artifact in the set. */
+/* an installed artifact is a consumer too: the programs that need a library were
+   usually installed before the package that displaces it arrives */
+struct installed_scan {
+    struct consumer_scan *scan;
+    const char *root_path;
+    int failed;
+};
+
+static int installed_consumer(void *context, int root, int item, const char *digest)
+{
+    struct installed_scan *state = context;
+    struct consumer_scan *scan = state->scan;
+    char *snapshot;
+    int result;
+    (void)root; (void)item;
+    if (!strcmp(digest, scan->provider)) return 1;
+    if (!(snapshot = holy_cache_snapshot(digest, state->root_path))) {
+        /* a consumer whose cached archive is gone cannot be walked, so the decision
+           is refused rather than reported as a fact about a smaller set */
+        fprintf(stderr, "holypkg: installed artifact needs its cached archive: %s\n", digest);
+        state->failed = 1;
+        return 1;
+    }
+    scan->consumer = digest;
+    result = holy_private_consumers(snapshot, scan->soname, record_consumer, scan);
+    unlink(snapshot);
+    free(snapshot);
+    if (!result) state->failed = 1;
+    return 1;
+}
+
+static int set_private_consumers(struct install_set *set, const char *root_path)
+{
+    struct consumer_scan scan = {0};
+    size_t i, j;
+    int result = 0;
+    for (i = 0; i < set->places.count && !scan.failed; ++i) {
+        const struct holy_private_place *place = &set->places.place[i];
+        const char *snapshot = NULL;
+        char *soname = NULL;
+        for (j = 0; j < set->count; ++j)
+            if (!strcmp(set->items[j].identity.digest, place->artifact)) {
+                snapshot = set->items[j].snapshot;
+                break;
+            }
+        if (!snapshot || !holy_private_soname(snapshot, place->path, &soname) || !soname)
+            continue;
+        for (j = 0; j < set->count && !scan.failed; ++j) {
+            if (!strcmp(set->items[j].identity.digest, place->artifact)) continue;
+            scan.consumer = set->items[j].identity.digest;
+            scan.provider = place->artifact;
+            scan.soname = soname;
+            if (!holy_private_consumers(set->items[j].snapshot, soname,
+                                        record_consumer, &scan)) scan.failed = 1;
+        }
+        if (!scan.failed) {
+            struct installed_scan installed = {&scan, root_path, 0};
+            unsigned long long generation = 0;
+            scan.provider = place->artifact;
+            scan.soname = soname;
+            if (!holy_state_visit(root_path, installed_consumer, &installed, &generation))
+                installed.failed = 1;
+            if (installed.failed) scan.failed = 1;
+        }
+        free(soname);
+    }
+    for (i = 0; i < scan.count; ++i) {
+        struct stranded_consumer *entry = scan.item[i];
+        printf("consumer %s %s needs %s from %s unreachable scope soname\n",
+               entry->consumer, entry->path, entry->soname, entry->provider);
+    }
+    if (scan.count) {
+        fprintf(stderr, "holypkg: decision-required placement strands %zu programs;"
+                        " holypkg patch CONSUMER --runpath DIR makes each reachable\n",
+                scan.count);
+        result = 3;
+    } else if (scan.failed) {
+        result = 6;
+    }
+    free_consumers(&scan);
+    return result;
+}
+
 static int set_claims_valid(struct install_set *set)
 {
     size_t i;
@@ -5374,6 +5512,7 @@ static int build_set(const char *root_path, int root, int dir,
         if (!service_scan(item->snapshot, &set->services, item->identity.digest)) goto done;
     }
     if (!set_claims_valid(set)) { result = 4; goto done; }
+    if (set->places.count && (result = set_private_consumers(set, root_path))) goto done;
     for (i = 0; i < set->count; ++i)
         if (!holy_conflict_claims_package(&set->capabilities, set->items[i].snapshot,
                                           set->items[i].identity.digest)) { result = 6; goto done; }

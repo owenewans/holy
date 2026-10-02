@@ -5,6 +5,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+struct consumer_report {
+    size_t count;
+};
+
+static int report_consumer(void *context, const char *path, const char *needed)
+{
+    struct consumer_report *report = context;
+    printf("consumer %s needs %s\n", path, needed);
+    ++report->count;
+    return 1;
+}
+
 /* the private placement of one verified manifest. a plan or a journal names the
    placements as ARTIFACT=PATH, and the result is the record the installed instance
    keeps as files while package-files stays what the package shipped. */
@@ -193,8 +205,29 @@ static int rewrite(void)
     return 1;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    /* the SONAME a placed library carries and the programs that name it, which is how
+       a private placement decides whether it strands anything */
+    if (argc == 4 && !strcmp(argv[1], "--soname")) {
+        char *soname = NULL;
+        if (!holy_private_soname(argv[2], argv[3], &soname)) {
+            fputs("private fixture failed: the archive or the payload is unreadable\n", stderr);
+            return 1;
+        }
+        printf("soname %s\n", soname ? soname : "-");
+        free(soname);
+        return 0;
+    }
+    if (argc == 4 && !strcmp(argv[1], "--consumers")) {
+        struct consumer_report report = {0};
+        if (!holy_private_consumers(argv[2], argv[3], report_consumer, &report)) {
+            fputs("private fixture failed: the archive is unreadable\n", stderr);
+            return 1;
+        }
+        printf("consumers %zu\n", report.count);
+        return 0;
+    }
     if (!targets() || !table() || !rewrite()) return 1;
     puts("private placement fixture ok");
     return 0;

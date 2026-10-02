@@ -510,8 +510,9 @@ check-solver:
 
 .PHONY: check-private
 check-private:
-	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o tests/private-helper tests/private.c src/private.c src/config.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o tests/private-helper tests/private.c $(filter-out src/main.o,$(HOLY_OBJECTS)) $(LDFLAGS) $(LDLIBS) $(SOLV_LIBS)
 	./tests/private-helper
+	sh tests/private-consumer.sh ./holypkg ./tests/private-helper
 
 .PHONY: check-rewrite
 check-rewrite: holypkg

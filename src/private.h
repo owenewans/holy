@@ -56,4 +56,15 @@ int holy_private_manifest(const struct holy_private_places *places, const char *
 /* reads one ARTIFACT=PATH placement from a plan or a journal line. */
 int holy_private_place_parse(const char *text, char artifact[65], char **path);
 
+/* the SONAME one payload of a verified package carries, or NULL when that payload is
+   not an ELF or states none. a placed shared library is what a consumer names, so the
+   SONAME is the fact a private set has to be matched on. */
+int holy_private_soname(const char *snapshot, const char *path, char **soname);
+
+/* every ELF payload of one package that names SONAME in DT_NEEDED. a zero return from
+   the visitor stops the walk. borrowed names stay valid during the callback only. */
+typedef int (*holy_private_consumer)(void *context, const char *path, const char *needed);
+int holy_private_consumers(const char *snapshot, const char *soname,
+                           holy_private_consumer visit, void *context);
+
 #endif
