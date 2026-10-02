@@ -13,6 +13,8 @@ test "$(id -u)" = 0 && awk '$1 == 0 && $2 != 0 && $3 == 1 { ok = 1 } END { exit 
 umask 022
 PATH=$PATH:/usr/sbin:/sbin
 export PATH
+# the tools beside this script, so the builder finds them wherever the repository is
+repo=$(cd "$(dirname "$0")/.." && pwd)
 bin=$(realpath "$1")
 static=$(realpath "$2")
 installer=$(realpath "${STATIC_HOLYINSTALL:?STATIC_HOLYINSTALL required}")
@@ -47,7 +49,7 @@ if test "$boot_test" = required && ! command -v "$qemu" >/dev/null; then
     boot_test=build-only
     echo "$qemu unavailable; image will remain untested" >&2
 fi
-for tool in dracut ldconfig limine sha256sum cpio gzip python3; do
+for tool in dracut ldconfig limine sha256sum b2sum cpio gzip python3; do
     command -v "$tool" >/dev/null || { echo "$tool required" >&2; exit 6; }
 done
 validate_kernel() {
@@ -184,7 +186,7 @@ trap finish EXIT
 trap 'exit 1' HUP INT TERM
 exec > "$out/build.log" 2>&1
 (
-    set -- "$bin" "$installer" "$cc" dracut ldconfig limine sha256sum cpio gzip python3 unshare
+    set -- "$bin" "$installer" "$cc" dracut ldconfig limine sha256sum b2sum cpio gzip python3 unshare
     if test "$profile" = dual-libc; then set -- "$@" "$glibc_cc" "$musl_cc" patchelf; fi
     if test "$storage" != ram; then set -- "$@" mke2fs qemu-img; fi
     if test "$storage" = gpt-ext4; then set -- "$@" sfdisk mkfs.fat mcopy mmd; else set -- "$@" xorriso; fi
@@ -829,17 +831,43 @@ PY
         mcopy -i "$work/esp.fat" "$root/usr/share/limine/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
     fi
     mcopy -i "$work/esp.fat" "$root/usr/share/limine/limine-bios.sys" ::/limine-bios.sys
-    mcopy -i "$work/esp.fat" "$root/boot/vmlinuz" ::/vmlinuz
-    mcopy -i "$work/esp.fat" "$out/initramfs.img" ::/initramfs.img
-    sed -e 's@boot():/boot/vmlinuz@boot():/vmlinuz@' \
-        -e 's@boot():/boot/initramfs.img@boot():/initramfs.img@' \
-        "$work/iso/boot/limine/limine.conf" > "$out/limine.conf"
+    # an installed system carries two kernel slots, so a kernel that does not boot is
+    # recoverable from the menu rather than only by reinstalling. both slots start with
+    # the same kernel, and a later update writes the inactive one and flips the default.
+    for slot in a b; do
+        mcopy -i "$work/esp.fat" "$root/boot/vmlinuz" "::/vmlinuz-$slot"
+        mcopy -i "$work/esp.fat" "$out/initramfs.img" "::/initramfs-$slot.img"
+        cp "$root/boot/vmlinuz" "$root/boot/vmlinuz-$slot"
+        cp "$out/initramfs.img" "$root/boot/initramfs-$slot.img"
+    done
+    sh "$repo/tools/limine-rollback.sh" a "$root/boot/vmlinuz-a" "$root/boot/initramfs-a.img" \
+        "$root/boot/vmlinuz-b" "$root/boot/initramfs-b.img" \
+        "console=ttyS0,115200 rdinit=/init $boot_service panic=1 $root_cmdline" \
+        > "$out/limine.conf"
+    mkdir -p "$root/boot/limine"
+    cp "$out/limine.conf" "$root/boot/limine/limine.conf"
     mcopy -i "$work/esp.fat" "$out/limine.conf" ::/limine.conf
-    for file in vmlinuz initramfs.img limine.conf; do
+    for file in vmlinuz-a vmlinuz-b initramfs-a.img initramfs-b.img limine.conf; do
         mcopy -i "$work/esp.fat" "::/$file" "$work/readback"
-        case "$file" in vmlinuz) cmp "$root/boot/vmlinuz" "$work/readback" ;; *) cmp "$out/$file" "$work/readback" ;; esac
+        case "$file" in
+            vmlinuz-a|vmlinuz-b) cmp "$root/boot/vmlinuz" "$work/readback" ;;
+            limine.conf) cmp "$out/limine.conf" "$work/readback" ;;
+            *) cmp "$out/initramfs.img" "$work/readback" ;;
+        esac
         rm "$work/readback"
     done
+    # the config has to name two slots, a menu and a digest each file really has, or the
+    # boot menu offers a choice that cannot boot and the rollback is a fiction
+    for slot in a b; do
+        for kind in vmlinuz initramfs; do
+            test "$(b2sum "$root/boot/$kind-$slot$(test "$kind" = vmlinuz || echo .img)" | cut -d' ' -f1)" \
+                = "$(sed -n "s@.*/$kind-$slot[.a-z]*#\([0-9a-f]*\).*@\1@p" "$out/limine.conf")" ||
+                { printf 'rollback-slot %s: %s does not match its digest in the config\n' "$slot" "$kind" >> "$record"; exit 1; }
+        done
+        printf 'rollback-slot %s ok\n' "$slot" >> "$record"
+    done
+    sh "$repo/tools/check-limine-rollback.sh" "$out/limine.conf" a >> "$record" 2>&1 ||
+        { printf 'rollback: the generated config was refused\n' >> "$record"; exit 1; }
     "$installer" disk finalize-plan --disk-plan "$out/disk.plan" \
         --esp "$work/esp.fat" --root-image "$root_disk" \
         --output "$out/disk-finalize.plan"

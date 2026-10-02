@@ -1631,11 +1631,40 @@
   block device, home directory, D-Bus service or credential is passed on. the
   command runs as PID 1 of its own pid namespace with its argv unchanged and its
   status as the status, and a host that refuses the namespaces or the device nodes
-  is 6 with the reason. the plan is verified against --root and is not applied, so
-  a trial that applies a prepared plan still needs an isolated copy of the
-  filesystem, which is open. check-root-trial carries the isolation properties and
-  returns 6 on a host that refuses device nodes in a user namespace, as this one
-  does, while check-plan-test proves the plan inputs.
+  is 6 with the reason. A trial that applies the plan has somewhere to apply it now:
+  `--apply --work DIRECTORY` copies the target filesystem into
+  WORK/trial-root, applies the plan to that copy and runs the command against it,
+  with /usr, /bin, /sbin, /lib, /lib64 and /etc bound from the copy read-only. proc,
+  sys, dev and run are not copied since a trial mounts its own, and a device node,
+  a socket or a fifo is refused and counted rather than carried. A state plan binds
+  the device and inode of the root it was reviewed for, so the copy derives its own
+  and the report names the digest it applied. Without --apply the running root is
+  what the command sees, so the two modes differ in what a probe observes, and a
+  work directory inside the root is refused because the copy would read its own
+  output. check-root-trial carries the isolation properties and
+  returns 6 on a host that refuses the namespaces, while check-plan-test proves the
+  plan inputs. The isolation is bubblewrap rather than hand-written mounts: a trial
+  is a set of flags, so what it promises is what this manager asks for instead of
+  mount code assembled here. `--dev` gives the standard character nodes and the
+  stream links on a host that refuses mknod inside a user namespace, which is what
+  returned 6 on this one. The clean build root is bubblewrap too: its limits are
+  setrlimit on the process that becomes the backend, so cpu, memory, file-size and
+  open-files reach the step while processes is refused, since rlimit_nproc stops the
+  backend's own namespace setup before the step exists. A step runs as the caller's
+  own id inside the namespace, which is what man/holy-recipe.5 already promised and
+  what the old mapping did not.
+- [ ] Make a kernel rollback a configuration rather than a reinstall, and prove it by
+  rebooting into the previous kernel. The installed profile now carries two kernel
+  slots on the boot partition, each with its own vmlinuz, initramfs and blake2b
+  digest in the Limine config, a menu with a reachable timeout, default_entry naming
+  the current slot by path, hash_mismatch_panic set to no and no
+  remember_last_entry. tools/limine-rollback.sh writes that config and
+  tools/check-limine-rollback.sh checks it; make check-rollback-config covers the
+  generator, the checker and every shape that cannot roll back, and the image builder
+  verifies each slot's digest against the file it wrote. A fresh install starts with
+  one kernel in both slots and is reported as having no rollback yet. The guest
+  contract that boots the new kernel, fails a probe and returns to the menu on the
+  previous one is not built.
 - [ ] Boot both target architectures in QEMU and prove PID 1, shell, package
   install/removal and recovery after removing either or both dynamic libc runtimes.
 - [ ] Run compiler/SDK, language, GUI, graphics, gaming, workstation and foreign

@@ -329,6 +329,31 @@ its own qcow2 overlay and records boot_media, two boot contracts and the
 unchanged copied base. gpt-ext4 produces disk.raw, disk.plan, disk-layout.json
 and limine.conf instead of an ISO. BIOS and UEFI remain separate test runs.
 .PP
+The gpt-ext4 profile writes an installed profile that can roll a kernel back. The
+boot partition carries two slots, vmlinuz-a with initramfs-a.img and vmlinuz-b with
+initramfs-b.img, and a limine.conf that names both as menu entries. The config is
+the whole rollback mechanism, and tools/limine-rollback.sh writes it and
+tools/check-limine-rollback.sh checks it. Five properties make it one: a timeout
+that is neither 0 nor no, so the menu is reachable at all; hash_mismatch_panic set
+to no, so a kernel that does not match its own digest returns to the menu instead
+of leaving the machine with no choice; default_entry naming the current slot by
+path rather than by position, so reordering cannot repoint it; no
+remember_last_entry, which on UEFI would override default_entry and make a slot
+switch invisible; and a 128 character blake2b-512 digest on every kernel and
+initramfs path, which is the length the loader accepts. Each entry also carries a
+comment naming its slot and the first bytes of its digest, so the menu shows what
+it will load. A fresh install starts with one kernel in both slots and therefore
+has no rollback yet; the checker reports that state and only
+make check-rollback-config, with a second kernel written, requires two distinct
+ones. A kernel update writes the inactive slot, builds that slot's initramfs, and
+only then changes default_entry, so a transaction interrupted between those steps
+leaves the default on the previous, working kernel. Rolling back changes
+default_entry back and needs neither a download nor a cache object, since the
+previous kernel is still in its slot with its digest still in the config. The live
+profile is not an installed profile: it carries one entry and timeout 0, because a
+rollback is not performed on live media and a menu would only delay the boot.
+.PP
+.PP
 The bootstrap glibc package currently contains
 libc.so.6 and its loader with licenses, not the complete SDK, locale archive,
 NSS modules or auxiliary glibc libraries. The reference image still needs
