@@ -1042,7 +1042,7 @@ static int run_step(const struct recipe_step *step, const char *work, const char
     if (sandbox) {
         /* the sandbox owns the process: it forks the namespaces itself and returns the
            exit status the step produced */
-        char *entries[16];
+        char *entries[17];
         const char *pairs[14][2];
         size_t used = 0, e;
         int status = 1;
@@ -1077,6 +1077,22 @@ static int run_step(const struct recipe_step *step, const char *work, const char
             else
                 snprintf(path, length, "PATH=/usr/bin:/bin");
             entries[used++] = path;
+        }
+        /* a library a dependency root carries has to reach a step that runs a tool from
+           that root, and the loader searches the paths the root itself holds, so the
+           same directories the loader would use are named here */
+        if (sandbox->deps) {
+            static const char *const loader[] = { "/lib64", "/usr/lib64", "/lib", "/usr/lib" };
+            size_t length = strlen(sandbox->deps) * 4 + 64;
+            char *library = malloc(length);
+            size_t l, at = 0;
+            if (!library) goto sandbox_done;
+            at = (size_t)snprintf(library, length, "LD_LIBRARY_PATH=");
+            for (l = 0; l < sizeof loader / sizeof *loader; ++l)
+                at += (size_t)snprintf(library + at, length - at, "%s%s%s",
+                                       sandbox->deps, loader[l],
+                                       l + 1 < sizeof loader / sizeof *loader ? ":" : "");
+            entries[used++] = library;
         }
         /* the child copies the vector until the terminator, so the table is closed here
            rather than left to whatever the stack held */

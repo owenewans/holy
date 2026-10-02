@@ -180,8 +180,10 @@ verified and staged into a private Holy root under the build directory and
 installed through the ordinary set transaction, so its manifests, providers and
 hooks are the ones this manager wrote. The root is bound read-only into the step
 namespace at the same path, and its usr/bin and bin come first on PATH, ahead
-of the host toolchain. Sixteen is the maximum; a path that is not local:FILE is
-2.
+of the host toolchain. LD_LIBRARY_PATH names the root's lib64, usr/lib64, lib
+and usr/lib, the directories the loader searches inside that root, so a tool from
+the root finds a library from the root. Sixteen is the maximum; a path that is
+not local:FILE is 2.
 .PP
 A name with any --environment other than clean is 2, since the host environment
 has no build root to carry it.

@@ -1124,7 +1124,9 @@
   host toolchain directories, a bare NAME against an installed instance of that
   package in the root. Each result is reported and written into HOLY/transform
   as build-depend-satisfied, and a record nothing satisfies stops the build with
-  6 before the first step instead of failing inside one. Three fixture defects
+  6 before the first step instead of failing inside one. A step also reaches a
+  library the dependency root carries, since LD_LIBRARY_PATH names the root's
+  own loader search directories. Three fixture defects
   came out of the work: the set engine takes one pointer per artifact, so an
   array of packed 65-byte blocks cannot be cast into its digest argument; the
   step environment vector had no NULL terminator, so the child walked past the

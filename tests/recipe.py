@@ -442,6 +442,73 @@ PACKAGE
         log = run("build", root / "host-cmd.recipe", "--output", out / "host-cmd",
                   "--work", host_work, "--yes")
         assert "build-depend-satisfied cmd:sh host /" in log
+        # a library the dependency root carries reaches a step that runs a tool from it,
+        # since the loader names the paths the root itself holds
+        write(root / "lib.c", "int helper(void) { return 41; }\n")
+        write(root / "app.c", """#include <stdio.h>
+int helper(void);
+int main(void) { return printf("helper=%d\\n", helper()) > 0 ? 0 : 1; }
+""")
+        subprocess.run(["gcc", "-shared", "-fPIC", "-Wl,-soname,libholyrecipe.so.1",
+                        "-o", str(root / "libholyrecipe.so.1"), str(root / "lib.c")],
+                       check=True)
+        subprocess.run(["gcc", "-o", str(root / "libapp"), str(root / "app.c"),
+                        f"-L{root}", "-l:libholyrecipe.so.1"], check=True)
+        lib_tree = root / "tree-holy-recipe-libdep"
+        (lib_tree / "HOLY").mkdir(parents=True)
+        write(lib_tree / "HOLY" / "meta", """format holy-package-1
+name holy-recipe-libdep
+version 1
+release 1
+os linux
+arch x86_64
+libc glibc
+""")
+        for part in ("deps", "provides", "hooks", "origin", "transform"):
+            (lib_tree / "HOLY" / part).write_text("")
+        (lib_tree / "DATA" / "usr" / "lib").mkdir(parents=True)
+        (lib_tree / "DATA" / "usr" / "bin").mkdir(parents=True)
+        subprocess.run(["cp", str(root / "libholyrecipe.so.1"),
+                        str(lib_tree / "DATA" / "usr" / "lib")], check=True)
+        subprocess.run(["ln", "-s", "libholyrecipe.so.1",
+                        str(lib_tree / "DATA" / "usr" / "lib" / "libholyrecipe.so")],
+                       check=True)
+        subprocess.run(["cp", str(root / "libapp"),
+                        str(lib_tree / "DATA" / "usr" / "bin" / "holy-recipe-libapp")],
+                       check=True)
+        generated = run("manifest", "generate", lib_tree,
+                        "--output", out / "libdep.files").split()
+        (lib_tree / "HOLY" / "files").write_text(Path(generated[1]).read_text())
+        run("pack", lib_tree, "--output", out / "holy-recipe-libdep.holy")
+        write(root / "libdep.recipe", """format holy-recipe-1
+name holy-recipe-libuser
+version 1.0
+release 1
+arch noarch
+libc nolibc
+summary Library dependency fixture
+output holy-recipe-libuser runtime
+build-depend cmd:holy-recipe-libapp
+step package /bin/sh <<PACKAGE
+mkdir -p "$HOLY_DEST/usr/share/holy-recipe-libuser"
+holy-recipe-libapp > "$HOLY_DEST/usr/share/holy-recipe-libuser/app-output"
+printf '%s\n' "$LD_LIBRARY_PATH" > "$HOLY_OUT/library-path"
+PACKAGE
+""")
+        lib_work = root / "libdep-work"
+        lib_work.mkdir()
+        run("build", root / "libdep.recipe", "--output", out / "libdep-out",
+            "--environment", "clean", "--work", lib_work, "--keep", "--yes",
+            "--dependency", "local:" + str(out / "holy-recipe-libdep.holy"),
+            "--dependency", "local:" + str(runtime))
+        library_path = (lib_work / "out" / "library-path").read_text().strip()
+        assert f"{lib_work}/deps/usr/lib" in library_path
+        contents = subprocess.run(
+            ["lz4", "-dc", str(out / "libdep-out" / "holy-recipe-libuser--noarch--nolibc.holy")],
+            check=True, capture_output=True).stdout
+        with tarfile.open(fileobj=__import__("io").BytesIO(contents)) as archive:
+            assert archive.extractfile(
+                "DATA/usr/share/holy-recipe-libuser/app-output").read() == b"helper=41\n"
         # the dependency root belongs to the clean environment only
         run("build", root / "dep.recipe", "--output", out / "dep-host",
             "--work", dep_work, "--keep", "--yes",
