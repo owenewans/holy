@@ -9,4 +9,10 @@
    a trial step fails. */
 int holy_trial_command(char *const argv[]);
 
+/* the same trial with a prepared root: the directories of ROOT are bound read-only
+   over the host ones and the backend's new root is exactly those binds, so a command
+   sees the copy the plan was applied to as its own filesystem rather than as a path
+   under the running system. ROOT is an absolute path to a directory the caller owns. */
+int holy_trial_command_at(char *const argv[], const char *root);
+
 #endif

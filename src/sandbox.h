@@ -49,7 +49,6 @@ struct holy_sandbox {
     const char *const *dependencies;
     size_t dependency_count;
     const char *work;        /* the build root, writable at the same path inside */
-    char *root;              /* the root directory, owned by the caller */
     char *deps;              /* the root holding the declared dependencies, or NULL */
     char *record;            /* one line naming what the environment provides */
     int output[2];           /* a pipe the child writes stdout and stderr into, or -1 */
@@ -59,8 +58,9 @@ struct holy_sandbox {
    what the backend needs, and six otherwise. */
 int holy_sandbox_probe(void);
 
-/* creates the root under the build directory and writes the report line. two for a
-   parameter this backend cannot serve, six for a missing capability. */
+/* writes the report line and applies the declared limits. two for a parameter this
+   backend cannot carry, which includes a process count, since the backend's own
+   namespace setup is refused under that ceiling; six for a missing capability. */
 int holy_sandbox_prepare(struct holy_sandbox *sandbox);
 
 /* runs one step in its own namespaces. argv carries no shell string and envp is a

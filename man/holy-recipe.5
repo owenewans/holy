@@ -128,10 +128,10 @@ needs a booted Holy image and qemu-system; when neither is available it returns
 build roots are not implemented and are rejected.
 .PP
 .SS Clean environment
---environment clean runs every step in its own user, mount and network
-namespace, inside a root the manager builds under the build directory. The
-parameters are explicit and the build prints one report line before the first
-step:
+--environment clean runs every step through bubblewrap, in its own user, mount,
+pid, ipc, uts and network namespace, inside a root the backend builds from the
+binds below. The parameters are explicit and the build prints one report line
+before the first step:
 .RS
 .nf
 build-environment root PATH uid UID network none|host read-only N mounts N devices N limits N deps none|declared
@@ -144,12 +144,15 @@ build root is bound writable at the same path the recipe exports, so HOLY_WORK,
 HOLY_SRC, HOLY_BUILD, HOLY_DEST, HOLY_OUT and HOLY_SPLIT_DEST keep the values the
 report already showed and the payload lands in the caller's own directory. The
 root holds nothing else: no host home, /root, /srv, /proc or socket, so a file
-a step writes outside the build root does not survive it.
+a step writes outside the build root does not survive it. /dev is a tmpfs holding
+only the device nodes this page names, which is why a step finds no pty or
+/dev/shm it was not given. bubblewrap is an ordinary package, and the host's copy
+runs the build; a host without it returns 6 and says so.
 .PP
---uid UID is the id the namespace maps to. It is the caller's id, which is what
-makes a step run as an ordinary user: a file a step writes belongs to that user
-and the step holds no privilege over the running system. A uid this backend
-cannot map is refused.
+--uid UID is the id the step runs as inside the namespace. Without it the step
+runs as the caller's own id, which is what makes it an ordinary user: a file a step
+writes belongs to the caller and the step holds no privilege over the running
+system. A uid this backend cannot map is refused.
 .PP
 --network on keeps the host network inside the namespace. Without it the
 namespace has no interface at all, so a step that needs the network fails on the
@@ -166,9 +169,12 @@ of the build root itself, which already carries it, and a source that does not
 exist are all refused or reported before a step runs.
 .PP
 --limit NAME=VALUE sets a resource limit with setrlimit, where NAME is cpu in
-seconds, memory, file-size and open-files in bytes and descriptors, and processes
-in count. A zero value would be unlimited, which is the opposite of a limit, and
-is refused.
+seconds, memory, file-size and open-files in bytes and descriptors. A zero value
+would be unlimited, which is the opposite of a limit, and is refused. processes is
+not a name this backend carries: rlimit_nproc counts every process of the mapped
+id, so the backend's own namespace setup is refused before the step starts, and a
+caller asking for it gets the argument error this page already defines rather than
+a ceiling that breaks the environment instead of the step.
 .PP
 --env NAME=VALUE declares one variable for every step. The inherited
 environment is cleared first, so a variable the host exports does not reach a

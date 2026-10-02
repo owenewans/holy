@@ -292,7 +292,7 @@ db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] 
 .br
 .B holypkg db recover --repair --root DIRECTORY
 .br
-.B holypkg test PLAN [--sha256 PLAN_SHA256] [--mode root|vm] [--root DIRECTORY] [--json] [--shell | -- COMMAND [ARGS...]]
+.B holypkg test PLAN [--sha256 PLAN_SHA256] [--mode root] [--root DIRECTORY] [--apply --work DIRECTORY] [--json] [--shell | -- COMMAND [ARGS...]]
 .br
 .B holypkg override list --root DIRECTORY [--json]
 .br
@@ -3031,24 +3031,45 @@ The requested set runs no probe on its own. -- COMMAND ARGS runs one command aft
 a set that completed, and --shell runs $SHELL or /bin/sh instead. argv is passed
 through unchanged, with no hidden shell between the command and this one, and the
 command status is the status of the command: a killed command is 128 plus its
-signal, a command that could not be executed is 127, a trial that could not be
-built is 1, and a host that refuses the namespaces or the device nodes a controlled
-/dev needs is 6. --mode vm has no place to run a command of the running root, so
---mode vm with a command is a usage error, and so are --shell with a command and a
--- with nothing after it.
+signal, a trial that could not be built is 1, and a host that refuses the
+namespaces is 6. root is the only mode, since a kernel that has to boot and a
+kernel that has to be recovered are the QEMU gates under make check-qemu rather than
+a mode of this command, so another name for --mode is a usage error, and so are
+--shell with a command and a -- with nothing after it.
 .PP
-A root trial makes private mount propagation, its own /proc, /run, /tmp and /home,
-PID, IPC and UTS namespaces, a user namespace when the host allows one, and a
-controlled /dev with the standard character nodes and the standard stream links.
-Nothing else of the running system is passed on: no host socket, block device, home
-directory, D-Bus service or credential, and a network only where the command makes
-one. A live /run, /tmp and /home are hidden, so a file the command writes there
-stays in the trial. The tmpfs sizes are 16 MiB for /run, 64 MiB for /tmp and 1 MiB
-each for /dev and /home. The command runs as PID 1 of its own PID namespace. A
-trial is not a defence against code that attacks the shared kernel on purpose, and
-the plan is still not applied by it: it verifies the plan against --root and then
-runs the probe against the running root, so a trial that applies a prepared plan
-still needs an isolated copy of the filesystem.
+A root trial is bubblewrap. The isolation is its flags, so what a trial promises is
+what this manager asks for rather than what a tool's documentation describes for a
+version the user did not pin: private mount propagation, its own /proc, /run, /tmp
+and /home, PID, IPC, UTS and cgroup namespaces, a user namespace, an empty
+environment, a session of its own, no capability above the caller, and a controlled
+/dev with the standard character nodes and the standard stream links. Nothing else
+of the running system is passed on: no host socket, block device, home directory,
+D-Bus service or credential, and a network only where the command makes one. A live
+/run, /tmp and /home are hidden, so a file the command writes there stays in the
+trial. The tmpfs sizes are 16 MiB for /run, 64 MiB for /tmp and 1 MiB each for
+/dev and /home. The command runs as PID 1 of its own PID namespace. bubblewrap is
+an ordinary package, and it is the host's copy that runs a trial, since the backend
+runs the check rather than being part of what the check exposes. A host with no
+bubblewrap is 6 and says so. A trial is not a defence against code that attacks the
+shared kernel on purpose.
+.PP
+The backend performs the exec, so a command it cannot run reports 1 with its own
+diagnostic naming the program, rather than a status this manager invented.
+.PP
+--apply --work DIRECTORY gives the trial somewhere to apply a plan. The plan is
+verified against --root as before, then the target filesystem is copied into
+WORK/trial-root, the plan is applied to that copy through the ordinary update
+transaction, and the command runs against the copy: /usr, /bin, /sbin, /lib,
+/lib64 and /etc are bound from it read-only, and a directory it does not have
+keeps the host one. The copy is reported with its directory, file, byte and
+refused counts, and --json carries the same as a holy-test-report-1 trial-root
+record. proc, sys, dev and run are not copied, since a trial mounts its own, and
+a device node, a socket or a fifo is refused and counted rather than carried.
+Without --apply the plan is not applied and the command runs against the running
+root, so the two modes differ in what the probe observes. --apply needs an absolute
+--work, and the work directory is created. The backend builds its new root from
+exactly the binds above, so / inside the trial is the copy's own filesystem rather
+than a path somewhere under the running system.
 .SH USER OVERRIDES
 override list reads the user override store of one target root and reports every
 record in it. It changes nothing, needs no cache object and no plan, and it never

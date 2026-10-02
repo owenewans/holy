@@ -1963,7 +1963,7 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
             if (strcmp(recipe.steps[i].phase, phases[k])) continue;
             if (recipe.steps[i].output) continue;
             result = run_step(&recipe.steps[i], work, recipe_dir, &recipe, environment,
-                              sandbox.root ? &sandbox : NULL, jobs, approve_all,
+                              sandbox.record ? &sandbox : NULL, jobs, approve_all,
                               noninteractive, &approve_rest, NULL);
             if (result) goto done;
         }
@@ -1990,7 +1990,7 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
             goto done;
         }
         result = run_step(&recipe.steps[i], work, recipe_dir, &recipe, environment,
-                          sandbox.root ? &sandbox : NULL, jobs, approve_all,
+                          sandbox.record ? &sandbox : NULL, jobs, approve_all,
                           noninteractive, &approve_rest, stage);
         if (!result) result = collect_payload(stage, NULL, recipe.steps[i].output, &payload) ? 0 : 1;
         if (result) {

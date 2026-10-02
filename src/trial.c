@@ -1,169 +1,104 @@
 #define _GNU_SOURCE
 #include "trial.h"
+#include "bwrap.h"
 
 #include <errno.h>
-#include <fcntl.h>
-#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mount.h>
 #include <sys/stat.h>
-#include <sys/sysmacros.h>
-#include <sys/wait.h>
 #include <unistd.h>
 
 /* a root trial is a decision about what the command can see, so the node set, the
-   tmpfs sizes and the namespace set are fixed here rather than chosen per call. */
-struct trial_node {
-    const char *name;
-    mode_t mode;
-    unsigned int major, minor;
+   tmpfs sizes and the namespace set are fixed here rather than chosen per call. the
+   backend is bubblewrap, so the isolation is its flags and this file is the list of
+   what the flags are asked for. */
+
+/* the directories a command resolves its interpreter and its libraries through. a
+   merged /usr tree reaches the same binaries through all of them, so each is bound
+   rather than only /usr */
+static const char *const trial_directories[] = {
+    "/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"
 };
 
-static const struct trial_node trial_nodes[] = {
-    { "null", 0666, 1, 3 },
-    { "zero", 0666, 1, 5 },
-    { "full", 0666, 1, 7 },
-    { "random", 0666, 1, 8 },
-    { "urandom", 0666, 1, 9 },
-    { "tty", 0666, 5, 0 }
+/* the sizes the man page states, which are the point at which a runaway command is a
+   failed check rather than a full host */
+static const struct { const char *path; unsigned long long bytes; } trial_volumes[] = {
+    { "/run", 16ull * 1024 * 1024 },
+    { "/tmp", 64ull * 1024 * 1024 },
+    { "/home", 1ull * 1024 * 1024 }
 };
 
-static int write_kernel_file(const char *path, const char *value)
-{
-    size_t length = strlen(value), offset = 0;
-    int fd = open(path, O_WRONLY | O_CLOEXEC);
-    if (fd < 0) return 0;
-    while (offset < length) {
-        ssize_t written = write(fd, value + offset, length - offset);
-        if (written < 0 && errno == EINTR) continue;
-        if (written <= 0) { close(fd); return 0; }
-        offset += (size_t)written;
-    }
-    return !close(fd);
-}
-
-/* the process keeps its own identity, so the trial does not look like a setuid
-   context, and the capabilities of the new user namespace still apply to the mounts
-   that follow. */
-static int enter_namespaces(int *namespaces)
-{
-    char mapping[80];
-    uid_t uid = geteuid();
-    gid_t gid = getegid();
-    *namespaces = CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS;
-    /* a root that may create namespaces without a user namespace still gets the rest */
-    if (unshare(*namespaces) &&
-        unshare(CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS)) return 0;
-    snprintf(mapping, sizeof mapping, "%lu %lu 1\n", (unsigned long)uid, (unsigned long)uid);
-    if (!write_kernel_file("/proc/self/uid_map", mapping) ||
-        !write_kernel_file("/proc/self/setgroups", "deny\n")) return 0;
-    snprintf(mapping, sizeof mapping, "%lu %lu 1\n", (unsigned long)gid, (unsigned long)gid);
-    if (!write_kernel_file("/proc/self/gid_map", mapping)) return 0;
-    /* the user namespace is available but the pid one is not: keep the mount, ipc and
-       uts isolation and say which set the trial got. */
-    if (unshare(CLONE_NEWPID)) *namespaces &= ~CLONE_NEWPID;
-    return 1;
-}
-
-static int mount_private(const char *source, const char *target, const char *type,
-                         unsigned long flags, const char *options)
+static int is_directory(const char *path)
 {
     struct stat st;
-    if (stat(target, &st)) return 0;
-    return !mount(source, target, type, flags, options);
+    return !lstat(path, &st) && S_ISDIR(st.st_mode);
 }
 
-/* a host that refuses device nodes inside a user namespace cannot have a controlled
-   /dev, and a trial without one is not a trial, so the reason is the requirement the
-   caller reports. */
-static int device_node(const struct trial_node *node)
+/* a prepared root's own copy first, so the command resolves its interpreter and its
+   libraries from the copy rather than from the host. a directory the copy does not
+   have keeps the host one, which is what a trial without it needs. the backend builds
+   its new root from exactly these binds, so / inside the trial is the copy's own
+   filesystem and the command needs no directory of its own to begin in. */
+static int bind_directories(struct holy_bwrap *bwrap, const char *root)
 {
-    char path[64];
-    snprintf(path, sizeof path, "/dev/%s", node->name);
-    if (mknod(path, S_IFCHR | node->mode, makedev(node->major, node->minor)))
-        fprintf(stderr, "holypkg: root trial cannot create %s: %s\n", path, strerror(errno));
-    else if (chmod(path, node->mode))
-        fprintf(stderr, "holypkg: root trial cannot set %s: %s\n", path, strerror(errno));
-    else return 1;
-    return 0;
-}
-
-static int apply_trial(int *capability)
-{
+    char source[4096];
     size_t i;
-    static const int links[] = { 0, 0, 1, 2 };
-    /* a fresh procfs shows the pid namespace of the process that mounts it, so this
-       runs inside the new one, which the exec will not leave */
-    if (!mount_private("proc", "/proc", "proc", MS_NOSUID | MS_NOEXEC | MS_NODEV, NULL))
-        return 0;
-    if (!mount_private("tmpfs", "/run", "tmpfs", MS_NOSUID | MS_NODEV,
-                       "mode=0755,size=16m") ||
-        !mount_private("tmpfs", "/tmp", "tmpfs", MS_NOSUID | MS_NODEV,
-                       "mode=1777,size=64m") ||
-        /* /dev is the one mount that must allow device nodes, which is the whole point
-           of a controlled /dev */
-        !mount_private("tmpfs", "/dev", "tmpfs", MS_NOSUID, "mode=0755,size=1m") ||
-        !mount_private("tmpfs", "/home", "tmpfs", MS_NOSUID | MS_NODEV,
-                       "mode=0755,size=1m"))
-        return 0;
-    for (i = 0; i < sizeof trial_nodes / sizeof *trial_nodes; ++i)
-        if (!device_node(&trial_nodes[i])) { *capability = 1; return 0; }
-    /* /dev/fd is the directory the links below live in, and the three standard
-       streams are the same directory entries under their own names */
-    for (i = 0; i < sizeof links / sizeof *links; ++i) {
-        char path[64], target[64];
-        snprintf(path, sizeof path, "/dev/fd/%d", links[i]);
-        snprintf(target, sizeof target, "/proc/self/fd/%d", links[i]);
-        if ((symlink(target, path) || symlink(target, path + 4)) && errno != EEXIST) {
-            fprintf(stderr, "holypkg: root trial cannot link %s: %s\n", path, strerror(errno));
-            *capability = 1;
-            return 0;
+    for (i = 0; i < sizeof trial_directories / sizeof *trial_directories; ++i) {
+        const char *name = trial_directories[i];
+        if (root && (size_t)snprintf(source, sizeof source, "%s%s", root, name) <
+                      sizeof source && is_directory(source)) {
+            if (holy_bwrap_bind(bwrap, 0, source, name)) return 1;
+            continue;
         }
+        if (!is_directory(name)) continue;
+        if (holy_bwrap_bind(bwrap, 0, name, name)) return 1;
     }
-    return 1;
-}
-
-static int wait_status(pid_t pid)
-{
-    int status;
-    while (waitpid(pid, &status, 0) < 0) {
-        if (errno != EINTR) return 1;
-    }
-    if (WIFEXITED(status)) return WEXITSTATUS(status);
-    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
-    return 1;
+    return 0;
 }
 
 int holy_trial_command(char *const argv[])
 {
-    pid_t outer, inner = -1;
-    int namespaces = 0, capability = 0;
+    return holy_trial_command_at(argv, NULL);
+}
+
+int holy_trial_command_at(char *const argv[], const char *root)
+{
+    struct holy_bwrap bwrap;
+    char *program;
+    size_t i;
+    int status;
     if (!argv || !argv[0] || !*argv[0]) return 2;
-    outer = fork();
-    if (outer < 0) {
-        fputs("holypkg: could not start a root trial\n", stderr);
+    if (root && root[0] != '/') return 2;
+    /* the host runs the backend. a target that has no bubblewrap of its own is a fact
+       for check to report about the target, not a reason this trial cannot run */
+    program = holy_bwrap_program();
+    if (!program) {
+        fputs("holypkg: root trial: no bubblewrap on the host\n", stderr);
+        return 6;
+    }
+    holy_bwrap_init(&bwrap, program);
+    free(program);
+    /* the host network stack stays, since the man page promises a network only where
+       the command makes one. the isolation and the empty environment come first, since
+       the backend reads its arguments in order */
+    holy_bwrap_isolate(&bwrap, 1, 1);
+    if (bind_directories(&bwrap, root)) { holy_bwrap_free(&bwrap); return 1; }
+    /* --dev brings the standard character nodes and the standard stream links, which
+       is the /dev a controlled trial promises and the one a host that refuses mknod
+       inside a user namespace still gives */
+    if (holy_bwrap_add(&bwrap, "--dev") || holy_bwrap_add(&bwrap, "/dev") ||
+        holy_bwrap_add(&bwrap, "--proc") || holy_bwrap_add(&bwrap, "/proc")) {
+        holy_bwrap_free(&bwrap);
         return 1;
     }
-    if (outer) return wait_status(outer);
-    if (!enter_namespaces(&namespaces)) {
-        fputs("holypkg: user, mount, pid, ipc or uts namespace unavailable\n", stderr);
-        _exit(6);
-    }
-    /* private propagation keeps every later mount, and every mount the command makes,
-       out of the running system */
-    if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) _exit(1);
-    /* the pid namespace starts at the next child, so the command is that child, it
-       mounts the trial it will run in, and this process only carries the namespaces. */
-    inner = fork();
-    if (inner < 0) _exit(1);
-    if (!inner) {
-        if (!apply_trial(&capability))
-            _exit(capability ? 6 : 1);
-        execv(argv[0], argv);
-        fprintf(stderr, "holypkg: trial: %s: %s\n", argv[0], strerror(errno));
-        _exit(errno == ENOENT ? 127 : 126);
-    }
-    _exit(wait_status(inner));
+    for (i = 0; i < sizeof trial_volumes / sizeof *trial_volumes; ++i)
+        if (holy_bwrap_tmpfs(&bwrap, trial_volumes[i].path, trial_volumes[i].bytes)) {
+            holy_bwrap_free(&bwrap);
+            return 1;
+        }
+    /* a probe writes to the streams it was given, which are the caller's own */
+    status = holy_bwrap_exec(&bwrap, argv, -1);
+    holy_bwrap_free(&bwrap);
+    return status;
 }
