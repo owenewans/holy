@@ -6,6 +6,7 @@
 #include "elf.h"
 #include "fetch.h"
 #include "pack.h"
+#include "state.h"
 #include "version.h"
 
 #include <archive.h>
@@ -86,6 +87,7 @@ struct recipe {
     struct recipe_step *steps;
     size_t step_count;
     const char *sandbox_record; /* the environment the build ran in, NULL for host */
+    char *dependency_record;    /* who satisfied each declared dependency, NULL for host */
     char *text;
     size_t text_length;
 };
@@ -133,7 +135,7 @@ static void recipe_free(struct recipe *r)
         for (j = 0; j < r->steps[i].argc; ++j) free(r->steps[i].argv[j]);
         free(r->steps[i].argv);
     }
-    free(r->sources); free(r->depends); free(r->build_depends);
+    free(r->sources); free(r->depends); free(r->build_depends); free(r->dependency_record);
     free(r->outputs); free(r->splits); free(r->hook_install);
     free(r->hook_remove); free(r->steps);
     memset(r, 0, sizeof *r);
@@ -207,7 +209,9 @@ static int append_depend(struct recipe_depend **list, size_t *count,
     if (!grown) return 0;
     *list = grown;
     memset(&grown[*count], 0, sizeof grown[*count]);
-    if (tokens_count == 2 && !strncmp(tokens[0], "cmd:", 4)) {
+    /* a command requirement carries a name only, so the prefix decides the kind whether
+       or not a comparison follows it */
+    if (tokens_count && !strncmp(tokens[0], "cmd:", 4) && tokens[0][4]) {
         grown[*count].kind = strdup("command");
         grown[*count].name = strdup(tokens[0] + 4);
     } else {
@@ -866,6 +870,107 @@ static int write_file(const char *path, const char *body, size_t length, unsigne
     return !close(fd);
 }
 
+/* a declared build dependency is a promise the environment either keeps or reports. the
+   dependency root is checked first, then the read-only host toolchain the root carries,
+   since a step reaches both through PATH */
+static int dependency_command(const char *root, const char *name, char *out, size_t size)
+{
+    static const char *const directories[] = { "usr/bin/", "bin/", "usr/sbin/", "sbin/" };
+    size_t root_length = strlen(root);
+    size_t i;
+    for (i = 0; i < sizeof directories / sizeof *directories; ++i) {
+        size_t length = root_length + strlen(directories[i]) + strlen(name) + 3;
+        char *path = malloc(length);
+        struct stat st;
+        int found;
+        if (!path) return 0;
+        snprintf(path, length, "%s%s%s", root,
+                 root[root_length - 1] == '/' ? "" : "/", directories[i]);
+        sprintf(path + strlen(path), "%s", name);
+        found = !stat(path, &st) && S_ISREG(st.st_mode) && (st.st_mode & 0111);
+        if (found) {
+            if (out) snprintf(out, size, "%s", path);
+            free(path);
+            return 1;
+        }
+        free(path);
+    }
+    return 0;
+}
+
+struct package_probe {
+    const char *name;
+    int found;
+};
+
+static int package_visit(void *opaque, int root, int instance, const char *digest)
+{
+    struct package_probe *probe = opaque;
+    char name[256];
+    (void)root;
+    (void)digest;
+    if (!holy_state_instance_field(instance, "name", name, sizeof name)) return 1;
+    if (!strcmp(name, probe->name)) probe->found = 1;
+    return probe->found ? 0 : 1;
+}
+
+/* one report line per declared dependency, and 6 naming the one the environment cannot
+   provide, so a build stops before a step instead of failing inside one */
+static int check_build_dependencies(struct recipe *recipe, const char *deps)
+{
+    char *record = NULL;
+    size_t used = 0, i;
+    for (i = 0; i < recipe->build_depend_count; ++i) {
+        const struct recipe_depend *depend = &recipe->build_depends[i];
+        char path[PATH_MAX];
+        char line[1024];
+        int length = 0;
+        if (!strcmp(depend->kind, "command")) {
+            if (deps && dependency_command(deps, depend->name, path, sizeof path))
+                length = snprintf(line, sizeof line, "build-depend-satisfied cmd:%s %s\n",
+                                   depend->name, path);
+            else if (dependency_command("/", depend->name, path, sizeof path))
+                length = snprintf(line, sizeof line, "build-depend-satisfied cmd:%s host %s\n",
+                                   depend->name, path);
+            else {
+                free(record);
+                fprintf(stderr, "holypkg: declared build dependency cmd:%s has no "
+                        "provider in the build root\n", depend->name);
+                return 6;
+            }
+        } else if (deps) {
+            /* a package requirement names an instance, so the root has to hold one */
+            struct package_probe probe = {depend->name, 0};
+            unsigned long long generation;
+            if (holy_state_visit(deps, package_visit, &probe, &generation) || !probe.found) {
+                free(record);
+                fprintf(stderr, "holypkg: declared build dependency %s has no provider "
+                        "in the build root\n", depend->name);
+                return 6;
+            }
+            length = snprintf(line, sizeof line, "build-depend-satisfied %s %s\n",
+                              depend->name, deps);
+        } else {
+            /* an environment without a root of its own holds no instance this manager
+               can see, so the record is carried unresolved rather than claimed */
+            length = snprintf(line, sizeof line, "build-depend-unresolved %s no-root\n",
+                              depend->name);
+        }
+        if (length < 0) { free(record); return 1; }
+        {
+            char *grown = realloc(record, used + (size_t)length + 1);
+            if (!grown) { free(record); return 1; }
+            record = grown;
+            memcpy(record + used, line, (size_t)length + 1);
+            used += (size_t)length;
+        }
+        fputs(line, stdout);
+    }
+    free(recipe->dependency_record);
+    recipe->dependency_record = record;
+    return 0;
+}
+
 static int run_step(const struct recipe_step *step, const char *work, const char *recipe_dir,
                     const struct recipe *recipe, const char *environment,
                     const struct holy_sandbox *sandbox, unsigned jobs,
@@ -959,7 +1064,23 @@ static int run_step(const struct recipe_step *step, const char *work, const char
             sprintf(entry, "%s=%s", pairs[e][0], pairs[e][1]);
             entries[e] = entry;
         }
-        entries[used] = (char *)"PATH=/usr/bin:/bin";
+        /* a declared dependency root comes first, so a step finds the tools the recipe
+           asked for before the host toolchain. every entry is allocated, since the
+           caller frees the table after the child copied it */
+        {
+            size_t length = sandbox->deps ? strlen(sandbox->deps) * 2 + 40 : 32;
+            char *path = malloc(length);
+            if (!path) goto sandbox_done;
+            if (sandbox->deps)
+                snprintf(path, length, "PATH=%s/usr/bin:%s/bin:/usr/bin:/bin",
+                         sandbox->deps, sandbox->deps);
+            else
+                snprintf(path, length, "PATH=/usr/bin:/bin");
+            entries[used++] = path;
+        }
+        /* the child copies the vector until the terminator, so the table is closed here
+           rather than left to whatever the stack held */
+        entries[used] = NULL;
         status = holy_sandbox_run(sandbox, argv, cwd, entries);
 sandbox_done:
         for (e = 0; e < used; ++e) free(entries[e]);
@@ -1622,6 +1743,9 @@ static int emit_output(struct recipe *recipe, const char *group, const char *out
             fputs("build-depend ", out);
             token(out, recipe->build_depends[i].name); fputc('\n', out);
         }
+        /* who provided each one belongs to the artifact, since the same recipe builds
+           against a different root on another host */
+        if (recipe->dependency_record) fputs(recipe->dependency_record, out);
         if (fclose(out)) goto done;
     }
     {
@@ -1727,6 +1851,13 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
     paths.sources = joined(work, "sources");
     if (!paths.work || !paths.src || !paths.build || !paths.dest || !paths.out ||
         !paths.sources) { result = 1; goto done; }
+    /* a declared dependency belongs to a build root, and only clean builds one, so the
+       host environment has nowhere to put it */
+    if (request && request->dependency_count && strcmp(environment, "clean")) {
+        fprintf(stderr, "holypkg: --dependency needs --environment clean\n");
+        result = 2;
+        goto done;
+    }
     if (!strcmp(environment, "clean")) {
         sandbox.uid = request ? request->uid : 0;
         sandbox.network = request ? request->network : 0;
@@ -1738,6 +1869,8 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
         sandbox.limit_count = request ? request->limit_count : 0;
         sandbox.env = request ? request->env : NULL;
         sandbox.env_count = request ? request->env_count : 0;
+        sandbox.dependencies = request ? request->dependencies : NULL;
+        sandbox.dependency_count = request ? request->dependency_count : 0;
         sandbox.work = work;
         /* a parameter this backend cannot serve is an argument error, and a missing
            namespace or an unusable root is a requirement this host does not meet */
@@ -1749,6 +1882,10 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
         recipe.sandbox_record = sandbox.record;
         printf("build-environment %s\n", sandbox.record);
     }
+    /* the host environment has no root of its own, so a declared command is checked
+       against the host PATH and a package dependency has nothing to provide it */
+    if (check_build_dependencies(&recipe, !strcmp(environment, "clean") ? sandbox.deps : NULL))
+        { result = 6; goto done; }
     printf("recipe %s %s-%s environment %s work %s\n",
            recipe.name, recipe.version, recipe.release, environment, work);
     for (i = 0; i < recipe.source_count; ++i) {

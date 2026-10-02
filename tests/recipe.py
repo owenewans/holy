@@ -301,6 +301,159 @@ PACKAGE
         # was given plus the build root
         assert "root" not in listing and "proc" not in listing and "srv" not in listing
         assert not (clean_work / "env" / "root").exists()
+        # a declared dependency becomes a private root the step finds on PATH, so the
+        # recipe runs a tool the host toolchain does not provide
+        write(root / "tool.c", """#include <stdio.h>
+int main(void) { return puts("built-by-dependency") < 0; }
+""")
+        subprocess.run(["gcc", "-o", str(root / "holy-recipe-tool"), str(root / "tool.c")],
+                       check=True)
+        loader = run("elf", root / "holy-recipe-tool").split("interpreter ", 1)[1].split()[0]
+        assert loader.startswith("/")
+        for name, files in (("holy-recipe-dep", {"usr/bin/holy-recipe-tool": root / "holy-recipe-tool"}),
+                            ("holy-recipe-runtime", {
+                                # both sit in the loader search path, since a soname the
+                                # loader cannot reach is not a provider
+                                loader.lstrip("/"): Path("/") / loader.lstrip("/"),
+                                loader.lstrip("/").rsplit("/", 1)[0] + "/libc.so.6":
+                                    Path(subprocess.run(["gcc", "-print-file-name=libc.so.6"],
+                                                        text=True, capture_output=True,
+                                                        check=True).stdout.strip())})):
+            tree = root / f"tree-{name}"
+            (tree / "HOLY").mkdir(parents=True)
+            write(tree / "HOLY" / "meta",
+                  f"format holy-package-1\nname {name}\nversion 1\nrelease 1\nos linux\n"
+                  "arch x86_64\nlibc glibc\n")
+            for part in ("deps", "provides", "hooks", "origin", "transform"):
+                (tree / "HOLY" / part).write_text("")
+            for path, source in files.items():
+                target = tree / "DATA" / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["cp", "-L", str(source), str(target)], check=True)
+            generated = run("manifest", "generate", tree,
+                            "--output", out / f"{name}.files").split()
+            (tree / "HOLY" / "files").write_text(Path(generated[1]).read_text())
+            run("pack", tree, "--output", out / f"{name}.holy")
+        dependency = out / "holy-recipe-dep.holy"
+        runtime = out / "holy-recipe-runtime.holy"
+        dependency_sha = hashlib.sha256(dependency.read_bytes()).hexdigest()
+        runtime_sha = hashlib.sha256(runtime.read_bytes()).hexdigest()
+        write(root / "dep.recipe", """format holy-recipe-1
+name holy-recipe-depuser
+version 1.0
+release 1
+arch noarch
+libc nolibc
+summary Declared dependency fixture
+output holy-recipe-depuser runtime
+build-depend cmd:holy-recipe-tool
+step package /bin/sh <<PACKAGE
+mkdir -p "$HOLY_DEST/usr/share/holy-recipe-depuser"
+holy-recipe-tool > "$HOLY_DEST/usr/share/holy-recipe-depuser/tool-output"
+printf '%s\n' "$PATH" > "$HOLY_OUT/path"
+printf '%s\n' "$(test -w /deps && echo yes || echo no)" > "$HOLY_OUT/deps-write"
+PACKAGE
+""")
+        dep_work = root / "dep-work"
+        dep_work.mkdir()
+        log = run("build", root / "dep.recipe", "--output", out / "dep-out",
+                  "--environment", "clean", "--work", dep_work, "--keep", "--yes",
+                  "--dependency", "local:" + str(dependency),
+                  "--dependency", "local:" + str(runtime))
+        assert "deps declared" in log
+        assert f"build-dependency {dependency_sha} installed" in log
+        assert f"build-dependency {runtime_sha} installed" in log
+        assert (f"build-depend-satisfied cmd:holy-recipe-tool {dep_work}/deps/usr/bin/"
+                "holy-recipe-tool") in log
+        dep_meta, _ = read_metadata(out / "dep-out" / "holy-recipe-depuser--noarch--nolibc.holy")
+        assert "deps declared" in dep_meta["HOLY/transform"]
+        assert (f"build-depend-satisfied cmd:holy-recipe-tool {dep_work}/deps/usr/bin/"
+                "holy-recipe-tool") in dep_meta["HOLY/transform"]
+        step_path = (dep_work / "out" / "path").read_text().strip()
+        assert step_path == f"{dep_work}/deps/usr/bin:{dep_work}/deps/bin:/usr/bin:/bin"
+        # the dependency root is a read-only mount, so a step uses the tool and cannot
+        # replace it
+        assert (dep_work / "out" / "deps-write").read_text().strip() == "no"
+        tool_output = out / "dep-out" / "holy-recipe-depuser--noarch--nolibc.holy"
+        contents = subprocess.run(["lz4", "-dc", str(tool_output)], check=True,
+                                  capture_output=True).stdout
+        with tarfile.open(fileobj=__import__("io").BytesIO(contents)) as archive:
+            assert archive.extractfile(
+                "DATA/usr/share/holy-recipe-depuser/tool-output").read() == b"built-by-dependency\n"
+        # a declared dependency nothing provides is refused before a step runs, and the
+        # missing provider is named
+        missing_work = root / "dep-missing-work"
+        missing_work.mkdir()
+        error = run("build", root / "dep.recipe", "--output", out / "dep-missing",
+                    "--environment", "clean", "--work", missing_work, "--keep", "--yes",
+                    "--dependency", "local:" + str(runtime), status=6)
+        assert "declared build dependency cmd:holy-recipe-tool has no provider" not in error
+        run("build", root / "dep.recipe", "--output", out / "dep-missing",
+            "--environment", "clean", "--work", missing_work, "--keep", "--yes",
+            "--dependency", "local:" + str(runtime), status=6)
+        # a package dependency is satisfied by an installed artifact of that name, not by
+        # a file on PATH
+        write(root / "dep-pkg.recipe", """format holy-recipe-1
+name holy-recipe-deppkg
+version 1.0
+release 1
+arch noarch
+libc nolibc
+summary Package dependency fixture
+output holy-recipe-deppkg runtime
+build-depend holy-recipe-runtime
+step package /bin/sh <<PACKAGE
+mkdir -p "$HOLY_DEST/usr/share/holy-recipe-deppkg"
+printf 'pkg\n' > "$HOLY_DEST/usr/share/holy-recipe-deppkg/value"
+PACKAGE
+""")
+        pkg_work = root / "dep-pkg-work"
+        pkg_work.mkdir()
+        log = run("build", root / "dep-pkg.recipe", "--output", out / "dep-pkg",
+                  "--environment", "clean", "--work", pkg_work, "--keep", "--yes",
+                  "--dependency", "local:" + str(runtime))
+        assert f"build-depend-satisfied holy-recipe-runtime {pkg_work}/deps" in log
+        assert (out / "dep-pkg" / "holy-recipe-deppkg--noarch--nolibc.holy").is_file()
+        unsatisfied_work = root / "dep-unsatisfied-work"
+        unsatisfied_work.mkdir()
+        run("build", root / "dep-pkg.recipe", "--output", out / "dep-pkg",
+            "--environment", "clean", "--work", unsatisfied_work, "--keep", "--yes",
+            "--dependency", "local:" + str(dependency), status=6)
+        # the host environment has no build root, so a declared command the host does not
+        # carry is reported before a step
+        host_work = root / "dep-host-work"
+        host_work.mkdir()
+        run("build", root / "dep.recipe", "--output", out / "dep-host",
+            "--work", host_work, "--keep", "--yes", status=6)
+        write(root / "host-cmd.recipe", """format holy-recipe-1
+name holy-recipe-hostcmd
+version 1.0
+release 1
+arch noarch
+libc nolibc
+summary Host command fixture
+build-depend cmd:sh
+output holy-recipe-hostcmd runtime
+step package /bin/sh <<PACKAGE
+mkdir -p "$HOLY_DEST/usr/share/holy-recipe-hostcmd"
+printf 'sh\n' > "$HOLY_DEST/usr/share/holy-recipe-hostcmd/value"
+PACKAGE
+""")
+        log = run("build", root / "host-cmd.recipe", "--output", out / "host-cmd",
+                  "--work", host_work, "--yes")
+        assert "build-depend-satisfied cmd:sh host /" in log
+        # the dependency root belongs to the clean environment only
+        run("build", root / "dep.recipe", "--output", out / "dep-host",
+            "--work", dep_work, "--keep", "--yes",
+            "--dependency", "local:" + str(dependency), status=2)
+        run("build", root / "dep.recipe", "--output", out / "dep-host",
+            "--environment", "clean", "--work", missing_work, "--keep", "--yes",
+            "--dependency", str(dependency), status=2)
+        absent_work = root / "dep-absent-work"
+        absent_work.mkdir()
+        run("build", root / "dep.recipe", "--output", out / "dep-host",
+            "--environment", "clean", "--work", absent_work, "--keep", "--yes",
+            "--dependency", "local:" + str(root / "absent.holy"), status=6)
         # a step that writes into a read-only host directory fails, so the environment is
         # a boundary rather than a different working directory
         write(root / "clean-ro.recipe", """format holy-recipe-1

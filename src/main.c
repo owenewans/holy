@@ -1451,7 +1451,7 @@ int main(int argc, char **argv)
     if (argc > 2 && !strcmp(argv[1], "build")) {
         const char *environment = NULL, *work = NULL, *output = NULL;
         struct holy_sandbox_request request = {0};
-        const char *devices[16], *envs[16];
+        const char *devices[16], *envs[16], *deps[16];
         struct holy_sandbox_mount mounts[8];
         struct holy_sandbox_limit limits[8];
         int i, yes = 0, noninteractive = 0, keep = 0;
@@ -1498,6 +1498,12 @@ int main(int argc, char **argv)
                 request.env = envs;
                 ++request.env_count;
             }
+            else if (!strcmp(argv[i], "--dependency") && i + 1 < argc) {
+                if (request.dependency_count >= 16) goto build_usage;
+                if (strncmp(argv[++i], "local:", 6) || !argv[i][6]) goto build_usage;
+                deps[request.dependency_count++] = argv[i];
+                request.dependencies = deps;
+            }
             else if (!strcmp(argv[i], "--jobs") && i + 1 < argc) {
                 char *end = NULL;
                 long value = strtol(argv[++i], &end, 10);
@@ -1516,6 +1522,7 @@ int main(int argc, char **argv)
               "[--environment host|clean|vm] [--work NEW_DIRECTORY] [--jobs N] "
               "[--uid UID] [--network on] [--device PATH ...] [--mount SOURCE:DEST[:rw] ...] "
               "[--limit NAME=VALUE ...] [--env NAME=VALUE ...] "
+              "[--dependency local:FILE ...] "
               "[--yes] [--noninteractive] [--keep]\n", stderr);
         return 2;
     }

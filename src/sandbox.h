@@ -31,6 +31,8 @@ struct holy_sandbox_request {
     size_t limit_count;
     const char *const *env;
     size_t env_count;
+    const char *const *dependencies;  /* local artifact paths, installed into the root */
+    size_t dependency_count;
 };
 
 struct holy_sandbox {
@@ -44,8 +46,11 @@ struct holy_sandbox {
     size_t limit_count;
     const char *const *env;  /* NAME=VALUE entries the caller declared */
     size_t env_count;
+    const char *const *dependencies;
+    size_t dependency_count;
     const char *work;        /* the build root, writable at the same path inside */
     char *root;              /* the root directory, owned by the caller */
+    char *deps;              /* the root holding the declared dependencies, or NULL */
     char *record;            /* one line naming what the environment provides */
 };
 

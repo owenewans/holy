@@ -134,7 +134,7 @@ parameters are explicit and the build prints one report line before the first
 step:
 .RS
 .nf
-build-environment root PATH uid UID network none|host read-only N mounts N devices N limits N
+build-environment root PATH uid UID network none|host read-only N mounts N devices N limits N deps none|declared
 .fi
 .RE
 .PP
@@ -172,7 +172,47 @@ is refused.
 .PP
 --env NAME=VALUE declares one variable for every step. The inherited
 environment is cleared first, so a variable the host exports does not reach a
-step the caller did not name. PATH is /usr/bin:/bin unless the caller sets it.
+step the caller did not name. PATH is the dependency root's directories, then
+/usr/bin:/bin, unless the caller sets it with --env.
+.PP
+--dependency local:FILE names an artifact the build root carries. Each one is
+verified and staged into a private Holy root under the build directory and
+installed through the ordinary set transaction, so its manifests, providers and
+hooks are the ones this manager wrote. The root is bound read-only into the step
+namespace at the same path, and its usr/bin and bin come first on PATH, ahead
+of the host toolchain. Sixteen is the maximum; a path that is not local:FILE is
+2.
+.PP
+A name with any --environment other than clean is 2, since the host environment
+has no build root to carry it.
+.PP
+The dependency root is a real root, not a directory of unpacked files, so a
+declared dependency that nothing provides is a set the engine refuses before a
+step runs, and a step cannot change the root its tool came from. Each artifact
+is reported as it is staged and as it is installed.
+.PP
+Every build-depend record is checked once the environment exists, before the
+first step, and the result is printed and written into HOLY/transform:
+.PP
+.RS
+.nf
+build-depend-satisfied cmd:make PATH
+build-depend-satisfied NAME PATH
+build-depend-unresolved NAME no-root
+.fi
+.RE
+.PP
+A cmd:NAME record is satisfied by an executable of that name in the dependency
+root, or, when no root carries it, in the host directories /usr/bin, /bin,
+/usr/sbin and /sbin, which is the toolchain a step reaches. A bare NAME record
+is satisfied by an installed instance of that package name in the dependency
+root, since a package is what a root provides and a file on PATH is not; where
+an environment has no root of its own, the record is reported unresolved, since
+the host's installed packages are not this manager's to prove.
+.PP
+A cmd: record nothing provides is 6 before any step runs, naming the record, so
+a missing toolchain is a report rather than a failure inside a step. A package
+record in a build root that does not hold that package is 6 for the same reason.
 .PP
 The environment is a namespace boundary, not a defence against code that attacks
 the shared kernel on purpose. A host that refuses an unprivileged user

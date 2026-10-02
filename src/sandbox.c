@@ -5,6 +5,8 @@
    overload needs C11, so the one use here is a plain scan */
 #define _GNU_SOURCE 1
 #include "sandbox.h"
+#include "cache.h"
+#include "state.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -267,6 +269,12 @@ static void child_setup(const struct holy_sandbox *sandbox, char *const argv[],
             _exit(126);
         }
     if (!bind_build_root(sandbox)) _exit(126);
+    /* the declared dependencies are reachable read-only, so a step uses a tool without
+       being able to change the root it came from */
+    if (sandbox->deps && !bind_read_only(sandbox->deps, sandbox->root)) {
+        complain("reach the declared dependencies", sandbox->deps);
+        _exit(126);
+    }
     for (i = 0; base_devices[i]; ++i)
         if (!bind_device(base_devices[i], sandbox->root)) {
             complain("reach a device node", base_devices[i]);
@@ -321,6 +329,60 @@ int holy_sandbox_probe(void)
     return 0;
 }
 
+/* the declared dependencies become a private Holy root, installed through the same
+   transaction an ordinary install uses, so a step finds them on the root PATH and their
+   manifests, providers and hooks are the ones this manager wrote */
+static int install_dependencies(struct holy_sandbox *sandbox,
+                                const char *const *paths, size_t count)
+{
+    char (*storage)[65] = NULL;
+    const char *digests[16];
+    size_t i;
+    char plan[65];
+    int result = 1;
+    if (!count) return 0;
+    if (count > 16) return 2;
+    sandbox->deps = joined(sandbox->work, "deps");
+    if (!sandbox->deps) return 1;
+    storage = calloc(count, sizeof *storage);
+    if (!storage) return 1;
+    /* the set engine takes one pointer per artifact, so the blocks are named rather
+       than handed over as a packed array */
+    for (i = 0; i < count; ++i) digests[i] = storage[i];
+    /* the root is a plain directory first, since the state engine creates its layout
+       under a path that already exists */
+    if (mkdir(sandbox->deps, 0755) && errno != EEXIST) {
+        complain("create the dependency root", strerror(errno));
+        goto done;
+    }
+    if (!holy_state_init(sandbox->deps)) { complain("initialise the dependency root", NULL); goto done; }
+    for (i = 0; i < count; ++i) {
+        /* the paths carry the local: prefix the command line uses, and the cache takes
+           the path itself */
+        if (strncmp(paths[i], "local:", 6) ||
+            !holy_cache_stage_local_digest(paths[i] + 6, sandbox->deps, storage[i])) {
+            complain("stage a declared dependency", paths[i]);
+            goto done;
+        }
+        printf("build-dependency %s staged\n", storage[i]);
+    }
+    /* the plan and the apply are two calls, since the set engine takes a plan hash as the
+       approval of a review the command line already is */
+    result = holy_state_set(digests, count, NULL, NULL,
+                            sandbox->deps, NULL, 0, NULL, 0, NULL, 0, NULL, 0, NULL, 0,
+                            plan);
+    if (!result)
+        result = holy_state_set(digests, count, NULL, plan,
+                                sandbox->deps, NULL, 0, NULL, 0, NULL, 0, NULL, 0,
+                                NULL, 0, NULL);
+    if (result) { complain("install the declared dependencies", NULL); goto done; }
+    for (i = 0; i < count; ++i) printf("build-dependency %s installed\n", storage[i]);
+    result = 0;
+done:
+    free(storage);
+    return result;
+}
+
 int holy_sandbox_prepare(struct holy_sandbox *sandbox)
 {
     size_t i;
@@ -328,6 +390,7 @@ int holy_sandbox_prepare(struct holy_sandbox *sandbox)
     if (!sandbox || !sandbox->work || sandbox->work[0] != '/') return 2;
     for (i = 0; i < sandbox->device_count; ++i)
         if (sandbox->devices[i][0] != '/') return 2;
+    if (sandbox->dependency_count > 16) return 2;
     for (i = 0; i < sandbox->mount_count; ++i) {
         if (sandbox->mounts[i].source[0] != '/' ||
             sandbox->mounts[i].destination[0] != '/') return 2;
@@ -338,36 +401,44 @@ int holy_sandbox_prepare(struct holy_sandbox *sandbox)
     }
     sandbox->root = joined(sandbox->work, "env");
     if (!sandbox->root) return 1;
+    if (mkdir(sandbox->root, 0755) && errno != EEXIST) {
+        complain("create the build environment root", strerror(errno));
+        goto failed;
+    }
+    /* the declared dependencies are installed before the record is written, so the record
+       and the step PATH describe the environment the step actually gets */
+    if (sandbox->dependency_count &&
+        install_dependencies(sandbox, sandbox->dependencies, sandbox->dependency_count))
+        goto failed;
     needed = snprintf(NULL, 0,
                       "root %s uid %lu network %s read-only %zu mounts %zu devices %zu "
-                      "limits %zu", sandbox->root,
+                      "limits %zu deps %s", sandbox->root,
                       sandbox->uid ? sandbox->uid : (unsigned long)getuid(),
                       sandbox->network ? "host" : "none",
                       (size_t)(sizeof read_only / sizeof *read_only - 1),
                       sandbox->mount_count,
                       (size_t)(sizeof base_devices / sizeof *base_devices - 1) +
                           sandbox->device_count,
-                      sandbox->limit_count);
+                      sandbox->limit_count, sandbox->deps ? "declared" : "none");
     if (needed < 0) { free(sandbox->root); sandbox->root = NULL; return 1; }
     sandbox->record = malloc((size_t)needed + 1);
     if (!sandbox->record) { free(sandbox->root); sandbox->root = NULL; return 1; }
     snprintf(sandbox->record, (size_t)needed + 1,
-             "root %s uid %lu network %s read-only %zu mounts %zu devices %zu limits %zu",
+             "root %s uid %lu network %s read-only %zu mounts %zu devices %zu limits %zu "
+             "deps %s",
              sandbox->root, sandbox->uid ? sandbox->uid : (unsigned long)getuid(),
              sandbox->network ? "host" : "none",
              (size_t)(sizeof read_only / sizeof *read_only - 1), sandbox->mount_count,
              (size_t)(sizeof base_devices / sizeof *base_devices - 1) +
                  sandbox->device_count,
-             sandbox->limit_count);
-    if (mkdir(sandbox->root, 0755) && errno != EEXIST) {
-        complain("create the build environment root", strerror(errno));
-        goto failed;
-    }
+             sandbox->limit_count, sandbox->deps ? "declared" : "none");
     return 0;
 failed:
     free(sandbox->root);
+    free(sandbox->deps);
     free(sandbox->record);
     sandbox->root = NULL;
+    sandbox->deps = NULL;
     sandbox->record = NULL;
     return 1;
 }
@@ -428,7 +499,9 @@ void holy_sandbox_free(struct holy_sandbox *sandbox)
 {
     if (!sandbox) return;
     free(sandbox->root);
+    free(sandbox->deps);
     free(sandbox->record);
     sandbox->root = NULL;
+    sandbox->deps = NULL;
     sandbox->record = NULL;
 }

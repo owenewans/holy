@@ -1111,6 +1111,26 @@
   declared mount, the declared variable, the declared limit, the uid the payload
   files ended up with, and the refusals for a relative device, an unknown mount
   suffix, a zero limit, a malformed name and a writable mount of the build root.
+  The clean build environment now carries the declared dependencies as well.
+  `--dependency local:FILE` verifies and stages each named artifact into a
+  private Holy root under the build directory and installs it through the
+  ordinary set transaction, so the dependency manifests, providers and hooks are
+  the ones this manager wrote rather than files unpacked beside the build. The
+  root is bound read-only into the step namespace at the same path and its
+  usr/bin and bin come first on PATH, so a step finds the tool the recipe asked
+  for before the host toolchain and cannot change the root it came from. Every
+  build-depend record is then checked once the environment exists: a cmd:NAME
+  record against an executable of that name in the dependency root or in the
+  host toolchain directories, a bare NAME against an installed instance of that
+  package in the root. Each result is reported and written into HOLY/transform
+  as build-depend-satisfied, and a record nothing satisfies stops the build with
+  6 before the first step instead of failing inside one. Three fixture defects
+  came out of the work: the set engine takes one pointer per artifact, so an
+  array of packed 65-byte blocks cannot be cast into its digest argument; the
+  step environment vector had no NULL terminator, so the child walked past the
+  table into stack memory and died before exec; and a cmd: prefix was recognized
+  only when a comparison followed, so `build-depend cmd:make` was read as a
+  package named cmd:make.
   The vm build environment needs a booted Holy image and qemu-system and remains
   open.
   The build runner no longer loses its private build root, keeps a root the
