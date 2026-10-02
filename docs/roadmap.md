@@ -108,7 +108,14 @@
   came back as a status with no reason; all three read the private path now. And the
   review reads its findings after the walk released the SONAME it looked up, so the
   recorded consumer names were borrowed pointers into freed memory and are owned
-  copies now.
+  copies now. Recovery of an interrupted placement was missing too: a crash between
+  saving an instance and rewriting its manifest left the payload under the private
+  root and a database naming the public path, and `installed_valid` refuses exactly
+  that instance, so recovery could never reach the code that would fix it. Recovery
+  now writes the missing transform record before it reads the database, the rewrite
+  reads the shipped manifest from whichever of the two names carries it, and a
+  `private-files-after` fault in tests/update-fault.c drives the case end to end in
+  tests/private-set.sh.
 - [x] Rewrite the interpreter, RPATH or RUNPATH, SONAME and DT_NEEDED of one file
   through patchelf, with no second rewriter in this repository. `holypkg patch`
   reads the facts the file states, states the argv patchelf would run and runs it

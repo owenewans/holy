@@ -11,7 +11,11 @@ expect() {
     expected=$1
     shift
     if "$@" > "$tmp/out" 2> "$tmp/err"; then actual=0; else actual=$?; fi
-    test "$actual" -eq "$expected" || { echo "GOT $actual WANT $expected: $*" >&2; cat "$tmp/out" >&2; cat "$tmp/err" >&2; exit 1; }
+    test "$actual" -eq "$expected" || {
+        echo "GOT $actual WANT $expected: $*" >&2
+        cat "$tmp/out" "$tmp/err" >&2
+        exit 1
+    }
 }
 
 # two packages ship the same program name, each with its own content
@@ -175,5 +179,47 @@ test "$(grep -c '^consumer ' "$tmp/out")" -eq 1
 grep -q "decision-required placement strands 1 programs" "$tmp/err"
 grep -q "holypkg patch CONSUMER --runpath DIR" "$tmp/err"
 test -f "$root2/usr/lib/libhelper.so.1"
+
+# a crash between saving an instance and recording its placement leaves the payload under
+# the private root and a manifest that names the public path. the root then contradicts
+# its own database, so recovery writes the record the instance is missing.
+program crasha one ''
+program crashb two crasha
+crasha=$(hash crasha) crashb=$(hash crashb)
+root4="$tmp/root4"
+mkdir -p "$root4/usr/bin"
+"$bin" db init --root "$root4" > "$tmp/out"
+"$bin" cache stage "local:$tmp/crasha.holy" --root "$root4" > "$tmp/out"
+expect 0 "$bin" db plan-set "$crasha" --root "$root4"
+"$bin" db apply-set "$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")" \
+    "$crasha" --root "$root4" > "$tmp/out"
+"$bin" cache stage "local:$tmp/crashb.holy" --root "$root4" > "$tmp/out"
+expect 0 "$bin" db plan-set "$crashb" --private "$crashb=usr/bin/prog" --root "$root4"
+crash_plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+
+fault=$(realpath "$(dirname "$0")/update-fault.c")
+cc=${CC:-cc}
+command -v "$cc" >/dev/null 2>&1 || { echo "$cc required for the placement recovery case" >&2; exit 6; }
+"$cc" -shared -fPIC -o "$tmp/fault.so" "$fault" -ldl
+if env LD_PRELOAD="$tmp/fault.so" HOLY_UPDATE_FAULT=private-files-after \
+       "$bin" db apply-set "$crash_plan" "$crashb" --private "$crashb=usr/bin/prog" \
+          --root "$root4" > "$tmp/out" 2> "$tmp/err"; then
+    echo "the fault did not interrupt the apply" >&2
+    exit 1
+fi
+# the crash left the private file placed, the instance saved and its transform record
+# unwritten, which is the state a root cannot be checked in
+test -f "$root4/usr/lib/holy/private/$crashb/usr/bin/prog"
+test ! -e "$root4/var/lib/holypkg/installed/$crashb/config-state"
+if "$bin" db check --all --root "$root4" > "$tmp/out" 2> "$tmp/err"; then exit 1; fi
+expect 0 "$bin" db recover --continue-set --root "$root4"
+grep -qx "format holy-private-transform-1" "$root4/var/lib/holypkg/installed/$crashb/config-state"
+expect 0 "$bin" db check --all --root "$root4"
+test "$(cat "$root4/usr/lib/holy/private/$crashb/usr/bin/prog")" = two
+# and the removal takes the private file while the public one the kept provider owns stays
+expect 0 "$bin" db rm "$crashb" --root "$root4"
+test ! -e "$root4/usr/lib/holy/private/$crashb/usr/bin/prog"
+test "$(cat "$root4/usr/bin/prog")" = one
+expect 0 "$bin" db check --all --root "$root4"
 
 echo "private placement set fixtures passed"

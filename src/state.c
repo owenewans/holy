@@ -2314,6 +2314,7 @@ static int save_placed_files(int item, const char *snapshot, const char *artifac
 {
     struct archive *archive = archive_read_new();
     struct archive_entry *entry;
+    struct stat st;
     char *raw = NULL, *placed = NULL, *record = NULL;
     size_t raw_length = 0, placed_length = 0, record_length = 0;
     char raw_hash[65], placed_hash[65];
@@ -2347,10 +2348,15 @@ static int save_placed_files(int item, const char *snapshot, const char *artifac
     /* the loop leaves on the record it was after, so an unfinished archive is caught
        by the manifest rewrite refusing a truncated one */
     if (!raw) goto done;
+    /* a crash between the two renames leaves the shipped manifest already named
+       package-files, so the raw digest is read from whichever of the two names carries
+       it. an instance with neither is not half recorded, it is something else. */
     if (!holy_private_manifest(places, artifact, raw, raw_length, &placed, &placed_length) ||
-        !instance_record_digest(item, "files", raw_hash) ||
-        renameat(item, "files", item, "package-files") || fsync(item) ||
-        !record_file(item, "files", placed, placed_length) ||
+        (!instance_record_digest(item, "files", raw_hash) &&
+         !instance_record_digest(item, "package-files", raw_hash))) goto done;
+    if (!fstatat(item, "files", &st, AT_SYMLINK_NOFOLLOW) &&
+        (renameat(item, "files", item, "package-files") || fsync(item))) goto done;
+    if (!record_file(item, "files", placed, placed_length) ||
         !instance_record_digest(item, "files", placed_hash)) goto done;
     record_length = (size_t)snprintf(NULL, 0,
         "format holy-private-transform-1\nsource %s\nraw %s\ninstalled %s\nplan %s\n",
@@ -6489,6 +6495,45 @@ static int instance_reason_matches(int item, const char *reason)
     return strstr(buffer, expected) != NULL;
 }
 
+/* an interrupted set can have saved an instance and stopped before its placement was
+   recorded. the payload is under the private root at that point, so the manifest has to
+   name it or the installed set contradicts the tree. the transform record is what says
+   the manifest was rewritten, so an instance without a valid one is recorded again; the
+   rewrite reads the shipped manifest out of the archive, so repeating it lands on the
+   same text.
+
+   this runs before the database is read, because a half recorded instance is exactly
+   what the reader refuses, so a recovery that waited for it would never get here. the
+   plan the journal names is the plan the record has to carry, since a crash cannot
+   change what the review settled. */
+static int set_resume_placements(const char *root_path, int dir,
+                                 const struct set_journal *journal,
+                                 const struct holy_private_places *places)
+{
+    int installed = child_dir(dir, "installed", 0), ok = 1;
+    size_t i, j;
+    if (installed < 0) return 0;
+    for (i = 0; i < places->count && ok; ++i) {
+        const char *artifact = places->place[i].artifact;
+        char *snapshot = NULL;
+        int item = child_dir(installed, artifact, 0);
+        if (item < 0) continue;
+        for (j = 0; j < journal->count; ++j)
+            if (!strcmp(journal->digests[j], artifact)) break;
+        if (j == journal->count || config_state_valid(item, artifact)) { close(item); continue; }
+        close(item);
+        if (!(snapshot = holy_cache_snapshot(artifact, root_path)) ||
+            !(item = child_dir(installed, artifact, 0))) ok = 0;
+        else {
+            ok = save_placed_files(item, snapshot, artifact, places, journal->hash);
+            close(item);
+        }
+        if (snapshot) { unlink(snapshot); free(snapshot); }
+    }
+    close(installed);
+    return ok;
+}
+
 static int recover_set(const char *root_path, int resume)
 {
     struct install_set set = {0};
@@ -6509,8 +6554,7 @@ static int recover_set(const char *root_path, int resume)
     if (dir < 0 || flock(dir, LOCK_EX) || !state_layout(dir, 1) ||
         !empty_child(dir, "index") || !read_generation(dir, &generation)) { result = 1; goto done; }
     if (read_set_journal(dir, &journal) != 1 ||
-        (generation != journal.generation && generation != journal.generation + 1) ||
-        !installed_valid(dir)) goto done;
+        (generation != journal.generation && generation != journal.generation + 1)) goto done;
     /* a journal written before phases existed states none, and the phase it names is
        where the transaction stopped: the root may already carry the generation the
        publication would have written, since that is the phase before the journal line */
@@ -6527,6 +6571,10 @@ static int recover_set(const char *root_path, int resume)
             goto done;
         }
         free(path);
+    }
+    if (!set_resume_placements(root_path, dir, &journal, &places) || !installed_valid(dir)) {
+        result = 1;
+        goto done;
     }
     if (journal.host[0] && (uname(&host) || strcmp(host.machine, journal.host))) goto done;
     digests = calloc(journal.count, sizeof *digests);
@@ -6608,6 +6656,13 @@ static int recover_set(const char *root_path, int resume)
                            item->source_record, item->architecture[0] ? item->architecture : NULL,
                            item->privileged, item->skipped_hooks))
             goto done;
+        if (holy_private_places_artifact(&places, item->identity.digest)) {
+            int saved = child_dir(installed, item->identity.digest, 0);
+            int recorded = saved >= 0 &&
+                save_placed_files(saved, item->snapshot, item->identity.digest, &places, set.hash);
+            if (saved >= 0) close(saved);
+            if (!recorded) goto done;
+        }
         printf("resumed %s\n", item->identity.digest);
     }
     /* a recovered set leaves the same record a committed one does, with the generation

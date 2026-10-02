@@ -1397,7 +1397,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=3dc031d167e78589d1e40f150e9cee5922bb08d5b0fdd6506012022164ea8949
+holypkg.8 source=holy version=development sha256=e43aa0395d755817fae5a5712fb753b2bfe3dc9697bd4e8d6097e27d14b82f13
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -4328,6 +4328,15 @@ INSTALLED CONFLICTS
      bors  where  it expects them. The plan prints one private line per decision
      and the plan hash covers it, so an apply without  the  decision  re-derives
      the collision and refuses rather than picking for the operator.
+
+     db	 recover  --continue-set finishes an interrupted set, and a placement is
+     part of that.  A crash between saving an instance and rewriting  its  mani-
+     fest  leaves  the	payload	 under the private root while the manifest still
+     names the public path, which is a database that contradicts the tree it de-
+     scribes. Recovery writes the missing transform record  from  the  journal's
+     plan  before  it reads the database, since a half recorded instance is what
+     the reader refuses, and it repeats a record that is  already  there  rather
+     than rewriting it, so a recovery run twice lands on the same text.
 
      A	placement names one artifact and one path it must ship. A path the arti-
      fact does not ship, a path already inside a private tree, a  path	with  an

@@ -2956,6 +2956,14 @@ neighbors where it expects them. The plan prints one private line per decision a
 the plan hash covers it, so an apply without the decision re-derives the collision
 and refuses rather than picking for the operator.
 .PP
+db recover --continue-set finishes an interrupted set, and a placement is part of that.
+A crash between saving an instance and rewriting its manifest leaves the payload under
+the private root while the manifest still names the public path, which is a database
+that contradicts the tree it describes. Recovery writes the missing transform record
+from the journal's plan before it reads the database, since a half recorded instance is
+what the reader refuses, and it repeats a record that is already there rather than
+rewriting it, so a recovery run twice lands on the same text.
+.PP
 A placement names one artifact and one path it must ship. A path the artifact does
 not ship, a path already inside a private tree, a path with an empty, dot or
 dot-dot component, an artifact id that is not a SHA-256 and the same pair twice

@@ -97,6 +97,10 @@ int renameat(int from, const char *old, int to, const char *name)
         if (fault("payload-after") && !strncmp(old, ".holy-update-", 13)) stop();
         if (fault("intent-after") && !strcmp(name, "journal")) stop();
         if (fault("generation-after") && !strcmp(name, "generation")) stop();
+        /* the placement record renames the shipped manifest aside, so a crash here
+           leaves the instance saved and its private manifest not written yet */
+        if (fault("private-files-after") && !strcmp(old, "files") &&
+            !strcmp(name, "package-files")) stop();
     }
     return result;
 }
