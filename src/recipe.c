@@ -1,6 +1,7 @@
 /* recipe manifest parsing and the build runner; see man/holy-recipe.5 */
 #define _XOPEN_SOURCE 700
 #include "recipe.h"
+#include "sandbox.h"
 #include "config.h"
 #include "elf.h"
 #include "fetch.h"
@@ -84,6 +85,7 @@ struct recipe {
     size_t config_count;
     struct recipe_step *steps;
     size_t step_count;
+    const char *sandbox_record; /* the environment the build ran in, NULL for host */
     char *text;
     size_t text_length;
 };
@@ -865,7 +867,8 @@ static int write_file(const char *path, const char *body, size_t length, unsigne
 }
 
 static int run_step(const struct recipe_step *step, const char *work, const char *recipe_dir,
-                    const struct recipe *recipe, const char *environment, unsigned jobs,
+                    const struct recipe *recipe, const char *environment,
+                    const struct holy_sandbox *sandbox, unsigned jobs,
                     int approve_all, int noninteractive, int *approve_rest,
                     const char *split_dest)
 {
@@ -931,6 +934,42 @@ static int run_step(const struct recipe_step *step, const char *work, const char
         if (answer[0] == 'a' || answer[0] == 'A') *approve_rest = 1;
         else if (answer[0] != 'y' && answer[0] != 'Y') { free(script); return 3; }
     }
+    if (sandbox) {
+        /* the sandbox owns the process: it forks the namespaces itself and returns the
+           exit status the step produced */
+        char *entries[16];
+        const char *pairs[14][2];
+        size_t used = 0, e;
+        int status = 1;
+        pairs[used][0] = "HOLY_WORK";      pairs[used][1] = work_buffer;      ++used;
+        pairs[used][0] = "HOLY_SRC";       pairs[used][1] = src_buffer;       ++used;
+        pairs[used][0] = "HOLY_BUILD";     pairs[used][1] = build_buffer;     ++used;
+        pairs[used][0] = "HOLY_DEST";      pairs[used][1] = dest_buffer;      ++used;
+        pairs[used][0] = "HOLY_OUT";       pairs[used][1] = out_buffer;       ++used;
+        pairs[used][0] = "HOLY_ARCH";      pairs[used][1] = recipe->arch ? recipe->arch : "any"; ++used;
+        pairs[used][0] = "HOLY_LIBC";      pairs[used][1] = recipe->libc ? recipe->libc : "nolibc"; ++used;
+        pairs[used][0] = "HOLY_JOBS";      pairs[used][1] = jobs_buffer;      ++used;
+        pairs[used][0] = "HOLY_BUILD_TARGET"; pairs[used][1] = target_buffer; ++used;
+        pairs[used][0] = "HOLY_HOST_TARGET";  pairs[used][1] = target_buffer; ++used;
+        pairs[used][0] = "HOLY_TARGET";       pairs[used][1] = target_buffer; ++used;
+        if (split_dest) { pairs[used][0] = "HOLY_SPLIT_DEST"; pairs[used][1] = split_dest; ++used; }
+        for (e = 0; e < used; ++e) {
+            char *entry = malloc(strlen(pairs[e][0]) + strlen(pairs[e][1]) + 2);
+            if (!entry) goto sandbox_done;
+            sprintf(entry, "%s=%s", pairs[e][0], pairs[e][1]);
+            entries[e] = entry;
+        }
+        entries[used] = (char *)"PATH=/usr/bin:/bin";
+        status = holy_sandbox_run(sandbox, argv, cwd, entries);
+sandbox_done:
+        for (e = 0; e < used; ++e) free(entries[e]);
+        if (status)
+            fprintf(stderr, "holypkg: recipe step %s failed with status %d\n",
+                    step->phase, status);
+        if (script && strncmp(script, work, strlen(work))) unlink(script);
+        free(script);
+        return status;
+    }
     child = fork();
     if (child < 0) { free(script); return 1; }
     if (!child) {
@@ -949,7 +988,7 @@ static int run_step(const struct recipe_step *step, const char *work, const char
         setenv("HOLY_TARGET", target_buffer, 1);
         if (split_dest) setenv("HOLY_SPLIT_DEST", split_dest, 1);
         if (library) setenv("LD_LIBRARY_PATH", library, 1);
-        if (!strcmp(environment, "clean")) {
+        if (!sandbox && !strcmp(environment, "clean")) {
             unsetenv("HOME");
             setenv("PATH", "/usr/bin:/bin", 1);
         }
@@ -1575,7 +1614,10 @@ static int emit_output(struct recipe *recipe, const char *group, const char *out
     {
         FILE *out = fopen(transform_path, "w");
         if (!out) goto done;
-        fprintf(out, "format holy-recipe-transform-1\nbuild-environment recorded\n");
+        /* the record names what the environment provided, so an artifact states the
+           environment that produced it rather than only that one existed */
+        fprintf(out, "format holy-recipe-transform-1\nbuild-environment %s\n",
+                recipe->sandbox_record ? recipe->sandbox_record : "host");
         for (i = 0; i < recipe->build_depend_count; ++i) {
             fputs("build-depend ", out);
             token(out, recipe->build_depends[i].name); fputc('\n', out);
@@ -1623,13 +1665,14 @@ static int remove_tree(const char *path)
 }
 
 int holy_recipe_build(const char *path, const char *environment, const char *work,
-                      const char *output, unsigned jobs, int approve_all,
-                      int noninteractive, int keep)
+                      const char *output, const struct holy_sandbox_request *request,
+                      unsigned jobs, int approve_all, int noninteractive, int keep)
 {
     struct recipe recipe = {0};
     struct run_paths paths = {0};
     struct payload payload = {0};
     struct requirement *requirements = NULL;
+    struct holy_sandbox sandbox = {0};
     size_t requirement_count = 0, requirement_capacity = 0, i, k;
     char *recipe_dir = NULL, *slash = NULL, *own_work = NULL;
     int result = 1, approve_rest = 0;
@@ -1684,6 +1727,28 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
     paths.sources = joined(work, "sources");
     if (!paths.work || !paths.src || !paths.build || !paths.dest || !paths.out ||
         !paths.sources) { result = 1; goto done; }
+    if (!strcmp(environment, "clean")) {
+        sandbox.uid = request ? request->uid : 0;
+        sandbox.network = request ? request->network : 0;
+        sandbox.devices = request ? request->devices : NULL;
+        sandbox.device_count = request ? request->device_count : 0;
+        sandbox.mounts = request ? request->mounts : NULL;
+        sandbox.mount_count = request ? request->mount_count : 0;
+        sandbox.limits = request ? request->limits : NULL;
+        sandbox.limit_count = request ? request->limit_count : 0;
+        sandbox.env = request ? request->env : NULL;
+        sandbox.env_count = request ? request->env_count : 0;
+        sandbox.work = work;
+        /* a parameter this backend cannot serve is an argument error, and a missing
+           namespace or an unusable root is a requirement this host does not meet */
+        if (holy_sandbox_probe()) { result = 6; goto done; }
+        {
+            int prepared = holy_sandbox_prepare(&sandbox);
+            if (prepared) { result = prepared == 2 ? 2 : 6; goto done; }
+        }
+        recipe.sandbox_record = sandbox.record;
+        printf("build-environment %s\n", sandbox.record);
+    }
     printf("recipe %s %s-%s environment %s work %s\n",
            recipe.name, recipe.version, recipe.release, environment, work);
     for (i = 0; i < recipe.source_count; ++i) {
@@ -1744,8 +1809,9 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
         for (i = 0; i < recipe.step_count; ++i) {
             if (strcmp(recipe.steps[i].phase, phases[k])) continue;
             if (recipe.steps[i].output) continue;
-            result = run_step(&recipe.steps[i], work, recipe_dir, &recipe, environment, jobs,
-                              approve_all, noninteractive, &approve_rest, NULL);
+            result = run_step(&recipe.steps[i], work, recipe_dir, &recipe, environment,
+                              sandbox.root ? &sandbox : NULL, jobs, approve_all,
+                              noninteractive, &approve_rest, NULL);
             if (result) goto done;
         }
         if (k == 0 || k == 1) continue;
@@ -1770,8 +1836,9 @@ int holy_recipe_build(const char *path, const char *environment, const char *wor
             result = 1;
             goto done;
         }
-        result = run_step(&recipe.steps[i], work, recipe_dir, &recipe, environment, jobs,
-                          approve_all, noninteractive, &approve_rest, stage);
+        result = run_step(&recipe.steps[i], work, recipe_dir, &recipe, environment,
+                          sandbox.root ? &sandbox : NULL, jobs, approve_all,
+                          noninteractive, &approve_rest, stage);
         if (!result) result = collect_payload(stage, NULL, recipe.steps[i].output, &payload) ? 0 : 1;
         if (result) {
             fprintf(stderr, "holypkg: split step for %s produced no usable tree\n",
@@ -1912,6 +1979,7 @@ done:
     free(requirements);
     payload_free(&payload);
     run_paths_free(&paths);
+    holy_sandbox_free(&sandbox);
     free(recipe_dir);
     free(own_work);
     recipe_free(&recipe);

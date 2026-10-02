@@ -1093,7 +1093,26 @@
   body ended the function early. An x- record of a recipe also undercounted its
   buffer, so a value with a byte outside printable ASCII overflowed it while the
   build read the recipe.
-  The makepkg build environment and the vm build environment remain open.
+  The clean build environment now exists and the vm build environment remains
+  open. `--environment clean` runs every step in its own user, mount and network
+  namespace inside a root built under the build directory: /usr, /bin, /sbin,
+  /lib, /lib64 and /etc bound read-only, the build root bound writable at the
+  path the recipe already exports, and /dev/null, /dev/zero, /dev/full, /dev/random
+  and /dev/urandom beside whatever --device names. Every parameter is explicit:
+  --uid, --network, --device, --mount SOURCE:DEST[:rw], --limit NAME=VALUE and
+  --env NAME=VALUE, and the build prints one report line naming all of them
+  before the first step runs. The inherited environment is cleared, so a variable
+  the host exports does not reach a step the caller did not name, and the
+  namespace maps the caller's own id, so a step writes files that belong to an
+  ordinary user and holds no privilege over the running system. That record is
+  written into HOLY/transform, so an artifact states the environment that
+  produced it rather than only that one existed. A fixture builds through it and
+  checks the read-only boundary, the absence of the host home and /proc, the
+  declared mount, the declared variable, the declared limit, the uid the payload
+  files ended up with, and the refusals for a relative device, an unknown mount
+  suffix, a zero limit, a malformed name and a writable mount of the build root.
+  The vm build environment needs a booted Holy image and qemu-system and remains
+  open.
   The build runner no longer loses its private build root, keeps a root the
   caller named, and reaches both the default and the named-root path in the
   fixture. The same run also restores three interrupted-mutation fixtures whose

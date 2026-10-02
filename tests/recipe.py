@@ -77,7 +77,7 @@ PACKAGE
         assert "format holy-recipe-origin-1" in metadata["HOLY/origin"]
         assert "greeting" in metadata["HOLY/files"]
         assert "config" in metadata["HOLY/files"]
-        assert "build-environment recorded" in metadata["HOLY/transform"]
+        assert "build-environment host" in metadata["HOLY/transform"]
         assert "HOLY/foreign" not in " ".join(names)
 
         # a compiled payload: the scanner derives arch, libc and soname requirements
@@ -245,6 +245,104 @@ PACKAGE
         run("cache", "stage", "local:" + str(library), "--root", installed)
         library_sha = hashlib.sha256(library.read_bytes()).hexdigest()
         run("db", "plan-set", library_sha, "--root", installed, status=4)
+
+        # the clean environment runs each step in its own user, mount and network
+        # namespace, with the host toolchain read-only and the build root writable
+        clean_work = root / "clean-work"
+        clean_work.mkdir()
+        write(root / "clean.recipe", """format holy-recipe-1
+name holy-recipe-clean
+version 1.0
+release 1
+arch noarch
+libc nolibc
+summary Clean environment fixture
+output holy-recipe-clean runtime
+config etc/holy-recipe-clean.conf
+step package /bin/sh <<PACKAGE
+mkdir -p "$HOLY_DEST/usr/share/holy-recipe-clean" "$HOLY_DEST/etc"
+test -x /bin/sh || exit 20
+test ! -w /usr || exit 21
+test -z "${HOME-}" || exit 22
+printf 'clean\n' > "$HOLY_DEST/usr/share/holy-recipe-clean/value"
+printf 'config\n' > "$HOLY_DEST/etc/holy-recipe-clean.conf"
+printf '%s\n' "$(id -u)" > "$HOLY_OUT/uid"
+printf '%s\n' "${FIXTURE_VAR:-unset}" > "$HOLY_OUT/var"
+printf '%s\n' "$(test -r /mnt/fixture/marker && echo yes || echo no)" > "$HOLY_OUT/mount"
+ls -A / > "$HOLY_OUT/listing"
+ulimit -n > "$HOLY_OUT/open-files"
+PACKAGE
+""")
+        mount_source = root / "fixture-mount"
+        mount_source.mkdir()
+        (mount_source / "marker").write_text("mounted\n")
+        log = run("build", root / "clean.recipe", "--output", out / "clean-out",
+                  "--environment", "clean", "--work", clean_work, "--keep", "--yes",
+                  "--env", "FIXTURE_VAR=declared",
+                  "--mount", f"{mount_source}:/mnt/fixture",
+                  "--limit", "open-files=256", "--limit", "cpu=120")
+        assert "build-environment root" in log
+        assert f"uid {os.getuid()}" in log
+        assert "network none" in log and "read-only 6" in log
+        assert "mounts 1" in log and "devices 5" in log and "limits 2" in log
+        clean_meta, _ = read_metadata(out / "clean-out" / "holy-recipe-clean--noarch--nolibc.holy")
+        assert "build-environment root" in clean_meta["HOLY/transform"]
+        assert "network none" in clean_meta["HOLY/transform"]
+        # a step that ran as an ordinary user inside the namespace left files the caller
+        # owns, since the namespace maps the one id the caller has
+        assert (clean_work / "out" / "uid").read_text().strip() == "0"
+        assert (clean_work / "out" / "uid").stat().st_uid == os.getuid()
+        assert (clean_work / "out" / "var").read_text().strip() == "declared"
+        assert (clean_work / "out" / "mount").read_text().strip() == "yes"
+        assert int((clean_work / "out" / "open-files").read_text().strip()) == 256
+        listing = set((clean_work / "out" / "listing").read_text().split())
+        assert {"bin", "etc", "lib", "lib64", "sbin", "tmp", "usr", "mnt"} <= listing
+        # the host home, /root and /proc are not in the root, so a step sees only what it
+        # was given plus the build root
+        assert "root" not in listing and "proc" not in listing and "srv" not in listing
+        assert not (clean_work / "env" / "root").exists()
+        # a step that writes into a read-only host directory fails, so the environment is
+        # a boundary rather than a different working directory
+        write(root / "clean-ro.recipe", """format holy-recipe-1
+name holy-recipe-clean-ro
+version 1.0
+release 1
+arch noarch
+libc nolibc
+summary Read-only fixture
+output holy-recipe-clean-ro runtime
+step package /bin/sh <<PACKAGE
+mkdir -p "$HOLY_DEST/usr/share/x"
+printf 'x\n' > "$HOLY_DEST/usr/share/x/value"
+printf 'nope\n' > /usr/holy-wrote-here 2>/dev/null || exit 21
+PACKAGE
+""")
+        read_only_work = root / "clean-ro-work"
+        read_only_work.mkdir()
+        run("build", root / "clean-ro.recipe", "--output", out / "clean-ro",
+            "--environment", "clean", "--work", read_only_work, "--yes", status=21)
+        assert not Path("/usr/holy-wrote-here").exists()
+        # every parameter is explicit, so a malformed one is an argument error
+        for bad in (("--uid", "zero"), ("--network", "off"), ("--device", "null"),
+                    ("--mount", f"{mount_source}/mnt/fixture"),
+                    ("--mount", f"{mount_source}:/mnt/fixture:ro"),
+                    ("--limit", "cpu=0"), ("--limit", "cpu"),
+                    ("--limit", "names=1"), ("--env", "1BAD=x"), ("--env", "NAMESET"),
+                    ("--env", "NAME=")):
+            run("build", root / "data.recipe", "--output", out / "bad",
+                "--environment", "clean", "--work", clean_work, "--yes",
+                *sum(([k, v] for k, v in [bad]), []), status=2)
+        run("build", root / "data.recipe", "--output", out / "bad",
+            "--environment", "trial", status=2)
+        # a writable mount of the build root would name the same tree twice, since the
+        # root already carries it writable
+        run("build", root / "data.recipe", "--output", out / "bad",
+            "--environment", "clean", "--work", clean_work, "--yes",
+            "--mount", f"{clean_work}:/mnt/again:rw", status=2)
+        # a mount source that does not exist is a report rather than a silent empty mount
+        run("build", root / "data.recipe", "--output", out / "bad",
+            "--environment", "clean", "--work", clean_work, "--yes",
+            "--mount", "/nonexistent-mount-source:/mnt/fixed", status=126)
     return 0
 
 

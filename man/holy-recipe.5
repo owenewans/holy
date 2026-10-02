@@ -122,12 +122,64 @@ Without a terminal and without --yes the build stops with decision-required (3).
 --noninteractive always requires --yes. A failing step aborts the build and
 reports its phase; an interpreter that cannot be executed returns 6.
 .PP
---environment host runs the steps in the current environment. --environment
-clean creates a separate build root with a fixed PATH and no HOME, and is not
-isolation from the host kernel. --environment vm needs a booted Holy image and
-qemu-system; when neither is available it returns 6 and names the missing
-capability. Git sources, converter evaluation and cross build roots are not
-implemented and are rejected.
+--environment host runs the steps in the current environment. --environment vm
+needs a booted Holy image and qemu-system; when neither is available it returns
+6 and names the missing capability. Git sources, converter evaluation and cross
+build roots are not implemented and are rejected.
+.PP
+.SS Clean environment
+--environment clean runs every step in its own user, mount and network
+namespace, inside a root the manager builds under the build directory. The
+parameters are explicit and the build prints one report line before the first
+step:
+.RS
+.nf
+build-environment root PATH uid UID network none|host read-only N mounts N devices N limits N
+.fi
+.RE
+.PP
+/usr, /bin, /sbin, /lib, /lib64 and /etc are bound read-only, so a step
+reaches the host toolchain through the same bytes and cannot change them. The
+build root is bound writable at the same path the recipe exports, so HOLY_WORK,
+HOLY_SRC, HOLY_BUILD, HOLY_DEST, HOLY_OUT and HOLY_SPLIT_DEST keep the values the
+report already showed and the payload lands in the caller's own directory. The
+root holds nothing else: no host home, /root, /srv, /proc or socket, so a file
+a step writes outside the build root does not survive it.
+.PP
+--uid UID is the id the namespace maps to. It is the caller's id, which is what
+makes a step run as an ordinary user: a file a step writes belongs to that user
+and the step holds no privilege over the running system. A uid this backend
+cannot map is refused.
+.PP
+--network on keeps the host network inside the namespace. Without it the
+namespace has no interface at all, so a step that needs the network fails on the
+connection rather than silently reaching one.
+.PP
+--device PATH adds a device node beside /dev/null, /dev/zero, /dev/full,
+/dev/random and /dev/urandom, which are always present. A path that is not an
+absolute device node is refused.
+.PP
+--mount SOURCE:DEST binds one host path into the root, read-only. :rw after the
+destination makes it writable, which is the only way a step writes outside the
+build root. A relative source or destination, an unknown suffix, a writable mount
+of the build root itself, which already carries it, and a source that does not
+exist are all refused or reported before a step runs.
+.PP
+--limit NAME=VALUE sets a resource limit with setrlimit, where NAME is cpu in
+seconds, memory, file-size and open-files in bytes and descriptors, and processes
+in count. A zero value would be unlimited, which is the opposite of a limit, and
+is refused.
+.PP
+--env NAME=VALUE declares one variable for every step. The inherited
+environment is cleared first, so a variable the host exports does not reach a
+step the caller did not name. PATH is /usr/bin:/bin unless the caller sets it.
+.PP
+The environment is a namespace boundary, not a defence against code that attacks
+the shared kernel on purpose. A host that refuses an unprivileged user
+namespace cannot provide this environment, and the build returns 6 naming the
+missing capability; a parameter this backend cannot serve is 2. The record the
+build prints is written into HOLY/transform, so an artifact states the
+environment that produced it.
 .SH CONVERSION
 holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY
 holypkg convert TEMPLATE --source NAME --output NEW_DIRECTORY

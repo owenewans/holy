@@ -1370,6 +1370,70 @@ done:
     return result;
 }
 
+/* a mount is SOURCE:DEST and a writable one says so after a second colon, since a
+   read-only mount is the default and a writable one is a decision */
+static int parse_mount(const char *spec, struct holy_sandbox_mount *out)
+{
+    char *copy, *first, *second;
+    int ok = 0;
+    if (!spec || !(copy = strdup(spec))) return 0;
+    first = strchr(copy, ':');
+    if (!first || first == copy || !first[1]) goto done;
+    *first = 0;
+    second = strchr(first + 1, ':');
+    if (second) *second = 0;
+    if (*copy != '/' || first[1] != '/') goto done;
+    if (second && strcmp(second + 1, "rw")) goto done;
+    out->source = copy;
+    out->destination = first + 1;
+    out->writable = second != NULL;
+    ok = 1;
+done:
+    if (!ok) free(copy);
+    return ok;
+}
+
+/* a limit is NAME=VALUE, and the value is a count this backend sets with setrlimit */
+static int parse_limit(const char *spec, struct holy_sandbox_limit *out)
+{
+    static const char *const names[] = {"cpu", "memory", "processes", "file-size",
+                                        "open-files", NULL};
+    char *copy, *equal, *end = NULL;
+    unsigned long long value;
+    size_t i;
+    int ok = 0;
+    if (!spec || !(copy = strdup(spec))) return 0;
+    equal = strchr(copy, '=');
+    if (!equal || equal == copy || !equal[1]) goto done;
+    *equal = 0;
+    for (i = 0; names[i]; ++i) if (!strcmp(names[i], copy)) break;
+    if (!names[i]) goto done;
+    value = strtoull(equal + 1, &end, 10);
+    if (!end || *end || !value) goto done;
+    out->name = names[i];
+    out->value = value;
+    ok = 1;
+done:
+    free(copy);
+    return ok;
+}
+
+/* a step environment entry is a name the shell would accept, with no hidden default */
+static int valid_env(const char *spec)
+{
+    size_t i = 0;
+    const char *equal;
+    if (!spec) return 0;
+    equal = strchr(spec, '=');
+    if (!equal || equal == spec || !equal[1]) return 0;
+    if (!((*spec >= 'A' && *spec <= 'Z') || (*spec >= 'a' && *spec <= 'z') || *spec == '_'))
+        return 0;
+    for (; i < (size_t)(equal - spec); ++i)
+        if (!((spec[i] >= 'A' && spec[i] <= 'Z') || (spec[i] >= 'a' && spec[i] <= 'z') ||
+              (spec[i] >= '0' && spec[i] <= '9') || spec[i] == '_')) return 0;
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     struct holy_config config = {0};
@@ -1386,6 +1450,10 @@ int main(int argc, char **argv)
     }
     if (argc > 2 && !strcmp(argv[1], "build")) {
         const char *environment = NULL, *work = NULL, *output = NULL;
+        struct holy_sandbox_request request = {0};
+        const char *devices[16], *envs[16];
+        struct holy_sandbox_mount mounts[8];
+        struct holy_sandbox_limit limits[8];
         int i, yes = 0, noninteractive = 0, keep = 0;
         unsigned jobs = 1;
         for (i = 3; i < argc; ++i) {
@@ -1396,25 +1464,60 @@ int main(int argc, char **argv)
                 environment = argv[++i];
             else if (!strcmp(argv[i], "--work") && !work && i + 1 < argc) work = argv[++i];
             else if (!strcmp(argv[i], "--output") && !output && i + 1 < argc) output = argv[++i];
+            else if (!strcmp(argv[i], "--uid") && !request.uid && i + 1 < argc) {
+                char *end = NULL;
+                unsigned long value = strtoul(argv[++i], &end, 10);
+                if (!end || *end || value > 4294967295UL) goto build_usage;
+                request.uid = value;
+            }
+            else if (!strcmp(argv[i], "--network") && !request.network && i + 1 < argc) {
+                if (strcmp(argv[++i], "on")) goto build_usage;
+                request.network = 1;
+            }
+            else if (!strcmp(argv[i], "--device") && i + 1 < argc) {
+                if (request.device_count >= 16) goto build_usage;
+                devices[request.device_count++] = argv[++i];
+                request.devices = devices;
+            }
+            else if (!strcmp(argv[i], "--mount") && i + 1 < argc) {
+                if (request.mount_count >= 8) goto build_usage;
+                if (!parse_mount(argv[++i], &mounts[request.mount_count])) goto build_usage;
+                request.mounts = mounts;
+                ++request.mount_count;
+            }
+            else if (!strcmp(argv[i], "--limit") && i + 1 < argc) {
+                if (request.limit_count >= 8) goto build_usage;
+                if (!parse_limit(argv[++i], &limits[request.limit_count])) goto build_usage;
+                request.limits = limits;
+                ++request.limit_count;
+            }
+            else if (!strcmp(argv[i], "--env") && i + 1 < argc) {
+                if (request.env_count >= 16) goto build_usage;
+                envs[request.env_count] = argv[++i];
+                if (!valid_env(envs[request.env_count])) goto build_usage;
+                request.env = envs;
+                ++request.env_count;
+            }
             else if (!strcmp(argv[i], "--jobs") && i + 1 < argc) {
                 char *end = NULL;
                 long value = strtol(argv[++i], &end, 10);
-                if (!end || *end || value < 1 || value > 4096) {
-                    fputs("usage: holypkg build RECIPE --output NEW_DIRECTORY "
-                          "[--environment host|clean|vm] [--work NEW_DIRECTORY] "
-                          "[--jobs N] [--yes] [--noninteractive] [--keep]\n", stderr);
-                    return 2;
-                }
+                if (!end || *end || value < 1 || value > 4096) goto build_usage;
                 jobs = (unsigned)value;
             } else {
-                fputs("usage: holypkg build RECIPE --output NEW_DIRECTORY "
-                      "[--environment host|clean|vm] [--work NEW_DIRECTORY] "
-                      "[--jobs N] [--yes] [--noninteractive] [--keep]\n", stderr);
-                return 2;
+                goto build_usage;
             }
         }
+        if (environment && strcmp(environment, "host") && strcmp(environment, "clean") &&
+            strcmp(environment, "vm")) goto build_usage;
         return holy_recipe_build(argv[2], environment ? environment : "host", work, output,
-                                 jobs, yes, noninteractive, keep);
+                                 &request, jobs, yes, noninteractive, keep);
+    build_usage:
+        fputs("usage: holypkg build RECIPE --output NEW_DIRECTORY "
+              "[--environment host|clean|vm] [--work NEW_DIRECTORY] [--jobs N] "
+              "[--uid UID] [--network on] [--device PATH ...] [--mount SOURCE:DEST[:rw] ...] "
+              "[--limit NAME=VALUE ...] [--env NAME=VALUE ...] "
+              "[--yes] [--noninteractive] [--keep]\n", stderr);
+        return 2;
     }
     if (argc > 1 && !strcmp(argv[1], "up")) return holy_up_command(argc, argv);
     if (argc > 1 && !strcmp(argv[1], "run")) return holy_run(argc, argv);
