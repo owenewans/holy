@@ -1397,7 +1397,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=29f747b1ba46d6ed26e92b004d7dfbda62f67d50dcd037b5b3e8d31954c5e648
+holypkg.8 source=holy version=development sha256=2c50ca7f457db3c0b8dd447408695cc388274bb933edcdbc359afc2dfad792a4
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -2183,6 +2183,24 @@ DESCRIPTION
      to	 that backend, so a pacman, apt, rpm-md, apk, xbps or eopkg source reads
      them as repository coordinates rather than as slot fields.
 
+     A slot several versions of one package  occupy  is	 a  different  question,
+     since  the	 name, os, architecture and libc are one thing and only the ver-
+     sion differs. A catalog that carries one name twice under one version  fam-
+     ily  resolves  it to the newest member with the family's own comparator and
+     says which artifact it resolved to:
+	    family-choice NAME provider=DIGEST slot NAME OS ARCH LIBC family FAMILY \
+	    version VERSION members N reason newest-in-family
+
+     The members are one family because a name under two families, or under  two
+     architectures or libc runtimes, is the slot choice above and is still 3. An
+     rpm  catalog  is  not compared here, so a name one rpm source carries twice
+     stays a choice. --arch and --libc narrow the candidates before  the  family
+     is	 read,	so a choice of slot and a choice of version compose. In JSON the
+     choice is one holy-local-solve-1 family-choice event whose consumer and re-
+     quirement are null, since the catalog resolved a name  rather  than  a  re-
+     quirement,	 and  which carries the provider, the slot, the family, the ver-
+     sion and the member count.
+
    Installed documentation
      holypkg docs --root DIRECTORY --output FILE creates a new holy-docs-1  bun-
      dle  from	the  selected  root's installed manifests. It holds the database
@@ -2795,12 +2813,14 @@ DESCRIPTION
 
      The  versions are compared with the family's own comparator, and the choice
      does not cross a family, so two families of one slot stay	a  decision  be-
-     cause  the data does not order them. Candidates that occupy different slots
-     are different things and stay a decision too. An explicit --choose	 is  the
-     operator's	 and is applied first, so the family pass never overrides it and
-     a requirement it already filled is not reported again. JSON adds one  holy-
-     local-solve-1  family-choice  event  carrying the consumer, the requirement
-     id, the provider, the slot, the family, the version and the reason.
+     cause  the	 data  does not order them. An rpm catalog is not compared, so a
+     name one rpm source carries twice stays a choice there too. Candidates that
+     occupy different slots are different things and stay a decision too. An ex-
+     plicit --choose is the operator's and is applied first, so the family  pass
+     never  overrides  it  and	a  requirement it already filled is not reported
+     again. JSON adds one holy-local-solve-1 family-choice  event  carrying  the
+     consumer,	the requirement id, the provider, the slot, the family, the ver-
+     sion and the reason.
 
      A requirement several candidates could fill across slots names every candi-
      date instead:

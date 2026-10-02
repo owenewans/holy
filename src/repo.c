@@ -876,6 +876,71 @@ static int indexed_file(const struct object *object, const char *path)
     return 0;
 }
 
+/* the family's own comparator, since a catalog orders its versions with the same rules
+   a requirement does. an rpm catalog is not compared here: the resolver settles an rpm
+   family through the rpm adapter and a name carried twice by one is a choice here too. */
+static int family_compare(const char *family, const char *left, const char *right, int *order)
+{
+    if (!family) return 0;
+    return !strcmp(family, "pacman") ? holy_pacman_version_compare(left, right, order) :
+           !strcmp(family, "deb") ? holy_deb_version_compare(left, right, order) :
+           !strcmp(family, "holy") ? holy_version_compare(left, right, order) :
+           !strcmp(family, "apk") ? holy_apk_version_compare(left, right, order) :
+           !strcmp(family, "xbps") ? holy_xbps_version_compare(left, right, order) : 0;
+}
+
+/* the newest member of the family a name names, or count when the name is a choice:
+   artifacts that differ in os, architecture, libc or version family are different
+   slots, and nothing in the catalog says which one the name meant */
+static size_t family_root(const struct object *objects, size_t count, const char *name,
+                          const char *arch, const char *libc)
+{
+    size_t i, members = 0, best = count;
+    for (i = 0; i < count; ++i) {
+        int order = 0;
+        if (strcmp(objects[i].identity.name, name)) continue;
+        if (arch && strcmp(objects[i].identity.arch, arch)) continue;
+        if (libc && strcmp(objects[i].identity.libc, libc)) continue;
+        if (!members) {
+            best = i;
+            ++members;
+            continue;
+        }
+        if (!same_slot(&objects[best].identity, &objects[i].identity) ||
+            !family_compare(objects[i].identity.version_family,
+                            objects[i].identity.version, objects[best].identity.version,
+                            &order)) return count;
+        if (order > 0) best = i;
+        ++members;
+    }
+    return members > 1 ? best : count;
+}
+
+/* the catalog's own choice, stated the way the resolver states it, so a name that
+   carried two versions says which artifact it resolved to */
+static void report_family_root(const struct object *object, const char *name,
+                               size_t members, int json)
+{
+    const struct holy_package_identity *identity = &object->identity;
+    if (json) {
+        printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"family-choice\","
+               "\"consumer\":null,\"requirement\":null,\"provider\":\"%s\","
+               "\"slot\":{\"name\":", identity->digest);
+        printf("\"%s\",\"os\":\"%s\",\"arch\":\"%s\",\"libc\":\"%s\"},"
+               "\"family\":\"%s\",\"version\":\"%s\",\"members\":%zu,"
+               "\"reason\":\"newest-in-family\"}\n",
+               identity->name, identity->os, identity->arch, identity->libc,
+               identity->version_family ? identity->version_family : "-",
+               identity->version, members);
+        return;
+    }
+    printf("family-choice %s provider=%s slot %s %s %s %s family %s version %s members %zu "
+           "reason newest-in-family\n", name, identity->digest, identity->name, identity->os,
+           identity->arch, identity->libc,
+           identity->version_family ? identity->version_family : "-", identity->version,
+           members);
+}
+
 struct or_match { const struct object *object; int found; };
 
 static int indexed_version_matches(const struct object *object,
@@ -1603,6 +1668,21 @@ static int list_probe(const char *directory, const char *query,
                 root = i;
                 ++roots;
             }
+            if (roots != 1 && roots) {
+                size_t newest = family_root(objects, count, solve_name,
+                                            stage->arch, stage->libc);
+                if (newest < count) {
+                    size_t members = 0;
+                    for (i = 0; i < count; ++i)
+                        if (!strcmp(objects[i].identity.name, solve_name) &&
+                            (!stage->arch || !strcmp(objects[i].identity.arch, stage->arch)) &&
+                            (!stage->libc || !strcmp(objects[i].identity.libc, stage->libc)))
+                            ++members;
+                    root = newest;
+                    roots = 1;
+                    report_family_root(&objects[newest], solve_name, members, solve_json);
+                }
+            }
             if (roots != 1) {
                 *solve_rc = roots ? 3 : 6;
                 /* a name the catalog has and a slot it does not is a different answer
@@ -1781,6 +1861,24 @@ static int list_probe(const char *directory, const char *query,
                 continue;
             root = i;
             ++roots;
+        }
+        if (roots != 1 && roots) {
+            size_t newest = family_root(objects, count, solve_name,
+                                        stage ? stage->arch : NULL,
+                                        stage ? stage->libc : NULL);
+            if (newest < count) {
+                size_t members = 0;
+                for (i = 0; i < count; ++i)
+                    if (!strcmp(objects[i].identity.name, solve_name) &&
+                        (!stage || !stage->arch ||
+                         !strcmp(objects[i].identity.arch, stage->arch)) &&
+                        (!stage || !stage->libc ||
+                         !strcmp(objects[i].identity.libc, stage->libc)))
+                        ++members;
+                root = newest;
+                roots = 1;
+                report_family_root(&objects[newest], solve_name, members, solve_json);
+            }
         }
         if (roots != 1 && !(stage && stage->slot)) {
             *solve_rc = roots ? 3 : 6;

@@ -837,6 +837,27 @@ name the catalog does not carry at all. --arch and --libc on a foreign backend
 still belong to that backend, so a pacman, apt, rpm-md, apk, xbps or eopkg source
 reads them as repository coordinates rather than as slot fields.
 .PP
+A slot several versions of one package occupy is a different question, since the
+name, os, architecture and libc are one thing and only the version differs. A
+catalog that carries one name twice under one version family resolves it to the
+newest member with the family's own comparator and says which artifact it
+resolved to:
+.RS
+.nf
+family-choice NAME provider=DIGEST slot NAME OS ARCH LIBC family FAMILY \\
+version VERSION members N reason newest-in-family
+.fi
+.RE
+.PP
+The members are one family because a name under two families, or under two
+architectures or libc runtimes, is the slot choice above and is still 3. An rpm
+catalog is not compared here, so a name one rpm source carries twice stays a
+choice. --arch and --libc narrow the candidates before the family is read, so a
+choice of slot and a choice of version compose. In JSON the choice is one
+holy-local-solve-1 family-choice event whose consumer and requirement are null,
+since the catalog resolved a name rather than a requirement, and which carries
+the provider, the slot, the family, the version and the member count.
+.PP
 .SS Installed documentation
 holypkg docs --root DIRECTORY --output FILE creates a new holy-docs-1 bundle
 from the selected root's installed manifests. It holds the database shared
@@ -1426,7 +1447,8 @@ family pacman version 2 release 1 reason newest-in-family
 .PP
 The versions are compared with the family's own comparator, and the choice does not
 cross a family, so two families of one slot stay a decision because the data does not
-order them. Candidates that occupy different slots are different things and stay a
+order them. An rpm catalog is not compared, so a name one rpm source carries twice
+stays a choice there too. Candidates that occupy different slots are different things and stay a
 decision too. An explicit --choose is the operator's and is applied first, so the
 family pass never overrides it and a requirement it already filled is not reported
 again. JSON adds one holy-local-solve-1 family-choice event carrying the consumer, the

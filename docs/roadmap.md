@@ -494,6 +494,17 @@
   never overrides the operator and a requirement it already filled is not reported again.
   An equality two releases of one package both satisfy, which is what a bare version
   compares equal to, is therefore the family's newest member rather than a decision.
+  The catalog reads the same way, so the rule reaches all three entry points rather
+  than the two that share a resolver: `holypkg repo solve DIRECTORY NAME` answered 3
+  for a name the index carries under one version family twice, and now resolves the
+  name to the newest member with `family-choice NAME provider=DIGEST slot NAME OS
+  ARCH LIBC family FAMILY version VERSION members N reason newest-in-family`, and one
+  holy-local-solve-1 family-choice event whose consumer and requirement are null. A
+  member of another family under one name, or another architecture or libc runtime, is
+  the slot choice and is still 3, and `--arch`/`--libc` narrow the candidates before
+  the family is read so a slot choice and a version choice compose. An rpm catalog is
+  not compared, since the rpm adapter is not linked into the catalog path, so a name
+  one rpm source carries twice stays a choice there.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions. The
   private placement of a colliding file, the patchelf rewrite of a consumer's
@@ -1461,8 +1472,9 @@
   db apply-set prints the same findings before it stages the first payload file. A
   selection with two providers of one SONAME, two private programs of one name or
   two different-ABI offers of one name is reported in the plan rather than left to a
-  later report. Conflicts between a selection and the already installed set remain
-  outside the plan, and an automatic choice between two candidates remains open.
+  later report, and a selection is reported against the installed set it joins as
+  well as against itself, so a capability the two sets both offer is named by the
+  review instead of waiting for a later report.
 
 ## Base system and images
 
