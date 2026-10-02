@@ -30,6 +30,11 @@ void holy_missing_requirement_free(struct holy_missing_requirement *missing);
    candidates, not physical library bindings in a launch context. */
 int holy_resolve_collect(const char *const *paths, size_t count,
                           const char *choice, struct holy_resolution *result);
+/* the same collection naming every candidate of an unresolved requirement on stdout;
+   json is 0 for the line form and 1 for holy-local-solve-1 */
+int holy_resolve_collect_choices(const char *const *paths, size_t count,
+                                 const char *choice, struct holy_resolution *result,
+                                 int json);
 /* validates a complete proposed set; every input remains selected. ambiguous
    provider edges still require a decision. root records the first input only;
    installed reasons and source/slot decisions belong to the caller. */

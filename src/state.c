@@ -5066,8 +5066,10 @@ static int build_set(const char *root_path, int root, int dir,
             goto done;
         }
     }
-    result = holy_resolve_collect((const char *const *)snapshots, count, choice,
-                                  &set->resolution);
+    /* a set plan that cannot be resolved names every candidate, since the operator
+       chooses one of them with --choose and needs to know which slot each fills */
+    result = holy_resolve_collect_choices((const char *const *)snapshots, count, choice,
+                                          &set->resolution, 0);
     if (result) goto done;
     for (i = 0; i < accepted_count; ++i) {
         for (j = 0; j < set->resolution.artifact_count; ++j)

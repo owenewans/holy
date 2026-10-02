@@ -55,14 +55,14 @@ grep -Fqx "{\"schema\":\"holy-local-solve-1\",\"type\":\"summary\",\"count\":2,\
 grep -qx "generation $generation" "$tmp/out"
 if "$bin" repo solve "$tmp/repo" absent --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 6; fi
 grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"unavailable-artifact"}' "$tmp/out"
+b2_hash=$(sha256sum "$tmp/b-2.holy")
+b2_hash=${b2_hash%% *}
 mkdir "$tmp/repo-choice"
 cp "$tmp/root-1.holy" "$tmp/b-1.holy" "$tmp/b-2.holy" "$tmp/repo-choice/"
 "$bin" repo index "$tmp/repo-choice" > "$tmp/out"
 "$bin" repo seal "$tmp/repo-choice" > "$tmp/out"
 choice_generation=$(sha256sum "$tmp/repo-choice/index")
 choice_generation=${choice_generation%% *}
-b2_hash=$(sha256sum "$tmp/b-2.holy")
-b2_hash=${b2_hash%% *}
 if test "$#" -ge 2; then
     api=$2
     "$api" - "$tmp/root-1.holy" "$tmp/b-1.holy" "$tmp/unused-1.holy" > "$tmp/record"
@@ -105,7 +105,11 @@ grep -Fqx "{\"schema\":\"holy-local-solve-1\",\"type\":\"summary\",\"count\":2,\
 if grep -Fq "\"sha256\":\"$b_hash\"" "$tmp/out"; then exit 1; fi
 if "$bin" repo solve "$tmp/repo-choice" root --choose "b-1=$root_hash" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"decision-required"}' "$tmp/out"
-test "$(wc -l < "$tmp/out")" -eq 1
+# a choice naming an artifact that does not provide the requirement is refused, and the
+# report names the candidates that do
+grep -Fq '"type":"choice"' "$tmp/out"
+grep -Fq "\"requirement\":\"b-1\"" "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 2
 if "$bin" repo solve "$tmp/repo-choice" root --choose broken --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
 grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"invalid-query"}' "$tmp/out"
 printf 'corrupt\n' > "$tmp/repo/unused-1.holy"
@@ -158,12 +162,27 @@ if "$bin" solve "local:$tmp/root-1.holy" --json > "$tmp/out" 2> "$tmp/err"; then
 grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"dependency-conflict","requirement":"b-1"}' "$tmp/out"
 test "$(wc -l < "$tmp/out")" -eq 1
 if "$bin" solve "local:$tmp/root-1.holy" "local:$tmp/b-1.holy" "local:$tmp/b-2.holy" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
-test ! -s "$tmp/out"
+grep -qx "choice b-1 consumer=$root_hash candidates=2" "$tmp/out"
+grep -qx "candidate $b_hash slot b linux noarch nolibc version 1 release 1" "$tmp/out"
+grep -qx "candidate $b2_hash slot b linux noarch nolibc version 2 release 1" "$tmp/out"
+test "$(wc -l < "$tmp/out")" -eq 3
 if "$bin" solve "local:$tmp/root-1.holy" "local:$tmp/b-1.holy" "local:$tmp/b-2.holy" --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"decision-required"}' "$tmp/out"
-test "$(wc -l < "$tmp/out")" -eq 1
-b2_hash=$(sha256sum "$tmp/b-2.holy")
-b2_hash=${b2_hash%% *}
+test "$(wc -l < "$tmp/out")" -eq 2
+python3 - "$tmp/out" "$root_hash" "$b_hash" "$b2_hash" <<'PYCHOICE'
+import json, pathlib, sys
+events = [json.loads(x) for x in pathlib.Path(sys.argv[1]).read_text().splitlines()]
+choice = next(x for x in events if x['type'] == 'choice')
+assert choice['consumer'] == sys.argv[2] and choice['requirement'] == 'b-1'
+assert choice['candidates'] == [
+    {"sha256": sys.argv[3], "slot": {"name": "b", "os": "linux", "arch": "noarch",
+                                     "libc": "nolibc"}, "version": "1", "release": "1"},
+    {"sha256": sys.argv[4], "slot": {"name": "b", "os": "linux", "arch": "noarch",
+                                     "libc": "nolibc"}, "version": "2", "release": "1"}]
+PYCHOICE
+# a requirement one artifact fills names no candidate, since nothing is in the way
+"$bin" solve "local:$tmp/root-1.holy" "local:$tmp/b-1.holy" > "$tmp/out"
+if grep -q '^choice ' "$tmp/out"; then exit 1; fi
 "$bin" solve "local:$tmp/root-1.holy" "local:$tmp/b-1.holy" "local:$tmp/b-2.holy" --choose "b-1=$b2_hash" --json > "$tmp/out"
 grep -Fqx "{\"schema\":\"holy-local-solve-1\",\"type\":\"selected\",\"sha256\":\"$b2_hash\"}" "$tmp/out"
 if grep -Fq "\"sha256\":\"$b_hash\"" "$tmp/out"; then exit 1; fi

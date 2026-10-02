@@ -1370,6 +1370,23 @@ providers and plan hash. --candidate adds local archives to the resolver pool;
 only selected packages are installed. --choose binds one stable requirement ID
 to an exact provider artifact hash. The default root is /. Local archive
 metadata cannot assign a trusted source-id.
+.PP
+A requirement several artifacts could fill is the operator's decision, so the report
+names every candidate with the slot it occupies and the version it carries:
+.RS
+.nf
+choice dep-1 consumer=DIGEST candidates=2
+candidate DIGEST slot lib linux noarch nolibc version 1 release 1
+candidate DIGEST slot lib linux noarch nolibc version 1 release 1
+.fi
+.RE
+.PP
+Two candidates of one slot are two members of one version family, which is the case a
+choice settles. A requirement one artifact fills names no candidate, since nothing is
+in the way. The set planner prints this report, and the apply prints it again when its
+own re-derivation reaches the same decision. JSON adds one holy-local-solve-1 choice
+event carrying the consumer, the requirement id and a candidate array of digest, slot
+and version.
 .B --associate-source ALIAS
 is an explicit confirmation that the root local artifact belongs to an active
 registered source. The manager resolves the alias to its immutable source-id

@@ -357,7 +357,16 @@
   `available SHA256 version VERSION` per slot, so a family is read against the
   index the source publishes; a source with no bound catalog, a local slot or a
   catalog with nothing newer reports a dash. Slot selection inside a resolver
-  choice stays unfinished.
+  choice now names every candidate: `choice ID consumer=DIGEST candidates=N` is
+  followed by one `candidate SHA256 slot NAME OS ARCH LIBC version V release R`
+  per artifact that could fill the requirement, so the decision states which slot
+  each choice lands in and not only a digest. Two candidates of one slot are two
+  members of one family, which is the case a choice settles; a requirement one
+  artifact fills names no candidate. The set planner prints the report and the
+  apply prints it again when its own re-derivation reaches the same decision, and
+  `solve` and `repo solve` print it in both the line and the JSON form, the latter
+  as one holy-local-solve-1 choice event. Automatic selection between two
+  candidates stays unfinished and refused.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions.
 - [x] Accept nonempty HOLY/transform as an immutable provenance record in local

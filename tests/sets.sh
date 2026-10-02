@@ -52,10 +52,28 @@ package unused unused ''
 app=$(hash app) lib=$(hash lib) unused=$(hash unused)
 package alternative alternative '' lib
 alternative=$(hash alternative)
+# a requirement several artifacts could fill names every candidate with the slot it
+# occupies, so the decision names what the choice lands in and not only a digest
 expect 3 "$bin" db plan-set "$app" "$lib" "$alternative" --root "$root"
+grep -qx "choice dep-1 consumer=$app candidates=2" "$tmp/out"
+# both artifacts carry one package name, so both candidates occupy the same slot and
+# the report says so rather than implying two slots
+grep -qx "candidate $lib slot lib linux noarch nolibc version 1 release 1" "$tmp/out"
+grep -qx "candidate $alternative slot lib linux noarch nolibc version 1 release 1" "$tmp/out"
+test "$(grep -c '^choice ' "$tmp/out")" -eq 1
+test "$(wc -l < "$tmp/out")" -eq 3
 expect 0 "$bin" db plan-set "$app" "$lib" "$alternative" --choose "dep-1=$lib" --root "$root"
+test "$(grep -c '^choice ' "$tmp/out")" -eq 0
 chosen=$(plan_hash)
 expect 3 "$bin" db apply-set "$chosen" "$app" "$lib" --root "$root"
+test ! -e "$root/usr/share/app"
+# the apply reaches the same decision through its own re-derivation and names the
+# candidates again, since a plan hash that was never reviewed changes nothing here
+expect 3 "$bin" db apply-set "$(printf '%064d' 0)" "$app" "$lib" "$alternative" \
+    --root "$root"
+grep -qx "choice dep-1 consumer=$app candidates=2" "$tmp/out"
+grep -qx "candidate $lib slot lib linux noarch nolibc version 1 release 1" "$tmp/out"
+grep -qx "candidate $alternative slot lib linux noarch nolibc version 1 release 1" "$tmp/out"
 test ! -e "$root/usr/share/app"
 expect 4 "$bin" db plan-set "$app" --root "$root"
 expect 0 "$bin" db plan-set "$app" "$lib" "$unused" --root "$root"

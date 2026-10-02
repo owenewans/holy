@@ -751,6 +751,59 @@ static int symbol_context(const struct local_item *consumer, const struct elf_ed
     return 0;
 }
 
+/* a requirement several artifacts could fill is the operator's decision, so every
+   candidate is named with the slot it occupies and the version it carries. without
+   this the caller holds a digest and no way to know which slot the choice lands in */
+static void report_choice_candidates(const struct local_item *local,
+                                     const struct holy_solver_item *items,
+                                     size_t count, const int *selected, int json)
+{
+    size_t i, j, k;
+    for (i = 0; i < count; ++i) {
+        if (selected ? !selected[i] : i != 0) continue;
+        for (j = 0; j < local[i].requirement_count; ++j) {
+            const char *capability = local[i].requirements[j].first;
+            const char *id = local[i].requirement_ids[j];
+            size_t matches = 0;
+            int first = 1;
+            for (k = 0; k < count; ++k)
+                if ((selected ? selected[k] : 1) && provides(&items[k], capability)) ++matches;
+            if (matches < 2) continue;
+            if (json) {
+                printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"choice\","
+                       "\"consumer\":\"%s\",\"requirement\":", local[i].identity.digest);
+                json_string(id);
+                fputs(",\"candidates\":[", stdout);
+            } else {
+                printf("choice %s consumer=%s candidates=%zu\n", id,
+                       local[i].identity.digest, matches);
+            }
+            for (k = 0; k < count; ++k) {
+                const struct holy_package_identity *identity = &local[k].identity;
+                if (selected ? !selected[k] : !provides(&items[k], capability)) continue;
+                if (!provides(&items[k], capability)) continue;
+                if (json) {
+                    if (!first) putchar(',');
+                    first = 0;
+                    printf("{\"sha256\":\"%s\",\"slot\":{\"name\":", identity->digest);
+                    json_string(identity->name);
+                    printf(",\"os\":\"%s\",\"arch\":\"%s\",\"libc\":\"%s\"},"
+                           "\"version\":", identity->os, identity->arch, identity->libc);
+                    json_string(identity->version);
+                    fputs(",\"release\":", stdout);
+                    json_string(identity->release);
+                    putchar('}');
+                } else {
+                    printf("candidate %s slot %s %s %s %s version %s release %s\n",
+                           identity->digest, identity->name, identity->os, identity->arch,
+                           identity->libc, identity->version, identity->release);
+                }
+            }
+            if (json) puts("]}");
+        }
+    }
+}
+
 static void report_edges(const struct local_item *local, const struct holy_solver_item *items,
                           size_t count, const int *selected, int json)
 {
@@ -1022,7 +1075,8 @@ static int resolve(const char *const *paths, size_t count, int json,
                     const char *generation, const char *choice,
                     struct holy_resolution *output, int all,
                     struct holy_missing_requirement *missing_output,
-                    const char *const *skip_ids, size_t skip_count)
+                    const char *const *skip_ids, size_t skip_count,
+                    int report_choices, int report_json)
 {
     struct local_item *local = NULL;
     struct holy_solver_item *items = NULL;
@@ -1188,8 +1242,15 @@ static int resolve(const char *const *paths, size_t count, int json,
     }
 done:
     if (result && output) holy_resolution_free(output);
-    if (json >= 0 && (result == 3 || result == 4) && prepared == count && local && items)
-        report_edges(local, items, count, NULL, json);
+    /* json is -1 for a caller that collects a resolution and prints no report, and a
+       set plan asks for the candidates alone, since its edge report would repeat the
+       selected-provider lines the plan already printed */
+    if ((json >= 0 || report_choices) && (result == 3 || result == 4) &&
+        prepared == count && local && items) {
+        if (json >= 0) report_edges(local, items, count, NULL, json);
+        report_choice_candidates(local, items, count, NULL,
+                                 json >= 0 ? json : report_json);
+    }
     if (result && !missing_output) fprintf(stderr, "holypkg: local resolution %s\n",
                         result == 2 ? "has an invalid choice" :
                         result == 3 ? "needs provider choice" :
@@ -1253,21 +1314,31 @@ done:
 int holy_resolve_local(const char *const *paths, size_t count, int json,
                        const char *generation, const char *choice)
 {
-    return resolve(paths, count, json, generation, choice, NULL, 0, NULL, NULL, 0);
+    return resolve(paths, count, json, generation, choice, NULL, 0, NULL, NULL, 0, 0, 0);
 }
 
 int holy_resolve_collect(const char *const *paths, size_t count,
                           const char *choice, struct holy_resolution *result)
 {
     memset(result, 0, sizeof *result);
-    return resolve(paths, count, -1, NULL, choice, result, 0, NULL, NULL, 0);
+    return resolve(paths, count, -1, NULL, choice, result, 0, NULL, NULL, 0, 0, 0);
+}
+
+/* the same collection naming every candidate of an unresolved requirement, for a caller
+   that shows the decision to an operator instead of resolving it inside a transaction */
+int holy_resolve_collect_choices(const char *const *paths, size_t count,
+                                 const char *choice, struct holy_resolution *result,
+                                 int json)
+{
+    memset(result, 0, sizeof *result);
+    return resolve(paths, count, -1, NULL, choice, result, 0, NULL, NULL, 0, 1, json);
 }
 
 int holy_resolve_collect_set(const char *const *paths, size_t count,
                               struct holy_resolution *result)
 {
     memset(result, 0, sizeof *result);
-    return resolve(paths, count, -1, NULL, NULL, result, 1, NULL, NULL, 0);
+    return resolve(paths, count, -1, NULL, NULL, result, 1, NULL, NULL, 0, 0, 0);
 }
 
 void holy_missing_requirement_free(struct holy_missing_requirement *missing)
@@ -1286,7 +1357,7 @@ int holy_resolve_missing(const char *const *paths, size_t count,
 {
     memset(missing, 0, sizeof *missing);
     return resolve(paths, count, -1, NULL, NULL, NULL, 0, missing,
-                   skip_ids, skip_count);
+                   skip_ids, skip_count, 0, 0);
 }
 
 void holy_resolution_free(struct holy_resolution *result)
