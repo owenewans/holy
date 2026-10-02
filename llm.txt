@@ -1090,7 +1090,7 @@ SEE ALSO
      holypkg(8), holy.conf(5), holy-image(7)
 
 								  HOLYINSTALL(8)
-holy-package.5 source=holy version=development sha256=c1e0877db91580d7382074adbb37c3c6bc6ea0b94f647763f08d6937bdba2700
+holy-package.5 source=holy version=development sha256=fd4795742581d82163214c0225a769413fe62b0cd6a5142ae445f1c23df619d1
 HOLY-PACKAGE(5)			  File Formats			 HOLY-PACKAGE(5)
 
 NAME
@@ -1108,17 +1108,21 @@ DESCRIPTION
      lies remain inspectable but cannot acquire guessed version semantics.   Un-
      versioned file requirements match exact nondirectory paths in verified pay-
      load manifests. Declared file claims alone do not establish file ownership.
-     Unversioned  command requirements match executable payloads in the standard
-     bin directories. Links must resolve to an executable in the same  artifact;
-     declared command claims alone do not prove one exists.  Native packages opt
-     in with x-version-family holy. Their version and release use decimal compo-
-     nents  separated  by dots, with an optional lowercase prerelease suffix in-
-     troduced by hyphen or tilde, such as 7.3-rc4. Invalid Holy	 native	 version
-     or release fields fail inspection. Native comparison treats absent trailing
-     numeric  components  as zero, compares numbers without fixed-width overflow
-     and places prereleases before final versions.   Pacman  imports  store  the
-     complete  foreign epoch:version-release in version, and use release for the
-     native artifact revision.
+     Command requirements match executable payloads in the standard bin directo-
+     ries.  Links  must	 resolve to an executable in the same artifact; declared
+     command claims alone do not prove one exists. A versioned command	require-
+     ment  is compared against the version of the package that owns the program,
+     since the program itself carries no version: the provider must satisfy  the
+     relation  within  the  consumer's declared family, and a provider without a
+     family cannot satisfy a  comparison.  An  unversioned  command  requirement
+     matches  any  owner.   Native  packages  opt in with x-version-family holy.
+     Their version and release use decimal components separated by dots, with an
+     optional lowercase prerelease suffix introduced by hyphen or tilde, such as
+     7.3-rc4. Invalid Holy native version or release fields fail inspection. Na-
+     tive comparison treats absent trailing numeric components as zero, compares
+     numbers without fixed-width overflow and places  prereleases  before  final
+     versions.	 Pacman imports store the complete foreign epoch:version-release
+     in version, and use release for the native artifact revision.
 
      The inspector accepts os=linux or windows, arch=x86, x86_64 or noarch,  and
      libc=glibc,  musl	or nolibc. noarch requires nolibc. These checks validate

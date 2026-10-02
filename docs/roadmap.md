@@ -121,7 +121,11 @@
   in standard bin directories, including links to an executable in the same
   artifact. Reject claim-only and nonexecutable candidates; retain command
   edges through installation and removal checks. Custom PATH, shell builtins,
-  versioned command requirements and private launcher mappings remain open.
+  versioned command requirements are compared against the version of the package
+  that owns the program, since the program itself carries no version, so a
+  provider has to satisfy the relation in the consumer's declared family and one
+  without a family cannot. Custom PATH, shell builtins and private launcher
+  mappings remain open.
 
 - [x] Build gzip, LZ4, Zstandard, XZ and bzip2 codecs into the static musl client.
   Verify foreign import and native install/check/remove in a chroot without

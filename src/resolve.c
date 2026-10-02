@@ -202,12 +202,13 @@ static int exact_requirement(void *opaque, const char *id,
     if (
         (!strcmp(kind, "file") && (!literal_path(name) || strcmp(relation, "any"))) ||
         (!strcmp(kind, "command") && (!name[0] || strchr(name, '/') ||
-                                     !strcmp(name, ".") || !strcmp(name, "..") ||
-                                     strcmp(relation, "any")))) return 0;
+                                     !strcmp(name, ".") || !strcmp(name, "..")))) return 0;
     capability = named_capability(kind, name);
     if (!capability) return 0;
     ok = add_requirement(item, id, capability);
     free(capability);
+    /* a versioned requirement is compared against the provider's version, which is the
+       version of the package that owns the file, the command or the soname */
     if (ok && (strcmp(kind, "package") || strcmp(arch, "any") ||
                strcmp(libc, "any") || strcmp(relation, "any"))) {
         ok = add_package_edge(item, item->requirement_count - 1,
@@ -279,8 +280,29 @@ static int package_edge_matches(const struct local_item *consumer,
         (constrained && (!candidate->identity.version_family ||
                          strcmp(candidate->identity.version_family, family)))) return 0;
     if (!strcmp(edge->kind, "file")) return has_file(candidate, edge->name);
-    if (!strcmp(edge->kind, "command")) return has_command(candidate, edge->name);
     if (!strcmp(edge->kind, "soname")) return has_soname(candidate, edge->name);
+    if (!strcmp(edge->kind, "command")) {
+        /* a command is provided by the payload of the package that owns it, so the
+           command decides the candidate and that package's version is the comparison */
+        const char *candidate_version = candidate->identity.version;
+        char *with_revision = NULL;
+        int owned;
+        if (!has_command(candidate, edge->name)) return 0;
+        if (!constrained) return 1;
+        if (!strcmp(family, "xbps") || !strcmp(family, "rpm")) {
+            size_t length;
+            if (!candidate->identity.release) return 0;
+            length = strlen(candidate_version) + strlen(candidate->identity.release) + 2;
+            with_revision = malloc(length);
+            if (!with_revision) return -1;
+            snprintf(with_revision, length, "%s%c%s", candidate_version,
+                     !strcmp(family, "rpm") ? '-' : '_', candidate->identity.release);
+            candidate_version = with_revision;
+        }
+        owned = version_matches(candidate_version, edge, adapter);
+        free(with_revision);
+        return owned;
+    }
     base = named_capability(edge->kind, edge->name);
     if (!base) return -1;
     if (!strcmp(base, candidate->capability)) {
