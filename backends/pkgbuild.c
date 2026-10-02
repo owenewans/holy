@@ -3,6 +3,7 @@
 #define _XOPEN_SOURCE 700
 #define _DEFAULT_SOURCE 1
 #include "pkgbuild.h"
+#include "shrecipe.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -433,6 +434,8 @@ struct note {
     char **lines;
     size_t count;
     size_t carried, preserved, helper, unknown, changes;
+    char **environments;   /* helper environments in the order the converter names them */
+    size_t environment_count;
 };
 
 static int note_add(struct note *note, const char *kind, const char *format, ...)
@@ -458,10 +461,44 @@ static int note_add(struct note *note, const char *kind, const char *format, ...
     return 1;
 }
 
+/* one named helper environment the converter did not run, whose SHA-256 both the report
+   and the build record carry */
+static void note_environment(struct note *note, const char *name)
+{
+    char **grown = realloc(note->environments, (note->environment_count + 1) * sizeof *grown);
+    if (!grown) return;
+    note->environments = grown;
+    if (!(note->environments[note->environment_count] = strdup(name))) return;
+    ++note->environment_count;
+}
+
+/* one environment name and the digest of the ordered set, in the form the report and
+   the recipe record both use. the record quotes the value, since HOLY/meta takes one
+   quoted value per x- record */
+static void note_environments(FILE *out, const struct note *note, const char *prefix, int quoted)
+{
+    char digest[65];
+    size_t i;
+    if (!note->environment_count) return;
+    for (i = 0; i < note->environment_count; ++i) {
+        fprintf(out, "%shelper-environment ", prefix);
+        if (quoted) holy_token(out, note->environments[i]);
+        else fprintf(out, "%s", note->environments[i]);
+        fputc('\n', out);
+    }
+    if (!holy_environment_digest(note->environments, note->environment_count, digest)) return;
+    fprintf(out, "%shelper-environment-sha256 ", prefix);
+    if (quoted) holy_token(out, digest);
+    else fprintf(out, "%s", digest);
+    fputc('\n', out);
+}
+
 static void note_free(struct note *note)
 {
     size_t i;
     for (i = 0; i < note->count; ++i) free(note->lines[i]);
+    for (i = 0; i < note->environment_count; ++i) free(note->environments[i]);
+    free(note->environments);
     free(note->lines);
     memset(note, 0, sizeof *note);
 }
@@ -1118,12 +1155,19 @@ int holy_convert_pkgbuild(const char *input, const char *source, const char *out
             note_add(&note, "preserved", "split %s PKGBUILD:%zu-%zu", splits[k].name,
                      splits[k].block->first, splits[k].block->last);
     }
-    if (find_block(&pkg, "prepare"))
+    if (find_block(&pkg, "prepare")) {
         note_add(&note, "helper", "makepkg prepare environment not carried");
-    if (find_block(&pkg, "build"))
+        note_environment(&note, "makepkg");
+    }
+    if (find_block(&pkg, "build")) {
         note_add(&note, "helper", "makepkg.conf CFLAGS and LDFLAGS profile not carried");
-    if (find_block(&pkg, "check"))
+        note_environment(&note, "makepkg.conf");
+    }
+    if (find_block(&pkg, "check")) {
         note_add(&note, "helper", "makepkg check environment not carried");
+        note_environment(&note, "makepkg");
+    }
+    note_environments(out, &note, "x-", 1);
     if (fflush(out) || fclose(out)) { out = NULL; result = 1; goto done; }
     out = NULL;
     if (!wrote) {
@@ -1149,6 +1193,7 @@ int holy_convert_pkgbuild(const char *input, const char *source, const char *out
     fputs("arch ", out); token(out, arch); fputc('\n', out);
     fputs("recipe ", out); token(out, name); fputs(".recipe\n", out);
     fprintf(out, "status %s\n", review ? "review-required" : "native");
+    note_environments(out, &note, "", 0);
     for (k = 0; k < note.count; ++k) fprintf(out, "%s\n", note.lines[k]);
     fprintf(out, "summary carried %zu preserved %zu helper %zu unknown %zu changes %zu\n",
             note.carried, note.preserved, note.helper, note.unknown, note.changes);

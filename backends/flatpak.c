@@ -454,6 +454,7 @@ static void flatpak_buildsystem(struct flatpak_build *build, const char *system,
     }
     flatpak_note(build, "helper", "the %s buildsystem of module %s is a flatpak-builder "
                   "template, which no Holy phase provides", system, build->name);
+    holy_note_environment(build->note, "flatpak-builder");
     build->review = 1;
 }
 
@@ -920,6 +921,7 @@ int holy_convert_flatpak(const char *input, const char *source, const char *outp
                           "its %zu modules, while each step here installs into the payload, so a "
                           "later module cannot read an earlier install", modules->count);
     }
+    holy_note_environment_records(build.out, &note);
     if (ferror(build.out) || fclose(build.out)) {
         build.out = NULL;
         goto done;
@@ -948,6 +950,7 @@ int holy_convert_flatpak(const char *input, const char *source, const char *outp
         fputs("recipe ", build.out); holy_token(build.out, named); fputc('\n', build.out);
     }
     fprintf(build.out, "status %s\n", build.review ? "review-required" : "native");
+    holy_note_environments(build.out, &note);
     for (index = 0; index < note.count; ++index) fprintf(build.out, "%s\n", note.lines[index]);
     fprintf(build.out, "summary carried %zu preserved %zu helper %zu unknown %zu changes %zu\n",
             note.carried, note.preserved, note.helper, note.unknown, note.changes);

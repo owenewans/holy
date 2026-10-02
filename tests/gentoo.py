@@ -167,6 +167,14 @@ pkg_postinst() {
 
         # each eclass and each helper the bodies call is reported, never faked
         assert "helper the toolchain-funcs eclass" in report
+        # the helper environments the converter could not run are named, and their
+        # SHA-256 travels in both the report and the recipe
+        assert "helper-environment toolchain-funcs" in report
+        assert "helper-environment ebuild.sh" in report
+        digest = report.split("helper-environment-sha256 ")[1].split()[0]
+        assert len(digest) == 64 and all(c in "0123456789abcdef" for c in digest)
+        assert f'x-helper-environment-sha256 "{digest}"' in recipe
+        assert 'x-helper-environment "toolchain-funcs"' in recipe
         assert "the src_prepare body calls the default helper" in report
         assert "the src_prepare body calls the die helper" in report
         assert "the src_compile body calls the emake helper" in report

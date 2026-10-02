@@ -255,6 +255,22 @@ mkdir -p $RPM_BUILD_ROOT/usr/share/rpm-demo
             in report
         assert "unknown requirement rpmlib(CompressedFileNames) uses a resolver-specific form" \
             in report
+        # a macro the vendor set would resolve is the helper environment this converter
+        # fixes rather than runs, and the ordered digest reaches the recipe
+        write(package / "rpm-demo.spec", """Name: rpm-demo
+Version: 1
+Release: 1
+%install
+mkdir -p %{_vendorprefix}/usr/share/rpm-demo
+""")
+        run("convert", package / "rpm-demo.spec", "--source", "fedora",
+            "--output", root / "macro", status=3)
+        report = (root / "macro" / "conversion").read_text()
+        assert "unknown macro %{_vendorprefix} is not carried" in report
+        assert "helper-environment rpm-macros" in report
+        env_digest = report.split("helper-environment-sha256 ")[1].split()[0]
+        assert f'x-helper-environment-sha256 "{env_digest}"' in \
+            (root / "macro" / "rpm-demo.recipe").read_text()
 
         # a subpackage with no files list, and a files list option
         write(package / "rpm-demo.spec", """Name: rpm-demo

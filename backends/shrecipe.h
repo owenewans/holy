@@ -104,9 +104,21 @@ struct recipe_note {
     char **lines;
     size_t count;
     size_t carried, preserved, helper, unknown, changes;
+    char **environments;   /* helper environments in the order the converter names them */
+    size_t environment_count;
 };
 
 int holy_note_add(struct recipe_note *note, const char *kind, const char *format, ...);
+/* one named helper environment the converter did not run. the name joins the ordered
+   list whose SHA-256 both the report and the build record carry. */
+int holy_note_environment(struct recipe_note *note, const char *name);
+/* writes the environment lines and their digest, and returns 1 when there are any. */
+int holy_note_environments(FILE *out, const struct recipe_note *note);
+/* writes the same names as x- records, so HOLY/meta carries the helper environment the
+   converter could not run. */
+int holy_note_environment_records(FILE *out, const struct recipe_note *note);
+/* the SHA-256 of the ordered names, separated by NUL so two spellings differ. */
+int holy_environment_digest(char *const *names, size_t count, char digest[65]);
 void holy_note_free(struct recipe_note *note);
 const char *holy_relation_name(const char *operator);
 /* writes one depend record, keeping the upstream name, relation and version. */

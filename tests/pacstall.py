@@ -356,6 +356,11 @@ package() {
         assert "the give_this key is a Pacstall setting this converter reports" in report
         assert "the prepare body reads KVER, which is the running kernel" in report
         assert "the prepare body reads homedir, which is the home directory" in report
+        # the Pacstall environment supplies the variables these bodies read, so it is
+        # named, and its ordered digest reaches the recipe
+        assert "helper-environment pacstall" in report
+        env_digest = report.split("helper-environment-sha256 ")[1].split()[0]
+        assert f'x-helper-environment-sha256 "{env_digest}"' in recipe
         assert f"conditional block {pacscript}:15 if [[" in report
         assert f"conditional assignment pacdeps {pacscript}:16" in report
 

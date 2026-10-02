@@ -1173,10 +1173,77 @@ int holy_note_add(struct recipe_note *note, const char *kind, const char *format
     return 1;
 }
 
+int holy_environment_digest(char *const *names, size_t count, char digest[65])
+{
+    unsigned char bytes[32];
+    unsigned int size = 0;
+    EVP_MD_CTX *context = EVP_MD_CTX_new();
+    size_t i;
+    int ok = 0;
+    if (!context || EVP_DigestInit_ex(context, EVP_sha256(), NULL) != 1) goto done;
+    for (i = 0; i < count; ++i)
+        if (EVP_DigestUpdate(context, names[i], strlen(names[i]) + 1) != 1) goto done;
+    if (EVP_DigestFinal_ex(context, bytes, &size) != 1 || size != 32) goto done;
+    for (i = 0; i < 32; ++i) snprintf(digest + i * 2, 3, "%02x", bytes[i]);
+    ok = 1;
+done:
+    EVP_MD_CTX_free(context);
+    return ok;
+}
+
+int holy_note_environment(struct recipe_note *note, const char *name)
+{
+    char **grown;
+    size_t i;
+    if (!name || !*name) return 0;
+    /* the environment is a set, so a helper several bodies reach is named once */
+    for (i = 0; i < note->environment_count; ++i)
+        if (!strcmp(note->environments[i], name)) return 1;
+    grown = realloc(note->environments, (note->environment_count + 1) * sizeof *grown);
+    if (!grown) return 0;
+    note->environments = grown;
+    if (!(note->environments[note->environment_count] = strdup(name))) return 0;
+    ++note->environment_count;
+    return 1;
+}
+
+int holy_note_environments(FILE *out, const struct recipe_note *note)
+{
+    char digest[65];
+    size_t i;
+    if (!note->environment_count) return 0;
+    /* the report names the environment as it is written, and the recipe records quote
+       it, since HOLY/meta takes one quoted value per record */
+    for (i = 0; i < note->environment_count; ++i)
+        fprintf(out, "helper-environment %s\n", note->environments[i]);
+    if (!holy_environment_digest(note->environments, note->environment_count, digest)) return 0;
+    fprintf(out, "helper-environment-sha256 %s\n", digest);
+    return 1;
+}
+
+int holy_note_environment_records(FILE *out, const struct recipe_note *note)
+{
+    char digest[65];
+    size_t i;
+    if (!note->environment_count) return 0;
+    for (i = 0; i < note->environment_count; ++i) {
+        fputs("x-helper-environment ", out);
+        holy_token(out, note->environments[i]);
+        fputc('\n', out);
+    }
+    if (!holy_environment_digest(note->environments, note->environment_count, digest)) return 0;
+    fputs("x-helper-environment-sha256 ", out);
+    holy_token(out, digest);
+    fputc('\n', out);
+    return 1;
+}
+
 void holy_note_free(struct recipe_note *note)
 {
     size_t i;
     for (i = 0; i < note->count; ++i) free(note->lines[i]);
+    for (i = 0; i < note->environment_count; ++i) free(note->environments[i]);
+    free(note->environments);
     free(note->lines);
     memset(note, 0, sizeof *note);
 }

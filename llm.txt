@@ -5173,7 +5173,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-recipe.5 source=holy version=development sha256=938b4c0ccce1d513bd885e15103c841b63dee210c9973ee5a72b9eac13824f4e
+holy-recipe.5 source=holy version=development sha256=b7fe2eff018bf024a1561ff029e02c6d12074d74ccdc41d781535076a13cb680
 HOLY-RECIPE(5)		       Holy package format		  HOLY-RECIPE(5)
 
 NAME
@@ -5940,6 +5940,24 @@ CONVERSION REPORT
      since  review  is	a  statement about execution, not about whether the text
      could be carried. A missing identity, a computed identity or malformed text
      returns 2; an unreadable input returns 6.
+
+     A helper environment is a program that supplies the  phases,  variables  or
+     macros  a	foreign	 recipe needs and that this converter does not run. Each
+     one is named in the order the converter reached it, as a set rather than  a
+     count, and the SHA-256 of those NUL-separated names follows:
+
+	    helper-environment makepkg
+	    helper-environment-sha256 HASH
+
+     The  same	names  and  hash  are  x-  records  in	the converted recipe, so
+     HOLY/meta of the artifact a build produces states the helper environment it
+     was built against.	 The names a  converter	 uses  are  the	 upstream  ones:
+     makepkg  and  makepkg.conf,  abuild,  an eclass or ebuild.sh, common/build-
+     style/STYLE, the v* helpers  of  common/environment/setup/install.sh,  deb-
+     helper  and dpkg, rpmbuild and rpm-macros, pacstall, flatpak-builder, home-
+     brew-ruby, slackbuild-script and  guix-build-system.  An  environment  that
+     supplies  something  the  payload	already carries needs no name, so a con-
+     verter reports only what it could not run.
 
 RESULTS
      Each output artifact is written to the output directory.  Its  manifest  is

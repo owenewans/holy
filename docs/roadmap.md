@@ -856,7 +856,14 @@
   every named refusal.
 - [ ] Implement AUR, Aports, xbps-src, SlackBuilds, RPM spec, Debian source,
   Gentoo, Pacstall, Homebrew and Guix recipe conversion with helper environments
-  and split outputs. Every named family now has a converter.
+  and split outputs. Every named family now has a converter, and each one names
+  the helper environment it could not run: the SHA-256 of the ordered, deduplicated
+  set of names travels in the conversion report and as an x- record in the recipe,
+  so HOLY/meta of the built artifact states the environment it was built against.
+  The environments named so far are makepkg and makepkg.conf, abuild, an eclass
+  and ebuild.sh, a common/build-style script and the v* helpers, debhelper and dpkg,
+  rpmbuild and the vendor macro set, pacstall, flatpak-builder, homebrew-ruby,
+  slackbuild-script and guix-build-system.
   The native side of that work now exists: `holypkg build` parses a
   holy-recipe(5) manifest, fetches pinned sources, unpacks them, runs reviewed
   phase steps with absolute HOLY_* paths, and packs one .holy per declared

@@ -185,6 +185,12 @@ void-demo-doc_package() {{
         assert "preserved depends depends=" in report
         assert "helper common/build-style/gnu-makefile.sh" in report
         assert "helper v* helpers carried" in report
+        # the build style and the shared helper scripts are the environment this
+        # converter does not run, and their ordered digest reaches the recipe
+        assert "helper-environment gnu-makefile" in report
+        assert "helper-environment common/environment/setup/install.sh" in report
+        env_digest = report.split("helper-environment-sha256 ")[1].split()[0]
+        assert f'x-helper-environment-sha256 "{env_digest}"' in recipe
         assert "semantic-change distfiles are extracted into HOLY_SRC" in report
 
         # the converted recipe builds through the normal engine

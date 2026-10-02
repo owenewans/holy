@@ -239,6 +239,10 @@ def main():
         assert "the gradle buildsystem of module unknown-system is a flatpak-builder template" \
             in report
         assert "helper 1" in report
+        # flatpak-builder is the helper environment this converter does not run
+        assert "helper-environment flatpak-builder" in report
+        env_digest = report.split("helper-environment-sha256 ")[1].split()[0]
+        assert f'x-helper-environment-sha256 "{env_digest}"' in recipe
         # the modules no longer share one prefix
         assert "shares one prefix across its 3 modules" in report
         assert "status review-required" in report

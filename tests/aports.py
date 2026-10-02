@@ -201,6 +201,10 @@ extras() {{
         assert "preserved subpackage aports-demo-dev from dev APKBUILD:" in report
         assert "unknown sha512sums pins a digest a Holy source cannot use" in report
         assert "helper abuild runs default_prepare" in report
+        # abuild is the helper environment, and its digest reaches the built artifact
+        assert "helper-environment abuild" in report
+        env_digest = report.split("helper-environment-sha256 ")[1].split()[0]
+        assert f'x-helper-environment-sha256 "{env_digest}"' in recipe
         assert "semantic-change local source aports-demo-2.1.0.tar.gz copied" in report
         assert "unknown dependency musl uses a resolver-specific prefix" not in report
 
@@ -216,6 +220,7 @@ extras() {{
         assert "usr/bin/aports-demo" in library["HOLY/files"]
         assert digest in library["HOLY/origin"]
         assert "gcc" in library["HOLY/transform"]
+        assert f'x-helper-environment-sha256 "{env_digest}"' in library["HOLY/meta"]
         assert '"usr/bin/aports-demo" "holy-recipe"' in library["HOLY/deps"]
         assert "usr/share/dev-greeting" in devel["HOLY/files"]
         assert "usr/include/main.h" in devel["HOLY/files"]

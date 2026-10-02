@@ -987,6 +987,7 @@ int holy_convert_aports(const char *input, const char *source, const char *outpu
         } else {
             holy_note_add(&note, "helper", "abuild supplies the default builddir %s-%s under "
                           "the source tree", name, version);
+            holy_note_environment(&note, "abuild");
         }
         free(declared);
         if (!builddir) { result = 1; goto done; }
@@ -1005,10 +1006,12 @@ int holy_convert_aports(const char *input, const char *source, const char *outpu
                 if (strcmp(phases[index].phase, "prepare")) {
                     holy_note_add(&note, "helper", "abuild runs the built-in %s phase, which "
                                   "this converter does not reproduce", phases[index].phase);
+                    holy_note_environment(&note, "abuild");
                     continue;
                 }
                 holy_note_add(&note, "helper", "abuild runs default_prepare, which applies the "
                               "patches listed in source");
+                holy_note_environment(&note, "abuild");
                 review = 1;
                 continue;
             }
@@ -1040,6 +1043,7 @@ int holy_convert_aports(const char *input, const char *source, const char *outpu
         free(prefix);
     }
     if (!wrote) { result = 1; goto done; }
+    holy_note_environment_records(out, &note);
     if (fflush(out) || fclose(out)) { out = NULL; result = 1; goto done; }
     out = NULL;
 
@@ -1059,6 +1063,7 @@ int holy_convert_aports(const char *input, const char *source, const char *outpu
     fputs("arch ", out); holy_token(out, arch); fputc('\n', out);
     fputs("recipe ", out); holy_token(out, name); fputs(".recipe\n", out);
     fprintf(out, "status %s\n", review ? "review-required" : "native");
+    holy_note_environments(out, &note);
     for (k = 0; k < note.count; ++k) fprintf(out, "%s\n", note.lines[k]);
     fprintf(out, "summary carried %zu preserved %zu helper %zu unknown %zu changes %zu\n",
             note.carried, note.preserved, note.helper, note.unknown, note.changes);

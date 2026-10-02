@@ -919,6 +919,7 @@ int holy_convert_gentoo(const char *input, const char *source, const char *outpu
         review = 1;
         holy_note_add(&note, "helper", "the %s eclass, which this converter does not run",
                       eclasses[index]);
+        holy_note_environment(&note, eclasses[index]);
     }
 
     /* the metadata that steers a build and that a Holy recipe has no place for */
@@ -1077,6 +1078,7 @@ int holy_convert_gentoo(const char *input, const char *source, const char *outpu
             review = 1;
             holy_note_add(&note, "helper", "the %s phase, which the inherited eclasses supply "
                           "and this converter does not run", phases[index].phase);
+            holy_note_environment(&note, "ebuild.sh");
             continue;
         }
         if (function->conditional) {
@@ -1114,6 +1116,7 @@ int holy_convert_gentoo(const char *input, const char *source, const char *outpu
                       "and a Holy hook carries a script rather than a function", maintainer[i]);
     }
 
+    holy_note_environment_records(out, &note);
     if (fclose(out)) { out = NULL; result = 1; goto done; }
     out = NULL;
 
@@ -1138,6 +1141,7 @@ int holy_convert_gentoo(const char *input, const char *source, const char *outpu
     fputs("arch \"any\"\nrecipe ", out); holy_token(out, name.name);
     fprintf(out, ".recipe\n");
     fprintf(out, "status %s\n", review ? "review-required" : "native");
+    holy_note_environments(out, &note);
     for (index = 0; index < note.count; ++index) fprintf(out, "%s\n", note.lines[index]);
     fprintf(out, "summary carried %zu preserved %zu helper %zu unknown %zu changes %zu\n",
             note.carried, note.preserved, note.helper, note.unknown, note.changes);

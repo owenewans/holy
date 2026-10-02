@@ -997,6 +997,7 @@ int holy_convert_brew(const char *input, const char *source, const char *output)
         brew_note(&brew, "helper", "the install body keeps %zu Ruby statements, so the formula "
                   "is copied beside the recipe as homebrew-install.rb and the build declares a "
                   "ruby build requirement", brew.preserved);
+        holy_note_environment(brew.note, "homebrew-ruby");
     }
     snprintf(recipe_path, sizeof recipe_path, "%s/%s.recipe", output, brew.name);
     snprintf(report_path, sizeof report_path, "%s/conversion", output);
@@ -1045,6 +1046,7 @@ int holy_convert_brew(const char *input, const char *source, const char *output)
     fputs(" runtime\n", brew.out);
     if (brew.step_text && brew.step_size)
         fwrite(brew.step_text, 1, brew.step_size, brew.out);
+    holy_note_environment_records(brew.out, &note);
     if (ferror(brew.out) || fclose(brew.out)) { brew.out = NULL; goto done; }
     brew.out = fopen(report_path, "wb");
     if (!brew.out) {
@@ -1081,6 +1083,7 @@ int holy_convert_brew(const char *input, const char *source, const char *output)
     fputs("recipe ", brew.out); holy_token(brew.out, summary);
     fputc('\n', brew.out);
     fprintf(brew.out, "status %s\n", brew.review ? "review-required" : "native");
+    holy_note_environments(brew.out, &note);
     for (i = 0; i < note.count; ++i) fprintf(brew.out, "%s\n", note.lines[i]);
     fprintf(brew.out, "summary carried %zu preserved %zu helper %zu unknown %zu changes %zu\n",
             note.carried, note.preserved, note.helper, note.unknown, note.changes);

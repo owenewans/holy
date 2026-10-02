@@ -477,6 +477,7 @@ static int emit_build_system(struct guix *guix, const char *system)
     if (!system) {
         guix_report(guix, "unknown", "the definition names no build system, and a build needs "
                     "one to run");
+        holy_note_environment(guix->note, "guix-build-system");
         guix->review = 1;
         return 0;
     }
@@ -543,11 +544,13 @@ static int emit_build_system(struct guix *guix, const char *system)
     if (!strcmp(system, trivial)) {
         guix_report(guix, "unknown", "the %s runs a build procedure the definition states as a "
                     "Scheme body, which this converter does not evaluate", system);
+        holy_note_environment(guix->note, "guix-build-system");
         guix->review = 1;
         return 0;
     }
     guix_report(guix, "unknown", "the build system %s is not one this converter replaces, so the "
                 "definition needs a build phase of its own", system);
+    holy_note_environment(guix->note, "guix-build-system");
     guix->review = 1;
     return 0;
 }
@@ -816,6 +819,7 @@ int holy_convert_guix(const char *input, const char *source, const char *output)
     fputs(" runtime\n", guix.out);
     if (guix.step_text && guix.step_size)
         fwrite(guix.step_text, 1, guix.step_size, guix.out);
+    holy_note_environment_records(guix.out, &note);
     if (ferror(guix.out) || fclose(guix.out)) { guix.out = NULL; goto done; }
     guix.out = fopen(report_path, "wb");
     if (!guix.out) {
@@ -853,6 +857,7 @@ int holy_convert_guix(const char *input, const char *source, const char *output)
         fputc('\n', guix.out);
     }
     fprintf(guix.out, "status %s\n", guix.review ? "review-required" : "native");
+    holy_note_environments(guix.out, &note);
     for (i = 0; i < note.count; ++i) fprintf(guix.out, "%s\n", note.lines[i]);
     fprintf(guix.out, "summary carried %zu preserved %zu helper %zu unknown %zu changes %zu\n",
             note.carried, note.preserved, note.helper, note.unknown, note.changes);

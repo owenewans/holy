@@ -1249,8 +1249,10 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
                         splits[k].name, files, patches);
         if (body_uses_helper(splits[k].install.body, splits[k].install.length)) helpers = 1;
     }
-    if (helpers)
+    if (helpers) {
         holy_note_add(&note, "helper", "v* helpers carried from common/environment/setup/install.sh");
+        holy_note_environment(&note, "common/environment/setup/install.sh");
+    }
     if (distfiles || hooks_used || files || patches) {
         /* xbps-src moves a single top level directory to $wrksrc, so HOLY_SRC gets the
            content of that directory rather than the directory itself */
@@ -1326,15 +1328,18 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
                     review = 1;
                     holy_note_add(&note, "helper", "common/build-style/%s.sh supplies the %s step",
                              style, map->holy);
+                    holy_note_environment(&note, style);
                 }
                 continue;
             }
             /* a patches directory needs the prepare step even without a patch function */
             if (patches && !strcmp(map->holy, "prepare"))
                 holy_note_add(&note, "carried", "patches directory applied in the prepare step");
-            if (style && *style)
+            if (style && *style) {
                 holy_note_add(&note, "helper", "common/build-style/%s.sh is not run, the %s body "
                          "comes from the template", style, map->holy);
+                holy_note_environment(&note, style);
+            }
             prefix = prologue(&pkg, name, version, release, "$HOLY_DEST", helpers, files, patches, 0);
             if (!prefix) { result = 1; goto done; }
             for (i = 0; i < 3; ++i) {
@@ -1389,6 +1394,7 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
         free(body);
         free(prefix);
     }
+    holy_note_environment_records(out, &note);
     if (fflush(out) || fclose(out)) { out = NULL; result = 1; goto done; }
     out = NULL;
 
@@ -1408,6 +1414,7 @@ int holy_convert_voidsrc(const char *input, const char *source, const char *outp
     fputs("arch any\n", out);
     fputs("recipe ", out); holy_token(out, name); fputs(".recipe\n", out);
     fprintf(out, "status %s\n", review ? "review-required" : "native");
+    holy_note_environments(out, &note);
     for (k = 0; k < note.count; ++k) fprintf(out, "%s\n", note.lines[k]);
     fprintf(out, "summary carried %zu preserved %zu helper %zu unknown %zu changes %zu\n",
             note.carried, note.preserved, note.helper, note.unknown, note.changes);

@@ -179,6 +179,11 @@ override_dh_auto_install:
         assert "status review-required" in report
         assert "carried debian/control" in report
         assert "carried Package deb-demo 14" in report
+        # debhelper and dpkg are the helper environments the rules need, and the digest
+        # of the ordered set travels with the recipe
+        assert "helper-environment debhelper" in report
+        env_digest = report.split("helper-environment-sha256 ")[1].split()[0]
+        assert f'x-helper-environment-sha256 "{env_digest}"' in recipe
         assert "carried Package deb-demo-dev 27" in report
         assert "carried changelog version 2.6.0" in report
         assert "semantic-change the Debian revision 1 becomes the Holy release" in report

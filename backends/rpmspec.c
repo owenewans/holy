@@ -340,6 +340,7 @@ static char *expand_macros(const char *body, size_t length, const char *name,
             /* the group stays as written, so the operator sees what is unresolved */
             *review = 1;
             holy_note_add(note, "unknown", "macro %%{%s} is not carried in %s", key, where);
+            holy_note_environment(note, "rpm-macros");
             if (!text_puts(&out, "%{") || !text_puts(&out, key) || !text_puts(&out, "}"))
                 goto failed;
             index = stop;
@@ -448,6 +449,7 @@ static char *file_paths(const char *body, size_t length, const char *name, const
         if (strchr(cursor, '%')) {
             *review = 1;
             holy_note_add(note, "unknown", "file path %s keeps a macro in %s", cursor, name);
+        holy_note_environment(note, "rpm-macros");
             free(entry);
             continue;
         }
@@ -1116,6 +1118,7 @@ int holy_convert_rpmspec(const char *input, const char *source, const char *outp
             free(body);
             holy_note_add(&note, "helper", "the %s section is empty, so the rpm build "
                           "environment supplies it", sections[index].name);
+            holy_note_environment(&note, "rpmbuild");
             review = 1;
             continue;
         }
@@ -1355,6 +1358,7 @@ int holy_convert_rpmspec(const char *input, const char *source, const char *outp
         holy_shell_lines_free(items);
         free(expanded);
     }
+    holy_note_environment_records(out, &note);
     if (fflush(out) || fclose(out)) { out = NULL; result = 1; goto done; }
     out = NULL;
     out = fopen(report_path, "wb");
@@ -1373,6 +1377,7 @@ int holy_convert_rpmspec(const char *input, const char *source, const char *outp
     fputs("arch ", out); holy_token(out, arch); fputc('\n', out);
     fputs("recipe ", out); holy_token(out, name); fputs(".recipe\n", out);
     fprintf(out, "status %s\n", review ? "review-required" : "native");
+    holy_note_environments(out, &note);
     for (index = 0; index < note.count; ++index) fprintf(out, "%s\n", note.lines[index]);
     fprintf(out, "summary carried %zu preserved %zu helper %zu unknown %zu changes %zu\n",
             note.carried, note.preserved, note.helper, note.unknown, note.changes);

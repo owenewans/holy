@@ -219,6 +219,8 @@ static void report_unknowns(const char *body, size_t length, struct recipe_note 
     for (index = 0; index < sizeof unresolved / sizeof *unresolved; ++index)
         if (contains(body, length, unresolved[index].token)) {
             holy_note_add(note, "unknown", "%s", unresolved[index].text);
+            /* the script keeps its own shell, so what it could not carry is named */
+            holy_note_environment(note, "slackbuild-script");
             *review = 1;
         }
 }
@@ -812,6 +814,7 @@ int holy_convert_slackbuild(const char *input, const char *source, const char *o
               "cp \"$HOLY_SRC/doinst.sh\" \"$HOLY_DEST/usr/share/holy/slackbuild/doinst.sh\"\n"
               "HOOK\n", out);
     }
+    holy_note_environment_records(out, &note);
     if (fflush(out) || fclose(out)) { out = NULL; result = 1; goto done; }
     out = NULL;
     out = fopen(report_path, "wb");
@@ -830,6 +833,7 @@ int holy_convert_slackbuild(const char *input, const char *source, const char *o
     fputs("arch any\n", out);
     fputs("recipe ", out); holy_token(out, name); fputs(".recipe\n", out);
     fprintf(out, "status %s\n", review ? "review-required" : "native");
+    holy_note_environments(out, &note);
     for (index = 0; index < note.count; ++index) fprintf(out, "%s\n", note.lines[index]);
     fprintf(out, "summary carried %zu preserved %zu helper %zu unknown %zu changes %zu\n",
             note.carried, note.preserved, note.helper, note.unknown, note.changes);

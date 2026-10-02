@@ -184,6 +184,11 @@ def main():
                in summary, summary
         assert "the definition computes a value with modulo" in summary, summary
         assert "the definition turns its test suite off" in summary, summary
+        # the guix build system it names is a helper environment this converter does
+        # not evaluate, and its ordered digest reaches the recipe
+        assert "helper-environment guix-build-system" in summary, summary
+        env_digest = summary.split("helper-environment-sha256 ")[1].split()[0]
+        assert f'x-helper-environment-sha256 "{env_digest}"' in recipe, recipe
         # a version constraint is a constraint, not a second name
         assert 'depend "zlib" "any" "-"\n' in recipe, recipe
         assert "1.3" not in recipe, recipe

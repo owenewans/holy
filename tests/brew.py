@@ -223,6 +223,11 @@ end
         # the Ruby that did not translate travels beside the recipe with its digest
         assert "preserved homebrew-install.rb " in summary, summary
         assert (rich_out / "homebrew-install.rb").read_text() == rich.read_text()
+        # the Ruby this converter could not translate is the helper environment the
+        # build needs, and its ordered digest reaches the recipe
+        assert "helper-environment homebrew-ruby" in summary, summary
+        env_digest = summary.split("helper-environment-sha256 ")[1].split()[0]
+        assert f'x-helper-environment-sha256 "{env_digest}"' in recipe, recipe
         # the build needs an interpreter for it
         assert 'build-depend "ruby" "any" "-"\n' in recipe, recipe
         assert "the install body keeps 1 Ruby statements" in summary, summary

@@ -798,6 +798,7 @@ static char *emit_hook(FILE *out, const char *group, const struct pacscript_name
                 *review = 1;
                 holy_note_add(note, "helper", "the %s body reads %s, which is %s", function->name,
                               environment[i].name, environment[i].why);
+                holy_note_environment(note, "pacstall");
             }
     }
     return strdup(installed);
@@ -1247,6 +1248,7 @@ int holy_convert_pacstall(const char *input, const char *source, const char *out
                 review = 1;
                 holy_note_add(&note, "helper", "the %s body reads %s, which is %s",
                               phases[index].pacscript, environment[i].name, environment[i].why);
+                holy_note_environment(&note, "pacstall");
             }
     }
     if (split) {
@@ -1293,6 +1295,7 @@ int holy_convert_pacstall(const char *input, const char *source, const char *out
                     review = 1;
                     holy_note_add(&note, "helper", "the %s body reads %s, which is %s", function_name,
                                   environment[i].name, environment[i].why);
+                    holy_note_environment(&note, "pacstall");
                 }
         }
     }
@@ -1342,6 +1345,7 @@ int holy_convert_pacstall(const char *input, const char *source, const char *out
                       script.values[index].name, input, script.values[index].line);
     }
 
+    holy_note_environment_records(out, &note);
     if (fclose(out)) { out = NULL; result = 1; goto done; }
     out = NULL;
     out = fopen(report_path, "wb");
@@ -1372,6 +1376,7 @@ int holy_convert_pacstall(const char *input, const char *source, const char *out
         fputc('\n', out);
     }
     fprintf(out, "status %s\n", review ? "review-required" : "native");
+    holy_note_environments(out, &note);
     for (index = 0; index < note.count; ++index) fprintf(out, "%s\n", note.lines[index]);
     fprintf(out, "summary carried %zu preserved %zu helper %zu unknown %zu changes %zu\n",
             note.carried, note.preserved, note.helper, note.unknown, note.changes);

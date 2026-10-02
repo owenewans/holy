@@ -175,6 +175,11 @@ EMAIL="fixture@example.org"
         assert "converted sb-demo status review-required" in out
         recipe = (root / "conv" / "sb-demo.recipe").read_text()
         report = (root / "conv" / "conversion").read_text()
+        # the script keeps its own shell, so the environment it needed is named and
+        # hashed
+        assert "helper-environment slackbuild-script" in report
+        env_digest = report.split("helper-environment-sha256 ")[1].split()[0]
+        assert f'x-helper-environment-sha256 "{env_digest}"' in recipe
         assert (root / "conv" / "sb-demo.SlackBuild").read_text() == \
             (package / "sb-demo.SlackBuild").read_text()
         assert hashlib.sha256((root / "conv" / "sb-demo.SlackBuild").read_bytes()).hexdigest() \

@@ -152,6 +152,11 @@ package_docs() {{
         assert "preserved split pkgbuild-demo-docs PKGBUILD:" in report
         assert "preserved hook pkgbuild-demo.install PKGBUILD:" in report
         assert "helper makepkg.conf" in report
+        # the makepkg profile is a helper environment this converter does not run, and
+        # its ordered digest reaches the recipe
+        assert "helper-environment makepkg.conf" in report
+        env_digest = report.split("helper-environment-sha256 ")[1].split()[0]
+        assert f'x-helper-environment-sha256 "{env_digest}"' in recipe
         assert "semantic-change single source lifted" in report
         assert "unknown 0" in report
 
