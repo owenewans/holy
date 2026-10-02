@@ -125,6 +125,17 @@ void holy_private_places_print(const struct holy_private_places *places, size_t 
                places->place[i].artifact, places->place[i].path, places->place[i].target);
 }
 
+static int number(const char *text, int base, long long *out)
+{
+    char *end;
+    long long value;
+    errno = 0;
+    value = strtoll(text, &end, base);
+    if (text[0] == '\0' || text[0] == '-' || errno || *end) return 0;
+    *out = value;
+    return 1;
+}
+
 static void quote(FILE *out, const char *value)
 {
     const unsigned char *p = (const unsigned char *)value;
@@ -166,11 +177,132 @@ static int emit(FILE *out, char **v, size_t count, const char *target)
     return !ferror(out);
 }
 
+/* a placed file lives under a tree the package never declared, and the installer
+   refuses a missing parent it was not told about, so the record gains the directories
+   between the private root and that file. they carry the ownership the placed file
+   itself has, since the private tree belongs to the package that shipped it. */
+struct parent_list {
+    char **path;
+    long long uid, gid;
+    size_t count;
+    char **declared;         /* the directories the source record already states */
+    size_t declared_count;
+};
+
+static int parent_order(const void *left, const void *right)
+{
+    return strcmp(*(char *const *)left, *(char *const *)right);
+}
+
+/* a directory the source record already states is not written twice: the manifest
+   reader rejects a duplicate path, and the existing row already describes it */
+static int parent_declared(const struct parent_list *list, const char *path)
+{
+    size_t i;
+    for (i = 0; i < list->declared_count; ++i)
+        if (!strcmp(list->declared[i], path)) return 1;
+    return 0;
+}
+
+static int parent_declare(struct parent_list *list, const char *path)
+{
+    char **grown;
+    if (list->declared_count >= PRIVATE_PLACES) return 0;
+    grown = realloc(list->declared, (list->declared_count + 1) * sizeof *grown);
+    if (!grown) return 0;
+    list->declared = grown;
+    list->declared[list->declared_count] = strdup(path);
+    if (!list->declared[list->declared_count]) return 0;
+    ++list->declared_count;
+    return 1;
+}
+
+static int parent_add(struct parent_list *list, const char *target)
+{
+    char *copy = strdup(target), *slash;
+    size_t i;
+    int ok = 0;
+    if (!copy) return 0;
+    /* every strict ancestor of the target, from the shallowest down. an ancestor the
+       source already states ends the walk, since the ones above it are stated too */
+    while ((slash = strrchr(copy, '/'))) {
+        char **grown;
+        *slash = '\0';
+        if (!*copy) break;
+        if (parent_declared(list, copy)) break;
+        for (i = 0; i < list->count; ++i)
+            if (!strcmp(list->path[i], copy)) break;
+        if (i < list->count) break;
+        if (list->count >= PRIVATE_PLACES) goto done;
+        grown = realloc(list->path, (list->count + 1) * sizeof *grown);
+        if (!grown) goto done;
+        list->path = grown;
+        list->path[list->count] = strdup(copy);
+        if (!list->path[list->count]) goto done;
+        ++list->count;
+    }
+    ok = 1;
+done:
+    free(copy);
+    return ok;
+}
+
+static void parents_free(struct parent_list *list)
+{
+    size_t i;
+    for (i = 0; i < list->count; ++i) free(list->path[i]);
+    for (i = 0; i < list->declared_count; ++i) free(list->declared[i]);
+    free(list->path);
+    free(list->declared);
+}
+
+/* strcmp orders a parent before its children because the separator sorts below every
+   byte a name component may hold, so one ascending pass is a valid creation order */
+static void parents_write(FILE *out, struct parent_list *list)
+{
+    size_t i;
+    if (list->count) qsort(list->path, list->count, sizeof *list->path, parent_order);
+    for (i = 0; i < list->count; ++i) {
+        fputs("dir ", out);
+        quote(out, list->path[i]);
+        fprintf(out, " 755 - - %lld %lld 0 - none - -\n", list->uid, list->gid);
+    }
+}
+
+/* a rewritten row still has to be a row the manifest reader accepts, so the placed
+   path is substituted in a copy rather than spliced into the original bytes */
+struct rewrite {
+    const struct holy_private_places *places;
+    const char *artifact;
+    struct parent_list parents;
+    long long uid, gid;
+    size_t mapped;
+    int owned;
+};
+
+static const char *rewrite_target(struct rewrite *state, char **v, size_t count, int *usable)
+{
+    size_t i;
+    *usable = 0;
+    if (count < 2 || strcmp(v[0], "file")) return NULL;
+    for (i = 0; i < state->places->count; ++i)
+        if (!strcmp(state->places->place[i].artifact, state->artifact) &&
+            !strcmp(state->places->place[i].path, v[1])) break;
+    if (i == state->places->count) return NULL;
+    /* a directory would move a whole subtree, which is the consumer's decision rather
+       than one file's, and a hardlink group would break when only one member moved */
+    if (count != 12 || strcmp(v[11], "-") ||
+        !number(v[5], 10, &state->uid) || !number(v[6], 10, &state->gid)) return NULL;
+    *usable = 1;
+    return state->places->place[i].target;
+}
+
 int holy_private_manifest(const struct holy_private_places *places, const char *artifact,
                           const char *source, size_t length, char **record, size_t *size)
 {
+    struct rewrite state = {places, artifact, {0}, 0, 0, 0, 0};
     FILE *out;
-    size_t start = 0, line = 0, mapped = 0, i;
+    size_t start = 0, line = 0;
     int ok = 0;
     *record = NULL;
     *size = 0;
@@ -181,39 +313,49 @@ int holy_private_manifest(const struct holy_private_places *places, const char *
         size_t bytes = end ? (size_t)(end - source - start) : length - start;
         char **v = NULL, *error = NULL;
         size_t count = 0;
-        const char *target = NULL;
+        const char *target;
+        int usable = 0;
         ++line;
         if (!holy_lex(source + start, bytes, &v, &count, "HOLY/files", line, &error)) {
             free(error);
             goto done;
         }
         free(error);
-        if (count >= 2 && !strcmp(v[0], "file")) {
-            for (i = 0; i < places->count; ++i)
-                if (!strcmp(places->place[i].artifact, artifact) &&
-                    !strcmp(places->place[i].path, v[1])) break;
-            /* only a file record can be placed: a directory would move a whole
-               subtree, which is the consumer's decision rather than one file's, and a
-               hardlink group would break when only one of its members moved */
-            if (i < places->count) {
-                if (count != 12 || strcmp(v[11], "-")) goto next;
-                target = places->place[i].target;
-                ++mapped;
-            }
-        }
-        if (target ? !emit(out, v, count, target) :
-            fwrite(source + start, 1, bytes + !!end, out) != bytes + !!end) {
+        if (count >= 2 && !strcmp(v[0], "dir") && !parent_declare(&state.parents, v[1])) {
             holy_tokens_free(v, count);
             goto done;
         }
-next:
+        target = rewrite_target(&state, v, count, &usable);
+        if (usable && target) {
+            char *body = NULL;
+            size_t body_size = 0;
+            FILE *row = open_memstream(&body, &body_size);
+            if (!row || !emit(row, v, count, target) || fclose(row) ||
+                !parent_add(&state.parents, target) ||
+                fwrite(body, 1, body_size, out) != body_size) {
+                free(body);
+                holy_tokens_free(v, count);
+                goto done;
+            }
+            free(body);
+            ++state.mapped;
+        } else if (fwrite(source + start, 1, bytes + !!end, out) != bytes + !!end) {
+            holy_tokens_free(v, count);
+            goto done;
+        }
         holy_tokens_free(v, count);
         start += bytes + !!end;
     }
     /* a placement the record does not carry is a decision about a file the package
        does not ship, so the rewrite is refused rather than half applied */
-    ok = mapped == holy_private_places_artifact(places, artifact) && !ferror(out);
+    if (state.mapped != holy_private_places_artifact(places, artifact)) goto done;
+    /* the private tree's directories are appended: the manifest reader sorts rows and
+       the installer resolves parents against a sorted list, so their place in the
+       record does not decide the order they are created in */
+    parents_write(out, &state.parents);
+    ok = !ferror(out);
 done:
+    parents_free(&state.parents);
     if (fclose(out)) ok = 0;
     if (!ok) {
         free(*record);

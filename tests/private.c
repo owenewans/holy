@@ -36,6 +36,40 @@ static int contains(const char *text, const char *needle)
     return text && strstr(text, needle) != NULL;
 }
 
+static size_t count_occurrences(const char *text, const char *needle)
+{
+    size_t seen = 0;
+    size_t length = strlen(needle);
+    while ((text = strstr(text, needle)) != NULL) { ++seen; text += length; }
+    return seen;
+}
+
+/* every directory row has to name a path that sorts after the directory rows written
+   before it, since the installer creates them from a sorted list */
+static int parents_in_order(const char *record)
+{
+    const char *cursor = record;
+    char previous[4096], current[4096];
+    size_t seen = 0;
+    previous[0] = '\0';
+    while ((cursor = strstr(cursor, "dir \"")) != NULL) {
+        const char *start = cursor + 5, *end;
+        size_t length;
+        cursor = start;
+        end = strchr(start, '"');
+        if (!end) return 0;
+        length = (size_t)(end - start);
+        if (length >= sizeof current) return 0;
+        memcpy(current, start, length);
+        current[length] = '\0';
+        if (seen && strcmp(previous, current) >= 0) return 0;
+        memcpy(previous, current, length + 1);
+        seen = 1;
+        cursor = end;
+    }
+    return seen != 0;
+}
+
 static int targets(void)
 {
     char target[4096];
@@ -121,6 +155,17 @@ static int rewrite(void)
             "file \"etc/tool.conf\" 644 - - 0 0 12 "
             "0000000000000000000000000000000000000000000000000000000000000000 config - -"))) return 0;
     if (!expect("the format line is preserved", contains(record, "format holy-files-1\n"))) return 0;
+    if (!expect("the private tree declares its own directories", contains(record,
+            "dir \"usr/lib/holy/private/06454e9dbc7db23ef1fcb4e016c3fac740da0658631f6afd9c11bc7fd379f77e/usr\" 755 - - 0 0 0 - none - -\n") &&
+            contains(record, "dir \"usr/lib/holy/private/06454e9dbc7db23ef1fcb4e016c3fac740da0658631f6afd9c11bc7fd379f77e/usr/bin\" 755 - - 0 0 0 - none - -\n")))
+        return 0;
+    if (!expect("the private directories are declared in creation order", parents_in_order(record))) return 0;
+    if (!expect("a directory the source already states is written once",
+            count_occurrences(record, "dir \"usr\" 755 - - 0 0 0 - none - -") == 1 &&
+            count_occurrences(record, "dir \"usr/bin\" 755 - - 0 0 0 - none - -") == 1)) return 0;
+    if (!expect("a shared ancestor of both private targets is declared once",
+            count_occurrences(record, "dir \"usr/lib\" 755 - - 0 0 0 - none - -") == 1 &&
+            count_occurrences(record, "dir \"usr/lib/holy/private\" 755 - - 0 0 0 - none - -") == 1)) return 0;
     free(record);
     record = NULL;
     if (!expect("a placement the record does not carry is refused", !holy_private_manifest(
