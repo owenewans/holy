@@ -5173,7 +5173,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-recipe.5 source=holy version=development sha256=0f7db6a86c96fddc9c15bb021e55c7ed18cbeb4afcf8ac89cf0f504f673ad436
+holy-recipe.5 source=holy version=development sha256=938b4c0ccce1d513bd885e15103c841b63dee210c9973ee5a72b9eac13824f4e
 HOLY-RECIPE(5)		       Holy package format		  HOLY-RECIPE(5)
 
 NAME
@@ -5933,9 +5933,9 @@ prepare, build, check and package become the matching phase, and a body keeps
      sion the reader does not evaluate, such as a modulo, are reported.
 
 
-CONVERSION REPORTThe report lists every carried, preserved, helper, unknown  and
-     changed item with
-     its  source  file	and  line  range, and its status is native or review-re-
+CONVERSION REPORT
+     The report lists every carried, preserved, helper, unknown and changed item
+     with its source file and line range, and its status is native or review-re-
      quired. A review-required conversion returns 3  with  the	recipe	written,
      since  review  is	a  statement about execution, not about whether the text
      could be carried. A missing identity, a computed identity or malformed text
