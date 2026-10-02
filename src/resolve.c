@@ -826,6 +826,123 @@ static void report_choice_candidates(const struct local_item *local,
     }
 }
 
+/* the slot a slot report names: the package name, os, architecture and libc. two
+   artifacts with one slot are the same thing for two systems, so a requirement that
+   both fill is about versions of one thing and not about two providers */
+static int same_identity_slot(const struct holy_package_identity *a,
+                              const struct holy_package_identity *b)
+{
+    return !strcmp(a->name, b->name) && !strcmp(a->os, b->os) &&
+           !strcmp(a->arch, b->arch) && !strcmp(a->libc, b->libc);
+}
+
+static int same_identity_family(const struct holy_package_identity *a,
+                                const struct holy_package_identity *b)
+{
+    return (!a->version_family && !b->version_family) ||
+           (a->version_family && b->version_family &&
+            !strcmp(a->version_family, b->version_family));
+}
+
+/* two candidates of one slot under one version family are the same thing at two
+   versions, so the newer one fills the requirement without an operator decision.
+   candidates that occupy different slots, or one slot under different families, are
+   different things and nothing in the data says which one the requirement meant, so
+   the decision stays. returns 0 when the requirement is a decision. */
+static int newest_in_family(const struct local_item *local,
+                            const struct holy_solver_item *items, size_t count,
+                            const char *capability, size_t *winner)
+{
+    size_t i, best = 0, members = 0;
+    const struct holy_package_identity *first = NULL;
+    const struct version_adapter *family = NULL;
+    for (i = 0; i < count; ++i) {
+        int order = 0;
+        if (!provides(&items[i], capability)) continue;
+        if (!first) {
+            first = &local[i].identity;
+            family = version_adapter(local[i].identity.version_family);
+            best = i;
+            continue;
+        }
+        if (!same_identity_slot(first, &local[i].identity) ||
+            !same_identity_family(first, &local[i].identity) || !family ||
+            !family->compare(local[i].identity.version, local[best].identity.version, &order))
+            return 0;
+        if (order > 0) best = i;
+        ++members;
+    }
+    if (members < 1) return 0;
+    *winner = best;
+    return 1;
+}
+
+/* one automatic choice, stated so a plan says what it decided instead of leaving the
+   selection to be read back as if every member of the family had been equal */
+static void report_family_choice(const struct local_item *consumer,
+                                 const struct local_item *provider,
+                                 const char *requirement, int json)
+{
+    const struct holy_package_identity *identity = &provider->identity;
+    if (json > 0) {
+        printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"family-choice\","
+               "\"consumer\":\"%s\",\"requirement\":", consumer->identity.digest);
+        json_string(requirement);
+        printf(",\"provider\":\"%s\",\"slot\":{\"name\":", identity->digest);
+        json_string(identity->name);
+        printf(",\"os\":\"%s\",\"arch\":\"%s\",\"libc\":\"%s\"},\"family\":",
+               identity->os, identity->arch, identity->libc);
+        json_string(identity->version_family ? identity->version_family : "-");
+        fputs(",\"version\":", stdout);
+        json_string(identity->version);
+        fputs(",\"reason\":\"newest-in-family\"}", stdout);
+        puts("");
+        return;
+    }
+    printf("family-choice %s consumer=%s provider=%s slot %s %s %s %s family %s "
+           "version %s reason newest-in-family\n", requirement, consumer->identity.digest,
+           identity->digest, identity->name, identity->os, identity->arch, identity->libc,
+           identity->version_family ? identity->version_family : "-", identity->version);
+}
+
+/* the requirements one version family decides on its own. a constrained requirement
+   already carries a per-consumer capability that only the candidates its constraint
+   admits provide, so counting the providers of that capability counts the candidates
+   the solver would consider. */
+static int choose_families(struct local_item *local, struct holy_solver_item *items,
+                           size_t count, int json)
+{
+    size_t i, j, k;
+    for (i = 0; i < count; ++i) for (j = 0; j < local[i].requirement_count; ++j) {
+        size_t provider, members = 0;
+        char *capability, *replacement;
+        for (k = 0; k < count; ++k)
+            if (provides(&items[k], local[i].requirements[j].first)) ++members;
+        if (members < 2) continue;
+        if (!newest_in_family(local, items, count, local[i].requirements[j].first,
+                              &provider)) continue;
+        /* a requirement id is written by the package that carries it and two packages may
+           use one id, so the capability that settles a requirement names its consumer.
+           one capability per requirement keeps two requirements the same id apart, which
+           a shared one would not: each would be satisfied by whichever provider won. */
+        capability = malloc(strlen(local[i].requirement_ids[j]) + sizeof "choice::"
+                            + strlen(local[i].identity.digest));
+        if (!capability) return 0;
+        sprintf(capability, "choice:%s:%s", local[i].identity.digest,
+                local[i].requirement_ids[j]);
+        replacement = strdup(capability);
+        if (!replacement) { free(capability); return 0; }
+        if (!add_provide(&items[provider], capability)) {
+            free(replacement); free(capability); return 0;
+        }
+        free(capability);
+        free((char *)local[i].requirements[j].first);
+        local[i].requirements[j].first = replacement;
+        report_family_choice(&local[i], &local[provider], local[i].requirement_ids[j], json);
+    }
+    return 1;
+}
+
 static void report_edges(const struct local_item *local, const struct holy_solver_item *items,
                           size_t count, const int *selected, int json)
 {
@@ -1203,6 +1320,9 @@ static int resolve(const char *const *paths, size_t count, int json,
         free((char *)local[0].requirements[requirement].first);
         local[0].requirements[requirement].first = replacement;
     }
+    /* an explicit choice is the operator's, so the family pass runs after it and sees a
+       requirement one provider already fills */
+    if (!choose_families(local, items, count, json >= 0 ? json : 0)) goto done;
     solved = all ? holy_solve_exact_set(items, count, selected) :
                    holy_solve_exact_unique(items, count, items[0].id, selected);
     if (solved == 1) for (i = 0; i < count; ++i) if (selected[i]) {

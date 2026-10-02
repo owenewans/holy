@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import hashlib
+import json
 import pathlib
 import subprocess
 import sys
@@ -13,6 +14,9 @@ with tempfile.TemporaryDirectory(prefix="holy-versions-") as scratch:
         result = subprocess.run([binary, *map(str, args)], capture_output=True, text=True)
         assert result.returncode == status, (args, result.returncode, result.stdout, result.stderr)
         return result.stdout
+
+    def digest(path):
+        return hashlib.sha256(path.read_bytes()).hexdigest()
 
     def package(label, name, version, deps="", family="pacman", arch="noarch", libc="nolibc", provides=""):
         tree = tmp / label
@@ -66,8 +70,14 @@ with tempfile.TemporaryDirectory(prefix="holy-versions-") as scratch:
     for family in (None, "future"):
         unsupported, _ = package("unsupported-" + str(family), "app", "1-1", dependency("ge", "1"), family)
         run("solve", "local:" + str(unsupported), "local:" + str(new), status=6)
+    # a bare version compares equal to both releases of a package, so an equality that
+    # two members of one family satisfy is the family's newest member and not a decision
     release, _ = package("no-release", "app", "1-1", dependency("eq", "1:2.0"))
-    run("solve", "local:" + str(release), "local:" + str(old), "local:" + str(new), status=3)
+    text = run("solve", "local:" + str(release), "local:" + str(old), "local:" + str(new))
+    assert "family-choice dep consumer=%s provider=%s" % (digest(release), new_hash) in text, text
+    assert "selected " + new_hash in text and "selected " + old_hash not in text, text
+    run("solve", "local:" + str(release), "local:" + str(old), "local:" + str(new),
+        "--choose", "dep=" + old_hash)
     run("solve", "local:" + str(release), "local:" + str(old), "local:" + str(new),
         "--choose", "dep=" + new_hash)
     root = tmp / "root"
@@ -114,6 +124,71 @@ with tempfile.TemporaryDirectory(prefix="holy-versions-") as scratch:
     run("solve", "local:" + str(scoped_app), "local:" + str(scoped_alias), status=4)
     alien_alias, _ = package("alien-alias", "implementation", "1", family="rpm", provides=claim)
     run("solve", "local:" + str(alias_app), "local:" + str(alien_alias), status=4)
+    # two members of one version family are one thing at two versions, so the newer one
+    # fills a requirement both satisfy and the choice is stated instead of asked for
+    fam_old, fam_old_hash = package("fam-old", "library", "1:1.0-1")
+    fam_new, fam_new_hash = package("fam-new", "library", "1:2.0-1")
+    fam_app, fam_app_hash = package("fam-app", "app", "1-1", dependency("ge", "1:1.0-1"))
+    line = ("family-choice dep consumer=%s provider=%s slot library linux noarch nolibc "
+            "family pacman version 1:2.0-1 reason newest-in-family")
+    text = run("solve", "local:" + str(fam_app), "local:" + str(fam_old), "local:" + str(fam_new))
+    assert line % (fam_app_hash, fam_new_hash) in text, text
+    assert "selected " + fam_new_hash in text and "selected " + fam_old_hash not in text, text
+    # the older member is still reachable by an explicit choice, which the family never overrides
+    text = run("solve", "local:" + str(fam_app), "local:" + str(fam_old), "local:" + str(fam_new),
+               "--choose", "dep=" + fam_old_hash)
+    assert "selected " + fam_old_hash in text and "selected " + fam_new_hash not in text, text
+    assert "family-choice" not in text, text
+    # the same decision as one json event
+    events = [json.loads(line) for line in run("solve", "local:" + str(fam_app),
+        "local:" + str(fam_old), "local:" + str(fam_new), "--json").splitlines()]
+    choices = [event for event in events if event["type"] == "family-choice"]
+    assert [choice["provider"] for choice in choices] == [fam_new_hash], choices
+    assert choices[0]["slot"] == {"name": "library", "os": "linux", "arch": "noarch",
+                                  "libc": "nolibc"}, choices[0]
+    assert choices[0]["reason"] == "newest-in-family", choices[0]
+    assert choices[0]["family"] == "pacman" and choices[0]["version"] == "1:2.0-1", choices[0]
+    # a provider of another slot is a different thing, so the requirement stays a decision
+    foreign_alias, _ = package("fam-foreign", "foreign-library", "9-1",
+                               provides="provide package library any any 1:2.0-1 fixture\n")
+    run("solve", "local:" + str(fam_app), "local:" + str(fam_old), "local:" + str(fam_new),
+        "local:" + str(foreign_alias), status=3)
+    # a version constraint already keeps a foreign family out, since it cannot satisfy a
+    # comparison the family does not state; an unconstrained requirement admits one, and
+    # two families of one slot are two things the data does not order either
+    any_app, any_app_hash = package("fam-any-app", "app", "1-1",
+        "require dep app package library any any any - original fixture\n")
+    foreign_family, _ = package("fam-other-family", "library", "999:99", family="rpm")
+    run("solve", "local:" + str(fam_app), "local:" + str(fam_old), "local:" + str(fam_new),
+        "local:" + str(foreign_family))
+    run("solve", "local:" + str(any_app), "local:" + str(fam_new), "local:" + str(foreign_family),
+        status=3)
+    # two consumers may reuse one requirement id, and each keeps its own provider: a
+    # capability shared between them would let either satisfy the other
+    twin_left, twin_left_hash = package("fam-twin-left", "twin-left", "1-1",
+        "require shared twin-left package library any any ge 1:1.0-1 original fixture\n")
+    twin_right, twin_right_hash = package("fam-twin-right", "twin-right", "1-1",
+        "require shared twin-right package library any any le 1:2.0-1 original fixture\n")
+    twin_newer, twin_newer_hash = package("fam-twin-newer", "library", "1:3.0-1")
+    text = run("solve", "local:" + str(twin_left), "local:" + str(twin_right),
+               "local:" + str(fam_old), "local:" + str(fam_new), "local:" + str(twin_newer))
+    assert text.count("family-choice shared ") == 2, text
+    assert ("family-choice shared consumer=%s provider=%s" % (twin_left_hash, twin_newer_hash)) in text, text
+    assert ("family-choice shared consumer=%s provider=%s" % (twin_right_hash, fam_new_hash)) in text, text
+    # a set plan states the same choice and installs the newer member of the family
+    family_root = tmp / "family-root"
+    family_root.mkdir()
+    run("db", "init", "--root", family_root)
+    for artifact in (fam_app, fam_old, fam_new):
+        run("cache", "stage", "local:" + str(artifact), "--root", family_root)
+    out = run("db", "plan-set", fam_app_hash, fam_old_hash, fam_new_hash, "--root", family_root)
+    assert "family-choice dep consumer=%s provider=%s" % (fam_app_hash, fam_new_hash) in out, out
+    plan = out.split(" sha256 ")[1].split()[0]
+    run("db", "apply-set", plan, fam_app_hash, fam_old_hash, fam_new_hash, "--root", family_root)
+    installed = family_root / "var/lib/holypkg/installed"
+    assert sorted(path.name for path in installed.iterdir()) == sorted(
+        [fam_app_hash, fam_new_hash]), sorted(path.name for path in installed.iterdir())
+    run("db", "check", "--all", "--root", family_root)
     alias_root = tmp / "alias-root"
     alias_root.mkdir()
     run("db", "init", "--root", alias_root)

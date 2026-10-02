@@ -1414,8 +1414,34 @@ candidate DIGEST slot lib linux noarch nolibc version 1 release 1
 .fi
 .RE
 .PP
-Two candidates of one slot are two members of one version family, which is the case a
-choice settles. A requirement one artifact fills names no candidate, since nothing is
+Two candidates of one slot under one version family are one thing at two versions, so
+the newer member fills the requirement without an operator decision, and the choice is
+stated rather than asked for:
+.RS
+.nf
+family-choice dep-1 consumer=DIGEST provider=DIGEST slot lib linux noarch nolibc \\
+family pacman version 2 release 1 reason newest-in-family
+.fi
+.RE
+.PP
+The versions are compared with the family's own comparator, and the choice does not
+cross a family, so two families of one slot stay a decision because the data does not
+order them. Candidates that occupy different slots are different things and stay a
+decision too. An explicit --choose is the operator's and is applied first, so the
+family pass never overrides it and a requirement it already filled is not reported
+again. JSON adds one holy-local-solve-1 family-choice event carrying the consumer, the
+requirement id, the provider, the slot, the family, the version and the reason.
+.PP
+A requirement several candidates could fill across slots names every candidate instead:
+.RS
+.nf
+choice dep-1 consumer=DIGEST candidates=2
+candidate DIGEST slot lib linux noarch nolibc version 1 release 1
+candidate DIGEST slot lib linux noarch nolibc version 1 release 1
+.fi
+.RE
+.PP
+A requirement one artifact fills names no candidate, since nothing is
 in the way. The set planner prints this report, and the apply prints it again when its
 own re-derivation reaches the same decision. JSON adds one holy-local-solve-1 choice
 event carrying the consumer, the requirement id and a candidate array of digest, slot

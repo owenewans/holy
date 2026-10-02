@@ -481,8 +481,19 @@
   claims incomplete scope installed-set` rather than reporting over a subset as if it were
   the set, and keeps the claims it did read, since a plan over a legible selection is not
   refused for a defect in the root that `db status` already names.
-  Automatic selection between two
-  candidates stays unfinished and refused.
+  Automatic selection between two candidates is in: two candidates that occupy one slot
+  under one version family are one thing at two versions, so the newer member fills the
+  requirement with the family's own comparator and the choice is stated with
+  `family-choice ID consumer=DIGEST provider=DIGEST slot NAME OS ARCH LIBC family FAMILY
+  version VERSION reason newest-in-family` instead of being asked for, and as one
+  holy-local-solve-1 family-choice event in JSON. The choice does not cross a family, so
+  two families of one slot stay a decision because the data does not order them, and a
+  candidate of another slot stays a decision because it is a different thing. A version
+  constraint already keeps a foreign family out, since it cannot satisfy a comparison
+  that family does not state. An explicit `--choose` is applied first, so the family pass
+  never overrides the operator and a requirement it already filled is not reported again.
+  An equality two releases of one package both satisfy, which is what a bare version
+  compares equal to, is therefore the family's newest member rather than a decision.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions. The
   private placement of a colliding file, the patchelf rewrite of a consumer's
