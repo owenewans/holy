@@ -1,5 +1,6 @@
 #define _XOPEN_SOURCE 700
 #include "config.h"
+#include "evaluate.h"
 #include "package.h"
 #include "verify.h"
 #include "fetch.h"
@@ -52,6 +53,7 @@
 #include "../backends/voidsrc.h"
 #include "recipe.h"
 
+#include <dirent.h>
 #include <stdio.h>
 #include <limits.h>
 #include <locale.h>
@@ -1434,6 +1436,59 @@ static int valid_env(const char *spec)
     return 1;
 }
 
+/* the recipe a converter wrote into its output directory, since the name it chose is its
+   own reading of the identity. returns the path, or NULL when it wrote none. */
+static char *find_recipe(const char *output)
+{
+    DIR *entries = opendir(output);
+    struct dirent *entry;
+    char *path = NULL;
+    size_t length = strlen(output);
+    if (!entries) return NULL;
+    while ((entry = readdir(entries)) != NULL) {
+        size_t at = strlen(entry->d_name);
+        char *candidate;
+        if (at < 8 || strcmp(entry->d_name + at - 7, ".recipe")) continue;
+        candidate = malloc(length + at + 2);
+        if (!candidate) break;
+        sprintf(candidate, "%s/%s", output, entry->d_name);
+        path = candidate;
+        break;
+    }
+    closedir(entries);
+    return path;
+}
+
+/* the family follows the upstream file name each builder uses, and each converter
+   writes its own recipe and report */
+static int convert_family(const char *input, const char *source, const char *output,
+                          const char *base)
+{
+    size_t at = strlen(base);
+    if (!strcmp(base, "template")) return holy_convert_voidsrc(input, source, output);
+    if (!strcmp(base, "APKBUILD")) return holy_convert_aports(input, source, output);
+    if (at > 11 && !strcmp(base + at - 11, ".SlackBuild")) {
+        return holy_convert_slackbuild(input, source, output);
+    }
+    if (at > 5 && !strcmp(base + at - 5, ".spec")) {
+        return holy_convert_rpmspec(input, source, output);
+    }
+    if (!strcmp(base, "debian")) return holy_convert_debsrc(input, source, output);
+    if (at > 7 && !strcmp(base + at - 7, ".ebuild")) {
+        return holy_convert_gentoo(input, source, output);
+    }
+    if (at > 10 && !strcmp(base + at - 10, ".pacscript")) {
+        return holy_convert_pacstall(input, source, output);
+    }
+    if (at > 3 && !strcmp(base + at - 3, ".rb")) return holy_convert_brew(input, source, output);
+    if (at > 4 && !strcmp(base + at - 4, ".scm")) return holy_convert_guix(input, source, output);
+    if ((at > 5 && !strcmp(base + at - 5, ".json")) ||
+        (at > 4 && (!strcmp(base + at - 4, ".yml") || !strcmp(base + at - 5, ".yaml")))) {
+        return holy_convert_flatpak(input, source, output);
+    }
+    return holy_convert_pkgbuild(input, source, output);
+}
+
 int main(int argc, char **argv)
 {
     struct holy_config config = {0};
@@ -2202,44 +2257,97 @@ int main(int argc, char **argv)
     }
 
     if (argc > 1 && !strcmp(argv[1], "convert")) {
-        if (argc == 7 && !strcmp(argv[3], "--source") && !strcmp(argv[5], "--output")) {
-            /* the family follows the upstream file name each builder uses */
-            const char *base = strrchr(argv[2], '/');
-            base = base ? base + 1 : argv[2];
-            if (!strcmp(base, "template")) return holy_convert_voidsrc(argv[2], argv[4], argv[6]);
-            if (!strcmp(base, "APKBUILD")) return holy_convert_aports(argv[2], argv[4], argv[6]);
-            {
-                size_t at = strlen(base);
-                if (at > 11 && !strcmp(base + at - 11, ".SlackBuild")) {
-                    return holy_convert_slackbuild(argv[2], argv[4], argv[6]);
-                }
-                if (at > 5 && !strcmp(base + at - 5, ".spec")) {
-                    return holy_convert_rpmspec(argv[2], argv[4], argv[6]);
-                }
-                if (!strcmp(base, "debian")) {
-                    return holy_convert_debsrc(argv[2], argv[4], argv[6]);
-                }
-                if (at > 7 && !strcmp(base + at - 7, ".ebuild")) {
-                    return holy_convert_gentoo(argv[2], argv[4], argv[6]);
-                }
-                if (at > 10 && !strcmp(base + at - 10, ".pacscript")) {
-                    return holy_convert_pacstall(argv[2], argv[4], argv[6]);
-                }
-                if (at > 3 && !strcmp(base + at - 3, ".rb")) {
-                    return holy_convert_brew(argv[2], argv[4], argv[6]);
-                }
-                if (at > 4 && !strcmp(base + at - 4, ".scm")) {
-                    return holy_convert_guix(argv[2], argv[4], argv[6]);
-                }
-                if ((at > 5 && !strcmp(base + at - 5, ".json")) ||
-                    (at > 4 && (!strcmp(base + at - 4, ".yml") ||
-                                !strcmp(base + at - 5, ".yaml")))) {
-                    return holy_convert_flatpak(argv[2], argv[4], argv[6]);
+        /* an upstream evaluator runs the code the foreign recipe carries, so it is named
+           explicitly and its consent is the operator's */
+        const char *evaluator = NULL, *source_name = NULL, *output_name = NULL;
+        struct holy_evaluator_result evaluator_result;
+        int have_evaluator = 0;
+        const char *evaluator_args[16];
+        const char *input = argc > 2 ? argv[2] : NULL;
+        size_t evaluator_argc = 0;
+        int approved = 0, noninteractive = 0, valid = input != NULL;
+        {
+            /* the options are read in any order, since the evaluator travels with the
+               recipe it expands */
+            int at;
+            for (at = 3; valid && at < argc; ++at) {
+                if (!strcmp(argv[at], "--source") && at + 1 < argc && !source_name) {
+                    source_name = argv[at + 1]; ++at;
+                } else if (!strcmp(argv[at], "--output") && at + 1 < argc && !output_name) {
+                    output_name = argv[at + 1]; ++at;
+                } else if (!strcmp(argv[at], "--evaluator") && at + 1 < argc && !evaluator) {
+                    evaluator = argv[at + 1]; ++at;
+                } else if (!strcmp(argv[at], "--evaluator-arg") && at + 1 < argc &&
+                           evaluator_argc < 16) {
+                    evaluator_args[evaluator_argc++] = argv[at + 1]; ++at;
+                } else if (!strcmp(argv[at], "--yes")) {
+                    approved = 1;
+                } else if (!strcmp(argv[at], "--noninteractive")) {
+                    noninteractive = 1;
+                } else valid = 0;
+            }
+            if (evaluator_argc) evaluator_args[evaluator_argc] = NULL;
+            /* an evaluator reads a recipe, so it needs an argument naming one, and an
+               argument without a program is not a program call */
+            if (evaluator && !evaluator_argc) valid = 0;
+            if (evaluator_argc && !evaluator) valid = 0;
+            if (!source_name || !output_name) valid = 0;
+        }
+        if (valid && evaluator) {
+            /* the evaluator runs where the file it expands lives, so a relative path in
+               the recipe means the same thing to it */
+            const char *base = strrchr(input, '/');
+            char directory[4096];
+            struct holy_evaluator program;
+            struct holy_evaluator_result result;
+            int status, skipped = 0;
+            /* a name without a directory is in the caller's own directory */
+            if (!base) {
+                if (!getcwd(directory, sizeof directory)) return 6;
+            } else {
+                if ((size_t)(base - input) >= sizeof directory) return 2;
+                memcpy(directory, input, (size_t)(base - input));
+                directory[base - input] = 0;
+            }
+            program.path = evaluator;
+            program.argv = evaluator_args;
+            program.cwd = directory;
+            status = holy_evaluator_run(&program, &result, approved, noninteractive,
+                                        &skipped);
+            /* a refusal and an exit write nothing, so the conversion does not follow */
+            if (status) return status;
+            /* a skip is the text reading alone, which is the conversion the caller wants */
+            if (skipped) {
+                const char *name = strrchr(input, '/');
+                printf("evaluator %s skipped; converting from the text reading\n", evaluator);
+                return convert_family(input, source_name, output_name,
+                                      name ? name + 1 : input);
+            }
+            evaluator_result = result;
+            have_evaluator = 1;
+            /* the comparison needs the recipe, so the result waits for it */
+        }
+        /* the family follows the upstream file name each builder uses */
+        if (valid) {
+            const char *base = strrchr(input, '/');
+            int converted;
+            base = base ? base + 1 : input;
+            converted = convert_family(input, source_name, output_name, base);
+            /* the evaluator expansion is compared with what the text reading produced,
+               so the operator sees the difference before any build */
+            /* the recipe file name is the converter's own reading of the identity, so it
+               is found in the output directory rather than derived from the input name */
+            if (have_evaluator && converted >= 0) {
+                char *path = find_recipe(output_name);
+                if (path) {
+                    holy_evaluator_report(&evaluator_result, path, evaluator);
+                    holy_evaluator_free(&evaluator_result);
+                    free(path);
                 }
             }
-            return holy_convert_pkgbuild(argv[2], argv[4], argv[6]);
+            return converted;
         }
-        fputs("usage: holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|debian|NAME.ebuild|NAME.pacscript|NAME.rb|NAME.scm|NAME.json|TEMPLATE --source NAME --output NEW_DIRECTORY\n",
+        fputs("usage: holypkg convert PKGBUILD|APKBUILD|NAME.SlackBuild|NAME.spec|debian|NAME.ebuild|NAME.pacscript|NAME.rb|NAME.scm|NAME.json|TEMPLATE --source NAME --output NEW_DIRECTORY [--evaluator PATH [--evaluator-arg ARG]...] [--yes] [--noninteractive]\n",
               stderr);
         return 2;
     }

@@ -864,6 +864,23 @@
   and ebuild.sh, a common/build-style script and the v* helpers, debhelper and dpkg,
   rpmbuild and the vendor macro set, pacstall, flatpak-builder, homebrew-ruby,
   slackbuild-script and guix-build-system.
+  For the fields no text reading can know, an upstream evaluator in the working
+  environment may now be run: `holypkg convert ... --evaluator PATH
+  [--evaluator-arg ARG]`. It is a build and import tool dependency, never a second
+  manager of the installed system, so running it runs the code the foreign recipe
+  carries. The program digest goes into the prompt, the run happens in its own
+  user, mount and network namespace with the host toolchain read-only, in the
+  directory holding the file, with a declared PATH, and the program and output
+  digests are reported. The consent is the four answers the hooks use: y runs it,
+  n refuses and e exits without writing, s converts from the text alone, --yes is
+  y without a prompt, and a run with neither --yes nor a terminal is 3 so a
+  script never runs code it did not name. Before any build the fields the
+  evaluator read are compared with the recipe, so a computed version shows as
+  `evaluator-version evaluator="2.5.1" text="2.5"`, and the evaluator output is
+  kept beside the recipe. A fixture proves both an agreeing and a disagreeing
+  evaluator, the four answers, and the refusals for a missing program, a file
+  that is not executable, a relative path, an evaluator with no argument and an
+  argument with no program.
   The native side of that work now exists: `holypkg build` parses a
   holy-recipe(5) manifest, fetches pinned sources, unpacks them, runs reviewed
   phase steps with absolute HOLY_* paths, and packs one .holy per declared

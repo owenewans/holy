@@ -52,6 +52,7 @@ struct holy_sandbox {
     char *root;              /* the root directory, owned by the caller */
     char *deps;              /* the root holding the declared dependencies, or NULL */
     char *record;            /* one line naming what the environment provides */
+    int output[2];           /* a pipe the child writes stdout and stderr into, or -1 */
 };
 
 /* zero when this kernel gives a process an unprivileged user namespace, which is

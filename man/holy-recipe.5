@@ -225,6 +225,8 @@ environment that produced it.
 .SH CONVERSION
 holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY
 holypkg convert TEMPLATE --source NAME --output NEW_DIRECTORY
+holypkg convert PKGBUILD --source NAME --output NEW_DIRECTORY --evaluator PATH
+    [--evaluator-arg ARG]... [--yes] [--noninteractive]
 holypkg import PKGBUILD --source NAME --format pkgbuild --output NEW_DIRECTORY
 holypkg import TEMPLATE --source NAME --format void --output NEW_DIRECTORY
 .PP
@@ -234,6 +236,56 @@ directory holding the original file, a copy of every local source and directory
 it names, a holy-recipe-1 manifest and a conversion report. NAME is a source
 alias without a colon and is recorded as provenance; it grants no installed
 source id. The original file is never executed.
+.SS Upstream evaluator
+Some fields cannot be read from the text at all: a computed version, a shell
+substitution in a dependency, a build style that changes the phase list. For
+those an existing upstream evaluator in the working environment may be run, so
+the expansion is exact rather than guessed.
+.PP
+--evaluator PATH names an absolute executable file, and --evaluator-arg ARG
+passes an argument to it, up to sixteen. The evaluator runs in its own user,
+mount and network namespace with the host toolchain bound read-only, in the
+directory holding the file it expands, with PATH set to /usr/bin:/bin and
+nothing else, so the result is the same on every host. The program digest and
+the digest of its output are printed, and the output is kept beside the recipe
+as evaluator-output.
+.PP
+Running an evaluator runs the code the foreign recipe carries, so it is shown
+as such and needs a decision. The prompt is:
+.PP
+.RS
+.nf
+evaluator PATH sha256 HASH runs code: it expands the foreign recipe as the
+upstream builder would
+Run the evaluator PATH? [y/N/s/e]
+.fi
+.RE
+.PP
+y runs it. n refuses and e exits; neither writes anything, and both return 3.
+s skips it and converts from the text alone, which returns the conversion the
+text reading would have produced. --yes is y without a prompt, and a run without
+--yes on a stream that is not a terminal is 3, so a script never runs code it
+did not name.
+.PP
+Before any build, the fields the evaluator read are compared with the recipe this
+converter wrote, and a difference is one line:
+.PP
+.RS
+.nf
+evaluator-version evaluator="2.5.1" text="2.5"
+evaluator-release evaluator="4" text="3"
+.fi
+.RE
+.PP
+The keys the comparison reads are pkgbase, pkgver and pkgrel against the recipe's
+name, version and release, written either as KEY=VALUE or as KEY = VALUE. When
+nothing differs the conversion says the evaluator agrees with the text reading.
+An evaluator that fails with a status, a program that is not an absolute
+executable file, and an argument with no program are each named rather than
+skipped.
+.PP
+After a manual correction the recipe is an ordinary local recipe and no
+evaluator is needed to build it.
 .SS PKGBUILD
 pkgbase, pkgver, pkgrel, pkgdesc, url, license, arch, epoch, depends,
 makedepends, checkdepends, optdepends and backup are carried. A list is read the

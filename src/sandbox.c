@@ -297,6 +297,15 @@ static void child_setup(const struct holy_sandbox *sandbox, char *const argv[],
         }
     if (chroot(sandbox->root)) { complain("enter the build root", strerror(errno)); _exit(126); }
     if (cwd && chdir(cwd)) { complain("enter the step directory", strerror(errno)); _exit(126); }
+    /* a caller that captures the output names a file for it, since a pipe would be
+       read by the parent while the child holds both ends */
+    if (sandbox->output[0] >= 0) {
+        if (dup2(sandbox->output[0], STDOUT_FILENO) < 0 ||
+            dup2(sandbox->output[0], STDERR_FILENO) < 0) {
+            complain("redirect the step output", strerror(errno));
+            _exit(126);
+        }
+    }
     /* the caller names the environment, so a variable the host exports does not reach a
        step. building the vector here rather than through putenv is what keeps the
        inherited table out of it */
@@ -388,6 +397,9 @@ int holy_sandbox_prepare(struct holy_sandbox *sandbox)
     size_t i;
     int needed;
     if (!sandbox || !sandbox->work || sandbox->work[0] != '/') return 2;
+    /* a caller that did not name an output leaves it inherited */
+    if (sandbox->output[0] == 0 && sandbox->output[1] == 0)
+        sandbox->output[0] = sandbox->output[1] = -1;
     for (i = 0; i < sandbox->device_count; ++i)
         if (sandbox->devices[i][0] != '/') return 2;
     if (sandbox->dependency_count > 16) return 2;
