@@ -84,7 +84,8 @@ expect 3 "$bin" test "$tmp/plan" --sha256 "$(printf '%064d' 0)" --root "$root"
 grep -qx 'holypkg: plan digest differs from the approved one' "$tmp/err"
 test ! -s "$tmp/out"
 expect 2 "$bin" test
-expect 2 "$bin" test "$tmp/plan" --shell --root "$root"
+# a shell and a command are two ways to name one probe, so the pair is refused
+expect 2 "$bin" test "$tmp/plan" --root "$root" --shell -- /bin/true
 expect 2 "$bin" test "$tmp/plan" --mode host --root "$root"
 expect 2 "$bin" test "$tmp/plan" --sha256 --root "$root"
 printf 'format holy-up-plan-1\nsource-id %s\n' "$source_id" > "$tmp/malformed.plan"
@@ -104,16 +105,13 @@ grep -qx "{\"schema\":\"holy-test-report-1\",\"type\":\"check\",\"check\":\"old-
 grep -q '"type":"image","mode":"root","generation":' "$tmp/out"
 grep -qx "{\"schema\":\"holy-test-report-1\",\"type\":\"unexecuted\",\"check\":\"runtime-probes\",\"reason\":\"explicit-probe-request\"}" "$tmp/out"
 grep -qx '{"schema":"holy-test-report-1","type":"summary","pass":8,"fail":0,"skip":1,"unknown":0,"coverage":"plan-inputs"}' "$tmp/out"
-# a VM trial owns its own image and needs a runner this command does not have.
-expect 6 "$bin" test "$tmp/plan" --mode vm --root "$root"
-grep -qx "test-image vm none reason no-vm-runner" "$tmp/out"
-grep -qx "test-check vm-trial unknown detail no-vm-runner" "$tmp/out"
-grep -qx "test-unexecuted vm-trial reason no-vm-runner" "$tmp/out"
-grep -qx "test-report pass 8 fail 0 skip 1 unknown 1 coverage plan-inputs" "$tmp/out"
+# there is one trial mode. a VM is the kernel rollback gate under make check-qemu, not
+# a mode of this command, so a name for it is a usage error.
+expect 2 "$bin" test "$tmp/plan" --mode vm --root "$root"
+expect 2 "$bin" test "$tmp/plan" --mode overlay --root "$root"
 # the probe options are decisions about the trial, and they are checked before any
 # plan is read
 expect 2 "$bin" test "$tmp/plan" --root "$root" --shell -- /bin/true
-expect 2 "$bin" test "$tmp/plan" --mode vm --root "$root" -- /bin/true
 expect 2 "$bin" test "$tmp/plan" --root "$root" --
 # with --trial the fixture also proves the private root trial itself, which needs a host
 # that allows device nodes inside a user namespace
@@ -128,7 +126,7 @@ if test "${2:-}" = --trial; then
         test "$(ls -A /tmp | wc -l)" -eq 1 || exit 12
         test -c /dev/null && test -c /dev/urandom || exit 13
         test -z "$(ls -A /home)" || exit 15
-        test "$(cut -d" " -f1 < /proc/self/stat)" = 1 || exit 14
+        test "$$" = 1 || exit 14
         printf trial-ok' > "$tmp/out" 2> "$tmp/err" || rc=$?
     if test "$rc" = 6; then
         cat "$tmp/err" >&2
@@ -139,10 +137,35 @@ if test "${2:-}" = --trial; then
     grep -qx trial-ok "$tmp/out"
     test ! -e /tmp/marker
     expect 7 "$bin" test "$tmp/plan" --root "$root" -- /bin/sh -c 'exit 7'
-    expect 127 "$bin" test "$tmp/plan" --root "$root" -- /nonexistent-trial-probe
-    grep -q 'holypkg: trial: /nonexistent-trial-probe' "$tmp/err"
+    expect 1 "$bin" test "$tmp/plan" --root "$root" -- /nonexistent-trial-probe
+    grep -q 'nonexistent-trial-probe' "$tmp/err"
     expect 0 env SHELL=/bin/true "$bin" test "$tmp/plan" --root "$root" --shell
+    # a trial that applies the plan needs somewhere to apply it: the target filesystem is
+    # copied, the plan is applied to the copy and the running root keeps its own payload.
+    # a state plan binds the device and inode of the root it was reviewed for, so the
+    # copy derives its own and the report names the one it applied.
+    mkdir "$tmp/work"
+    rc=0
+    "$bin" test "$tmp/plan" --root "$root" --apply --work "$tmp/work" \
+        -- /bin/sh -c 'cat /usr/share/update-fixture' > "$tmp/out" 2> "$tmp/err" || rc=$?
+    test "$rc" -eq 0 || { cat "$tmp/out" "$tmp/err"; exit 1; }
+    grep -qx "version 2" "$tmp/out"
+    grep -q "test-trial-root $tmp/work/trial-root directories " "$tmp/out"
+    grep -q "test-trial-apply $tmp/work/trial-root state-plan " "$tmp/out"
+    test -d "$tmp/work/trial-root/usr/share"
+    test "$(cat "$root/usr/share/update-fixture")" = "version 1"
+    test "$(cat "$tmp/work/trial-root/usr/share/update-fixture")" = "version 2"
+    "$bin" test "$tmp/plan" --root "$root" --apply --work "$tmp/work2" --json \
+        -- /bin/true > "$tmp/out" 2> "$tmp/err"
+    grep -q '"type":"trial-root"' "$tmp/out"
+    grep -q '"type":"trial-apply"' "$tmp/out"
 fi
+# the trial options are decisions about the trial, and they are checked before any plan
+# is read
+expect 2 "$bin" test "$tmp/plan" --root "$root" --apply
+expect 2 "$bin" test "$tmp/plan" --root "$root" --apply --work relative
+# a work directory inside the root would read its own output while copying
+expect 2 "$bin" test "$tmp/plan" --root "$root" --apply --work "$root"
 # each bound input has one honest outcome when it is not what the plan recorded.
 cp -a "$root" "$tmp/root-new-gone"
 rm "$tmp/root-new-gone/var/cache/holypkg/objects/sha256/$next.holy"

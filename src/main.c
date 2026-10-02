@@ -54,6 +54,7 @@
 #include "recipe.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
 #include <limits.h>
 #include <locale.h>
@@ -2296,18 +2297,31 @@ int main(int argc, char **argv)
         if (valid && evaluator) {
             /* the evaluator runs where the file it expands lives, so a relative path in
                the recipe means the same thing to it */
-            const char *base = strrchr(input, '/');
             char directory[4096];
             struct holy_evaluator program;
             struct holy_evaluator_result result;
             int status, skipped = 0;
-            /* a name without a directory is in the caller's own directory */
-            if (!base) {
-                if (!getcwd(directory, sizeof directory)) return 6;
-            } else {
-                if ((size_t)(base - input) >= sizeof directory) return 2;
-                memcpy(directory, input, (size_t)(base - input));
-                directory[base - input] = 0;
+            /* the sandbox binds the directory the evaluator reads, and a bind names an
+               absolute path on both sides, so a relative input is resolved here rather
+               than refused deeper in. a name without a directory is the caller's own */
+            {
+                char *absolute = realpath(input, NULL);
+                const char *base;
+                if (!absolute) {
+                    fprintf(stderr, "holypkg: %s: %s\n", input, strerror(errno));
+                    return 6;
+                }
+                base = strrchr(absolute, '/');
+                if (!base) {
+                    free(absolute);
+                    if (!getcwd(directory, sizeof directory)) return 6;
+                } else {
+                    size_t length = (size_t)(base - absolute);
+                    if (length >= sizeof directory) { free(absolute); return 2; }
+                    memcpy(directory, absolute, length);
+                    directory[length] = 0;
+                    free(absolute);
+                }
             }
             program.path = evaluator;
             program.argv = evaluator_args;

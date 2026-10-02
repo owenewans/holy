@@ -9,6 +9,7 @@
 #include "trial.h"
 #include "up.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <openssl/evp.h>
@@ -202,6 +203,138 @@ static int archived(const char *digest, const char *root,
     return 1;
 }
 
+/* the volatile trees of a live system, which a copy of the filesystem for a trial has
+   no use for and cannot reproduce */
+static const char *const skipped_trees[] = { "proc", "sys", "dev", "run" };
+
+struct trial_copy {
+    size_t files;
+    size_t directories;
+    size_t bytes;
+    size_t refused;
+};
+
+/* one directory level, with the entries a trial root needs and nothing that would
+   escape it. a device node, a socket or a fifo is refused and counted, since a copy
+   that carried one would not be the filesystem it claims to be. */
+static int copy_level(const char *from, const char *to, struct trial_copy *copy)
+{
+    DIR *entries = opendir(from);
+    struct dirent *entry;
+    int ok = 1;
+    if (!entries) return 0;
+    errno = 0;
+    while ((entry = readdir(entries)) != NULL) {
+        char source[4096], target[4096];
+        struct stat st;
+        size_t i;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        if ((size_t)snprintf(source, sizeof source, "%s/%s", from, entry->d_name) >= sizeof source ||
+            (size_t)snprintf(target, sizeof target, "%s/%s", to, entry->d_name) >= sizeof source) {
+            ++copy->refused;
+            continue;
+        }
+        if (lstat(source, &st)) { ++copy->refused; continue; }
+        for (i = 0; i < sizeof skipped_trees / sizeof *skipped_trees; ++i)
+            if (!strcmp(entry->d_name, skipped_trees[i])) break;
+        if (i < sizeof skipped_trees / sizeof *skipped_trees) continue;
+        if (S_ISDIR(st.st_mode)) {
+            if (mkdir(target, st.st_mode & 07777) && errno != EEXIST) { ++copy->refused; continue; }
+            ++copy->directories;
+            if (!copy_level(source, target, copy)) ok = 0;
+        } else if (S_ISREG(st.st_mode)) {
+            int in = open(source, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+            int out = open(target, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                           st.st_mode & 07777);
+            char buffer[65536];
+            ssize_t got;
+            if (in < 0 || out < 0 || (out >= 0 && fchmod(out, st.st_mode & 07777))) {
+                ++copy->refused;
+            } else {
+                while ((got = read(in, buffer, sizeof buffer)) > 0) {
+                    ssize_t at = 0;
+                    copy->bytes += (size_t)got;
+                    while (at < got) {
+                        ssize_t written = write(out, buffer + at, (size_t)(got - at));
+                        if (written < 0) { if (errno == EINTR) continue; break; }
+                        at += written;
+                    }
+                    if (at < got) break;
+                }
+                ++copy->files;
+            }
+            if (in >= 0) close(in);
+            if (out >= 0) close(out);
+        } else if (S_ISLNK(st.st_mode)) {
+            char link[4096];
+            ssize_t length = readlink(source, link, sizeof link - 1);
+            if (length < 0) ++copy->refused;
+            else {
+                link[length] = 0;
+                if (symlink(link, target)) ++copy->refused;
+                else ++copy->files;
+            }
+        } else {
+            ++copy->refused;
+        }
+        errno = 0;
+    }
+    if (errno) ok = 0;
+    closedir(entries);
+    return ok;
+}
+
+/* an isolated copy of the target filesystem, which is what a trial that applies a
+   prepared plan needs, since the running root must not change. */
+static char *copy_root(const char *root, const char *work, struct trial_copy *copy)
+{
+    char *path = malloc(strlen(work) + 16);
+    struct stat st;
+    if (!path) return NULL;
+    snprintf(path, strlen(work) + 16, "%s/trial-root", work);
+    /* the caller named a work directory, so it is created rather than refused. it is
+       outside the root, since a copy inside the tree it copies would read its own
+       output, and that is checked before this runs */
+    if (mkdir(work, 0700) && errno != EEXIST) { free(path); return NULL; }
+    if (mkdir(path, 0700) && errno != EEXIST) { free(path); return NULL; }
+    if (lstat(root, &st) || !S_ISDIR(st.st_mode) ||
+        !copy_level(root, path, copy)) { free(path); return NULL; }
+    return path;
+}
+
+/* the same pairs applied to the trial copy, so the command runs the change the plan
+   names. a state plan binds the device and inode of the root it was reviewed for, so
+   the copy derives its own and that is the record the trial reports: the approved
+   digest belongs to the root the operator reviewed, not to this copy. */
+static int apply_trial_plan(const struct holy_up_plan *plan, const char *root,
+                            char hash[65])
+{
+    const char **olds = NULL, **news = NULL;
+    struct holy_update_request request = {0};
+    char *record = NULL;
+    size_t i;
+    int ok = 0;
+    hash[0] = 0;
+    if (!plan->slot_count) return 1;
+    olds = calloc(plan->slot_count, sizeof *olds);
+    news = calloc(plan->slot_count, sizeof *news);
+    if (!olds || !news) goto done;
+    for (i = 0; i < plan->slot_count; ++i) {
+        olds[i] = plan->slots[i].old_digest;
+        news[i] = plan->slots[i].new_digest;
+    }
+    request.olds = olds;
+    request.news = news;
+    request.pair_count = plan->slot_count;
+    if (holy_state_update_prepare(&request, root, hash, &record)) goto done;
+    ok = !holy_state_apply_update(hash, &request, root);
+done:
+    free(record);
+    free(olds);
+    free(news);
+    return ok;
+}
+
 int holy_test_command(int argc, char **argv)
 {
     const char *mode = "root", *root = "/", *approved = NULL, *plan_path = NULL;
@@ -213,7 +346,10 @@ int holy_test_command(int argc, char **argv)
     char index[65], source_id[65], slot[65], binding[65];
     unsigned long long generation = 0;
     char *old_snapshot = NULL;
-    int dir = -1, status = 0, i, read, command = -1, shell = 0;
+    char *trial_root = NULL;
+    struct trial_copy copied = {0, 0, 0, 0};
+    const char *work = NULL;
+    int dir = -1, status = 0, i, read, command = -1, shell = 0, apply = 0, mode_seen = 0;
 
     for (i = 0; i < argc; ++i) {
         const char *option = argv[i];
@@ -221,21 +357,40 @@ int holy_test_command(int argc, char **argv)
         if (command < 0 && !plan_path && option[0] != '-') { plan_path = option; continue; }
         if (!strcmp(option, "--sha256") && i + 1 < argc && !approved) { approved = argv[++i]; continue; }
         if (!strcmp(option, "--root") && i + 1 < argc) { root = argv[++i]; continue; }
-        if (!strcmp(option, "--mode") && i + 1 < argc) { mode = argv[++i]; continue; }
+        /* one trial mode, kept as a named parameter so a name for the kernel rollback
+           gate is a usage error rather than a silently ignored option */
+        if (!strcmp(option, "--mode") && i + 1 < argc && !mode_seen) {
+            mode = argv[++i];
+            mode_seen = 1;
+            continue;
+        }
+        if (!strcmp(option, "--apply") && !apply) { apply = 1; continue; }
+        if (!strcmp(option, "--work") && i + 1 < argc && !work) { work = argv[++i]; continue; }
         if (!strcmp(option, "--json")) { run.json = 1; continue; }
-        if (!strcmp(option, "--shell") && !shell && !command) { shell = 1; continue; }
+        /* a shell and a command are two ways to name one probe, so the pair is refused
+           below rather than by a guard that cannot see a command yet */
+        if (!strcmp(option, "--shell") && !shell) { shell = 1; continue; }
         status = 2;
         goto usage;
     }
     if (shell && command >= 0) { status = 2; goto usage; }
     if (command >= 0 && !command) { status = 2; goto usage; }
-    if ((command >= 0 || shell) && strcmp(mode, "root")) { status = 2; goto usage; }
-    if (!plan_path || !*root || (strcmp(mode, "root") && strcmp(mode, "vm"))) {
-        status = 2;
-        goto usage;
+    /* a trial that applies a plan needs somewhere to apply it */
+    if (apply && (!work || work[0] != '/')) { status = 2; goto usage; }
+    /* a copy made inside the tree it copies would read its own output, so the work
+       directory has to be outside the root */
+    if (apply) {
+        size_t root_length = strlen(root);
+        while (root_length > 1 && root[root_length - 1] == '/') --root_length;
+        if (!strncmp(work, root, root_length) &&
+            (work[root_length] == '/' || work[root_length] == 0)) {
+            status = 2;
+            goto usage;
+        }
     }
+    if (!plan_path || !*root || strcmp(mode, "root")) { status = 2; goto usage; }
     run.root = root;
-    run.mode = mode;
+    run.mode = "root";
 
     read = holy_up_plan_read(plan_path, approved, &plan);
     if (read == 2) fprintf(stderr, "holypkg: malformed update plan\n");
@@ -283,10 +438,9 @@ int holy_test_command(int argc, char **argv)
 
     record(&run, "plan-document", "pass", NULL);
 
-    /* the trial base: the installed set for a root test, and none for a VM trial that
-       owns its own image, which the runner measures as it copies that image. */
-    if (!strcmp(mode, "root") &&
-        !holy_state_visit(root, observed_visit, &observed, &generation) &&
+    /* the trial base is the installed set, which a live rootfs has no stable digest
+       for, so the report names a digest of the installed artifact set instead */
+    if (!holy_state_visit(root, observed_visit, &observed, &generation) &&
         !observed.overflow && observed_binding(&observed, binding)) {
         if (run.json) {
             printf("{\"schema\":\"holy-test-report-1\",\"type\":\"image\",\"mode\":\"root\",\"generation\":%llu,\"digest\":",
@@ -295,10 +449,8 @@ int holy_test_command(int argc, char **argv)
             printf("}\n");
         } else printf("test-image rootfs generation %llu digest %s\n", generation, binding);
     } else if (run.json)
-        printf("{\"schema\":\"holy-test-report-1\",\"type\":\"image\",\"mode\":\"%s\",\"image\":null,\"reason\":\"no-image-binding\"}\n",
-               mode);
-    else printf("test-image %s none reason %s\n", mode,
-                strcmp(mode, "root") ? "no-vm-runner" : "no-image-binding");
+        printf("{\"schema\":\"holy-test-report-1\",\"type\":\"image\",\"mode\":\"root\",\"image\":null,\"reason\":\"no-image-binding\"}\n");
+    else printf("test-image rootfs none reason no-image-binding\n");
 
     /* every slot of a prepared group is a plan input the probe checks, since one
        decision covers all of them */
@@ -365,7 +517,6 @@ int holy_test_command(int argc, char **argv)
         record(&run, "installed-payload", "fail", "invalid-installed-manifest");
     else record(&run, "installed-payload", "skip", "no-installed-slot");
 
-    if (!strcmp(mode, "vm")) record(&run, "vm-trial", "unknown", "no-vm-runner");
     record(&run, "runtime-probes", "skip", "explicit-probe-request");
 
     /* each slot states the decisions its review named, so the report names them all */
@@ -399,6 +550,41 @@ int holy_test_command(int argc, char **argv)
        this command does not have, and a skip that was not requested fails nothing. */
     status = run.unknown ? 6 : run.fail ? 4 : 0;
     if (ferror(stdout)) status = 1;
+    /* a trial that applies a plan needs an isolated copy of the filesystem, since the
+       running root must not change, and the command then sees that copy rather than the
+       system it was verified against */
+    if (!status && apply) {
+        trial_root = copy_root(root, work, &copied);
+        if (!trial_root) {
+            fprintf(stderr, "holypkg: the trial could not copy %s\n", root);
+            status = 1;
+        } else if (run.json) {
+            printf("{\"schema\":\"holy-test-report-1\",\"type\":\"trial-root\",\"root\":");
+            print_string(trial_root);
+            printf(",\"directories\":%zu,\"files\":%zu,\"bytes\":%zu,\"refused\":%zu}\n",
+                   copied.directories, copied.files, copied.bytes, copied.refused);
+        } else {
+            printf("test-trial-root %s directories %zu files %zu bytes %zu refused %zu\n",
+                   trial_root, copied.directories, copied.files, copied.bytes, copied.refused);
+        }
+        if (!status) {
+            char applied[65];
+            if (!apply_trial_plan(&plan, trial_root, applied)) {
+                fprintf(stderr, "holypkg: the prepared plan did not apply to the trial "
+                        "root\n");
+                status = 1;
+            } else if (run.json) {
+                printf("{\"schema\":\"holy-test-report-1\",\"type\":\"trial-apply\","
+                       "\"root\":");
+                print_string(trial_root);
+                printf(",\"state-plan\":\"%s\",\"slots\":%zu}\n", applied,
+                       plan.slot_count);
+            } else {
+                printf("test-trial-apply %s state-plan %s slots %zu\n", trial_root,
+                       applied, plan.slot_count);
+            }
+        }
+    }
     /* a probe runs only against a requested set that completed, and a vm trial has no
        place to run a command of the running root. */
     if (!status && (command >= 0 || shell)) {
@@ -412,9 +598,11 @@ int holy_test_command(int argc, char **argv)
         } else {
             status = 2;
         }
-        if (!status) status = holy_trial_command(selected);
+        if (!status) status = trial_root ? holy_trial_command_at(selected, trial_root)
+                                         : holy_trial_command(selected);
     }
 done:
+    free(trial_root);
     if (status == 2) goto usage;
     if (old_snapshot) { unlink(old_snapshot); free(old_snapshot); }
     if (dir >= 0) close(dir);
@@ -423,6 +611,6 @@ done:
     holy_up_plan_free(&plan);
     return status;
 usage:
-    fputs("usage: holypkg test PLAN [--sha256 PLAN_SHA256] [--mode root|vm] [--root DIRECTORY] [--json] [--shell | -- COMMAND [ARGS...]]\n", stderr);
+    fputs("usage: holypkg test PLAN [--sha256 PLAN_SHA256] [--root DIRECTORY] [--mode root] [--apply --work DIRECTORY] [--json] [--shell | -- COMMAND [ARGS...]]\n", stderr);
     return status ? status : 2;
 }
