@@ -1397,7 +1397,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=39f96065d84214af331ea6222a702991496ce7c950288676ed97143b54949df5
+holypkg.8 source=holy version=development sha256=9b9700549455421e52ce529689e79c0459164752bac3e0066605e4b9b616f26a
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -4374,7 +4374,10 @@ INSTALLED CONFLICTS
      walk is the displacing artifact itself.
 
      Changing  the  search  paths  of  the  consumers  of a displaced file needs
-     patchelf and is not part of this decision. The private  file  is  reachable
+     patchelf and is not part of this decision. A consumer the plan names  still
+     has to be told where the private directory is, and this command is how, one
+     file  at  a  time, outside the transaction that placed it. Carrying both in
+     one set is recorded as open on the roadmap. The private file  is  reachable
      through "holypkg run SOURCE:PACKAGE -- COMMAND", which puts the private bin
      directory	first  on PATH, or through an explicit --view bind, and a binary
      that names an absolute helper path has to be started through that view.

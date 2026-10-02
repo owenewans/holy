@@ -122,6 +122,32 @@
   process held and the apply never returned. `holy_state_visit` is now split so a
   caller that already holds the lock reads through it, and the fixture runs the apply
   under a watchdog so the hang fails the run instead of stalling it.
+- [ ] Carry a consumer's search-path rewrite through one set transaction, so a
+  placement and the rewrite that makes its consumers work are one reviewed decision
+  instead of a placement followed by a separate `holypkg patch`.
+  `db plan-set`/`db apply-set` take `--search CONSUMER=DIR`, the plan prints a
+  `search CONSUMER PATH DIR` line per settled consumer and carries the decision in the
+  plan hash, the journal reaches version 9 for it, and the apply runs patchelf through
+  `src/rewrite.c` in a new `search` phase between `applying` and `instances` so a crash
+  resumes inside it. The decision is only accepted with a placement, and only for a
+  directory some placement produced. A consumer the walk finds and the caller did not
+  name is still refused, so a decision for an artifact nothing consumes settles nothing.
+  The rewrite writes the absolute path the installed system resolves rather than the
+  root-relative one the plan states, since a search path with a slash that is not
+  absolute would resolve against the running process. The manifest row of a rewritten
+  payload carries the new size as well as the new hash, because patchelf grows the file
+  it rewrites, and the instance records `holy-rewrite-transform-1` beside its
+  `package-files` the way a placement records `holy-private-transform-1`.
+  Worked end to end by hand on the ELF fixture: the apply commits at generation 3, the
+  consumer carries `/usr/lib/holy/private/<artifact>/usr/lib` in DT_RUNPATH, and
+  `db check` finds the file's size and digest matching. It does not land, because the
+  installed graph is the part still open. The SONAME provider edge for the consumer
+  still names the artifact that owned the library at the public path, while the
+  consumer's search path now leads to the private copy the displacing artifact owns, so
+  `db check` answers `unknown-loader-context` and status 4 for that consumer. Settling
+  it means re-pointing the provider edge in the same transaction, which is a change to
+  the installed graph and not to a manifest row, and it needs its own review. The diff
+  is kept at /tmp/opencode/search-wip2.patch rather than committed half working.
 - [x] Rewrite the interpreter, RPATH or RUNPATH, SONAME and DT_NEEDED of one file
   through patchelf, with no second rewriter in this repository. `holypkg patch`
   reads the facts the file states, states the argv patchelf would run and runs it

@@ -2998,7 +2998,10 @@ provider showed up is still named. A provider the walk must not walk is the
 displacing artifact itself.
 .PP
 Changing the search paths of the consumers of a displaced file needs patchelf and
-is not part of this decision. The private file is reachable through
+is not part of this decision. A consumer the plan names still has to be told where the
+private directory is, and this command is how, one file at a time, outside the
+transaction that placed it. Carrying both in one set is recorded as open on the
+roadmap. The private file is reachable through
 "holypkg run SOURCE:PACKAGE -- COMMAND", which puts the private bin directory
 first on PATH, or through an explicit --view bind, and a binary that names an
 absolute helper path has to be started through that view.
