@@ -40,9 +40,11 @@ int holy_repo_search_fuzzy(const char *directory, const char *query);
 int holy_repo_search_file(const char *directory, const char *query);
 int holy_repo_search_file_fuzzy(const char *directory, const char *query);
 /* verifies the catalog and returns one exact package record or a choice status. */
-int holy_repo_info_name(const char *directory, const char *name);
+int holy_repo_info_name(const char *directory, const char *name,
+                        const char *arch, const char *libc);
 /* reads validated dependency records from one pinned catalog generation. */
-int holy_repo_requirements(const char *directory, const char *name);
+int holy_repo_requirements(const char *directory, const char *name,
+                           const char *arch, const char *libc);
 int holy_repo_seal(const char *directory);
 int holy_repo_seal_signed(const char *directory, const char *private_key);
 int holy_repo_verify_signature(const char *directory, const char *public_key);
@@ -73,9 +75,12 @@ int holy_repo_catalog_index_fast(const char *directory, char digest[65]);
 int holy_repo_catalog_slot_digest(const char *directory,
                                   const struct holy_package_identity *slot,
                                   const char *artifact, char index_digest[65]);
-/* stages the indexed requirement closure for v5 catalogs; older indexes use the full pool. */
+/* stages the indexed requirement closure for v5 catalogs; older indexes use the full
+   pool. arch and libc narrow a name the catalog offers for several architectures, and
+   either may be NULL. */
 int holy_repo_stage_set(const char *directory, const char *name,
-                        const char *root, struct holy_repo_set *set);
+                        const char *root, struct holy_repo_set *set,
+                        const char *arch, const char *libc);
 /* stage exact indexed providers and their in-source dependency closure. */
 int holy_repo_stage_provider(const char *directory, const char *kind,
                              const char *name, const char *root,

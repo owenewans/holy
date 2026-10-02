@@ -64,6 +64,15 @@ authority.
 regular image files, not block devices. Its fixed plan schema forbids include.
 The installer's text menu can save [disk] alongside [install] and prepare the
 disk plan independently of package selection. See holyinstall(8).
+.SS Reference source
+packages.holypkg.eu is the reference source of the Holy base. The name carries no
+authority: it is not compiled into the manager, it has no built-in source-id, and it
+is never active until a configuration names it. Its published generation is signed
+with Ed25519, so a configuration that uses it names the public key and freezes the
+index digest it reviewed. The private signing key stays on the publishing machine and
+is not a configuration input. Verification establishes authenticity only relative to
+the supplied key, so freshness comes from a separate digest pin.
+.PP
 .SH EXAMPLE
 .nf
 [general]
@@ -72,7 +81,15 @@ scripts ask
 [source arch]
 type pacman
 repo core "https://mirror.example/arch/$repo/os/$arch"
+[source packages]
+type holy-http
+url "https://packages.holypkg.eu/"
+public-key-ed25519 9c86f10a96bd9b7016d94b05401d594db11cb66aa70157297cae8046732d1054
 .fi
+.PP
+The mirror.example host above is a template and is not a working mirror. A shipped
+configuration carries the commented, release-verified official and popular sources,
+and the user enables them.
 .SH FILES
 /etc/holy.conf is the proposed system path. The checker takes an explicit file.
 .SH SOURCE IDENTITIES

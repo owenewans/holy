@@ -329,7 +329,7 @@ check-init: holy-init
 check-hooks: holypkg
 	CC="$(CC)" sh tests/hooks.sh ./holypkg
 
-check: check-pacman check-deb check-apt check-slackware check-apk check-xbps-import check-xbps-version check-xbps-index check-appimage check-snap check-run check-recipe check-evaluate check-command-version check-split check-debug check-pkgbuild check-void check-aports check-slackbuild check-rpmspec check-debsrc check-gentoo check-pacstall check-flatpak check-brew check-guix check-scoop check-winget check-nix check-eopkg check-conflict check-index check-closure check-loader-search check-update-group check-qemu-copy check-plan-test check-override check-cc check-hooks check-apk-version check-apk-index check-apk-fetch check-native-version $(if $(RPM_LIBS),check-rpm) holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
+check: check-pacman check-deb check-apt check-slackware check-apk check-xbps-import check-xbps-version check-xbps-index check-appimage check-snap check-run check-recipe check-evaluate check-command-version check-split check-debug check-pkgbuild check-void check-aports check-slackbuild check-rpmspec check-debsrc check-gentoo check-pacstall check-flatpak check-brew check-guix check-scoop check-winget check-nix check-eopkg check-conflict check-index check-closure check-loader-search check-slot-choice check-update-group check-qemu-copy check-plan-test check-override check-cc check-hooks check-apk-version check-apk-index check-apk-fetch check-native-version $(if $(RPM_LIBS),check-rpm) holypkg tests/resolution check-init check-solver check-install-payload check-install check-https check-git-source check-repo-closure
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg
@@ -472,6 +472,11 @@ check-hardware:
 # that shows both, a digest each path carries and a default that names the slot
 check-rollback-config:
 	sh tests/rollback-config.sh
+
+# a repository that carries one name for several architectures must ask which slot, at
+# the local mirror and through a registered source alike
+check-slot-choice:
+	sh tests/slot-choice.sh ./holypkg
 
 .PHONY: check-image-docs
 check-image-docs:

@@ -1051,6 +1051,9 @@ struct stage_request {
     int index_only;
     int provider;
     struct holy_repo_slot_list *candidates;
+    /* the CLI disambiguates a name a repository offers for several architectures with
+       these, so both are optional and neither is a guess */
+    const char *arch, *libc;
 };
 
 static int copy_identity(struct holy_package_identity *to,
@@ -1587,19 +1590,29 @@ static int list_probe(const char *directory, const char *query,
         candidate_snapshots = calloc(count ? count : 1, sizeof *candidate_snapshots);
         if (!candidate_snapshots) goto done;
     }
-    if (stage && !stage->slot && !stage->index_only &&
+    if (stage && (solve_name || stage->provider) && !stage->slot && !stage->index_only &&
         dependency_index && file_index && soname_index) {
         size_t root = count, roots = 0;
         if (!stage->provider) {
-            for (i = 0; i < count; ++i)
-                if (!strcmp(objects[i].identity.name, solve_name)) {
-                    root = i;
-                    ++roots;
-                }
+            size_t named = 0;
+            for (i = 0; i < count; ++i) {
+                if (strcmp(objects[i].identity.name, solve_name)) continue;
+                ++named;
+                if (stage->arch && strcmp(objects[i].identity.arch, stage->arch)) continue;
+                if (stage->libc && strcmp(objects[i].identity.libc, stage->libc)) continue;
+                root = i;
+                ++roots;
+            }
             if (roots != 1) {
                 *solve_rc = roots ? 3 : 6;
-                fprintf(stderr, "holypkg: repository root %s\n",
-                        roots ? "requires package choice" : "not found");
+                /* a name the catalog has and a slot it does not is a different answer
+                   from a name it does not have, and the caller needs to know which */
+                if (roots) fprintf(stderr, "holypkg: repository root %s\n",
+                                   "requires package choice");
+                else if (named) fprintf(stderr, "holypkg: repository root %s has no %s\n",
+                                        solve_name, stage->arch ? "artifact of that arch"
+                                                               : "artifact of that arch and libc");
+                else fprintf(stderr, "holypkg: repository root %s not found\n", solve_name);
                 ok = 1; goto done;
             }
         }
@@ -1756,15 +1769,27 @@ static int list_probe(const char *directory, const char *query,
     if (fetch_digest && (!chosen || !holy_fetch_local(chosen, output))) goto done;
     if (solve_name) {
         const char **paths = NULL;
-        size_t root = count, roots = 0, next = 1;
-        for (i = 0; i < count; ++i) if (!strcmp(objects[i].identity.name, solve_name)) {
+        size_t root = count, roots = 0, next = 1, named = 0;
+        for (i = 0; i < count; ++i) {
+            if (strcmp(objects[i].identity.name, solve_name)) continue;
+            ++named;
+            /* the same two fields the caller named, applied where the verified pool is
+               re-counted, so the choice is made once and means the same thing twice */
+            if (stage && stage->arch && strcmp(objects[i].identity.arch, stage->arch))
+                continue;
+            if (stage && stage->libc && strcmp(objects[i].identity.libc, stage->libc))
+                continue;
             root = i;
             ++roots;
         }
         if (roots != 1 && !(stage && stage->slot)) {
             *solve_rc = roots ? 3 : 6;
-            fprintf(stderr, "holypkg: repository root %s\n",
-                    roots ? "requires package choice" : "not found");
+            /* a name the catalog has and a slot it does not is a different answer from
+               a name it does not have */
+            if (roots) fprintf(stderr, "holypkg: repository root requires package choice\n");
+            else if (named) fprintf(stderr, "holypkg: repository root %s has no artifact of "
+                                   "that arch and libc\n", solve_name);
+            else fprintf(stderr, "holypkg: repository root %s not found\n", solve_name);
             if (solve_json)
                 printf("{\"schema\":\"holy-local-solve-1\",\"type\":\"error\",\"code\":\"%s\"}\n",
                        roots ? "decision-required" : "unavailable-artifact");
@@ -1841,11 +1866,19 @@ static int list_probe(const char *directory, const char *query,
             fputs("status unknown: source has no complete dependency index\n", stdout);
             if (solve_rc) *solve_rc = 6;
         } else {
-            for (j = 0; j < count; ++j)
-                if (!strcmp(objects[j].identity.name, query)) {
-                    found = j;
-                    ++matches;
-                }
+            size_t named = 0;
+            for (j = 0; j < count; ++j) {
+                if (strcmp(objects[j].identity.name, query)) continue;
+                ++named;
+                /* a name one repository carries for several architectures is a choice
+                   the caller makes with --arch or --libc, and never a guess */
+                if (stage && stage->arch && strcmp(objects[j].identity.arch, stage->arch))
+                    continue;
+                if (stage && stage->libc && strcmp(objects[j].identity.libc, stage->libc))
+                    continue;
+                found = j;
+                ++matches;
+            }
             if (matches == 1) {
                 if (!record(stdout, &objects[found])) goto done;
                 for (j = 0; j < objects[found].requirement_count; ++j)
@@ -1854,8 +1887,12 @@ static int list_probe(const char *directory, const char *query,
                 printf("requirements %zu\n", objects[found].requirement_count);
                 if (solve_rc) *solve_rc = 0;
             } else {
-                fprintf(stderr, "holypkg: repository package %s\n",
-                        matches ? "requires an architecture/ABI choice" : "not found");
+                if (matches) fprintf(stderr, "holypkg: repository package requires an "
+                                   "architecture/ABI choice\n");
+                else if (named)
+                    fprintf(stderr, "holypkg: repository package %s has no artifact of "
+                            "that arch and libc\n", query);
+                else fprintf(stderr, "holypkg: repository package %s not found\n", query);
                 if (solve_rc) *solve_rc = matches ? 3 : 6;
             }
         }
@@ -1886,9 +1923,16 @@ static int list_probe(const char *directory, const char *query,
         printf("suggested %zu of %zu %s\n", shown, matches,
                emit == 5 ? "packages" : "file candidates");
     } else {
-        size_t matches = 0, only = count;
+        size_t matches = 0, named = 0, only = count;
         for (j = 0; j < count; ++j) {
             if (query && strcmp(objects[j].identity.name, query)) continue;
+            if (query) ++named;
+            /* a name one repository carries for several architectures is a choice the
+               caller makes with --arch or --libc, and never a guess */
+            if (stage && stage->arch && strcmp(objects[j].identity.arch, stage->arch))
+                continue;
+            if (stage && stage->libc && strcmp(objects[j].identity.libc, stage->libc))
+                continue;
             if (provider_kind && !objects[j].provider_match) continue;
             if (file_query && (!file_index || !indexed_file(&objects[j], file_query)))
                 continue;
@@ -1904,9 +1948,13 @@ static int list_probe(const char *directory, const char *query,
         if (emit == 3) {
             *solve_rc = matches > 1 ? 3 : matches ? 0 : 6;
             if (matches == 1 && !record(stdout, &objects[only])) goto done;
-            if (matches != 1)
-                fprintf(stderr, "holypkg: repository package %s\n",
-                        matches ? "requires an architecture/ABI choice" : "not found");
+            if (matches != 1) {
+                if (matches) fprintf(stderr, "holypkg: repository package requires an "
+                                   "architecture/ABI choice\n");
+                else if (named) fprintf(stderr, "holypkg: repository package %s has no "
+                                       "artifact of that arch and libc\n", query);
+                else fprintf(stderr, "holypkg: repository package %s not found\n", query);
+            }
         }
         if (emit == 8 && solve_rc) *solve_rc = matches ? 0 : 4;
         if (emit == 4) {
@@ -2048,21 +2096,35 @@ int holy_repo_search_file_fuzzy(const char *directory, const char *query)
     return result;
 }
 
-int holy_repo_info_name(const char *directory, const char *name)
+int holy_repo_info_name(const char *directory, const char *name,
+                        const char *arch, const char *libc)
 {
+    /* the filters travel in the stage so one query loop serves both, and the set is a
+       real one because the loop writes the index digest into it */
+    struct holy_repo_set set;
+    struct stage_request stage = {NULL, &set, NULL, NULL, 0, 0, NULL, arch, libc};
     int result = 6;
     if (!name || !*name) return 2;
+    memset(&set, 0, sizeof set);
     if (!list(directory, name, NULL, 1, 3, NULL, NULL, NULL, NULL,
-              NULL, NULL, 0, &result, NULL, 0, NULL, NULL)) return 6;
+              NULL, NULL, 0, &result, NULL, 0, &stage, NULL)) return 6;
+    holy_repo_set_free(&set);
     return result;
 }
 
-int holy_repo_requirements(const char *directory, const char *name)
+int holy_repo_requirements(const char *directory, const char *name,
+                           const char *arch, const char *libc)
 {
+    /* the filters travel in the stage so one query loop serves both, and the set is a
+       real one because the loop writes the index digest into it */
+    struct holy_repo_set set;
+    struct stage_request stage = {NULL, &set, NULL, NULL, 0, 0, NULL, arch, libc};
     int result = 6;
     if (!name || !*name) return 2;
+    memset(&set, 0, sizeof set);
     if (!list(directory, name, NULL, 1, 7, NULL, NULL, NULL, NULL,
-              NULL, NULL, 0, &result, NULL, 0, NULL, NULL)) return 6;
+              NULL, NULL, 0, &result, NULL, 0, &stage, NULL)) return 6;
+    holy_repo_set_free(&set);
     return result;
 }
 
@@ -2172,12 +2234,15 @@ void holy_repo_set_free(struct holy_repo_set *set)
 }
 
 int holy_repo_stage_set(const char *directory, const char *name,
-                        const char *root, struct holy_repo_set *set)
+                        const char *root, struct holy_repo_set *set,
+                        const char *arch, const char *libc)
 {
-    struct stage_request stage = {root, set, NULL, NULL, 0, 0, NULL};
+    struct stage_request stage = {root, set, NULL, NULL, 0, 0, NULL, NULL, NULL};
     int result = 6;
     memset(set, 0, sizeof *set);
     if (!name || !*name || !root || !*root) return 2;
+    stage.arch = arch;
+    stage.libc = libc;
     if (!list(directory, NULL, NULL, 1, 0, NULL, NULL, NULL, NULL,
               name, NULL, 0, &result, NULL, 0, &stage, NULL)) {
         holy_repo_set_free(set);
@@ -2191,7 +2256,7 @@ int holy_repo_stage_provider(const char *directory, const char *kind,
                              const char *name, const char *root,
                              struct holy_repo_set *set)
 {
-    struct stage_request stage = {root, set, NULL, NULL, 0, 1, NULL};
+    struct stage_request stage = {root, set, NULL, NULL, 0, 1, NULL, NULL, NULL};
     int result = 6;
     memset(set, 0, sizeof *set);
     if (!kind || (strcmp(kind, "package") && strcmp(kind, "package-or") && strcmp(kind, "file") &&
@@ -2211,7 +2276,7 @@ int holy_repo_stage_slot(const char *directory, const char *root,
                          const struct holy_package_identity *slot,
                          struct holy_repo_set *set)
 {
-    struct stage_request stage = {root, set, slot, NULL, 0, 0, NULL};
+    struct stage_request stage = {root, set, slot, NULL, 0, 0, NULL, NULL, NULL};
     int result = 6;
     memset(set, 0, sizeof *set);
     if (!root || !*root || !slot || !slot->name || !slot->os ||
@@ -2239,7 +2304,7 @@ int holy_repo_slot_candidates(const char *directory,
                               struct holy_repo_slot_list *out)
 {
     struct holy_repo_set index = {0};
-    struct stage_request stage = {NULL, &index, slot, NULL, 1, 0, out};
+    struct stage_request stage = {NULL, &index, slot, NULL, 1, 0, out, NULL, NULL};
     int result = 6;
     if (!directory || !slot || !slot->name || !slot->os || !slot->arch ||
         !slot->libc || !out) return 2;
@@ -2254,7 +2319,7 @@ int holy_repo_stage_slot_digest(const char *directory, const char *root,
                                 const struct holy_package_identity *slot,
                                 const char *digest, struct holy_repo_set *set)
 {
-    struct stage_request stage = {root, set, slot, digest, 0, 0, NULL};
+    struct stage_request stage = {root, set, slot, digest, 0, 0, NULL, NULL, NULL};
     int result = 6;
     if (!directory || !root || !slot || !slot->name || !slot->os ||
         !slot->arch || !slot->libc || !digest || strlen(digest) != 64 ||
@@ -2334,7 +2399,7 @@ int holy_repo_catalog_index(const char *directory, char digest[65])
 int holy_repo_catalog_index_fast(const char *directory, char digest[65])
 {
     struct holy_repo_set index = {0};
-    struct stage_request stage = {NULL, &index, NULL, NULL, 1, 0, NULL};
+    struct stage_request stage = {NULL, &index, NULL, NULL, 1, 0, NULL, NULL, NULL};
     int ok = list(directory, NULL, NULL, 1, 0, NULL, NULL, NULL, NULL,
                   NULL, NULL, 0, NULL, NULL, 0, &stage, NULL);
     if (ok) memcpy(digest, index.index, 65);
@@ -2347,7 +2412,7 @@ int holy_repo_catalog_slot_digest(const char *directory,
                                   const char *artifact, char index_digest[65])
 {
     struct holy_repo_set index = {0};
-    struct stage_request stage = {NULL, &index, slot, artifact, 1, 0, NULL};
+    struct stage_request stage = {NULL, &index, slot, artifact, 1, 0, NULL, NULL, NULL};
     int result = 6;
     if (!slot || !artifact || strlen(artifact) != 64 ||
         strspn(artifact, "0123456789abcdef") != 64) return 2;

@@ -4,7 +4,7 @@ holypkg \- Holy local package tooling prototype
 .SH SYNOPSIS
 .B holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--associate SHA256=ALIAS ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
-.B holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--candidate-local SOURCE=FILE.holy ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--accept-service UNIT ...] [--root DIRECTORY] [--prepare | --yes] [--noninteractive]
+.B holypkg add SOURCE:PACKAGE [--arch ARCH] [--libc LIBC] [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--candidate-local SOURCE=FILE.holy ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--accept-service UNIT ...] [--root DIRECTORY] [--prepare | --yes] [--noninteractive]
 .br
 .B holypkg up SOURCE:PACKAGE [SOURCE:PACKAGE ...] [--prepare] [--output NEW_FILE] [--catalog MIRROR] [--choose SHA256 | SOURCE:PACKAGE=SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--accept-service UNIT ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
@@ -822,6 +822,19 @@ Successful return is 0; invalid arguments return 2, conflicting
 hashes or catalog contents 4, unavailable TLS/network inputs 6, and local
 filesystem errors 1. The directory remains private to its owner until that
 owner chooses to share it.
+.SS Choosing a slot
+A native repository may carry one package name for several architectures or several
+libc runtimes, since a slot is the name, os, architecture and libc together. A
+native source query that names such a package without saying which one returns 3
+and requires package choice or requires an architecture/ABI choice, because the
+manager does not pick a slot for the caller. --arch ARCH and --libc LIBC are that
+choice, and they narrow the name to one slot for search, info, add and up. Either
+may be given alone; a slot that the catalog does not have is 6 and names the
+package and the arch it has no artifact for, which is a different answer from a
+name the catalog does not carry at all. --arch and --libc on a foreign backend
+still belong to that backend, so a pacman, apt, rpm-md, apk, xbps or eopkg source
+reads them as repository coordinates rather than as slot fields.
+.PP
 .SS Installed documentation
 holypkg docs --root DIRECTORY --output FILE creates a new holy-docs-1 bundle
 from the selected root's installed manifests. It holds the database shared

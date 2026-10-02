@@ -29,6 +29,22 @@ musl "../out/musl-bootstrap/musl.holy"
 # mirror "../out/exported-mirror"
 # embed-mirror yes
 
+# packages.holypkg.eu is the reference source of the base, documented rather than
+# privileged: it is not built into the manager, it has no built-in source-id and it is
+# never active until a configuration names it. Its generation is signed, so a config that
+# uses it needs the public key and freezes the index digest it reviewed. The private key
+# stays on the publishing machine and is not a configuration input.
+# [source packages]
+# type holy-http
+# url "https://packages.holypkg.eu/"
+# public-key-ed25519 9c86f10a96bd9b7016d94b05401d594db11cb66aa70157297cae8046732d1054
+#
+# the generation is pinned with sync rather than in the config, since a digest in a
+# config would claim a freshness the config cannot prove. this is the generation
+# published when the reference source was first sealed, and a later publication has
+# another digest:
+#   holypkg sync packages --sha256 PINNED_INDEX_SHA256 --root TARGET_ROOT
+
 # [source git-example]
 # type holy-git
 # url "https://git.example/holy-packages.git"

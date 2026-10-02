@@ -1653,6 +1653,21 @@
   backend's own namespace setup before the step exists. A step runs as the caller's
   own id inside the namespace, which is what man/holy-recipe.5 already promised and
   what the old mapping did not.
+- [x] Publish the reference package source at packages.holypkg.eu and make a
+  multi-architecture index usable from the CLI. The domain is documented rather than
+  privileged: it is not compiled into the manager, has no built-in source-id and is
+  never active until a configuration names it. The published generation carries ten
+  packages, five core artifacts for x86 and x86_64, sealed with an Ed25519 index
+  signature whose private key stays on the publishing machine. A client registered the
+  source, synced the pinned generation over HTTPS, verified the signature against a
+  supplied public key, bound the catalog and resolved a package by name, and the
+  artifact it staged hashes to the index record. A catalog that carries one name for
+  several architectures now needs the caller to name the slot: `add`, `info`, `up` and
+  `repo requirements` accept `--arch` and `--libc`, a name with several matches returns
+  3, a slot the catalog lacks returns 6 and says so, and a search still lists every
+  slot without choosing. check-slot-choice covers the local mirror and a registered
+  source. Installing a core artifact needs root, since its manifest owns the files under
+  uid 0, and no signed artifact has been fetched from the domain by a QEMU guest yet.
 - [ ] Make a kernel rollback a configuration rather than a reinstall, and prove it by
   rebooting into the previous kernel. The installed profile now carries two kernel
   slots on the boot partition, each with its own vmlinuz, initramfs and blake2b

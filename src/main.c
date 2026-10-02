@@ -464,7 +464,7 @@ done:
 static int query_source(int argc, char **argv, int search)
 {
     const char *root = "/", *catalog = NULL, *alias = NULL, *name = NULL;
-    const char *repo = NULL, *arch = NULL;
+    const char *repo = NULL, *arch = NULL, *libc = NULL;
     const char *suite = NULL, *component = NULL, *index_arch = NULL;
     const char *separator = search ? NULL : strchr(argv[2], ':');
     char source_id[65], *owned_alias = NULL, *bound_catalog = NULL;
@@ -495,6 +495,8 @@ static int query_source(int argc, char **argv, int search)
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) repo = argv[++i];
         else if (!strcmp(argv[i], "--arch") && !arch && i + 1 < argc &&
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) arch = argv[++i];
+        else if (!strcmp(argv[i], "--libc") && !libc && i + 1 < argc &&
+                 argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) libc = argv[++i];
         else if (!strcmp(argv[i], "--suite") && !suite && i + 1 < argc &&
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) suite = argv[++i];
         else if (!strcmp(argv[i], "--component") && !component && i + 1 < argc &&
@@ -626,7 +628,10 @@ static int query_source(int argc, char **argv, int search)
                                     root, alias);
             goto done;
         }
-        if (repo || arch || suite ||
+        /* --arch reaches a native source as the slot disambiguator the man page
+           documents, so only a repository or a suite belongs to a foreign backend
+           here; every other family returned above and --arch was already its own */
+        if (repo || suite ||
             (strcmp(family, "holy-http") && strcmp(family, "holy-git"))) {
             free(family); goto done;
         }
@@ -639,14 +644,14 @@ static int query_source(int argc, char **argv, int search)
     }
     result = holy_source_catalog(root, alias, catalog, source_id);
     if (!result) {
-        if (!search) result = holy_repo_info_name(catalog, name);
+        if (!search) result = holy_repo_info_name(catalog, name, arch, libc);
         else result = search_catalog(catalog, name, file_search, fuzzy_search);
         if (!result) printf("source-id %s\n", source_id);
     }
 done:
     if (result == 2) fprintf(stderr,
-        search ? "usage: holypkg search QUERY [--source SOURCE] [--repo REPO] [--arch ARCH] [--suite SUITE --component COMPONENT --index-arch ARCH] [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]\n" :
-                 "usage: holypkg info SOURCE:PACKAGE [--repo REPO] [--arch ARCH] [--suite SUITE --component COMPONENT --index-arch ARCH] [--catalog MIRROR] [--root DIRECTORY]\n");
+        search ? "usage: holypkg search QUERY [--source SOURCE] [--repo REPO] [--arch ARCH] [--libc LIBC] [--suite SUITE --component COMPONENT --index-arch ARCH] [--file] [--fuzzy] [--catalog MIRROR] [--root DIRECTORY]\n" :
+                 "usage: holypkg info SOURCE:PACKAGE [--repo REPO] [--arch ARCH] [--libc LIBC] [--suite SUITE --component COMPONENT --index-arch ARCH] [--catalog MIRROR] [--root DIRECTORY]\n");
     for (j = 0; j < alias_count; ++j) free(aliases[j]);
     free(aliases);
     free(owned_alias); free(bound_catalog);
@@ -806,6 +811,7 @@ static int add_source(int argc, char **argv)
     size_t digest_count = 0, binding_count = 0, skip_count = 0, i, j, k;
     int unavailable_seen = 0;
     int yes = 0, prepare = 0, noninteractive = 0, root_seen = 0, result = 2;
+    const char *slot_arch = NULL, *slot_libc = NULL;
     if (!separator || separator == argv[2] || !separator[1] ||
         strchr(separator + 1, ':')) goto done;
     alias = malloc((size_t)(separator - argv[2]) + 1);
@@ -897,6 +903,12 @@ static int add_source(int argc, char **argv)
         else if (!strcmp(argv[i], "--accept-service") && i + 1 < (size_t)argc &&
                  argv[i + 1][0] && strncmp(argv[i + 1], "--", 2))
             accepted_service[service_count++] = argv[++i];
+        /* a catalog that carries one name for several architectures needs the caller to
+           name the one, which is what the man page's --arch and --libc are for */
+        else if (!strcmp(argv[i], "--arch") && !slot_arch && i + 1 < (size_t)argc &&
+                 argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) slot_arch = argv[++i];
+        else if (!strcmp(argv[i], "--libc") && !slot_libc && i + 1 < (size_t)argc &&
+                 argv[i + 1][0] && strncmp(argv[i + 1], "--", 2)) slot_libc = argv[++i];
         else if (!strcmp(argv[i], "--yes") && !yes) yes = 1;
         else if (!strcmp(argv[i], "--prepare") && !prepare) prepare = 1;
         else if (!strcmp(argv[i], "--noninteractive") && !noninteractive) noninteractive = 1;
@@ -914,7 +926,8 @@ static int add_source(int argc, char **argv)
     }
     result = holy_source_catalog(root, alias, catalog, source_id);
     if (result) goto done;
-    result = holy_repo_stage_set(catalog, separator + 1, root, &staged);
+    result = holy_repo_stage_set(catalog, separator + 1, root, &staged,
+                                 slot_arch, slot_libc);
     if (result) goto done;
     if (staged.count > 10000) { result = 2; goto done; }
     for (i = 0; i < staged.count; ++i) digests[digest_count++] = staged.digests[i];
@@ -947,7 +960,8 @@ static int add_source(int argc, char **argv)
         result = item->provider ?
             holy_repo_stage_provider(item->catalog, item->kind, item->name,
                                      root, &item->staged) :
-            holy_repo_stage_set(item->catalog, item->name, root, &item->staged);
+            holy_repo_stage_set(item->catalog, item->name, root, &item->staged,
+                                slot_arch, slot_libc);
         if (result) goto done;
         for (j = 0; j < item->staged.count; ++j) {
             char *binding;
@@ -1237,7 +1251,8 @@ next_alias:
     }
     result = holy_source_catalog(root, alias, catalog, next_id);
     if (result) { result = 3; goto done; }
-    result = holy_repo_stage_set(catalog, separator + 1, root, &next);
+    result = holy_repo_stage_set(catalog, separator + 1, root, &next,
+                                 slot_arch, slot_libc);
     if (result) { result = 3; goto done; }
     if (strcmp(source_id, next_id) || strcmp(staged.index, next.index) ||
         staged.count != next.count) { result = 3; goto done; }
@@ -1252,7 +1267,8 @@ next_alias:
         result = item->provider ?
             holy_repo_stage_provider(item->catalog, item->kind, item->name,
                                      root, &item->next) :
-            holy_repo_stage_set(item->catalog, item->name, root, &item->next);
+            holy_repo_stage_set(item->catalog, item->name, root, &item->next,
+                                slot_arch, slot_libc);
         if (result || strcmp(item->staged.index, item->next.index) ||
             item->staged.count != item->next.count) { result = 3; goto done; }
         for (j = 0; j < item->staged.count; ++j)
@@ -1277,7 +1293,7 @@ next_alias:
                                             accepted_service, service_count, NULL);
 done:
     if (result == 2)
-        fputs("usage: holypkg add SOURCE:PACKAGE [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--candidate-local SOURCE=FILE.holy ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--accept-service UNIT ...] [--root DIRECTORY] [--prepare | --yes] [--noninteractive]\n", stderr);
+        fputs("usage: holypkg add SOURCE:PACKAGE [--arch ARCH] [--libc LIBC] [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--candidate-local SOURCE=FILE.holy ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--accept-service UNIT ...] [--root DIRECTORY] [--prepare | --yes] [--noninteractive]\n", stderr);
     for (i = 0; i < binding_count; ++i) free((void *)bindings[i]);
     for (i = 0; i < skip_count; ++i) free((void *)skipped[i]);
     for (i = 0; extras && i <= extra_count && i < 10000; ++i) {
@@ -2809,9 +2825,19 @@ rollback_usage:
     if (argc == 4 && !strcmp(argv[1], "repo") &&
         !strcmp(argv[2], "list"))
         return holy_repo_list(argv[3]) ? 0 : 1;
-    if (argc == 5 && !strcmp(argv[1], "repo") &&
-        !strcmp(argv[2], "requirements"))
-        return holy_repo_requirements(argv[3], argv[4]);
+    /* the local-mirror form takes the same two slot filters as a source query, so a
+       mirror on disk and the same mirror published over HTTPS answer alike */
+    if (argc >= 5 && !strcmp(argv[1], "repo") && !strcmp(argv[2], "requirements")) {
+        const char *arch = NULL, *libc = NULL;
+        int i;
+        for (i = 5; i < argc; ++i) {
+            if (!strcmp(argv[i], "--arch") && i + 1 < argc && !arch) arch = argv[++i];
+            else if (!strcmp(argv[i], "--libc") && i + 1 < argc && !libc) libc = argv[++i];
+            else { fputs("usage: holypkg repo requirements DIRECTORY NAME [--arch ARCH] [--libc LIBC]\n", stderr); return 2; }
+        }
+        if (i != argc) { fputs("usage: holypkg repo requirements DIRECTORY NAME [--arch ARCH] [--libc LIBC]\n", stderr); return 2; }
+        return holy_repo_requirements(argv[3], argv[4], arch, libc);
+    }
     if (argc == 5 && !strcmp(argv[1], "repo") &&
         !strcmp(argv[2], "search"))
         return holy_repo_search(argv[3], argv[4]) ? 0 : 1;
@@ -3163,7 +3189,7 @@ set_done:
         return 2;
     }
     if (argc != 4 || strcmp(argv[1], "config") || strcmp(argv[2], "check")) {
-        fprintf(stderr, "usage: holypkg check [SOURCE:PACKAGE] [--root DIRECTORY] [--json] | holypkg files SOURCE:PACKAGE [--root DIRECTORY] | holypkg rm SOURCE:PACKAGE [--root DIRECTORY] [--yes] [--accept-broken] | holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] -- COMMAND [ARGS...] | holypkg add local:FILE [--candidate local:FILE...] [--choose ID=SHA256] [--skip-hooks SHA256...] [--root DIRECTORY] [--yes] [--noninteractive] | holypkg config check FILE | holypkg info|verify|manifest|scan local:FILE | holypkg manifest generate DIRECTORY --output FILE | holypkg requirements|provides local:FILE [--json] | holypkg solve local:ROOT [local:CANDIDATE...] [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE] | holypkg pack DIRECTORY --output FILE.holy | holypkg check|preview local:FILE --root DIRECTORY [--json] | holypkg cache stage local:FILE --root DIRECTORY | holypkg cache verify SHA256 --root DIRECTORY | holypkg db init|status|slots|cancel|recover|preflight|plan|recheck|apply --root DIRECTORY | holypkg db recover --abort-empty|--continue|--finish-apply --root DIRECTORY | holypkg db check SHA256|--all --root DIRECTORY [--json] | holypkg db rm SHA256 [SHA256 ...] [--accept-broken] --root DIRECTORY | holypkg db owner PATH --root DIRECTORY | holypkg db status|preflight --root DIRECTORY --json | holypkg db reserve SHA256 --root DIRECTORY | holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID...] [--accept-arch SHA256...] [--accept-privileged SHA256...] [--skip-hooks SHA256...] --root DIRECTORY | holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID...] [--accept-arch SHA256...] [--accept-privileged SHA256...] [--skip-hooks SHA256...] --root DIRECTORY | holypkg db recover --finish-set|--continue-set|--repair --root DIRECTORY | holypkg db configure-plan SHA256 --root DIRECTORY | holypkg db configure-apply PLAN_SHA256 SHA256 --root DIRECTORY | holypkg db configure-recover SHA256 --retry --root DIRECTORY | holypkg db plan-update OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY | holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY | holypkg db recover --update --root DIRECTORY | holypkg db slots --root DIRECTORY [--source SOURCE_ID ...] | holypkg db repair-plan SHA256 --root DIRECTORY | holypkg db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY | holypkg db approve PLAN_SHA256 --root DIRECTORY | holypkg elf FILE | holypkg repo index|list|seal DIRECTORY | holypkg repo requirements DIRECTORY NAME | holypkg repo search DIRECTORY NAME [--fuzzy] | holypkg repo search-file DIRECTORY NAME_OR_PATH [--fuzzy] | holypkg repo solve DIRECTORY NAME [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg repo providers DIRECTORY KIND NAME [--json] | holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY\n");
+        fprintf(stderr, "usage: holypkg check [SOURCE:PACKAGE] [--root DIRECTORY] [--json] | holypkg files SOURCE:PACKAGE [--root DIRECTORY] | holypkg rm SOURCE:PACKAGE [--root DIRECTORY] [--yes] [--accept-broken] | holypkg run SOURCE:PACKAGE [--root DIRECTORY] [--arch ARCH] [--libc LIBC] -- COMMAND [ARGS...] | holypkg add local:FILE [--candidate local:FILE...] [--choose ID=SHA256] [--skip-hooks SHA256...] [--root DIRECTORY] [--yes] [--noninteractive] | holypkg config check FILE | holypkg info|verify|manifest|scan local:FILE | holypkg manifest generate DIRECTORY --output FILE | holypkg requirements|provides local:FILE [--json] | holypkg solve local:ROOT [local:CANDIDATE...] [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg fetch local:FILE [--extract] --output DIRECTORY | holypkg fetch https://URL --sha256 SHA256 --output DIRECTORY [--ca-file FILE] | holypkg pack DIRECTORY --output FILE.holy | holypkg check|preview local:FILE --root DIRECTORY [--json] | holypkg cache stage local:FILE --root DIRECTORY | holypkg cache verify SHA256 --root DIRECTORY | holypkg db init|status|slots|cancel|recover|preflight|plan|recheck|apply --root DIRECTORY | holypkg db recover --abort-empty|--continue|--finish-apply --root DIRECTORY | holypkg db check SHA256|--all --root DIRECTORY [--json] | holypkg db rm SHA256 [SHA256 ...] [--accept-broken] --root DIRECTORY | holypkg db owner PATH --root DIRECTORY | holypkg db status|preflight --root DIRECTORY --json | holypkg db reserve SHA256 --root DIRECTORY | holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID...] [--accept-arch SHA256...] [--accept-privileged SHA256...] [--skip-hooks SHA256...] --root DIRECTORY | holypkg db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID...] [--accept-arch SHA256...] [--accept-privileged SHA256...] [--skip-hooks SHA256...] --root DIRECTORY | holypkg db recover --finish-set|--continue-set|--repair --root DIRECTORY | holypkg db configure-plan SHA256 --root DIRECTORY | holypkg db configure-apply PLAN_SHA256 SHA256 --root DIRECTORY | holypkg db configure-recover SHA256 --retry --root DIRECTORY | holypkg db plan-update OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY | holypkg db apply-update PLAN_SHA256 OLD_SHA256 NEW_SHA256 [--accept-arch NEW_SHA256] [--accept-privileged NEW_SHA256] --root DIRECTORY | holypkg db recover --update --root DIRECTORY | holypkg db slots --root DIRECTORY [--source SOURCE_ID ...] | holypkg db repair-plan SHA256 --root DIRECTORY | holypkg db repair SHA256 --plan PLAN_SHA256 --root DIRECTORY | holypkg db approve PLAN_SHA256 --root DIRECTORY | holypkg elf FILE | holypkg repo index|list|seal DIRECTORY | holypkg repo requirements DIRECTORY NAME [--arch ARCH] [--libc LIBC] | holypkg repo search DIRECTORY NAME [--fuzzy] | holypkg repo search-file DIRECTORY NAME_OR_PATH [--fuzzy] | holypkg repo solve DIRECTORY NAME [--choose REQUIREMENT_ID=SHA256] [--json] | holypkg repo providers DIRECTORY KIND NAME [--json] | holypkg repo fetch DIRECTORY SHA256 --output DIRECTORY\n");
         return 2;
     }
     path = argv[3];
