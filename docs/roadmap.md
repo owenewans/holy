@@ -466,7 +466,22 @@
   artifact fills names no candidate. The set planner prints the report and the
   apply prints it again when its own re-derivation reaches the same decision, and
   `solve` and `repo solve` print it in both the line and the JSON form, the latter
-  as one holy-local-solve-1 choice event. Automatic selection between two
+  as one holy-local-solve-1 choice event. A set plan now also states the capabilities the
+  selection and the installed set it joins offer twice, read from the selected
+  artifacts and from every instance the target root already has, so a capability two
+  artifacts across the two sets both offer is named by the review instead of waiting for
+  a `holypkg conflict` report run after the fact. An artifact the selection already
+  carries is counted once, so a reused installed dependency does not claim its own
+  capabilities twice, and the walk reads through the lock the transaction holds. The walk
+  refuses a root with a transaction pending, which is the state a recovery re-derives the
+  plan in, so recovery asks for the plan without the installed claims; the claims are not
+  part of the plan digest, which is why the digest a journal names still matches. An
+  installed instance record the walk cannot read, such as one written before a record grew
+  a field, leaves the claims short; the plan states that with `set-conflicts installed
+  claims incomplete scope installed-set` rather than reporting over a subset as if it were
+  the set, and keeps the claims it did read, since a plan over a legible selection is not
+  refused for a defect in the root that `db status` already names.
+  Automatic selection between two
   candidates stays unfinished and refused.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions. The

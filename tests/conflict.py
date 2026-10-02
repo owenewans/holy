@@ -5,6 +5,7 @@ two private programs of one name."""
 import hashlib
 import json
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -198,6 +199,36 @@ def main():
         out = call("db", "plan-set", lone, "--root", set_root)
         assert "conflict " not in out, out
         assert "set-conflicts generation 0 artifacts 1 capabilities 1 conflicts 0 read-only" in out, out
+
+        # a selection joins a set that already has claims, so a capability the two sets
+        # both offer is named by the plan rather than left for a report run afterwards
+        across_root = base / "across-root"
+        (across_root / "usr/share").mkdir(parents=True)
+        call("db", "init", "--root", across_root)
+        installed = build(across_root, base / "tree7a", "across-one",
+                          files={"usr/share/across-one": "one\n"},
+                          provides="provide soname libacross.so.1 noarch nolibc - metadata\n")
+        install(across_root, [installed])
+        joining = build(across_root, base / "tree7b", "across-two",
+                        files={"usr/share/across-two": "two\n"},
+                        provides="provide soname libacross.so.1 noarch nolibc - metadata\n")
+        out = call("db", "plan-set", joining, "--root", across_root)
+        assert 'conflict soname "libacross.so.1" providers 2 reason duplicate-provider' in out, out
+        assert "set-conflicts generation 1 artifacts 1 capabilities 2 conflicts 1 read-only" in out, out
+        # both providers are named, so the report says which two artifacts the review has
+        # to choose between and which of them is already installed
+        assert "provider %s arch \"noarch\" libc \"nolibc\"" % installed in out, out
+        assert "provider %s arch \"noarch\" libc \"nolibc\"" % joining in out, out
+        # a selection reuses an installed dependency rather than restating it, so the
+        # installed set contributes nothing for an artifact the selection already carries
+        reused = build(across_root, base / "tree7c", "across-app",
+                       files={"usr/share/across-app": "the application\n"},
+                       provides="provide package across-app noarch nolibc - metadata\n",
+                       deps="require dep-1 across-app package across-one noarch nolibc any - "
+                            "across-one metadata\n")
+        out = call("db", "plan-set", reused, "--root", across_root)
+        assert "conflict " not in out, out
+        assert "set-conflicts generation 1 artifacts 2 capabilities 2 conflicts 0 read-only" in out, out
         # two offers of one SONAME with different ABIs is a mismatch, not a duplicate
         abi_a = build(set_root, base / "tree8", "abi-twin-a", files={"usr/share/abi-twin-a": "a\n"},
                       provides="provide package abi-twin-a noarch nolibc - metadata\n"

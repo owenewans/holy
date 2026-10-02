@@ -34,6 +34,18 @@ int holy_conflict_claims_push(struct holy_conflict_claims *claims, const char *k
 /* reads the provides records and the payload manifest of one package archive. */
 int holy_conflict_claims_package(struct holy_conflict_claims *claims,
                                  const char *package, const char *digest);
+/* adds the claims of every artifact the target root already has installed, so a
+   selection is reported against the set it would join rather than against itself
+   alone. an artifact the selection already carries is left out, since its own claims
+   are stated. root_fd and dir_fd are the descriptors the caller already opened and
+   locked, since a second shared lock on the same directory would block against them.
+   complete says whether every instance was read, since a plan that reports over fewer
+   artifacts than the root has has to say so. only invalid input is an error here: an
+   installed record the walk cannot read leaves the claims short and complete 0, which is
+   a fact about the report and not a reason to refuse a plan over a legible selection. */
+int holy_conflict_claims_installed(struct holy_conflict_claims *claims,
+                                   int root_fd, int dir_fd,
+                                   unsigned long long *generation, int *complete);
 /* sorts the claims and counts the capabilities two artifacts both offer. */
 size_t holy_conflict_claims_findings(struct holy_conflict_claims *claims);
 /* one line per finding, in the order the claims sort into. */

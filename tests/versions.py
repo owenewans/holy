@@ -158,7 +158,11 @@ with tempfile.TemporaryDirectory(prefix="holy-versions-") as scratch:
     cache.unlink()
     run("db", "plan-set", alias_app_hash, "--root", alias_root, status=6)
     run("cache", "stage", "local:" + str(alias), "--root", alias_root)
-    legacy_plan = run("db", "plan-set", alias_app_hash, "--root", alias_root).split(" sha256 ")[1].split()[0]
+    legacy = run("db", "plan-set", alias_app_hash, "--root", alias_root)
+    # the installed instance is a legacy record the walk cannot read, so the plan says the
+    # installed claims are short instead of reporting over a subset as if it were the set
+    assert "set-conflicts installed claims incomplete scope installed-set" in legacy, legacy
+    legacy_plan = legacy.split(" sha256 ")[1].split()[0]
     run("db", "apply-set", legacy_plan, alias_app_hash, "--root", alias_root)
     run("db", "check", "--all", "--root", alias_root)
     upgraded, upgraded_hash = package("keep-claim", "implementation", "0.3-1", provides=claim)

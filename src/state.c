@@ -827,8 +827,8 @@ failed:
 /* the walk itself, over a state directory the caller opened. a caller that already
    holds the lock passes it: flock is per descriptor, so taking LOCK_SH here on a second
    descriptor of a directory this process holds LOCK_EX on would block against itself. */
-static int state_visit_locked(int root, int dir, holy_instance_visit visit, void *context,
-                              unsigned long long *generation)
+int state_visit_locked(int root, int dir, holy_instance_visit visit, void *context,
+                       unsigned long long *generation)
 {
     int installed = -1, result = 1, pending;
     char **names = NULL, digest[65], approved[65];
@@ -4074,6 +4074,7 @@ struct install_set {
     size_t count, paths;
     struct holy_conflict_claims capabilities;
     size_t capability_findings;
+    int capability_complete;   /* every installed instance was read into the claims */
     struct set_claim *claims;
     size_t claim_count;
     char *graph;
@@ -5646,6 +5647,17 @@ static int build_set(const char *root_path, int root, int dir,
     for (i = 0; i < set->count; ++i)
         if (!holy_conflict_claims_package(&set->capabilities, set->items[i].snapshot,
                                           set->items[i].identity.digest)) { result = 6; goto done; }
+    /* the selection joins a set that already has claims of its own, so a capability two
+       artifacts across the two sets both offer is reported here rather than left for a
+       report run after the fact. the walk refuses a root with a transaction pending,
+       which is the state a recovery re-derives the plan in, and the claims are not part
+       of the plan hash, so recovery asks for the plan without them. */
+    if (!completed) {
+        unsigned long long stated = 0;
+        int across = holy_conflict_claims_installed(&set->capabilities, root, dir,
+                                                   &stated, &set->capability_complete);
+        if (across) { result = across; goto done; }
+    }
     set->capability_findings = holy_conflict_claims_findings(&set->capabilities);
     if (!set_soname_paths(set, root)) { result = 3; goto done; }
     if (!same_root(root_path, &st)) { result = 4; goto done; }
@@ -6163,6 +6175,10 @@ static void print_set_overrides(const struct install_set *set)
 static void print_set_conflicts(const struct install_set *set, unsigned long long generation)
 {
     holy_conflict_claims_print(&set->capabilities, 0);
+    /* an instance the walk could not read leaves the claims short, and a report that
+       named a smaller set as if it were the whole one would be a fact about a subset */
+    if (!set->capability_complete)
+        printf("set-conflicts installed claims incomplete scope installed-set\n");
     holy_private_places_print(&set->places, set->places.count);
     printf("set-conflicts generation %llu artifacts %zu capabilities %zu conflicts %zu read-only\n",
            generation, set->count, set->capabilities.count, set->capability_findings);

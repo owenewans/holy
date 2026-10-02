@@ -302,6 +302,40 @@ void holy_conflict_claims_print(const struct holy_conflict_claims *claims, int j
     }
 }
 
+/* the caller is inside a set transaction, so it hands the state directory it already
+   opened and locked rather than opening a second descriptor for a shared lock */
+int holy_conflict_claims_installed(struct holy_conflict_claims *claims,
+                                   int root_fd, int dir_fd,
+                                   unsigned long long *generation, int *complete)
+{
+    struct holy_conflict_claims installed = {0};
+    size_t i, j;
+    int result;
+    if (!claims || root_fd < 0 || dir_fd < 0 || !complete) return 2;
+    *complete = 0;
+    result = state_visit_locked(root_fd, dir_fd, collect, &installed, generation);
+    /* an instance record the walk could not read leaves the installed claims short, and
+       the caller states that rather than reporting over a smaller set as if it were the
+       whole one. the claims it did read are real, so they are kept. */
+    *complete = !result;
+    /* a selection already carries the claims of its own artifacts, so the installed
+       set contributes only what the selection does not state itself */
+    for (i = 0; i < installed.count && !result; ++i) {
+        int own = 0;
+        for (j = 0; j < claims->count; ++j)
+            if (!strcmp(claims->claim[j].digest, installed.claim[i].digest)) { own = 1; break; }
+        if (own) continue;
+        if (!holy_conflict_claims_push(claims, installed.claim[i].kind, installed.claim[i].name,
+                                       installed.claim[i].arch, installed.claim[i].libc,
+                                       installed.claim[i].digest)) {
+            holy_conflict_claims_free(&installed);
+            return 1;
+        }
+    }
+    holy_conflict_claims_free(&installed);
+    return 0;
+}
+
 int holy_conflict_report(const char *root, int json)
 {
     struct holy_conflict_claims claims = {0};

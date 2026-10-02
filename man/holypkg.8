@@ -1113,18 +1113,36 @@ Unused candidates are excluded from the operation. The plan digest binds
 target-root device/inode, generation, selected graph, explicit provider choice
 and every selected manifest. Inter-package path and slot conflicts are rejected.
 .PP
-The plan also states the capabilities its own selection offers twice, read from
-the provides records and payload manifests of the selected artifacts. A package
+The plan also states the capabilities the selection and the installed set it
+joins offer twice, read from the provides records and payload manifests of the
+selected artifacts and of every instance the target root already has. A package
 name, a SONAME, a declared file path and a program under a private bin directory
 are the shapes, and each finding names every provider, its arch and libc and the
 reason: duplicate-provider for one ABI scope, abi-mismatch when the providers
 disagree, mixed-providers for one package name and shadowed-path for one private
-program name. The line
+program name. A provider that is already installed is named in the same finding
+as one the selection carries, so a collision with the set the transaction joins is
+stated by the review rather than left for a
+.B holypkg conflict
+report run afterwards. The line
 .B set-conflicts generation G artifacts N capabilities C conflicts M read-only
-follows the findings. db apply-set prints the same findings before it stages the
-first payload file, and a reused installed artifact states its capabilities again.
-A shared public path is not a finding, since two selected artifacts claiming one
-path are rejected before this report.
+follows the findings, where C counts the claims of both sets and an artifact the
+selection already carries is counted once. db apply-set prints the same findings
+before it stages the first payload file, and a reused installed artifact states
+its capabilities again. A shared public path is not a finding, since two selected
+artifacts claiming one path are rejected before this report.
+An installed instance record the walk cannot read, such as an instance written
+before a record grew a field, leaves the installed claims short. The plan says
+so rather than reporting over a subset as if it were the set, with
+.B set-conflicts installed claims incomplete scope installed-set
+before the summary line, and the claims it did read are still stated. db status
+reports the record itself.
+.PP
+The walk over the installed set reads through the lock the transaction already
+holds, and it refuses a root with a transaction pending, which is the state a
+recovery re-derives the plan in. A recovery therefore asks for the plan without
+the installed claims; the claims are not part of the plan digest, so the digest a
+journal names is the one the review approved either way.
 .PP
 db rm takes one artifact or several. With several, every artifact is checked
 before the first one is removed, so a consumer, a changed file, a

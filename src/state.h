@@ -140,6 +140,11 @@ int holy_state_find_slot(const char *root_path, const char *source_id,
 typedef int (*holy_instance_visit)(void *, int, int, const char *);
 int holy_state_visit(const char *root_path, holy_instance_visit visit, void *context,
                      unsigned long long *generation);
+/* the same walk over a state directory the caller already opened and locked. a caller
+   inside a write transaction must use this, since a second LOCK_SH on the same directory
+   through another descriptor blocks against the lock the caller holds. */
+int state_visit_locked(int root, int dir, holy_instance_visit visit, void *context,
+                       unsigned long long *generation);
 
 /* one field of an installed instance meta record, which is the package meta the
    instance was installed from; 0 when the record is absent, unreadable or lacks it. */
