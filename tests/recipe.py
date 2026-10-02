@@ -288,9 +288,9 @@ PACKAGE
         clean_meta, _ = read_metadata(out / "clean-out" / "holy-recipe-clean--noarch--nolibc.holy")
         assert "build-environment root" in clean_meta["HOLY/transform"]
         assert "network none" in clean_meta["HOLY/transform"]
-        # a step that ran as an ordinary user inside the namespace left files the caller
-        # owns, since the namespace maps the one id the caller has
-        assert (clean_work / "out" / "uid").read_text().strip() == "0"
+        # a step runs as the caller's own id inside the namespace, so a file it wrote is
+        # owned by the caller and the step holds no privilege over the running system
+        assert (clean_work / "out" / "uid").read_text().strip() == str(os.getuid())
         assert (clean_work / "out" / "uid").stat().st_uid == os.getuid()
         assert (clean_work / "out" / "var").read_text().strip() == "declared"
         assert (clean_work / "out" / "mount").read_text().strip() == "yes"
