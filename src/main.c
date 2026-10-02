@@ -160,7 +160,7 @@ static int add_local(int argc, char **argv)
                             accepted_arch, arch_count,
                             accepted_privileged, privileged_count,
                             skipped_hooks, skipped_count,
-                            accepted_service, service_count, plan);
+                            accepted_service, service_count, NULL, 0, plan);
     if (result) goto done;
     if (!yes) {
         if (noninteractive || !isatty(STDIN_FILENO)) {
@@ -180,7 +180,7 @@ static int add_local(int argc, char **argv)
                             accepted_arch, arch_count,
                             accepted_privileged, privileged_count,
                             skipped_hooks, skipped_count,
-                            accepted_service, service_count, NULL);
+                            accepted_service, service_count, NULL, 0, NULL);
 done:
     if (result == 2)
         fputs("usage: holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--associate SHA256=ALIAS ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
@@ -2649,7 +2649,7 @@ key_usage:
                 privileged[privileged_count++] = argv[++i];
             else if (!strcmp(argv[i], "--accept-service") && i + 1 < argc)
                 services[service_count++] = argv[++i];
-            else if (!strcmp(argv[i], "--accept-broken")) broken = 1;
+            else if (!strcmp(argv[i], "--accept-broken") || !strcmp(argv[i], "--yes")) broken = 1;
             else goto rollback_usage;
         }
         result = holy_state_rollback(argv[2], approved, broken,
@@ -2986,9 +2986,9 @@ update_done:
         int end = argc - 2;
         const char *choice = NULL;
         const char **digests, **bindings, **accepted_arch, **accepted_privileged, **skipped_hooks;
-        const char **accepted_service;
+        const char **accepted_service, **placements;
         size_t count = 0, binding_count = 0, accepted_count = 0, privileged_count = 0, skipped_count = 0;
-        size_t service_count = 0;
+        size_t service_count = 0, placement_count = 0;
         int i, result = 2;
         if (strcmp(argv[argc - 2], "--root")) return 2;
         digests = calloc((size_t)argc, sizeof *digests);
@@ -2997,10 +2997,11 @@ update_done:
         accepted_privileged = calloc((size_t)argc, sizeof *accepted_privileged);
         skipped_hooks = calloc((size_t)argc, sizeof *skipped_hooks);
         accepted_service = calloc((size_t)argc, sizeof *accepted_service);
+        placements = calloc((size_t)argc, sizeof *placements);
         if (!digests || !bindings || !accepted_arch || !accepted_privileged || !skipped_hooks ||
-            !accepted_service) {
+            !accepted_service || !placements) {
             free(digests); free(bindings); free(accepted_arch); free(accepted_privileged);
-            free(skipped_hooks); free(accepted_service); return 1;
+            free(skipped_hooks); free(accepted_service); free(placements); return 1;
         }
         for (i = start; i < end; ++i) {
             if (!strcmp(argv[i], "--choose")) {
@@ -3021,6 +3022,9 @@ update_done:
             } else if (!strcmp(argv[i], "--accept-service")) {
                 if (++i >= end) goto set_done;
                 accepted_service[service_count++] = argv[i];
+            } else if (!strcmp(argv[i], "--private")) {
+                if (++i >= end) goto set_done;
+                placements[placement_count++] = argv[i];
             } else if (argv[i][0] == '-') goto set_done;
             else digests[count++] = argv[i];
         }
@@ -3029,10 +3033,11 @@ update_done:
                                           bindings, binding_count, accepted_arch, accepted_count,
                                           accepted_privileged, privileged_count,
                                           skipped_hooks, skipped_count,
-                                          accepted_service, service_count, NULL);
+                                          accepted_service, service_count,
+                                          placements, placement_count, NULL);
 set_done:
         free(digests); free(bindings); free(accepted_arch); free(accepted_privileged);
-        free(skipped_hooks); free(accepted_service);
+        free(skipped_hooks); free(accepted_service); free(placements);
         return result;
     }
     if (argc == 6 && !strcmp(argv[1], "db") &&
@@ -3114,7 +3119,8 @@ set_done:
         if (!digests) return 1;
         if (strcmp(argv[argc - 2], "--root")) { free(digests); return 2; }
         for (i = 3; i < end; ++i) {
-            if (!strcmp(argv[i], "--accept-broken")) broken = 1;
+            /* --yes and --accept-broken are the same consent on this path */
+            if (!strcmp(argv[i], "--accept-broken") || !strcmp(argv[i], "--yes")) broken = 1;
             else if (argv[i][0] == '-') { free(digests); return 2; }
             else digests[count++] = argv[i];
         }

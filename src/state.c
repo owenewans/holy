@@ -20,6 +20,7 @@
 #include "repo.h"
 #include "version.h"
 #include "change.h"
+#include "private.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -285,9 +286,12 @@ static int config_state_valid(int item, const char *artifact)
     char *record = update_record(item, "config-state");
     int ok = 0;
     if (!record) return 0;
-    if (sscanf(record,
-               "format holy-config-transform-1\nsource %64[0-9a-f]\nraw %64[0-9a-f]\ninstalled %64[0-9a-f]\nplan %64[0-9a-f]\n",
-               source, raw, installed, plan) != 4 ||
+    if ((sscanf(record,
+                "format holy-config-transform-1\nsource %64[0-9a-f]\nraw %64[0-9a-f]\ninstalled %64[0-9a-f]\nplan %64[0-9a-f]\n",
+                source, raw, installed, plan) != 4 &&
+         sscanf(record,
+                "format holy-private-transform-1\nsource %64[0-9a-f]\nraw %64[0-9a-f]\ninstalled %64[0-9a-f]\nplan %64[0-9a-f]\n",
+                source, raw, installed, plan) != 4) ||
         !valid_digest(source) || !valid_digest(raw) || !valid_digest(installed) ||
         !valid_digest(plan) ||
         strcmp(source, artifact) ||
@@ -2286,6 +2290,70 @@ done:
     return NULL;
 }
 
+/* a placement changes where a file lives, so the instance keeps the manifest the
+   package shipped as package-files and the record it actually installed as files. the
+   transform record names both digests, which is the same shape the preserved-config
+   transform uses, so every reader of an instance already understands it. */
+static int save_placed_files(int item, const char *snapshot, const char *artifact,
+                             const struct holy_private_places *places,
+                             const char *transaction)
+{
+    struct archive *archive = archive_read_new();
+    struct archive_entry *entry;
+    char *raw = NULL, *placed = NULL, *record = NULL;
+    size_t raw_length = 0, placed_length = 0, record_length = 0;
+    char raw_hash[65], placed_hash[65];
+    int status, ok = 0;
+    if (!archive || archive_read_support_filter_lz4(archive) != ARCHIVE_OK ||
+        archive_read_support_format_tar(archive) != ARCHIVE_OK ||
+        archive_read_open_filename(archive, snapshot, 8192) != ARCHIVE_OK) goto done;
+    while ((status = archive_read_next_header(archive, &entry)) == ARCHIVE_OK) {
+        const char *path = archive_entry_pathname(entry);
+        la_ssize_t got;
+        size_t used = 0;
+        if (!path || strcmp(path, "HOLY/files") ||
+            archive_entry_filetype(entry) != AE_IFREG ||
+            archive_entry_size(entry) < 0 || archive_entry_size(entry) > 16 * 1024 * 1024) {
+            if (archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
+            continue;
+        }
+        raw_length = (size_t)archive_entry_size(entry);
+        raw = malloc(raw_length + 1);
+        if (!raw) goto done;
+        while (used < raw_length) {
+            got = archive_read_data(archive, raw + used, raw_length - used);
+            if (got < 0) goto done;
+            if (!got) break;
+            used += (size_t)got;
+        }
+        if (used != raw_length || archive_read_data_skip(archive) != ARCHIVE_OK) goto done;
+        raw[raw_length] = '\0';
+        break;
+    }
+    /* the loop leaves on the record it was after, so an unfinished archive is caught
+       by the manifest rewrite refusing a truncated one */
+    if (!raw) goto done;
+    if (!holy_private_manifest(places, artifact, raw, raw_length, &placed, &placed_length) ||
+        !instance_record_digest(item, "files", raw_hash) ||
+        renameat(item, "files", item, "package-files") || fsync(item) ||
+        !record_file(item, "files", placed, placed_length) ||
+        !instance_record_digest(item, "files", placed_hash)) goto done;
+    record_length = (size_t)snprintf(NULL, 0,
+        "format holy-private-transform-1\nsource %s\nraw %s\ninstalled %s\nplan %s\n",
+        artifact, raw_hash, placed_hash, transaction);
+    record = malloc(record_length + 1);
+    if (!record) goto done;
+    if (snprintf(record, record_length + 1,
+        "format holy-private-transform-1\nsource %s\nraw %s\ninstalled %s\nplan %s\n",
+        artifact, raw_hash, placed_hash, transaction) < 0 ||
+        !record_file(item, "config-state", record, record_length)) goto done;
+    ok = config_state_valid(item, artifact);
+done:
+    archive_read_free(archive);
+    free(raw); free(placed); free(record);
+    return ok;
+}
+
 static int save_instance(int installed, const char *digest, const char *snapshot,
                          unsigned long long generation, const char *graph, size_t graph_length,
                          const char *reason, const char *source_record,
@@ -3948,6 +4016,7 @@ static int scan_privileged(void *context, const struct holy_manifest_entry *entr
 
 struct set_claim {
     char *path;
+    char *artifact;             /* the artifact that claims it, for a placement */
     unsigned mode;
     long long uid, gid;
     int directory;
@@ -3982,6 +4051,8 @@ struct install_set {
     struct holy_override_record_info *overrides;
     size_t override_count;
     struct service_list services;
+    struct holy_private_places places;
+    const char *claim_artifact;         /* the artifact the claim visitor is scanning */
     char hash[65];
     char host[65];
     char catalog_index[65];
@@ -4003,6 +4074,8 @@ struct set_journal {
     size_t skipped_count;
     char **accepted_service;
     size_t service_count;
+    char **placements;            /* the placements the review displaced a file for */
+    size_t placement_count;
 };
 
 static void service_list_free(struct service_list *list)
@@ -4026,8 +4099,12 @@ static void free_set(struct install_set *set)
         free(set->items[i].source_record);
         holy_package_identity_free(&set->items[i].identity);
     }
-    for (i = 0; i < set->claim_count; ++i) free(set->claims[i].path);
+    for (i = 0; i < set->claim_count; ++i) {
+        free(set->claims[i].path);
+        free(set->claims[i].artifact);
+    }
     free(set->claims);
+    holy_private_places_free(&set->places);
     holy_conflict_claims_free(&set->capabilities);
     free(set->items);
     free(set->graph);
@@ -4039,19 +4116,31 @@ static void free_set(struct install_set *set)
     memset(set, 0, sizeof *set);
 }
 
+/* a displaced file keeps its claim out of the public tree: what the set checks is the
+   path the file will occupy, so two artifacts may ship one public file once the review
+   has said which of them moves aside */
 static int set_claim(void *context, const struct holy_manifest_entry *entry)
 {
     struct install_set *set = context;
     struct set_claim *claims;
-    size_t length = strlen(entry->path);
+    const char *path = entry->path;
+    size_t length = strlen(path);
     if (set->claim_count >= 1000000) return 0;
+    if (set->places.count && set->claim_artifact) {
+        const char *private = holy_private_lookup(&set->places, set->claim_artifact, path);
+        if (private) path = private;
+        else if (holy_private_places_artifact(&set->places, set->claim_artifact)) return 1;
+    }
+    length = strlen(path);
+    if (length && path[length - 1] == '/') --length;
+    if (!length) return 1;
     claims = realloc(set->claims, (set->claim_count + 1) * sizeof *claims);
     if (!claims) return 0;
     set->claims = claims;
-    if (length && entry->path[length - 1] == '/') --length;
     claims = &set->claims[set->claim_count];
-    claims->path = strndup(entry->path, length);
-    if (!claims->path) return 0;
+    claims->path = strndup(path, length);
+    claims->artifact = strdup(set->claim_artifact ? set->claim_artifact : "-");
+    if (!claims->path || !claims->artifact) return 0;
     claims->directory = entry->directory;
     claims->mode = entry->mode;
     claims->uid = entry->uid;
@@ -4171,6 +4260,12 @@ static int set_claims_valid(struct install_set *set)
             (!a->directory || !b->directory || a->mode != b->mode ||
              a->uid != b->uid || a->gid != b->gid)) {
             fprintf(stderr, "holypkg: selected packages claim the same path: %s\n", a->path);
+            /* either artifact can be the one that moves aside, so the message names
+               both rather than picking a winner the operator did not choose */
+            fprintf(stderr, "holypkg: decision-required collision path=%s owners=%s,%s;"
+                            " --private %s=%s or --private %s=%s places one copy in its private tree\n",
+                    a->path, a->artifact, b->artifact,
+                    a->artifact, a->path, b->artifact, b->path);
             return 0;
         }
     }
@@ -4999,6 +5094,7 @@ static int build_set(const char *root_path, int root, int dir,
                       const char *const *accepted_arch, size_t accepted_count,
                       const char *const *accepted_privileged, size_t privileged_count,
                       const char *const *skipped_hooks, size_t skipped_count,
+                      struct holy_private_places *places,
                       const struct holy_override_record_info *override_records,
                       size_t override_record_count,
                       struct install_set *set)
@@ -5049,6 +5145,10 @@ static int build_set(const char *root_path, int root, int dir,
     if (!snapshots || fstat(root, &st) || uname(&host)) goto done;
     if (strlen(host.machine) >= sizeof set->host) goto done;
     strcpy(set->host, host.machine);
+    /* the set owns the placements once it has taken them, so the caller's table is
+       emptied rather than freed twice. this happens before the item loop, since the
+       claim visitor resolves a path against the placements as it reads each manifest */
+    if (places) { set->places = *places; memset(places, 0, sizeof *places); }
     for (i = 0; i < count; ++i) {
         snapshots[i] = holy_cache_snapshot(digests[i], root_path);
         if (!snapshots[i]) {
@@ -5116,6 +5216,15 @@ static int build_set(const char *root_path, int root, int dir,
     if (!hash_text(plan.hash, number)) goto done;
     snprintf(number, sizeof number, "%llu", generation);
     if (!hash_text(plan.hash, number)) goto done;
+    /* the placement is part of what the review fixed, so the plan hash carries it and
+       the same decision set produces the same plan */
+    for (i = 0; i < set->places.count; ++i) {
+        char line[4096];
+        int length = snprintf(line, sizeof line, "private %s %s\n",
+                              set->places.place[i].artifact, set->places.place[i].path);
+        if (length < 0 || (size_t)length >= sizeof line ||
+            !hash_text(plan.hash, line)) goto done;
+    }
     for (i = 0; i < set->count; ++i) {
         struct set_item *item = &set->items[i];
         for (j = 0; j < count; ++j)
@@ -5259,7 +5368,9 @@ static int build_set(const char *root_path, int root, int dir,
             goto done;
         }
         result = 1;
+        set->claim_artifact = item->identity.digest;
         if (!holy_verify_visit(item->snapshot, set_claim, set)) goto done;
+        set->claim_artifact = NULL;
         if (!service_scan(item->snapshot, &set->services, item->identity.digest)) goto done;
     }
     if (!set_claims_valid(set)) { result = 4; goto done; }
@@ -5321,6 +5432,8 @@ static void free_set_journal(struct set_journal *journal)
     free(journal->skipped_hooks);
     for (i = 0; i < journal->service_count; ++i) free(journal->accepted_service[i]);
     free(journal->accepted_service);
+    for (i = 0; i < journal->placement_count; ++i) free(journal->placements[i]);
+    free(journal->placements);
     memset(journal, 0, sizeof *journal);
 }
 
@@ -5384,6 +5497,7 @@ static int write_set_journal(int transactions, unsigned long long generation,
                              const char *const *accepted_privileged, size_t privileged_count,
                              const char *const *skipped_hooks, size_t skipped_count,
                              const char *const *accepted_service, size_t service_count,
+                             const char *const *placements, size_t placement_count,
                              const char *phase)
 {
     char *record = NULL;
@@ -5392,11 +5506,12 @@ static int write_set_journal(int transactions, unsigned long long generation,
     int ok = 1;
     if (!stream || !phase_valid(phase)) return 0;
     if (fprintf(stream, "format holy-set-journal-%d\ngeneration %llu\nplan %s\nroot %s\nchoice %s\n",
-                service_count ? 7 : skipped_count ? 6 : set->catalog_index[0] ? 5 :
+                placement_count ? 8 : service_count ? 7 : skipped_count ? 6 :
+                set->catalog_index[0] ? 5 :
                 privileged_count ? 4 : accepted_count ? 3 : set->binding_count ? 2 : 1,
                 generation, set->hash, set->resolution.root, choice ? choice : "-") < 0) ok = 0;
     if ((accepted_count || privileged_count || skipped_count || service_count ||
-         set->catalog_index[0]) &&
+         placement_count || set->catalog_index[0]) &&
         fprintf(stream, "host %s\n", set->host) < 0) ok = 0;
     if (set->catalog_index[0] &&
         fprintf(stream, "catalog-index %s\n", set->catalog_index) < 0) ok = 0;
@@ -5412,6 +5527,10 @@ static int write_set_journal(int transactions, unsigned long long generation,
         if (fprintf(stream, "skip-hooks %s\n", skipped_hooks[i]) < 0) ok = 0;
     for (i = 0; i < service_count && ok; ++i)
         if (fprintf(stream, "service %s\n", accepted_service[i]) < 0) ok = 0;
+    /* the placement is recorded as artifact=path, so a recovery re-derives the same
+       private targets instead of resolving the decision again */
+    for (i = 0; i < placement_count && ok; ++i)
+        if (fprintf(stream, "private %s\n", placements[i]) < 0) ok = 0;
     if (fprintf(stream, "phase %s\n", phase) < 0) ok = 0;
     if (fclose(stream)) ok = 0;
     /* the journal is rewritten as the transaction advances, so it is replaced rather
@@ -5481,7 +5600,8 @@ static int read_set_journal(int dir, struct set_journal *journal)
             memchr(line, 0, (size_t)got)) goto done;
         line[got - 1] = 0;
         if (number == 0) {
-            if (!strcmp(line, "format holy-set-journal-7")) version = 7;
+            if (!strcmp(line, "format holy-set-journal-8")) version = 8;
+            else if (!strcmp(line, "format holy-set-journal-7")) version = 7;
             else if (!strcmp(line, "format holy-set-journal-6")) version = 6;
             else if (!strcmp(line, "format holy-set-journal-5")) version = 5;
             else if (!strcmp(line, "format holy-set-journal-4")) version = 4;
@@ -5575,6 +5695,27 @@ static int read_set_journal(int dir, struct set_journal *journal)
             next[journal->service_count] = strdup(line + 8);
             if (!next[journal->service_count]) goto done;
             ++journal->service_count;
+        } else if (version == 8 && !strncmp(line, "private ", 8)) {
+            char artifact[65], *path = NULL;
+            char **next;
+            size_t i;
+            if (journal->accepted_count || journal->privileged_count || journal->skipped_count ||
+                journal->service_count || journal->binding_count ||
+                !holy_private_place_parse(line + 8, artifact, &path) ||
+                journal->placement_count >= journal->count) { free(path); goto done; }
+            for (i = 0; i < journal->count; ++i)
+                if (!strcmp(artifact, journal->digests[i])) break;
+            if (i == journal->count) { free(path); goto done; }
+            for (i = 0; i < journal->placement_count; ++i)
+                if (!strcmp(line + 8, journal->placements[i])) { free(path); goto done; }
+            next = realloc(journal->placements,
+                           (journal->placement_count + 1) * sizeof *next);
+            free(path);
+            if (!next) goto done;
+            journal->placements = next;
+            next[journal->placement_count] = strdup(line + 8);
+            if (!next[journal->placement_count]) goto done;
+            ++journal->placement_count;
         } else if (!strncmp(line, "phase ", 6)) {
             /* the phase closes the journal, so a record that named one twice or named
                an unknown one is not a journal this root wrote */
@@ -5622,7 +5763,8 @@ static int read_set_journal(int dir, struct set_journal *journal)
          (version == 4 && journal->privileged_count) ||
          (version == 5 && journal->catalog_index[0] && journal->binding_count) ||
          (version == 6 && journal->skipped_count) ||
-         (version == 7 && journal->service_count))) result = 1;
+         (version == 7 && journal->service_count) ||
+         (version == 8 && journal->placement_count))) result = 1;
 done:
     free(line);
     if (stream) fclose(stream);
@@ -5751,6 +5893,7 @@ static void print_set_overrides(const struct install_set *set)
 static void print_set_conflicts(const struct install_set *set, unsigned long long generation)
 {
     holy_conflict_claims_print(&set->capabilities, 0);
+    holy_private_places_print(&set->places, set->places.count);
     printf("set-conflicts generation %llu artifacts %zu capabilities %zu conflicts %zu read-only\n",
            generation, set->count, set->capabilities.count, set->capability_findings);
 }
@@ -5764,9 +5907,11 @@ static int state_set(const char *const *digests, size_t count, const char *choic
                      const char *const *accepted_privileged, size_t privileged_count,
                      const char *const *skipped_hooks, size_t skipped_count,
                      const char *const *accepted_service, size_t service_count,
+                     const char *const *placements, size_t placement_count,
                      char plan_hash[65], int quiet)
 {
     struct install_set set = {0};
+    struct holy_private_places places = {0};
     struct holy_override_record_info *override_records = NULL;
     size_t override_record_count = 0;
     unsigned long long generation;
@@ -5775,6 +5920,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
     if (plan_hash) plan_hash[0] = 0;
     if ((approved && !valid_digest(approved)) || (choice && !set_choice_valid(choice))) return 2;
     if (service_count > 10000) return 2;
+    if (placement_count > 10000) return 2;
     for (i = 0; i < service_count; ++i) {
         size_t j;
         if (!holy_unit_name_valid(accepted_service[i])) return 2;
@@ -5783,6 +5929,19 @@ static int state_set(const char *const *digests, size_t count, const char *choic
     }
     root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     dir = root < 0 ? -1 : state_dir_at(root, 0);
+    /* a placement names an artifact and the public path that artifact loses, so it is
+       resolved before the lock and rejected here if the line is malformed */
+    for (i = 0; i < placement_count; ++i) {
+        char artifact[65];
+        char *path = NULL;
+        if (!holy_private_place_parse(placements[i], artifact, &path) ||
+            !holy_private_place_add(&places, artifact, path)) {
+            free(path);
+            result = 2;
+            goto done;
+        }
+        free(path);
+    }
     /* the override store is read before the database lock, since the plan binds what
        the store says and the read must not wait for a lock this call takes */
     if (dir >= 0 && holy_override_records(root_path, &override_records,
@@ -5798,7 +5957,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
     result = build_set(root_path, root, dir, generation, digests, count, choice, 0, bindings, binding_count,
                        default_source_id, catalog_index,
                        accepted_arch, accepted_count, accepted_privileged, privileged_count,
-                       skipped_hooks, skipped_count, override_records,
+                       skipped_hooks, skipped_count, &places, override_records,
                        override_record_count, &set);
     if (result) goto done;
     if (!quiet && !set_service_consent(&set, accepted_service, service_count))
@@ -5847,7 +6006,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
                            accepted_arch, accepted_count,
                            accepted_privileged, privileged_count,
                            skipped_hooks, skipped_count,
-                           accepted_service, service_count, "applying")) {
+                           accepted_service, service_count, placements, placement_count, "applying")) {
         struct stat st;
         result = fstatat(transactions, "set-journal", &st, AT_SYMLINK_NOFOLLOW) ? 1 : 5;
         goto done;
@@ -5856,14 +6015,42 @@ static int state_set(const char *const *digests, size_t count, const char *choic
     result = 5;
     for (i = 0; i < set.count; ++i) {
         struct set_item *item = &set.items[i];
+        size_t placed = set.places.count ?
+                        holy_private_places_artifact(&set.places, item->identity.digest) : 0;
+        struct holy_install_placement *placements = NULL;
+        int item_result = 0;
         if (item->reused) continue;
-        if (!holy_install_payload(item->snapshot, root, item->privileged) ||
+        if (placed) {
+            size_t j, k = 0;
+            placements = calloc(placed, sizeof *placements);
+            if (!placements) goto done;
+            for (j = 0; j < set.places.count && k < placed; ++j) {
+                if (strcmp(set.places.place[j].artifact, item->identity.digest)) continue;
+                placements[k].artifact = item->identity.digest;
+                placements[k].public_path = set.places.place[j].path;
+                placements[k].private_path = set.places.place[j].target;
+                ++k;
+            }
+            item_result = holy_install_payload_placed(item->snapshot, root, item->privileged,
+                                                      placements, placed);
+        } else {
+            item_result = holy_install_payload(item->snapshot, root, item->privileged);
+        }
+        free(placements);
+        if (!item_result ||
             !save_instance(installed, item->identity.digest, item->snapshot, generation,
                            set.graph, set.graph_length,
                            strcmp(item->identity.digest, set.resolution.root) ? "dependency" : "explicit",
                            item->source_record, item->architecture[0] ? item->architecture : NULL,
-                           item->privileged, item->skipped_hooks))
-            goto done;
+                           item->privileged, item->skipped_hooks)) goto done;
+        if (placed) {
+            int saved = child_dir(installed, item->identity.digest, 0);
+            int recorded = saved >= 0 &&
+                save_placed_files(saved, item->snapshot, item->identity.digest,
+                                  &set.places, set.hash);
+            if (saved >= 0) close(saved);
+            if (!recorded) goto done;
+        }
         printf("applied %s\n", item->identity.digest);
     }
     /* every instance is in place, which is the phase a crash after this point resumes
@@ -5872,7 +6059,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
                            accepted_arch, accepted_count,
                            accepted_privileged, privileged_count,
                            skipped_hooks, skipped_count,
-                           accepted_service, service_count, "instances")) goto done;
+                           accepted_service, service_count, placements, placement_count, "instances")) goto done;
     /* the journal the transaction used becomes its decisions record, and the directory
        name is the plan it was made with, so the root keeps what the set was reviewed
        with. the record is written before the journal is dropped, so a crash leaves the
@@ -5882,13 +6069,13 @@ static int state_set(const char *const *digests, size_t count, const char *choic
                            accepted_arch, accepted_count,
                            accepted_privileged, privileged_count,
                            skipped_hooks, skipped_count,
-                           accepted_service, service_count, "record") ||
+                           accepted_service, service_count, placements, placement_count, "record") ||
         !set_generation(dir, generation + 1) ||
         !write_set_journal(transactions, generation, &set, choice,
                            accepted_arch, accepted_count,
                            accepted_privileged, privileged_count,
                            skipped_hooks, skipped_count,
-                           accepted_service, service_count, "generation") ||
+                           accepted_service, service_count, placements, placement_count, "generation") ||
         unlinkat(transactions, "set-journal", 0) || fsync(transactions)) goto done;
     printf("committed-set %s generation %llu artifacts %zu\n", set.hash, generation + 1, set.count);
     result = 0;
@@ -5911,12 +6098,14 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
                    const char *const *accepted_privileged, size_t privileged_count,
                    const char *const *skipped_hooks, size_t skipped_count,
                    const char *const *accepted_service, size_t service_count,
+                   const char *const *placements, size_t placement_count,
                    char plan_hash[65])
 {
     return state_set(digests, count, choice, approved, root_path, bindings,
                      binding_count, NULL, NULL, accepted_arch, accepted_count,
                      accepted_privileged, privileged_count, skipped_hooks, skipped_count,
-                     accepted_service, service_count, plan_hash, 0);
+                     accepted_service, service_count, placements, placement_count,
+                     plan_hash, 0);
 }
 
 int holy_state_set_source(const char *const *digests, size_t count,
@@ -5932,7 +6121,8 @@ int holy_state_set_source(const char *const *digests, size_t count,
     return state_set(digests, count, choice, approved, root_path, NULL, 0,
                      source_id, catalog_index, accepted_arch, accepted_count,
                      accepted_privileged, privileged_count, NULL, 0,
-                     accepted_service, service_count, plan_hash, 0);
+                     accepted_service, service_count, NULL, 0,
+                     plan_hash, 0);
 }
 
 int holy_state_set_source_bindings(const char *const *digests, size_t count,
@@ -5950,7 +6140,8 @@ int holy_state_set_source_bindings(const char *const *digests, size_t count,
                      bindings, binding_count, source_id, catalog_index,
                      accepted_arch, accepted_count,
                      accepted_privileged, privileged_count, NULL, 0,
-                     accepted_service, service_count, plan_hash, 0);
+                     accepted_service, service_count, NULL, 0,
+                     plan_hash, 0);
 }
 
 int holy_state_probe_source_bindings(const char *const *digests, size_t count,
@@ -5968,7 +6159,7 @@ int holy_state_probe_source_bindings(const char *const *digests, size_t count,
                      bindings, binding_count, source_id, catalog_index,
                      accepted_arch, accepted_count,
                      accepted_privileged, privileged_count, NULL, 0,
-                     accepted_service, service_count, NULL, 1);
+                     accepted_service, service_count, NULL, 0, NULL, 1);
 }
 
 static int instance_matches_snapshot(int item, const char *snapshot)
@@ -6060,6 +6251,7 @@ static int recover_set(const char *root_path, int resume)
     unsigned long long generation, recorded;
     const char **digests = NULL;
     unsigned char *present = NULL;
+    struct holy_private_places places = {0};
     size_t i, j, phase = 0;
     struct utsname host;
     int root = -1, dir = -1, installed = -1, transactions = -1, result = 5, phased = 0;
@@ -6079,6 +6271,16 @@ static int recover_set(const char *root_path, int resume)
     if (!phased) strcpy(journal.phase, "applying");
     phase = phase_index(journal.phase);
     printf("resumed-phase %s\n", journal.phase);
+    for (i = 0; i < journal.placement_count; ++i) {
+        char artifact[65];
+        char *path = NULL;
+        if (!holy_private_place_parse(journal.placements[i], artifact, &path) ||
+            !holy_private_place_add(&places, artifact, path)) {
+            free(path);
+            goto done;
+        }
+        free(path);
+    }
     if (journal.host[0] && (uname(&host) || strcmp(host.machine, journal.host))) goto done;
     digests = calloc(journal.count, sizeof *digests);
     present = calloc(journal.count, 1);
@@ -6093,7 +6295,7 @@ static int recover_set(const char *root_path, int resume)
                   (const char *const *)journal.accepted_arch, journal.accepted_count,
                   (const char *const *)journal.accepted_privileged, journal.privileged_count,
                   (const char *const *)journal.skipped_hooks, journal.skipped_count,
-                  override_records, override_record_count, &set) ||
+                  &places, override_records, override_record_count, &set) ||
         set.count != journal.count || strcmp(set.hash, journal.hash)) goto done;
     /* a journal names the consent it was reviewed with; a set that starts a service
        without one is refused here too, so a hand edited journal places no unit */
@@ -8182,7 +8384,7 @@ static int rollback_set_review(const char *transaction, char **digests, size_t c
                             NULL, root_path, NULL, 0,
                             arch_list, arch ? 1 : 0, privileged_list, privileged ? 1 : 0,
                             hooks, decisions.hook_count,
-                            services, decisions.service_count, plan);
+                            services, decisions.service_count, NULL, 0, plan);
     free(hooks);
     free(services);
     rollback_decisions_free(&decisions);
@@ -8224,7 +8426,7 @@ static int rollback_set_apply(const char *transaction, const char *approved,
                             approved, root_path, NULL, 0,
                             arch_list, arch ? 1 : 0, privileged_list, privileged ? 1 : 0,
                             hooks, decisions.hook_count,
-                            services, decisions.service_count, NULL);
+                            services, decisions.service_count, NULL, 0, NULL);
     free(hooks);
     free(services);
     rollback_decisions_free(&decisions);

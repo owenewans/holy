@@ -67,8 +67,24 @@
   `--view PUBLIC=PRIVATE` bind mounts a package-owned private file or directory
   over an existing public path of the same type in a private user/mount namespace, then
   enters the target root. The fixture checks absolute helper lookup, argv,
-  exit status and host path isolation. Automatic private conflict placement,
-  missing public mountpoints and privileged fallback remain open.
+  exit status and host path isolation. Missing public mountpoints and privileged
+  fallback remain open.
+- [x] Resolve a confirmed file collision by placing one copy in the private tree
+  its artifact owns. A set whose selection claims one public path twice stops
+  with status 4 and names both owners plus the two decisions that settle it;
+  `--private ARTIFACT=PATH` is that decision. The displaced copy installs under
+  `/usr/lib/holy/private/ARTIFACT/PATH` with the structure the package declared,
+  the other provider keeps the public path, and the instance keeps the shipped
+  manifest as package-files beside the installed one, joined by a
+  `holy-private-transform-1` record naming both digests. The plan prints one
+  private line per decision and the plan hash covers it, so an apply without the
+  decision re-derives the collision rather than resolving it. Fixtures cover the
+  plan, the apply, check, the removal that takes the private file and leaves the
+  public one, a placement for an artifact outside the set, and a placement for a
+  path the package does not ship. Refusals cover a directory, a hardlink group, a
+  nested private path, a duplicate pair and one private target claimed twice.
+  Consumer search-path rewriting through patchelf and ABI-matched private
+  library sets remain open.
 - [x] Publish a native index generation with an optional Ed25519 signature
   before switching `current`; verify the exact index bytes and package
   artifacts against a supplied public key. Signed HTTPS mirrors check the
@@ -372,7 +388,11 @@
   as one holy-local-solve-1 choice event. Automatic selection between two
   candidates stays unfinished and refused.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
-  private providers, interpreter handling and explicit conflict decisions.
+  private providers, interpreter handling and explicit conflict decisions. The
+  private placement of a colliding file is done and its limits are stated in
+  man/holypkg.8; patchelf rewriting of the consumer's interpreter, RPATH, RUNPATH,
+  SONAME and DT_NEEDED is not, so a displaced shared library is not yet reachable
+  by the program that needs it.
 - [x] Accept nonempty HOLY/transform as an immutable provenance record in local
   solve, single-package planning, set installation and removal. The installer
   verifies the already transformed payload and does not execute the record.

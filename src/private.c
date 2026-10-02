@@ -275,9 +275,7 @@ struct rewrite {
     const struct holy_private_places *places;
     const char *artifact;
     struct parent_list parents;
-    long long uid, gid;
     size_t mapped;
-    int owned;
 };
 
 static const char *rewrite_target(struct rewrite *state, char **v, size_t count, int *usable)
@@ -292,7 +290,8 @@ static const char *rewrite_target(struct rewrite *state, char **v, size_t count,
     /* a directory would move a whole subtree, which is the consumer's decision rather
        than one file's, and a hardlink group would break when only one member moved */
     if (count != 12 || strcmp(v[11], "-") ||
-        !number(v[5], 10, &state->uid) || !number(v[6], 10, &state->gid)) return NULL;
+        !number(v[5], 10, &state->parents.uid) ||
+        !number(v[6], 10, &state->parents.gid)) return NULL;
     *usable = 1;
     return state->places->place[i].target;
 }
@@ -300,10 +299,13 @@ static const char *rewrite_target(struct rewrite *state, char **v, size_t count,
 int holy_private_manifest(const struct holy_private_places *places, const char *artifact,
                           const char *source, size_t length, char **record, size_t *size)
 {
-    struct rewrite state = {places, artifact, {0}, 0, 0, 0, 0};
+    struct rewrite state;
     FILE *out;
     size_t start = 0, line = 0;
     int ok = 0;
+    memset(&state, 0, sizeof state);
+    state.places = places;
+    state.artifact = artifact;
     *record = NULL;
     *size = 0;
     out = open_memstream(record, size);

@@ -5,6 +5,7 @@
 /src/*.o
 /tests/solver
 /tests/install-helper
+/tests/private-helper
 /tests/__pycache__/
 /tools/__pycache__/
 /.build-config

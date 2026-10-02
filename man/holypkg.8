@@ -241,7 +241,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db apply --root DIRECTORY
 .br
-.B holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] --root DIRECTORY
+.B holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] [--private ARTIFACT=PATH ...] --root DIRECTORY
 .br
 .B holypkg db transactions reports every transaction this root committed. A commit
 leaves a directory named for the plan it committed with, a committed file
@@ -266,7 +266,7 @@ schema with one object per transaction and a summary object. A root without
 a usable database is 6.
 
 .PP
-db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] --root DIRECTORY
+db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] [--private ARTIFACT=PATH ...] --root DIRECTORY
 .br
 .B holypkg db recover --finish-set|--continue-set --root DIRECTORY
 .br
@@ -2937,6 +2937,34 @@ db plan-set and db apply-set read the same four claim shapes from the archives o
 the artifacts they select, so a plan states the ambiguity its own selection creates
 before any file is staged. The reason names and the conflict line format are the
 same; the set report adds no JSON, since a plan has no JSON output.
+.PP
+A path two selected artifacts both claim is a collision, and the set stops with
+status 4 and names both owners. Either artifact can be the one that moves aside, so
+the message gives both decisions rather than choosing one. --private ARTIFACT=PATH
+is that decision: the copy of PATH that ARTIFACT ships installs under
+/usr/lib/holy/private/ARTIFACT/PATH instead, the other provider keeps the public
+path, and the private file stays owned by the artifact that shipped it. The
+relative structure the package declared is kept, so a displaced program finds its
+neighbors where it expects them. The plan prints one private line per decision and
+the plan hash covers it, so an apply without the decision re-derives the collision
+and refuses rather than picking for the operator.
+.PP
+A placement names one artifact and one path it must ship. A path the artifact does
+not ship, a path already inside a private tree, a path with an empty, dot or
+dot-dot component, an artifact id that is not a SHA-256 and the same pair twice
+are all refused, and one private target may not be claimed by two placements.
+Only a regular file, symlink or hardlink row moves: a directory would relocate a
+whole subtree and a hardlink group would break when one member moved, so both are
+refused. The instance keeps the manifest the package shipped as package-files and
+the record it actually installed as files, with a holy-private-transform-1 record
+naming both digests, which keeps the source artifact, the modified package and
+what reached the root three separate facts.
+.PP
+Changing the search paths of the consumers of a displaced file needs patchelf and
+is not part of this decision. The private file is reachable through
+"holypkg run SOURCE:PACKAGE -- COMMAND", which puts the private bin directory
+first on PATH, or through an explicit --view bind, and a binary that names an
+absolute helper path has to be started through that view.
 .SH ENROLLED KEYS
 key add NAME FILE enrolls one public key under NAME in the keys directory of the
 target root, which is ROOT/var/lib/holypkg/keys. The default root is /. A name is
