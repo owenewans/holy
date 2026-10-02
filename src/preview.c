@@ -107,7 +107,8 @@ done:
 
 static int preview(const char *package, const char *root_path,
                    int json, int resolved, int completed, int accepted_privileged,
-                   int skipped_hooks)
+                   int skipped_hooks,
+                   const struct holy_preview_placement *placements, size_t placed)
 {
     struct archive *archive = NULL;
     struct archive_entry *entry;
@@ -153,8 +154,18 @@ static int preview(const char *package, const char *root_path,
             goto done;
         }
         if (count == (size_t)-1 / sizeof *actions) goto done;
-        state = inspect_path(root, path + 5,
-                             archive_entry_filetype(entry) == AE_IFDIR);
+        {
+            /* a displaced file is read at the private path it will occupy, so the
+               public path the review handed to another provider is not a conflict */
+            const char *look = path + 5;
+            size_t k;
+            for (k = 0; k < placed; ++k)
+                if (!strcmp(placements[k].public_path, look)) {
+                    look = placements[k].private_path;
+                    break;
+                }
+            state = inspect_path(root, look, archive_entry_filetype(entry) == AE_IFDIR);
+        }
         if (state < 0) { rc = 1; goto done; }
         next = realloc(actions, (count + 1) * sizeof *actions);
         if (!next) { rc = 1; goto done; }
@@ -253,6 +264,16 @@ static int preview(const char *package, const char *root_path,
                 putchar('\n');
             }
         }
+    } else if (conflicts && !completed) {
+        /* a resolved preview is part of a plan, so nothing of it reaches stdout; a
+           conflict that refuses the plan is then the only reason for the status, and
+           status 4 without a path would not tell an operator what to decide about. a
+           tolerated conflict belongs to an artifact already installed, where the
+           caller owns the answer, so nothing is said */
+        for (i = 0; i < count; ++i)
+            if (actions[i].state == 2)
+                fprintf(stderr, "holypkg: preview conflict artifact=%s path=%s\n",
+                        identity.digest, actions[i].path);
     }
     rc = (conflicts && !completed) ? 4 :
          (!resolved && (requirements || elf_needed || script_interpreters)) ? 3 : 0;
@@ -284,11 +305,21 @@ int holy_preview_local(const char *package, const char *root_path)
 
 int holy_preview_local_format(const char *package, const char *root_path, int json)
 {
-    return preview(package, root_path, json, 0, 0, 0, 0);
+    return preview(package, root_path, json, 0, 0, 0, 0, NULL, 0);
 }
 
 int holy_preview_resolved(const char *package, const char *root_path, int completed,
                           int accepted_privileged, int skipped_hooks)
 {
-    return preview(package, root_path, -1, 1, completed, accepted_privileged, skipped_hooks);
+    return preview(package, root_path, -1, 1, completed, accepted_privileged, skipped_hooks,
+                   NULL, 0);
+}
+
+int holy_preview_resolved_placed(const char *package, const char *root_path, int completed,
+                                 int accepted_privileged, int skipped_hooks,
+                                 const struct holy_preview_placement *placements,
+                                 size_t count)
+{
+    return preview(package, root_path, -1, 1, completed, accepted_privileged, skipped_hooks,
+                   placements, count);
 }

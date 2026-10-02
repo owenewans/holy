@@ -2942,7 +2942,12 @@ same; the set report adds no JSON, since a plan has no JSON output.
 .PP
 A path two selected artifacts both claim is a collision, and the set stops with
 status 4 and names both owners. Either artifact can be the one that moves aside, so
-the message gives both decisions rather than choosing one. --private ARTIFACT=PATH
+the message gives both decisions rather than choosing one. A path one selected
+artifact claims that an installed artifact already owns is refused the same way,
+and a resolved preview names the path as "preview conflict artifact=DIGEST
+path=PATH", because a plan reports no preview of its own and status 4 without a path
+would not say what to decide about. A conflict an artifact that is already installed
+carries is not named, since the set tolerates that one. --private ARTIFACT=PATH
 is that decision: the copy of PATH that ARTIFACT ships installs under
 /usr/lib/holy/private/ARTIFACT/PATH instead, the other provider keeps the public
 path, and the private file stays owned by the artifact that shipped it. The
@@ -2973,13 +2978,10 @@ settles it. A consumer whose cached archive is gone returns 6 rather than being
 left out of the count, since the walk would then report a fact about a smaller set
 than the one installed.
 .PP
-That check cannot be exercised end to end through db plan-set yet. The local
-resolver requires a provider in the set for every DT_NEEDED and every PT_INTERP a
-payload carries, so a set of application packages that link glibc does not resolve
-without the runtime packages in the same set. The consumer walk itself is covered
-by tests/private-consumer.sh against real archives; the set-level refusal is
-implemented and states the same facts, but its acceptance waits on the resolver
-carrying runtime requirements.
+The walk covers both sets: an artifact already installed when the displacement
+arrives is a consumer too, so a program that needed the library before the second
+provider showed up is still named. A provider the walk must not walk is the
+displacing artifact itself.
 .PP
 Changing the search paths of the consumers of a displaced file needs patchelf and
 is not part of this decision. The private file is reachable through

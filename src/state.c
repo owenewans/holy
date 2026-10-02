@@ -1056,6 +1056,11 @@ struct plan_hash {
     size_t count;
     int dir;
     int claim_error;
+    /* the placements the hashed artifact carries. a displaced file is hashed and
+       checked at the private path it will occupy, since the public path belongs to
+       the provider the review kept */
+    const struct holy_install_placement *placed;
+    size_t placed_count;
 };
 
 static int path_available(int dir, const char *path, int directory)
@@ -1105,8 +1110,17 @@ static int hash_text(EVP_MD_CTX *hash, const char *text)
 static int plan_entry(void *context, const struct holy_manifest_entry *entry)
 {
     struct plan_hash *plan = context;
+    struct holy_manifest_entry moved;
     char attributes[128];
+    size_t i;
     int written, available;
+    moved = *entry;
+    for (i = 0; i < plan->placed_count; ++i)
+        if (!strcmp(plan->placed[i].public_path, entry->path)) {
+            moved.path = plan->placed[i].private_path;
+            entry = &moved;
+            break;
+        }
     if ((entry->link && (entry->mode != 0777 || entry->link[0] == '/')) ||
         !entry->path[0] || entry->path[0] == '/' ||
         !strcmp(entry->path, "var/lib/holypkg") ||
@@ -4252,9 +4266,12 @@ static int claim_order(const void *left, const void *right)
 /* one ELF of a package that names a placed library, so the review can see which
    programs the placement would cut off */
 struct stranded_consumer {
-    const char *consumer;
-    const char *provider;
-    const char *soname;
+    /* every name is owned: the review reads this list after the walk that produced it
+       has released the snapshots, the SONAME it looked up and the installed names it
+       was handed, so borrowed pointers would already be gone */
+    char *consumer;
+    char *provider;
+    char *soname;
     char *path;
 };
 
@@ -4278,14 +4295,21 @@ static int record_consumer(void *context, const char *path, const char *needed)
     if (!grown) { scan->failed = 1; return 0; }
     scan->item = grown;
     entry = calloc(1, sizeof *entry);
-    if (!entry || !(entry->path = strdup(path))) {
+    if (entry) {
+        entry->path = strdup(path);
+        entry->consumer = strdup(scan->consumer);
+        entry->provider = strdup(scan->provider);
+        entry->soname = strdup(scan->soname);
+    }
+    if (!entry || !entry->path || !entry->consumer || !entry->provider || !entry->soname) {
+        free(entry->path);
+        free(entry->consumer);
+        free(entry->provider);
+        free(entry->soname);
         free(entry);
         scan->failed = 1;
         return 0;
     }
-    entry->consumer = scan->consumer;
-    entry->provider = scan->provider;
-    entry->soname = scan->soname;
     scan->item[scan->count++] = entry;
     return 1;
 }
@@ -4295,6 +4319,9 @@ static void free_consumers(struct consumer_scan *scan)
     size_t i;
     for (i = 0; i < scan->count; ++i) {
         free(scan->item[i]->path);
+        free(scan->item[i]->consumer);
+        free(scan->item[i]->provider);
+        free(scan->item[i]->soname);
         free(scan->item[i]);
     }
     free(scan->item);
@@ -4319,20 +4346,23 @@ static int installed_consumer(void *context, int root, int item, const char *dig
     char *snapshot;
     int result;
     (void)root; (void)item;
-    if (!strcmp(digest, scan->provider)) return 1;
+    /* the visit continues with the next instance, so zero is what this returns; a
+       non-zero value would abort the walk after one artifact and name that artifact
+       as the reason the rest was never looked at */
+    if (!strcmp(digest, scan->provider)) return 0;
     if (!(snapshot = holy_cache_snapshot(digest, state->root_path))) {
         /* a consumer whose cached archive is gone cannot be walked, so the decision
            is refused rather than reported as a fact about a smaller set */
         fprintf(stderr, "holypkg: installed artifact needs its cached archive: %s\n", digest);
         state->failed = 1;
-        return 1;
+        return 0;
     }
     scan->consumer = digest;
     result = holy_private_consumers(snapshot, scan->soname, record_consumer, scan);
     unlink(snapshot);
     free(snapshot);
     if (!result) state->failed = 1;
-    return 1;
+    return 0;
 }
 
 static int set_private_consumers(struct install_set *set, const char *root_path)
@@ -4368,7 +4398,6 @@ static int set_private_consumers(struct install_set *set, const char *root_path)
                 installed.failed = 1;
             if (installed.failed) scan.failed = 1;
         }
-        free(soname);
     }
     for (i = 0; i < scan.count; ++i) {
         struct stranded_consumer *entry = scan.item[i];
@@ -5223,6 +5252,70 @@ static int instance_source_matches(int instance, const char *record)
     return !strcmp(expected, actual);
 }
 
+/* the placements one set item carries, in the shape the preflight, the preview and
+   the plan hash all read. the caller frees the table. */
+static int set_item_placements(const struct set_item *item,
+                               const struct install_set *set,
+                               struct holy_install_placement **table, size_t *count)
+{
+    struct holy_install_placement *built;
+    size_t total = 0, i, k = 0;
+    *table = NULL;
+    *count = 0;
+    for (i = 0; i < set->places.count; ++i)
+        if (!strcmp(set->places.place[i].artifact, item->identity.digest)) ++total;
+    if (!total) return 1;
+    if (!(built = calloc(total, sizeof *built))) return 0;
+    for (i = 0; i < set->places.count && k < total; ++i) {
+        if (strcmp(set->places.place[i].artifact, item->identity.digest)) continue;
+        built[k].artifact = item->identity.digest;
+        built[k].public_path = set->places.place[i].path;
+        built[k].private_path = set->places.place[i].target;
+        ++k;
+    }
+    *table = built;
+    *count = total;
+    return 1;
+}
+
+/* the preflight for one set item. an item that carries a placement is checked with
+   it, since the public path of a displaced file is occupied by the provider the
+   review chose to keep, and that is a fact about the plan rather than drift. */
+static int set_item_preflight(const struct set_item *item,
+                              const struct holy_install_placement *table, size_t count,
+                              int root)
+{
+    return count ? holy_install_preflight_placed(item->snapshot, root, item->privileged,
+                                                 table, count)
+                 : holy_install_preflight(item->snapshot, root, item->privileged);
+}
+
+/* the preview for one set item, with the placements that item carries. a displaced
+   file is previewed at the private path it will occupy, since the public path belongs
+   to the provider the review kept and reporting it as a conflict would undo the
+   decision the caller already made. */
+static int set_item_preview(const struct set_item *item,
+                            const struct holy_install_placement *table,
+                            size_t count, const char *root_path, int completed)
+{
+    struct holy_preview_placement *seen = NULL;
+    size_t i;
+    int rc;
+    if (!count)
+        return holy_preview_resolved(item->snapshot, root_path, completed,
+                                     item->privileged, item->skipped_hooks || item->reused);
+    if (!(seen = calloc(count, sizeof *seen))) return 1;
+    for (i = 0; i < count; ++i) {
+        seen[i].public_path = table[i].public_path;
+        seen[i].private_path = table[i].private_path;
+    }
+    rc = holy_preview_resolved_placed(item->snapshot, root_path, completed,
+                                      item->privileged, item->skipped_hooks || item->reused,
+                                      seen, count);
+    free(seen);
+    return rc;
+}
+
 static int build_set(const char *root_path, int root, int dir,
                       unsigned long long generation, const char *const *digests,
                       size_t count, const char *choice, int completed,
@@ -5240,6 +5333,8 @@ static int build_set(const char *root_path, int root, int dir,
     char **snapshots = NULL;
     char **candidates = NULL;
     struct plan_hash plan = {0};
+    struct holy_install_placement *placed = NULL;
+    size_t placed_count = 0;
     struct stat st;
     struct utsname host;
     char number[128];
@@ -5484,8 +5579,13 @@ static int build_set(const char *root_path, int root, int dir,
         if (item->reused && !strcmp(item->identity.digest, set->resolution.root)) {
             result = 3; goto done;
         }
-        result = holy_preview_resolved(item->snapshot, root_path, completed || item->reused,
-                                       item->privileged, item->skipped_hooks || item->reused);
+        /* one placement table per item, shared by the preview, the preflight and the
+           plan hash, so all three agree on which path a displaced file occupies */
+        if (!set_item_placements(item, set, &placed, &placed_count)) goto done;
+        plan.placed = placed;
+        plan.placed_count = placed_count;
+        result = set_item_preview(item, placed, placed_count, root_path,
+                                  completed || item->reused);
         if (result) goto done;
         for (j = 0; j < i; ++j)
             if (same_slot(&set->items[j].identity, set->items[j].source_id,
@@ -5495,13 +5595,17 @@ static int build_set(const char *root_path, int root, int dir,
         if (!completed && !item->reused) {
             result = slot_available(dir, &item->identity, item->source_id);
             if (result != 1) { result = result < 0 ? 1 : 4; goto done; }
-            if (!holy_install_preflight(item->snapshot, root, item->privileged)) { result = 4; goto done; }
+            /* the displaced file is checked at the private path, so the public path the
+               review handed to another provider does not block this plan */
+            if (!set_item_preflight(item, placed, placed_count, root)) { result = 4; goto done; }
         }
         result = 6;
         plan.completed = completed || item->reused;
         plan.accepted_privileged = item->privileged;
         if (!hash_text(plan.hash, item->identity.digest) ||
             !holy_verify_visit(item->snapshot, plan_entry, &plan)) {
+            free(placed);
+            placed = NULL;
             if (plan.claim_error) result = plan.claim_error;
             goto done;
         }
@@ -5510,6 +5614,9 @@ static int build_set(const char *root_path, int root, int dir,
         if (!holy_verify_visit(item->snapshot, set_claim, set)) goto done;
         set->claim_artifact = NULL;
         if (!service_scan(item->snapshot, &set->services, item->identity.digest)) goto done;
+        free(placed);
+        placed = NULL;
+        placed_count = 0;
     }
     if (!set_claims_valid(set)) { result = 4; goto done; }
     if (set->places.count && (result = set_private_consumers(set, root_path))) goto done;
@@ -5542,6 +5649,7 @@ static int build_set(const char *root_path, int root, int dir,
     set->paths = plan.count;
     result = 0;
 done:
+    free(placed);
     if (snapshots) for (i = 0; i < count; ++i) {
         if (snapshots[i]) unlink(snapshots[i]);
         free(snapshots[i]);

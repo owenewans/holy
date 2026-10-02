@@ -11,7 +11,7 @@ expect() {
     expected=$1
     shift
     if "$@" > "$tmp/out" 2> "$tmp/err"; then actual=0; else actual=$?; fi
-    test "$actual" -eq "$expected" || { cat "$tmp/out" "$tmp/err"; exit 1; }
+    test "$actual" -eq "$expected" || { echo "GOT $actual WANT $expected: $*" >&2; cat "$tmp/out" >&2; cat "$tmp/err" >&2; exit 1; }
 }
 
 # two packages ship the same program name, each with its own content
@@ -100,5 +100,80 @@ test "$(cat "$root/usr/bin/prog")" = two
 expect 4 "$bin" check --root "$root"
 grep -q "broken-provider consumer=$root_artifact" "$tmp/out" "$tmp/err"
 
-echo "private placement set fixtures passed"
+# a displaced library is reachable only through a search path nobody has changed yet, so
+# the set names every ELF that needs it instead of stranding it. the resolver requires a
+# provider inside the set for each PT_INTERP and each DT_NEEDED, so this fixture
+# installs a runtime first: a stub carrying libc.so.6's SONAME and the version its
+# consumers require, since a provider that does not define the version does not satisfy
+# the edge. the libraries carry no RUNPATH, because a search path outside the target
+# root is a decision this fixture is not about.
+root2="$tmp/root2"
+mkdir -p "$root2/usr/lib" "$root2/usr/bin"
+"$bin" db init --root "$root2" > "$tmp/out"
+cc=${CC:-cc}
+command -v "$cc" >/dev/null 2>&1 || { echo "$cc required for the private consumer case" >&2; exit 6; }
+mkdir -p "$tmp/build"
+printf 'int helper(void) { return 7; }\n' > "$tmp/helper.c"
+printf 'int helper(void);\nint answer(void) { return 42 + helper(); }\n' > "$tmp/lib.c"
+printf 'GLIBC_2.2.5 { global: *; };\n' > "$tmp/build/versions.map"
+"$cc" -shared -fPIC -nostdlib -Wl,--version-script="$tmp/build/versions.map" \
+    -Wl,-soname,libc.so.6 -o "$tmp/build/libc.so.6" -x c /dev/null
+"$cc" -shared -fPIC -Wl,-soname,libhelper.so.1 -o "$tmp/build/libhelper.so.1" "$tmp/helper.c"
+"$cc" -shared -fPIC -Wl,-soname,libanswer.so.1 -o "$tmp/build/libanswer.so.1" \
+    "$tmp/lib.c" "$tmp/build/libhelper.so.1"
 
+elf_package() {
+    name=$1
+    shift
+    rm -rf "$tree"
+    mkdir -p "$tree/HOLY" "$tree/DATA/usr/lib" "$tree/DATA/usr/bin"
+    printf 'format holy-package-1\nname %s\nversion 1\nrelease 1\nos linux\narch x86_64\nlibc glibc\n' "$name" > "$tree/HOLY/meta"
+    for field in deps provides hooks origin transform; do : > "$tree/HOLY/$field"; done
+    for pair in "$@"; do
+        source=${pair%%:*}
+        target=${pair#*:}
+        cp "$tmp/build/$source" "$tree/DATA/$target"
+    done
+    "$bin" manifest generate "$tree" --output "$tmp/files" > "$tmp/out"
+    mv "$tmp/files" "$tree/HOLY/files"
+    "$bin" pack "$tree" --output "$tmp/$name.holy" > "$tmp/out"
+    "$bin" cache stage "local:$tmp/$name.holy" --root "$root2" > "$tmp/out"
+}
+
+install_set() {
+    expect 0 "$bin" db plan-set "$@" --root "$root2"
+    plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+    expect 0 "$bin" db apply-set "$plan" "$@" --root "$root2"
+}
+
+# the runtime carries the SONAME every glibc payload names, and stays one package: two
+# providers of one SONAME is a dependency conflict, a different decision from a collision
+elf_package runtime libc.so.6:usr/lib/libc.so.6
+runtime=$(sha256sum "$tmp/runtime.holy" | cut -d ' ' -f 1)
+install_set "$runtime"
+
+elf_package libanswer libhelper.so.1:usr/lib/libhelper.so.1 libanswer.so.1:usr/lib/libanswer.so.1
+libanswer=$(sha256sum "$tmp/libanswer.holy" | cut -d ' ' -f 1)
+install_set "$libanswer"
+
+test -f "$root2/usr/lib/libanswer.so.1"
+
+# a second provider of the helper library collides with the one already installed
+elf_package other libhelper.so.1:usr/lib/libhelper.so.1
+other=$(sha256sum "$tmp/other.holy" | cut -d ' ' -f 1)
+# the second provider of a path an installed artifact already owns is refused by the
+# preview, which reads the public path and sees the file that is there
+expect 4 "$bin" db plan-set "$other" "$libanswer" --root "$root2"
+grep -q "preview conflict artifact=$other path=usr/lib/libhelper.so.1" "$tmp/err"
+
+# the placement settles the collision and names the library that needs the displaced one,
+# since a private tree is reachable only through a search path nobody has changed yet
+expect 3 "$bin" db plan-set "$other" "$libanswer" --private "$other=usr/lib/libhelper.so.1" \
+    --root "$root2"
+grep -qx "consumer $libanswer usr/lib/libanswer.so.1 needs libhelper.so.1 from $other unreachable scope soname" "$tmp/out"
+test "$(grep -c '^consumer ' "$tmp/out")" -eq 1
+grep -q "decision-required placement strands 1 programs" "$tmp/err"
+grep -q "holypkg patch CONSUMER --runpath DIR" "$tmp/err"
+test -f "$root2/usr/lib/libhelper.so.1"
+
+echo "private placement set fixtures passed"

@@ -96,11 +96,19 @@
   it and one that needs two, and covers the SONAME a payload carries, a payload that
   carries none, a path the package does not ship, one consumer, a consumer of two
   libraries, the displaced library not being its own consumer, a SONAME nothing
-  names and an archive that is not one. The set-level refusal cannot be exercised
-  through `db plan-set` yet: the local resolver requires a provider in the set for
-  every DT_NEEDED and every PT_INTERP, so a set of glibc packages does not resolve
-  without the runtime in the same set. That gap is recorded under resolution and
-  the refusal waits on it.
+  names and an archive that is not one. `tests/private-set.sh` also carries the set
+  level case end to end: a runtime package whose stub carries libc.so.6's SONAME
+  and the version its consumers require, a library package, then a second provider
+  of one library, refused with status 4 and settled by `--private` into one
+  consumer line and status 3. Reaching that case needed three fixes. The visitor
+  contract of `holy_state_visit` is to return zero in order to continue, and the
+  consumer visitor returned one, so the walk stopped after the first installed
+  artifact. A placement relocates one path, and the preview, the preflight and the
+  plan hash all read the public path, so the very collision the decision settled
+  came back as a status with no reason; all three read the private path now. And the
+  review reads its findings after the walk released the SONAME it looked up, so the
+  recorded consumer names were borrowed pointers into freed memory and are owned
+  copies now.
 - [x] Rewrite the interpreter, RPATH or RUNPATH, SONAME and DT_NEEDED of one file
   through patchelf, with no second rewriter in this repository. `holypkg patch`
   reads the facts the file states, states the argv patchelf would run and runs it

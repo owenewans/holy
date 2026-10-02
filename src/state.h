@@ -134,7 +134,9 @@ int holy_state_find_slot(const char *root_path, const char *source_id,
                          const char *name, const char *arch, const char *libc,
                          char digest[65]);
 
-/* borrows root/instance fds under a shared lock, in artifact order; 0 succeeds. */
+/* borrows root/instance fds under a shared lock, in artifact order; 0 succeeds.
+   the visit returns 0 to continue to the next instance, since a non-zero value stops
+   the walk and becomes the status of the whole visit */
 typedef int (*holy_instance_visit)(void *, int, int, const char *);
 int holy_state_visit(const char *root_path, holy_instance_visit visit, void *context,
                      unsigned long long *generation);
