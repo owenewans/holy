@@ -824,17 +824,18 @@ failed:
     return -1;
 }
 
-int holy_state_visit(const char *root_path, holy_instance_visit visit, void *context,
-                     unsigned long long *generation)
+/* the walk itself, over a state directory the caller opened. a caller that already
+   holds the lock passes it: flock is per descriptor, so taking LOCK_SH here on a second
+   descriptor of a directory this process holds LOCK_EX on would block against itself. */
+static int state_visit_locked(int root, int dir, holy_instance_visit visit, void *context,
+                              unsigned long long *generation)
 {
-    int root = -1, dir = -1, installed = -1, result = 1, pending;
+    int installed = -1, result = 1, pending;
     char **names = NULL, digest[65], approved[65];
     size_t count = 0, i;
     DIR *list = NULL;
     struct dirent *entry;
-    root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    if (root < 0 || (dir = state_dir_at(root, 0)) < 0 || flock(dir, LOCK_SH) ||
-        !state_layout(dir, 0) || !read_generation(dir, generation)) goto done;
+    if (!state_layout(dir, 0) || !read_generation(dir, generation)) goto done;
     pending = transaction_pending(dir, *generation);
     if (pending < 0) goto done;
     if (pending) { result = 5; goto done; }
@@ -870,6 +871,17 @@ done:
     free(names);
     if (list) closedir(list);
     if (installed >= 0) close(installed);
+    return result;
+}
+
+int holy_state_visit(const char *root_path, holy_instance_visit visit, void *context,
+                     unsigned long long *generation)
+{
+    int root = -1, dir = -1, result = 1;
+    root = open(root_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (root < 0 || (dir = state_dir_at(root, 0)) < 0 || flock(dir, LOCK_SH)) goto done;
+    result = state_visit_locked(root, dir, visit, context, generation);
+done:
     if (dir >= 0) close(dir);
     if (root >= 0) close(root);
     return result;
@@ -4371,7 +4383,8 @@ static int installed_consumer(void *context, int root, int item, const char *dig
     return 0;
 }
 
-static int set_private_consumers(struct install_set *set, const char *root_path)
+static int set_private_consumers(struct install_set *set, int root, int dir,
+                                 const char *root_path)
 {
     struct consumer_scan scan = {0};
     size_t i, j;
@@ -4400,7 +4413,10 @@ static int set_private_consumers(struct install_set *set, const char *root_path)
             unsigned long long generation = 0;
             scan.provider = place->artifact;
             scan.soname = soname;
-            if (!holy_state_visit(root_path, installed_consumer, &installed, &generation))
+            /* this runs inside the set transaction, which already holds the state lock,
+               so the walk reads through that descriptor rather than taking the shared
+               lock again on a second one */
+            if (!state_visit_locked(root, dir, installed_consumer, &installed, &generation))
                 installed.failed = 1;
             if (installed.failed) scan.failed = 1;
         }
@@ -5625,7 +5641,8 @@ static int build_set(const char *root_path, int root, int dir,
         placed_count = 0;
     }
     if (!set_claims_valid(set)) { result = 4; goto done; }
-    if (set->places.count && (result = set_private_consumers(set, root_path))) goto done;
+    if (set->places.count &&
+        (result = set_private_consumers(set, root, dir, root_path))) goto done;
     for (i = 0; i < set->count; ++i)
         if (!holy_conflict_claims_package(&set->capabilities, set->items[i].snapshot,
                                           set->items[i].identity.digest)) { result = 6; goto done; }

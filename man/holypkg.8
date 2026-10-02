@@ -2986,6 +2986,12 @@ settles it. A consumer whose cached archive is gone returns 6 rather than being
 left out of the count, since the walk would then report a fact about a smaller set
 than the one installed.
 .PP
+db apply-set holds the state lock exclusively while it plans, and the walk reads the
+installed artifacts through that same lock rather than taking the shared lock again.
+flock belongs to the descriptor, not the process, so a second LOCK_SH on a directory
+this process already holds LOCK_EX on would block against itself and the apply would
+never return.
+.PP
 The walk covers both sets: an artifact already installed when the displacement
 arrives is a consumer too, so a program that needed the library before the second
 provider showed up is still named. A provider the walk must not walk is the

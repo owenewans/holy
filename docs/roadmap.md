@@ -115,7 +115,13 @@
   now writes the missing transform record before it reads the database, the rewrite
   reads the shipped manifest from whichever of the two names carries it, and a
   `private-files-after` fault in tests/update-fault.c drives the case end to end in
-  tests/private-set.sh.
+  tests/private-set.sh. That fixture also caught a hang nobody had seen: db apply-set
+  holds the state lock exclusively while it plans, and the consumer walk reached
+  installed artifacts through `holy_state_visit`, which took LOCK_SH again on a fresh
+  descriptor. flock is per descriptor, so the walk blocked against the lock its own
+  process held and the apply never returned. `holy_state_visit` is now split so a
+  caller that already holds the lock reads through it, and the fixture runs the apply
+  under a watchdog so the hang fails the run instead of stalling it.
 - [x] Rewrite the interpreter, RPATH or RUNPATH, SONAME and DT_NEEDED of one file
   through patchelf, with no second rewriter in this repository. `holypkg patch`
   reads the facts the file states, states the argv patchelf would run and runs it

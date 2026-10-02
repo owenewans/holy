@@ -126,9 +126,11 @@ printf 'GLIBC_2.2.5 { global: *; };\n' > "$tmp/build/versions.map"
 "$cc" -shared -fPIC -Wl,-soname,libanswer.so.1 -o "$tmp/build/libanswer.so.1" \
     "$tmp/lib.c" "$tmp/build/libhelper.so.1"
 
+# elf_package NAME SOURCE:TARGET..., staged into the root elf_root names or root2
 elf_package() {
     name=$1
     shift
+    rm -f "$tmp/$name.holy"
     rm -rf "$tree"
     mkdir -p "$tree/HOLY" "$tree/DATA/usr/lib" "$tree/DATA/usr/bin"
     printf 'format holy-package-1\nname %s\nversion 1\nrelease 1\nos linux\narch x86_64\nlibc glibc\n' "$name" > "$tree/HOLY/meta"
@@ -141,24 +143,27 @@ elf_package() {
     "$bin" manifest generate "$tree" --output "$tmp/files" > "$tmp/out"
     mv "$tmp/files" "$tree/HOLY/files"
     "$bin" pack "$tree" --output "$tmp/$name.holy" > "$tmp/out"
-    "$bin" cache stage "local:$tmp/$name.holy" --root "$root2" > "$tmp/out"
+    "$bin" cache stage "local:$tmp/$name.holy" --root "${elf_root:-$root2}" > "$tmp/out"
 }
 
+# install_set ROOT DIGEST...
 install_set() {
-    expect 0 "$bin" db plan-set "$@" --root "$root2"
+    root_set=$1
+    shift
+    expect 0 "$bin" db plan-set "$@" --root "$root_set"
     plan=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
-    expect 0 "$bin" db apply-set "$plan" "$@" --root "$root2"
+    expect 0 "$bin" db apply-set "$plan" "$@" --root "$root_set"
 }
 
 # the runtime carries the SONAME every glibc payload names, and stays one package: two
 # providers of one SONAME is a dependency conflict, a different decision from a collision
 elf_package runtime libc.so.6:usr/lib/libc.so.6
 runtime=$(sha256sum "$tmp/runtime.holy" | cut -d ' ' -f 1)
-install_set "$runtime"
+install_set "$root2" "$runtime"
 
 elf_package libanswer libhelper.so.1:usr/lib/libhelper.so.1 libanswer.so.1:usr/lib/libanswer.so.1
 libanswer=$(sha256sum "$tmp/libanswer.holy" | cut -d ' ' -f 1)
-install_set "$libanswer"
+install_set "$root2" "$libanswer"
 
 test -f "$root2/usr/lib/libanswer.so.1"
 
@@ -221,5 +226,34 @@ expect 0 "$bin" db rm "$crashb" --root "$root4"
 test ! -e "$root4/usr/lib/holy/private/$crashb/usr/bin/prog"
 test "$(cat "$root4/usr/bin/prog")" = one
 expect 0 "$bin" db check --all --root "$root4"
+
+# the consumer walk reads the installed artifacts, and apply-set holds the state lock
+# exclusively while it plans. a walk that took the shared lock again on a second
+# descriptor of the same directory would block against itself, so the case is an
+# apply-set carrying an ELF placement whose consumer the walk has to reach.
+root5="$tmp/root5"
+mkdir -p "$root5/usr/lib"
+"$bin" db init --root "$root5" > "$tmp/out"
+elf_root=$root5
+elf_package locked-runtime libc.so.6:usr/lib/libc.so.6
+locked_runtime=$(sha256sum "$tmp/locked-runtime.holy" | cut -d ' ' -f 1)
+install_set "$root5" "$locked_runtime"
+elf_package locked-lib libhelper.so.1:usr/lib/libhelper.so.1 libanswer.so.1:usr/lib/libanswer.so.1
+locked_lib=$(sha256sum "$tmp/locked-lib.holy" | cut -d ' ' -f 1)
+install_set "$root5" "$locked_lib"
+elf_package locked-other libhelper.so.1:usr/lib/libhelper.so.1
+locked_other=$(sha256sum "$tmp/locked-other.holy" | cut -d ' ' -f 1)
+elf_root=
+
+# a watchdog bounds the apply, so a walk that waited on a lock this process holds fails
+# the fixture instead of hanging it. the plan refuses and names the consumer, and the
+# apply reaches the same walk under the exclusive lock this process already holds.
+if command -v timeout >/dev/null 2>&1; then bounded="timeout 60"; else bounded=""; fi
+expect 3 "$bin" db plan-set "$locked_other" --private "$locked_other=usr/lib/libhelper.so.1" \
+    --root "$root5"
+grep -qx "consumer $locked_lib usr/lib/libanswer.so.1 needs libhelper.so.1 from $locked_other unreachable scope soname" "$tmp/out"
+expect 3 $bounded "$bin" db apply-set 0000000000000000000000000000000000000000000000000000000000000000 "$locked_other" \
+    --private "$locked_other=usr/lib/libhelper.so.1" --root "$root5"
+grep -qx "consumer $locked_lib usr/lib/libanswer.so.1 needs libhelper.so.1 from $locked_other unreachable scope soname" "$tmp/out"
 
 echo "private placement set fixtures passed"
