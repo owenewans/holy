@@ -10,6 +10,22 @@ struct holy_manifest_entry;
 int holy_install_preflight(const char *snapshot, int root, int accepted_privileged);
 /* exact existing payload or absent paths; caller owns an interrupted journal. */
 int holy_install_preflight_resume(const char *snapshot, int root, int accepted_privileged);
+/* one confirmed placement: the artifact whose copy of a colliding path installs under
+   its private root instead. the installed record carries the private path, so the
+   artifact id, the private path and the public provider stay separate facts. */
+struct holy_install_placement {
+    const char *artifact;
+    const char *public_path;
+    const char *private_path;
+};
+/* preflight and payload for a set that displaces files. placements may be NULL, which
+   is the ordinary install. a placement naming a path the artifact does not ship, or a
+   private path some other artifact already owns, fails the whole operation. */
+int holy_install_preflight_placed(const char *snapshot, int root, int accepted_privileged,
+                                  const struct holy_install_placement *placements,
+                                  size_t count);
+int holy_install_payload_placed(const char *snapshot, int root, int accepted_privileged,
+                                const struct holy_install_placement *placements, size_t count);
 /* validates declared parents and directories; create requires a published journal.
    existing directories are never chmodded, removed or replaced. */
 int holy_install_directory_plan(int root, const struct holy_manifest_entry *entries,

@@ -496,10 +496,11 @@ check-https: holypkg
 	sh tests/https.sh ./holypkg
 
 check-install-payload: holypkg
-	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o tests/install-helper tests/install.c src/install.c src/script.o src/elf.o src/change.c src/verify.c src/package.c src/stage.c src/config.c src/version.c backends/rpm-version.o $(LDFLAGS) -larchive -lcrypto -lelf $(SOLV_LIBS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o tests/install-helper tests/install.c src/install.c src/script.o src/elf.o src/change.c src/verify.c src/package.c src/stage.c src/config.c src/version.c src/private.o backends/rpm-version.o $(LDFLAGS) -larchive -lcrypto -lelf $(SOLV_LIBS)
 	sh tests/install.sh ./tests/install-helper ./holypkg
 	sh tests/symlinks.sh ./holypkg
 	sh tests/change.sh ./tests/install-helper ./holypkg
+	sh tests/private-install.sh ./tests/install-helper ./holypkg
 
 check-solver:
 	@pkg-config --exists libsolv || { echo 'libsolv development files required' >&2; exit 6; }

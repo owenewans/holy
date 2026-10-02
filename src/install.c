@@ -4,6 +4,7 @@
 #include "verify.h"
 #include "config.h"
 #include "script.h"
+#include "private.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -270,12 +271,39 @@ done:
     return ok;
 }
 
+/* a placement names one path of one artifact, and the same private target may not be
+   claimed twice, since the private tree is where the second copy keeps its identity */
+struct placements {
+    const struct holy_install_placement *item;
+    size_t count;
+};
+
+/* NULL when nothing is placed there, the path itself when it is not displaced, and
+   the private target when it is. a target two placements claim is refused instead of
+   being resolved, since one private path cannot hold two artifacts' files */
+static const char *placed_target(const struct placements *placed,
+                                 const char *artifact, const char *path)
+{
+    size_t i, j;
+    for (i = 0; i < placed->count; ++i) {
+        if (strcmp(placed->item[i].artifact, artifact) ||
+            strcmp(placed->item[i].public_path, path)) continue;
+        for (j = 0; j < i; ++j)
+            if (!strcmp(placed->item[j].private_path, placed->item[i].private_path)) return NULL;
+        return placed->item[i].private_path;
+    }
+    return path;
+}
+
 struct root_check {
     int root, recovering, accepted_privileged, files_fd;
     struct holy_manifest_entry *directories;
     size_t count;
     struct directory_list parents;
     struct observed_groups groups;
+    struct placements placed;
+    size_t matched;              /* the placements a manifest row actually matched */
+    const char *artifact;        /* the artifact whose files may be displaced */
 };
 
 static const char *repair_target(int files_fd, const char *path, int config,
@@ -313,14 +341,36 @@ static int collect_directory(void *context, const struct holy_manifest_entry *en
     return 1;
 }
 
+/* a placed file is checked at the path it will occupy, not at the public path the
+   package declared, so a directory that has to be created for it is planned too */
 static int check_entry(void *context, const struct holy_manifest_entry *entry)
 {
     struct root_check *check = context;
     struct holy_manifest_entry mapped = *entry;
     char *allocated = NULL;
+    const char *target;
     int state;
     struct stat observed;
-    mapped.path = repair_target(check->files_fd, entry->path, entry->config, &allocated);
+    target = repair_target(check->files_fd, entry->path, entry->config, &allocated);
+    if (!target) return 0;
+    if (check->placed.count && check->artifact) {
+        const char *private = placed_target(&check->placed, check->artifact, target);
+        if (private == target) {
+            free(allocated);
+            allocated = NULL;
+        } else {
+            size_t length = strlen(private);
+            char *copy;
+            if (!private) { free(allocated); return 0; }
+            copy = malloc(length + 1);
+            if (!copy) { free(allocated); return 0; }
+            memcpy(copy, private, length + 1);
+            free(allocated);
+            allocated = copy;
+            ++check->matched;
+        }
+    }
+    mapped.path = allocated ? allocated : (char *)target;
     if (!mapped.path) return 0;
     if ((entry->link && (entry->mode != 0777 || entry->link[0] == '/')) ||
         ((entry->mode & 07000) &&
@@ -338,15 +388,82 @@ static int check_entry(void *context, const struct holy_manifest_entry *entry)
     return state == 2 || (state == 1 && (entry->directory || check->recovering));
 }
 
-static int prepare_directories(const char *snapshot, int root, int create,
-                               int recovering, int accepted_privileged, int files_fd)
+/* a placement's private target needs directories the package manifest does not state,
+   since the package never declared them. they are added as directories the install
+   creates, carrying the ownership the package used for the tree it did declare. */
+static int add_placed_directories(struct root_check *check)
+{
+    size_t i;
+    for (i = 0; i < check->placed.count; ++i) {
+        const struct holy_install_placement *place = &check->placed.item[i];
+        char *copy;
+        if (strcmp(place->artifact, check->artifact)) continue;
+        copy = strdup(place->private_path);
+        if (!copy) return 0;
+        /* every strict ancestor of the target, deepest first. each one gets its own
+           allocation, since the directory plan holds the paths after this returns */
+        for (;;) {
+            struct holy_manifest_entry *items, item;
+            char *slash = strrchr(copy, '/'), *owned;
+            size_t length, z;
+            if (!slash) break;
+            *slash = '\0';
+            length = strlen(copy);
+            if (!length) break;
+            /* an ancestor the package already declared ends the walk: the ones above
+               it are declared by the same manifest and would be added twice */
+            for (z = 0; z < check->count; ++z)
+                if (!strcmp(check->directories[z].path, copy)) break;
+            if (z < check->count) break;
+            if (check->count == SIZE_MAX / sizeof *items) { free(copy); return 0; }
+            items = realloc(check->directories, (check->count + 1) * sizeof *items);
+            if (!items) { free(copy); return 0; }
+            check->directories = items;
+            memset(&item, 0, sizeof item);
+            item.mode = 0755;
+            item.uid = (long long)geteuid();
+            item.gid = (long long)getegid();
+            item.directory = 1;
+            owned = malloc(length + 1);
+            if (!owned) { free(copy); return 0; }
+            memcpy(owned, copy, length + 1);
+            item.path = owned;
+            items[check->count++] = item;
+        }
+        free(copy);
+    }
+    return 1;
+}
+
+/* a placement naming a path the artifact does not ship is a decision about a file that
+   is not there, so it fails the operation instead of being silently ignored */
+static int placements_complete(const struct root_check *check)
+{
+    size_t i, expected = 0;
+    if (!check->artifact) return 1;
+    for (i = 0; i < check->placed.count; ++i)
+        if (!strcmp(check->placed.item[i].artifact, check->artifact)) ++expected;
+    if (expected != check->matched) {
+        fputs("holypkg: a placement names a path the package does not ship\n", stderr);
+        return 0;
+    }
+    return 1;
+}
+
+static int prepare_directories_placed(const char *snapshot, int root, int create,
+                                      int recovering, int accepted_privileged, int files_fd,
+                                      const struct holy_install_placement *placements,
+                                      size_t count, const char *artifact)
 {
     struct root_check check = {0};
     size_t i;
     int ok = 0;
     check.root = root; check.recovering = recovering;
     check.accepted_privileged = accepted_privileged; check.files_fd = files_fd;
-    if (!holy_verify_visit(snapshot, collect_directory, &check)) goto done;
+    check.placed.item = placements; check.placed.count = placements ? count : 0;
+    check.artifact = artifact;
+    if (!holy_verify_visit(snapshot, collect_directory, &check) ||
+        !add_placed_directories(&check)) goto done;
     check.parents.items = calloc(check.count ? check.count : 1, sizeof *check.parents.items);
     if (!check.parents.items) goto done;
     check.parents.count = check.count;
@@ -354,6 +471,7 @@ static int prepare_directories(const char *snapshot, int root, int create,
     qsort(check.parents.items, check.count, sizeof *check.parents.items, directory_order);
     ok = holy_install_directory_plan(root, check.directories, check.count, 0, recovering) &&
          holy_verify_visit(snapshot, check_entry, &check) && groups_intact(&check.groups) &&
+         placements_complete(&check) &&
          (!create || holy_install_directory_plan(root, check.directories, check.count, 1, recovering));
 done:
     for (i = 0; i < check.count; ++i) free((char *)check.directories[i].path);
@@ -364,6 +482,13 @@ done:
     return ok;
 }
 
+static int prepare_directories(const char *snapshot, int root, int create,
+                               int recovering, int accepted_privileged, int files_fd)
+{
+    return prepare_directories_placed(snapshot, root, create, recovering, accepted_privileged,
+                                      files_fd, NULL, 0, NULL);
+}
+
 int holy_install_preflight(const char *snapshot, int root, int accepted_privileged)
 {
     return prepare_directories(snapshot, root, 0, 0, accepted_privileged, -1);
@@ -372,6 +497,14 @@ int holy_install_preflight(const char *snapshot, int root, int accepted_privileg
 int holy_install_preflight_resume(const char *snapshot, int root, int accepted_privileged)
 {
     return prepare_directories(snapshot, root, 0, 1, accepted_privileged, -1);
+}
+
+int holy_install_preflight_placed(const char *snapshot, int root, int accepted_privileged,
+                                  const struct holy_install_placement *placements,
+                                  size_t count)
+{
+    return prepare_directories_placed(snapshot, root, 1, 0, accepted_privileged, -1,
+                                      placements, count, placements ? placements[0].artifact : NULL);
 }
 
 static int link_payload(int root, const char *source, const struct holy_manifest_entry *destination,
@@ -451,8 +584,10 @@ static int repair_config_path(const struct repair_configs *configs, const char *
     return 0;
 }
 
-static int install_payload(const char *snapshot, int root, int missing_only,
-                           int accepted_privileged, int files_fd)
+static int install_payload_placed(const char *snapshot, int root, int missing_only,
+                                  int accepted_privileged, int files_fd,
+                                  const struct holy_install_placement *placements,
+                                  size_t placement_count, const char *artifact)
 {
     struct archive *archive = archive_read_new();
     struct archive_entry *entry;
@@ -460,9 +595,11 @@ static int install_payload(const char *snapshot, int root, int missing_only,
     char buffer[65536];
     int status, ok = 0;
     struct link_install links = {root, missing_only, 1};
+    struct placements placed = {placements, placements ? placement_count : 0};
     if (!archive) return 0;
     if ((files_fd >= 0 && !holy_verify_visit(snapshot, collect_repair_config, &configs)) ||
-        !prepare_directories(snapshot, root, 1, missing_only, accepted_privileged, files_fd) ||
+        !prepare_directories_placed(snapshot, root, 1, missing_only, accepted_privileged,
+                                    files_fd, placements, placement_count, artifact) ||
         (missing_only && !holy_verify_visit(snapshot, install_link, &links))) goto done;
     if (archive_read_support_filter_lz4(archive) != ARCHIVE_OK ||
         archive_read_support_format_tar(archive) != ARCHIVE_OK ||
@@ -484,6 +621,20 @@ static int install_payload(const char *snapshot, int root, int missing_only,
         target_path = repair_target(files_fd, path + 5,
             repair_config_path(&configs, path + 5), &mapped);
         if (!target_path) goto done;
+        /* a displaced file is written where its private tree says, so the archive
+           keeps the public path it shipped and the root gets the placement */
+        if (placed.count && artifact) {
+            const char *private = placed_target(&placed, artifact, target_path);
+            if (private != target_path) {
+                size_t length = strlen(private);
+                char *copy = malloc(length + 1);
+                if (!copy) goto done;
+                memcpy(copy, private, length + 1);
+                free(mapped);
+                mapped = copy;
+                target_path = copy;
+            }
+        }
         if (archive_entry_filetype(entry) == AE_IFLNK) {
             const char *target = archive_entry_symlink(entry);
             if (!target || target[0] == '/' ||
@@ -587,9 +738,24 @@ done:
     return ok;
 }
 
+static int install_payload(const char *snapshot, int root, int missing_only,
+                           int accepted_privileged, int files_fd)
+{
+    return install_payload_placed(snapshot, root, missing_only, accepted_privileged,
+                                  files_fd, NULL, 0, NULL);
+}
+
 int holy_install_payload(const char *snapshot, int root, int accepted_privileged)
 {
     return install_payload(snapshot, root, 0, accepted_privileged, -1);
+}
+
+int holy_install_payload_placed(const char *snapshot, int root, int accepted_privileged,
+                                const struct holy_install_placement *placements, size_t count)
+{
+    return install_payload_placed(snapshot, root, 0, accepted_privileged, -1,
+                                  placements, count,
+                                  placements ? placements[0].artifact : NULL);
 }
 
 int holy_install_payload_missing(const char *snapshot, int root)

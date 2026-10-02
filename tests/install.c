@@ -2,6 +2,7 @@
 #include "install.h"
 #include "verify.h"
 #include "change.h"
+#include "private.h"
 
 #include <fcntl.h>
 #include <openssl/evp.h>
@@ -139,6 +140,24 @@ int main(int argc, char **argv)
         ok = files >= 0 && root >= 0 && holy_install_check_path(files, root, argv[4]) == 1;
         if (files >= 0) close(files);
         if (root >= 0) close(root);
+        return ok ? 0 : 4;
+    }
+    if (argc == 6 && !strcmp(argv[1], "--placed")) {
+        /* one artifact displaces a file to its private tree. the archive keeps the
+           public path, the root receives the private path, and the public path stays
+           whatever was already installed there. */
+        struct holy_install_placement placement;
+        char private[4096];
+        root = open(argv[4], O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (root < 0 || !holy_private_target(argv[3], argv[5], private, sizeof private)) {
+            if (root >= 0) close(root);
+            return 2;
+        }
+        placement.artifact = argv[3];
+        placement.public_path = argv[5];
+        placement.private_path = private;
+        ok = holy_install_payload_placed(argv[2], root, 0, &placement, 1);
+        close(root);
         return ok ? 0 : 4;
     }
     if (argc != 3) return 2;
