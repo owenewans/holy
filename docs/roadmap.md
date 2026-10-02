@@ -1668,6 +1668,13 @@
   slot without choosing. check-slot-choice covers the local mirror and a registered
   source. Installing a core artifact needs root, since its manifest owns the files under
   uid 0, and no signed artifact has been fetched from the domain by a QEMU guest yet.
+  The domain's page is generated from the published directory by
+  tools/packages-page.sh, so it lists exactly the package records the sealed index
+  carries and states the generation, the signature state and the public key it read. It
+  uses the same layout as the other sites and a file server needs no directory listing
+  once an index exists. check-packages-page covers the derived rows, a row whose file
+  the directory lacks, an absent index, an unsigned generation and the absence of
+  template syntax the server would render.
 - [ ] Make a kernel rollback a configuration rather than a reinstall, and prove it by
   rebooting into the previous kernel. The installed profile now carries two kernel
   slots on the boot partition, each with its own vmlinuz, initramfs and blake2b
