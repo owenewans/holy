@@ -32,6 +32,7 @@
 #include "split.h"
 #include "eopkg.h"
 #include "override.h"
+#include "rewrite.h"
 #include "test.h"
 #include "up.h"
 #include "run.h"
@@ -2662,6 +2663,75 @@ rollback_usage:
         free(services); free(arch); free(privileged);
         fputs("usage: holypkg rollback TRANSACTION [--root DIRECTORY] [--apply PLAN_SHA256] [--accept-arch ARTIFACT_SHA256 ...] [--accept-privileged ARTIFACT_SHA256 ...] [--accept-service UNIT ...] [--accept-broken]\n", stderr);
         return 2;
+    }
+
+    /* the ELF rewriting patchelf performs, planned from the facts the file states and
+       run through execv. a second rewriter in this repository is what the spec
+       forbids, so this command states the argv and hands it to the tool. */
+    if (argc > 3 && !strcmp(argv[1], "patch")) {
+        struct holy_rewrite_change change[64];
+        struct holy_rewrite plan;
+        const char *tool = "patchelf", *file = NULL, *approved = NULL;
+        size_t count = 0;
+        int i, result;
+        for (i = 2; i < argc; ++i) {
+            enum holy_rewrite_kind kind;
+            const char *value = NULL;
+            char *equals;
+            if (!strcmp(argv[i], "--patchelf") && i + 1 < argc) { tool = argv[++i]; continue; }
+            if (!strcmp(argv[i], "--sha256") && i + 1 < argc) { approved = argv[++i]; continue; }
+            if (!strcmp(argv[i], "--interpreter")) kind = HOLY_REWRITE_INTERPRETER;
+            else if (!strcmp(argv[i], "--rpath")) kind = HOLY_REWRITE_RPATH;
+            else if (!strcmp(argv[i], "--runpath")) kind = HOLY_REWRITE_RUNPATH;
+            else if (!strcmp(argv[i], "--soname")) kind = HOLY_REWRITE_SONAME;
+            else if (!strcmp(argv[i], "--needed")) kind = HOLY_REWRITE_NEEDED;
+            else if (argv[i][0] == '-') { fputs("holypkg: unknown patch option\n", stderr); return 2; }
+            else if (!file) { file = argv[i]; continue; }
+            else {
+                /* a second positional completes a --needed OLD NEW pair, so both ends
+                   of a replacement are always explicit */
+                if (!count || change[count - 1].kind != HOLY_REWRITE_NEEDED ||
+                    change[count - 1].to) return 2;
+                change[count - 1].to = strdup(argv[i]);
+                if (!change[count - 1].to) return 1;
+                continue;
+            }
+            if (i + 1 >= argc || count == sizeof change / sizeof *change) return 2;
+            value = argv[++i];
+            memset(&change[count], 0, sizeof change[count]);
+            change[count].kind = kind;
+            if (kind == HOLY_REWRITE_NEEDED && (equals = strchr(value, '=')) != NULL) {
+                change[count].from = strndup(value, (size_t)(equals - value));
+                change[count].to = strdup(equals + 1);
+                if (!change[count].from || !change[count].to) return 1;
+            } else {
+                change[count].to = strdup(value);
+                if (!change[count].to) return 1;
+            }
+            ++count;
+        }
+        if (!file || !count) {
+            fputs("holypkg: usage: holypkg patch FILE [--patchelf PATH] "
+                  "[--interpreter PATH] [--rpath PATH] [--runpath PATH] "
+                  "[--soname NAME] [--needed OLD=NEW ...] [--sha256 PLAN]\n", stderr);
+            for (i = 0; i < (int)count; ++i) { free(change[i].from); free(change[i].to); }
+            return 2;
+        }
+        result = holy_rewrite_prepare(tool, file, change, count, &plan);
+        for (i = 0; i < (int)count; ++i) { free(change[i].from); free(change[i].to); }
+        if (result != 1) { holy_rewrite_free(&plan); return result > 0 ? result : 1; }
+        holy_rewrite_print(&plan);
+        if (!approved) { holy_rewrite_free(&plan); return 0; }
+        if (strcmp(plan.hash, approved)) {
+            fprintf(stderr, "holypkg: the file changed since the plan; re-run the plan\n");
+            holy_rewrite_free(&plan);
+            return 4;
+        }
+        result = holy_rewrite_apply(&plan);
+        holy_rewrite_free(&plan);
+        if (result) return result;
+        printf("rewritten %s\n", file);
+        return 0;
     }
 
     if ((argc == 3 || (argc == 4 && !strcmp(argv[3], "--build-id"))) &&

@@ -194,6 +194,8 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg elf FILE
 .br
+.B holypkg patch FILE [--patchelf PATH] [--interpreter PATH] [--rpath PATH] [--runpath PATH] [--soname NAME] [--needed OLD=NEW ...] [--sha256 SHA256]
+.br
 .B holypkg scan local:FILE
 .br
 .B holypkg preview local:FILE --root DIRECTORY
@@ -3111,6 +3113,45 @@ root, so the two modes differ in what the probe observes. --apply needs an absol
 --work, and the work directory is created. The backend builds its new root from
 exactly the binds above, so / inside the trial is the copy's own filesystem rather
 than a path somewhere under the running system.
+.SH ELF REWRITING
+patch is the interface to the ELF rewriting the spec assigns to patchelf. The
+interpreter, RPATH or RUNPATH, SONAME and DT_NEEDED of one file are rewritten by
+patchelf, and this repository writes no second rewriter of its own. The command
+reads the facts the file currently states, states the argv patchelf would run, and
+runs it through execv, so a value with a space or a quote stays one argument and no
+shell ever sees the line.
+.PP
+patch FILE with one or more changes prints the plan and changes nothing. Each change
+names what the file carries now and what it should carry instead, and a field the
+file already states that way is refused rather than run as a no-op, since a plan
+that claims a rewrite that does not happen misleads the review. --interpreter PATH
+sets PT_INTERP, --rpath PATH sets DT_RPATH and --runpath PATH sets DT_RUNPATH; the
+tool treats both search paths as one field, so --rpath adds --force-rpath to the argv
+and the requested tag is the caller's decision rather than a side effect.
+--soname NAME sets DT_SONAME. --needed OLD=NEW replaces one DT_NEEDED entry, and both
+ends are explicit because the spec allows an ambiguous name to be settled by naming
+the substitution; a replacement of a name the file does not carry is refused, and a
+replacement that renames nothing is refused too.
+.PP
+Each plan line is rewrite FILE SHA256 FIELD FROM -> TO scope file, followed by one
+rewrite-argv line with the whole command. Pass that SHA256 back as --sha256 to
+apply. The file is hashed again before the tool runs, so a file that changed after
+the review is refused with status 4 and nothing is rewritten; the apply also
+re-probes the tool and returns 6 if it is gone.
+.PP
+patchelf is a package like any other, so a host without one returns 6 and says the
+tool is missing rather than falling back to a local rewriter. --patchelf PATH
+selects a specific binary, and a bare name is resolved through PATH once, so the
+plan records the path the tool actually ran rather than a name PATH could redirect.
+A value that is empty, starts with a dash or is a relative path is refused with
+status 2 rather than resolved against the caller.
+.PP
+The private placement of a colliding file is what this command exists to finish.
+After a placement moves a library under /usr/lib/holy/private/ARTIFACT/, the
+consumer that needs it names the private directory in its RUNPATH, and the program
+runs again without any change to the public path. The placement itself is a set
+decision; this command is the follow-up the decision calls for, and it is separate
+because a rewrite touches bytes that a set transaction does not journal.
 .SH USER OVERRIDES
 override list reads the user override store of one target root and reports every
 record in it. It changes nothing, needs no cache object and no plan, and it never

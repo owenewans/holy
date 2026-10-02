@@ -83,8 +83,26 @@
   public one, a placement for an artifact outside the set, and a placement for a
   path the package does not ship. Refusals cover a directory, a hardlink group, a
   nested private path, a duplicate pair and one private target claimed twice.
-  Consumer search-path rewriting through patchelf and ABI-matched private
-  library sets remain open.
+  Consumer search-path rewriting is done; ABI-matched private library sets remain
+  open.
+- [x] Rewrite the interpreter, RPATH or RUNPATH, SONAME and DT_NEEDED of one file
+  through patchelf, with no second rewriter in this repository. `holypkg patch`
+  reads the facts the file states, states the argv patchelf would run and runs it
+  through execv, so a value with a space stays one argument and no shell sees the
+  line. Each plan line names the field, what the file carried and what it should
+  carry; a field already stated that way is refused instead of run as a no-op.
+  `--rpath` adds `--force-rpath` so the tag is the caller's decision, and
+  `--needed OLD=NEW` names both ends, which is the explicit substitution the spec
+  allows for an ambiguous DT_NEEDED. The file is hashed for the plan and again
+  before the tool runs, so a file that changed after the review changes nothing.
+  patchelf is a package: a bare name is resolved through PATH once so the plan
+  records the path the tool actually ran, and a host without one returns 6 rather
+  than falling back. `tests/rewrite.sh` builds a library and two consumers, one
+  with DT_RPATH and one with DT_RUNPATH, and covers the plan, the apply, the
+  private library becoming reachable through the written path, a changed file, an
+  already-satisfied field, a missing DT_NEEDED entry, a rename of nothing, a
+  non-ELF file, a file with no dynamic table, an absent tool and a relative or
+  empty value.
 - [x] Publish a native index generation with an optional Ed25519 signature
   before switching `current`; verify the exact index bytes and package
   artifacts against a supplied public key. Signed HTTPS mirrors check the
@@ -389,10 +407,11 @@
   candidates stays unfinished and refused.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions. The
-  private placement of a colliding file is done and its limits are stated in
-  man/holypkg.8; patchelf rewriting of the consumer's interpreter, RPATH, RUNPATH,
-  SONAME and DT_NEEDED is not, so a displaced shared library is not yet reachable
-  by the program that needs it.
+  private placement of a colliding file and the patchelf rewrite of a consumer's
+  search path are both done and their limits are stated in man/holypkg.8. What is
+  not done is the manager choosing those decisions itself: building a consistent
+  private library set for one ABI, selecting the consumers to rewrite, and carrying
+  both through one set transaction instead of as a follow-up command.
 - [x] Accept nonempty HOLY/transform as an immutable provenance record in local
   solve, single-package planning, set installation and removal. The installer
   verifies the already transformed payload and does not execute the record.
