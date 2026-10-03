@@ -1849,11 +1849,12 @@
   skip and unknown with coverage plan-inputs, lists runtime probes as
   unexecuted until a test asks for them, and returns 4 for a failed check and
   6 for an unknown one. --json uses holy-test-report-1. A fixture covers the
-  bound report, a VM mode that names the missing runner, and a deleted new
+  bound report, a usage error for any --mode name but root, and a deleted new
   archive, deleted old archive, drifted payload, removed slot, changed catalog
-  generation, changed source id and lost alias. Running a command in a trial
-  with --shell or -- COMMAND and the VM trial itself remain open, as does the
-  Holy hardware gate. `-- COMMAND ARGS` now runs one command in a private root
+  generation, changed source id and lost alias. The command holds no image and
+  starts no virtual machine, so a VM trial is the external runner under
+  make check-qemu and a name for it here is refused rather than half
+  implemented. The Holy hardware gate stays open. `-- COMMAND ARGS` now runs one command in a private root
   trial after a set that completed, and --shell runs $SHELL or /bin/sh. the trial
   makes private mount propagation, its own /proc, /run, /tmp and /home, PID, IPC
   and UTS namespaces, a user namespace where the host allows one and a controlled

@@ -3138,16 +3138,17 @@ test verifies one saved update plan against a target root without changing it. T
 plan is the fixed set up --prepare leaves behind, so the inputs are already decided
 and this command only reports whether they are still what the plan recorded. The
 default root is /. --sha256 is the plan digest to review against, and a plan whose
-digest differs is status 3. --mode root is the default; --mode vm asks for the
-inputs a VM trial would need.
+digest differs is status 3. --mode root is the only trial mode and is the default. A
+VM trial is the kernel rollback gate under make check-qemu, which owns the image and the
+runner; it is not a mode of this command, so any other --mode name is a usage error.
 .PP
 Every report names the plan, the mode, the source id and alias, the catalog path
 with its index digest, the old and new artifacts and the state plan. The plan
 document digest is the reported plan hash. A live rootfs has no stable whole-tree
 digest, so a root test binds its trial base as the installed generation with a
-digest of the installed artifact set, in artifact order. A VM trial owns a
-separate image, which the QEMU runner measures as it copies that image, so
---mode vm reports image none reason no-vm-runner and one unknown check.
+digest of the installed artifact set, in artifact order. This command holds no image
+and starts no virtual machine, so a trial bound to a boot image is the runner's work and
+not something a caller can ask for here.
 .PP
 A unit below etc/dinit.d is a service dinit starts without anything else being
 asked, so a set plan states every one its artifacts ship:
