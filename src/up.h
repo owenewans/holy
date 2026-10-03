@@ -39,4 +39,11 @@ struct holy_up_plan {
 int holy_up_plan_read(const char *path, const char *approved, struct holy_up_plan *plan);
 void holy_up_plan_free(struct holy_up_plan *plan);
 
+/* the slots of PLAN applied to ROOT, which is a copy rather than the reviewed root. a
+   state plan binds the device and inode of the root it was reviewed for, so the copy
+   derives its own and that digest is what HASH receives: the approved one belongs to
+   the root the operator reviewed, not to this copy. returns zero when the copy took
+   the change. */
+int holy_apply_trial(const struct holy_up_plan *plan, const char *root, char hash[65]);
+
 #endif

@@ -203,138 +203,6 @@ static int archived(const char *digest, const char *root,
     return 1;
 }
 
-/* the volatile trees of a live system, which a copy of the filesystem for a trial has
-   no use for and cannot reproduce */
-static const char *const skipped_trees[] = { "proc", "sys", "dev", "run" };
-
-struct trial_copy {
-    size_t files;
-    size_t directories;
-    size_t bytes;
-    size_t refused;
-};
-
-/* one directory level, with the entries a trial root needs and nothing that would
-   escape it. a device node, a socket or a fifo is refused and counted, since a copy
-   that carried one would not be the filesystem it claims to be. */
-static int copy_level(const char *from, const char *to, struct trial_copy *copy)
-{
-    DIR *entries = opendir(from);
-    struct dirent *entry;
-    int ok = 1;
-    if (!entries) return 0;
-    errno = 0;
-    while ((entry = readdir(entries)) != NULL) {
-        char source[4096], target[4096];
-        struct stat st;
-        size_t i;
-        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-        if ((size_t)snprintf(source, sizeof source, "%s/%s", from, entry->d_name) >= sizeof source ||
-            (size_t)snprintf(target, sizeof target, "%s/%s", to, entry->d_name) >= sizeof source) {
-            ++copy->refused;
-            continue;
-        }
-        if (lstat(source, &st)) { ++copy->refused; continue; }
-        for (i = 0; i < sizeof skipped_trees / sizeof *skipped_trees; ++i)
-            if (!strcmp(entry->d_name, skipped_trees[i])) break;
-        if (i < sizeof skipped_trees / sizeof *skipped_trees) continue;
-        if (S_ISDIR(st.st_mode)) {
-            if (mkdir(target, st.st_mode & 07777) && errno != EEXIST) { ++copy->refused; continue; }
-            ++copy->directories;
-            if (!copy_level(source, target, copy)) ok = 0;
-        } else if (S_ISREG(st.st_mode)) {
-            int in = open(source, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-            int out = open(target, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
-                           st.st_mode & 07777);
-            char buffer[65536];
-            ssize_t got;
-            if (in < 0 || out < 0 || (out >= 0 && fchmod(out, st.st_mode & 07777))) {
-                ++copy->refused;
-            } else {
-                while ((got = read(in, buffer, sizeof buffer)) > 0) {
-                    ssize_t at = 0;
-                    copy->bytes += (size_t)got;
-                    while (at < got) {
-                        ssize_t written = write(out, buffer + at, (size_t)(got - at));
-                        if (written < 0) { if (errno == EINTR) continue; break; }
-                        at += written;
-                    }
-                    if (at < got) break;
-                }
-                ++copy->files;
-            }
-            if (in >= 0) close(in);
-            if (out >= 0) close(out);
-        } else if (S_ISLNK(st.st_mode)) {
-            char link[4096];
-            ssize_t length = readlink(source, link, sizeof link - 1);
-            if (length < 0) ++copy->refused;
-            else {
-                link[length] = 0;
-                if (symlink(link, target)) ++copy->refused;
-                else ++copy->files;
-            }
-        } else {
-            ++copy->refused;
-        }
-        errno = 0;
-    }
-    if (errno) ok = 0;
-    closedir(entries);
-    return ok;
-}
-
-/* an isolated copy of the target filesystem, which is what a trial that applies a
-   prepared plan needs, since the running root must not change. */
-static char *copy_root(const char *root, const char *work, struct trial_copy *copy)
-{
-    char *path = malloc(strlen(work) + 16);
-    struct stat st;
-    if (!path) return NULL;
-    snprintf(path, strlen(work) + 16, "%s/trial-root", work);
-    /* the caller named a work directory, so it is created rather than refused. it is
-       outside the root, since a copy inside the tree it copies would read its own
-       output, and that is checked before this runs */
-    if (mkdir(work, 0700) && errno != EEXIST) { free(path); return NULL; }
-    if (mkdir(path, 0700) && errno != EEXIST) { free(path); return NULL; }
-    if (lstat(root, &st) || !S_ISDIR(st.st_mode) ||
-        !copy_level(root, path, copy)) { free(path); return NULL; }
-    return path;
-}
-
-/* the same pairs applied to the trial copy, so the command runs the change the plan
-   names. a state plan binds the device and inode of the root it was reviewed for, so
-   the copy derives its own and that is the record the trial reports: the approved
-   digest belongs to the root the operator reviewed, not to this copy. */
-static int apply_trial_plan(const struct holy_up_plan *plan, const char *root,
-                            char hash[65])
-{
-    const char **olds = NULL, **news = NULL;
-    struct holy_update_request request = {0};
-    char *record = NULL;
-    size_t i;
-    int ok = 0;
-    hash[0] = 0;
-    if (!plan->slot_count) return 1;
-    olds = calloc(plan->slot_count, sizeof *olds);
-    news = calloc(plan->slot_count, sizeof *news);
-    if (!olds || !news) goto done;
-    for (i = 0; i < plan->slot_count; ++i) {
-        olds[i] = plan->slots[i].old_digest;
-        news[i] = plan->slots[i].new_digest;
-    }
-    request.olds = olds;
-    request.news = news;
-    request.pair_count = plan->slot_count;
-    if (holy_state_update_prepare(&request, root, hash, &record)) goto done;
-    ok = !holy_state_apply_update(hash, &request, root);
-done:
-    free(record);
-    free(olds);
-    free(news);
-    return ok;
-}
-
 int holy_test_command(int argc, char **argv)
 {
     const char *mode = "root", *root = "/", *approved = NULL, *plan_path = NULL;
@@ -347,7 +215,7 @@ int holy_test_command(int argc, char **argv)
     unsigned long long generation = 0;
     char *old_snapshot = NULL;
     char *trial_root = NULL;
-    struct trial_copy copied = {0, 0, 0, 0};
+    struct holy_trial_copy copied = {0, 0, 0, 0};
     const char *work = NULL;
     int dir = -1, status = 0, i, read, command = -1, shell = 0, apply = 0, mode_seen = 0;
 
@@ -379,15 +247,7 @@ int holy_test_command(int argc, char **argv)
     if (apply && (!work || work[0] != '/')) { status = 2; goto usage; }
     /* a copy made inside the tree it copies would read its own output, so the work
        directory has to be outside the root */
-    if (apply) {
-        size_t root_length = strlen(root);
-        while (root_length > 1 && root[root_length - 1] == '/') --root_length;
-        if (!strncmp(work, root, root_length) &&
-            (work[root_length] == '/' || work[root_length] == 0)) {
-            status = 2;
-            goto usage;
-        }
-    }
+    if (apply && holy_trial_work_inside(work, root)) { status = 2; goto usage; }
     if (!plan_path || !*root || strcmp(mode, "root")) { status = 2; goto usage; }
     run.root = root;
     run.mode = "root";
@@ -554,7 +414,7 @@ int holy_test_command(int argc, char **argv)
        running root must not change, and the command then sees that copy rather than the
        system it was verified against */
     if (!status && apply) {
-        trial_root = copy_root(root, work, &copied);
+        trial_root = holy_trial_copy_root(root, work, &copied);
         if (!trial_root) {
             fprintf(stderr, "holypkg: the trial could not copy %s\n", root);
             status = 1;
@@ -569,7 +429,7 @@ int holy_test_command(int argc, char **argv)
         }
         if (!status) {
             char applied[65];
-            if (!apply_trial_plan(&plan, trial_root, applied)) {
+            if (!holy_apply_trial(&plan, trial_root, applied)) {
                 fprintf(stderr, "holypkg: the prepared plan did not apply to the trial "
                         "root\n");
                 status = 1;

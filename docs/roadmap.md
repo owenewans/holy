@@ -1522,7 +1522,19 @@
   too: a --arch or --libc that excludes the slot is named in the report rather
   than left to read as a package the set never held, and a --catalog path that
   cannot be opened names itself and the reason instead of answering 6 in silence.
-  Root trials for `up` and `apply` stay open.
+  `holypkg apply` takes `--work DIRECTORY` as a rehearsal: the root is copied to
+  `WORK/trial-root` and every source check and the transaction run against that
+  copy, so the running root keeps what it had and the report names the copy, the
+  state plan the copy derived and what the copy carried or refused. The copy
+  derives its own state plan, because that plan binds the device and inode of
+  the root it was reviewed for, which is why a rehearsal cannot apply the
+  document's digest; `test --apply --work` and `apply --work` now share that one
+  function, and the root copy moved to `src/trial.c` beside the trial that runs
+  commands. A work directory inside the root is a usage error, since a copy made
+  inside the tree it copies would read its own output. What is still open is the
+  namespace: a rehearsal copies in this process, so a hook the plan runs still
+  runs as it would in a real apply, and binding the whole copy over `/` writable
+  is what would change that.
   The existing run launcher now derives private PATH directories from the
   selected installed manifest, so a public executable can invoke its own
   private helper by name. Explicit directory views bind package-owned private

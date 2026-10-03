@@ -148,6 +148,15 @@ cp "$tmp/out" "$tmp/source.plan"
 source_plan=$(sha256sum "$tmp/source.plan" | cut -d ' ' -f 1)
 expect 0 "$bin" source apply "$tmp/source.plan" --sha256 "$source_plan" --root "$root"
 expect 3 "$bin" apply "$tmp/up.plan" --sha256 "$plan" --root "$root"
+# a rehearsal applies the approved plan to a copy of the root, so the review can be
+# exercised without the running root changing
+expect 0 "$bin" apply "$tmp/up.plan" --sha256 "$plan" --root "$root" --work "$tmp/trial"
+grep -qx 'version 1' "$root/usr/share/update-fixture"
+grep -q "^apply-trial-root $tmp/trial/trial-root slots 1 " "$tmp/out"
+grep -qx 'version 2' "$tmp/trial/trial-root/usr/share/update-fixture"
+# a work directory inside the root would be a copy reading its own output
+expect 2 "$bin" apply "$tmp/up.plan" --sha256 "$plan" --root "$root" --work "$root/trial"
+expect 2 "$bin" apply "$tmp/up.plan" --sha256 "$plan" --root "$root" --work relative
 expect 0 "$bin" up fixture:update-fixture --prepare --output "$tmp/fresh.plan" --root "$root"
 fresh=$(sha256sum "$tmp/fresh.plan" | cut -d ' ' -f 1)
 expect 0 "$bin" apply "$tmp/fresh.plan" --sha256 "$fresh" --root "$root"

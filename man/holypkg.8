@@ -8,7 +8,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg up SOURCE:PACKAGE [SOURCE:PACKAGE ...] [--all] [--prepare] [--output NEW_FILE] [--catalog MIRROR] [--choose SHA256 | SOURCE:PACKAGE=SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--accept-service UNIT ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
-.B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
+.B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY] [--work DIRECTORY]
 .br
 .B holypkg import INPUT --source NAME
 .B "     --format pacman|rpm|deb|slackware|apk|xbps|appimage|snap|scoop|winget|nix|eopkg|pkgbuild"
@@ -1682,8 +1682,19 @@ exact index, even when a cached artifact would satisfy the embedded database
 plan. It then rebuilds the plan under the writer lock. A changed database, source or payload needs a new plan. Successful
 apply uses the existing journaled cached-update engine; its recovery command
 is db recover --update. up prepares one slot or a group of them as one document, and
-apply runs the group as one transaction. Signed catalogs and root trials
-remain open.
+apply runs the group as one transaction. A rehearsal names --work DIRECTORY:
+the root is copied to WORK/trial-root and every check and the transaction run
+against that copy, so the running root keeps what it had. The work directory
+is created and must be absolute and outside the root, since a copy made inside
+the tree it copies would read its own output; either is a usage error. The
+copy leaves out proc, sys, dev and run, and a device node, socket or fifo it
+meets is refused and counted, so the reported counts say what the copy carried.
+The copy derives its own state plan, since that plan binds the device and inode
+of the root it was reviewed for, and the rehearsal names that digest rather
+than the approved one, which belongs to the root the operator reviewed. The
+rehearsal is a filesystem copy in this process rather than a namespace, so a
+hook the plan runs still runs as it would in a real apply; a trial that
+isolates the command itself remains open.
 .PP
 The db plan command reads the prepared reservation at the current database
 generation. It verifies a private snapshot of the cached artifact, checks

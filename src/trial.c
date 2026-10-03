@@ -2,7 +2,9 @@
 #include "trial.h"
 #include "bwrap.h"
 
+#include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -35,6 +37,8 @@ static int is_directory(const char *path)
     return !lstat(path, &st) && S_ISDIR(st.st_mode);
 }
 
+static int trial_run(char *const argv[], const char *root);
+
 /* a prepared root's own copy first, so the command resolves its interpreter and its
    libraries from the copy rather than from the host. a directory the copy does not
    have keeps the host one, which is what a trial without it needs. the backend builds
@@ -63,6 +67,11 @@ int holy_trial_command(char *const argv[])
 }
 
 int holy_trial_command_at(char *const argv[], const char *root)
+{
+    return trial_run(argv, root);
+}
+
+static int trial_run(char *const argv[], const char *root)
 {
     struct holy_bwrap bwrap;
     char *program;
@@ -101,4 +110,105 @@ int holy_trial_command_at(char *const argv[], const char *root)
     status = holy_bwrap_exec(&bwrap, argv, -1);
     holy_bwrap_free(&bwrap);
     return status;
+}
+
+/* the volatile trees of a live system, which a copy of the filesystem for a trial has
+   no use for and cannot reproduce */
+static const char *const skipped_trees[] = { "proc", "sys", "dev", "run" };
+
+/* one directory level, with the entries a trial root needs and nothing that would
+   escape it. */
+static int copy_level(const char *from, const char *to, struct holy_trial_copy *copy)
+{
+    DIR *entries = opendir(from);
+    struct dirent *entry;
+    int ok = 1;
+    if (!entries) return 0;
+    errno = 0;
+    while ((entry = readdir(entries)) != NULL) {
+        char source[4096], target[4096];
+        struct stat st;
+        size_t i;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        if ((size_t)snprintf(source, sizeof source, "%s/%s", from, entry->d_name) >= sizeof source ||
+            (size_t)snprintf(target, sizeof target, "%s/%s", to, entry->d_name) >= sizeof source) {
+            ++copy->refused;
+            continue;
+        }
+        if (lstat(source, &st)) { ++copy->refused; continue; }
+        for (i = 0; i < sizeof skipped_trees / sizeof *skipped_trees; ++i)
+            if (!strcmp(entry->d_name, skipped_trees[i])) break;
+        if (i < sizeof skipped_trees / sizeof *skipped_trees) continue;
+        if (S_ISDIR(st.st_mode)) {
+            if (mkdir(target, st.st_mode & 07777) && errno != EEXIST) { ++copy->refused; continue; }
+            ++copy->directories;
+            if (!copy_level(source, target, copy)) ok = 0;
+        } else if (S_ISREG(st.st_mode)) {
+            int in = open(source, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+            int out = open(target, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC,
+                           st.st_mode & 07777);
+            char buffer[65536];
+            ssize_t got;
+            if (in < 0 || out < 0 || (out >= 0 && fchmod(out, st.st_mode & 07777))) {
+                ++copy->refused;
+            } else {
+                while ((got = read(in, buffer, sizeof buffer)) > 0) {
+                    ssize_t at = 0;
+                    copy->bytes += (size_t)got;
+                    while (at < got) {
+                        ssize_t written = write(out, buffer + at, (size_t)(got - at));
+                        if (written < 0) { if (errno == EINTR) continue; break; }
+                        at += written;
+                    }
+                    if (at < got) break;
+                }
+                ++copy->files;
+            }
+            if (in >= 0) close(in);
+            if (out >= 0) close(out);
+        } else if (S_ISLNK(st.st_mode)) {
+            char link[4096];
+            ssize_t length = readlink(source, link, sizeof link - 1);
+            if (length < 0) ++copy->refused;
+            else {
+                link[length] = 0;
+                if (symlink(link, target)) ++copy->refused;
+                else ++copy->files;
+            }
+        } else {
+            ++copy->refused;
+        }
+        errno = 0;
+    }
+    if (errno) ok = 0;
+    closedir(entries);
+    return ok;
+}
+
+int holy_trial_work_inside(const char *work, const char *root)
+{
+    size_t root_length;
+    if (!work || !root) return 0;
+    root_length = strlen(root);
+    while (root_length > 1 && root[root_length - 1] == '/') --root_length;
+    return !strncmp(work, root, root_length) &&
+           (work[root_length] == '/' || work[root_length] == 0);
+}
+
+char *holy_trial_copy_root(const char *root, const char *work, struct holy_trial_copy *copy)
+{
+    char *path;
+    struct stat st;
+    size_t length;
+    if (!root || !work || work[0] != '/' || !copy) return NULL;
+    length = strlen(work) + 16;
+    path = malloc(length);
+    if (!path) return NULL;
+    snprintf(path, length, "%s/trial-root", work);
+    /* the caller named a work directory, so it is created rather than refused */
+    if (mkdir(work, 0700) && errno != EEXIST) { free(path); return NULL; }
+    if (mkdir(path, 0700) && errno != EEXIST) { free(path); return NULL; }
+    if (lstat(root, &st) || !S_ISDIR(st.st_mode) ||
+        !copy_level(root, path, copy)) { free(path); return NULL; }
+    return path;
 }

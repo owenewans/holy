@@ -7,6 +7,7 @@
 #include "source.h"
 #include "stage.h"
 #include "state.h"
+#include "trial.h"
 #include "../backends/pacman.h"
 #include "../backends/deb-version.h"
 #include "../backends/apk-version.h"
@@ -845,21 +846,78 @@ static int up_slot_order(const void *left, const void *right)
     return strcmp((*a)->catalog, (*b)->catalog);
 }
 
+int holy_apply_trial(const struct holy_up_plan *plan, const char *root, char hash[65])
+{
+    const char **olds = NULL, **news = NULL;
+    struct holy_update_request request = {0};
+    char *record = NULL;
+    size_t i;
+    int ok = 0;
+    hash[0] = 0;
+    if (!plan->slot_count) return 1;
+    olds = calloc(plan->slot_count, sizeof *olds);
+    news = calloc(plan->slot_count, sizeof *news);
+    if (!olds || !news) goto done;
+    for (i = 0; i < plan->slot_count; ++i) {
+        olds[i] = plan->slots[i].old_digest;
+        news[i] = plan->slots[i].new_digest;
+    }
+    request.olds = olds;
+    request.news = news;
+    request.pair_count = plan->slot_count;
+    if (holy_state_update_prepare(&request, root, hash, &record)) goto done;
+    ok = !holy_state_apply_update(hash, &request, root);
+done:
+    free(record);
+    free(olds);
+    free(news);
+    return ok;
+}
+
 int holy_apply_command(int argc, char **argv)
 {
-    const char *root = "/", *approved = NULL;
+    const char *root = "/", *approved = NULL, *work = NULL;
     struct holy_up_plan plan = {0};
     const char **olds = NULL, **news = NULL, **services = NULL, **arch = NULL, **privileged = NULL;
     const struct holy_up_slot **order = NULL;
     int *dirs = NULL;
     char **snapshots = NULL;
+    char *trial_root = NULL;
+    char trial_state[65] = "-";
+    struct holy_trial_copy copied = {0, 0, 0, 0};
     size_t i, service_total = 0, arch_count = 0, privileged_count = 0, service_count = 0;
     int result = 2;
-    if (argc == 5 && !strcmp(argv[3], "--sha256")) approved = argv[4];
-    else if (argc == 7 && !strcmp(argv[3], "--sha256") &&
-             !strcmp(argv[5], "--root")) { approved = argv[4]; root = argv[6]; }
+    /* the plan path is argv[2], so the options after it are read in order rather than
+       by counting arguments, and an option this command does not take is a usage error */
+    for (i = 3; i < (size_t)argc; ++i) {
+        if (!strcmp(argv[i], "--sha256") && i + 1 < (size_t)argc && !approved) {
+            approved = argv[++i];
+            continue;
+        }
+        if (!strcmp(argv[i], "--root") && i + 1 < (size_t)argc) { root = argv[++i]; continue; }
+        if (!strcmp(argv[i], "--work") && i + 1 < (size_t)argc && !work) {
+            work = argv[++i];
+            continue;
+        }
+        goto done;
+    }
     if (!approved || !digest_valid(approved) || !*root) goto done;
+    /* a rehearsal applies the plan to a copy of the root, so the work directory has to
+       be absolute and outside the tree it copies, or the copy would read its own output */
+    if (work && (!*work || work[0] != '/' || holy_trial_work_inside(work, root))) goto done;
     result = holy_up_plan_read(argv[2], approved, &plan);
+    if (result) goto done;
+    /* the copy stands in for the root from here on, so every check and the transaction
+       itself run against it and the running root keeps what it had */
+    if (work) {
+        trial_root = holy_trial_copy_root(root, work, &copied);
+        if (!trial_root) {
+            fprintf(stderr, "holypkg: the trial could not copy %s\n", root);
+            result = 1;
+            goto done;
+        }
+        root = trial_root;
+    }
     if (result) goto done;
     for (i = 0; i < plan.slot_count; ++i) service_total += plan.slots[i].service_count;
     dirs = calloc(plan.slot_count, sizeof *dirs);
@@ -937,7 +995,13 @@ int holy_apply_command(int argc, char **argv)
         holy_package_identity_free(&old_identity);
     }
     if (result) goto done;
-    {
+    if (trial_root) {
+        /* the copy derives its own state plan, since that plan binds the device and
+           inode of the root it was reviewed for, and the copy is a different directory */
+        char derived[65];
+        if (!holy_apply_trial(&plan, trial_root, derived)) result = 1;
+        else snprintf(trial_state, sizeof trial_state, "%s", derived);
+    } else {
         /* the state layer rebuilds the plan under its own writer lock and compares the
            approved digest, so the review and the apply are one decision */
         struct holy_update_request request = {
@@ -950,7 +1014,16 @@ int holy_apply_command(int argc, char **argv)
     }
 done:
     if (result == 2)
-        fputs("usage: holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]\n", stderr);
+        fputs("usage: holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY] [--work DIRECTORY]\n", stderr);
+    if (trial_root) {
+        /* the copy is what the rehearsal reported, so it is named with the plan it
+           derived and the counts that say what the copy carried and what it refused */
+        if (!result)
+            printf("apply-trial-root %s slots %zu state-plan %s directories %zu files %zu "
+                   "bytes %zu refused %zu\n", trial_root, plan.slot_count, trial_state,
+                   copied.directories, copied.files, copied.bytes, copied.refused);
+        free(trial_root);
+    }
     if (dirs) {
         for (i = 0; i < plan.slot_count; ++i) if (dirs[i] >= 0) close(dirs[i]);
         free(dirs);
