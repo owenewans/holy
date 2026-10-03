@@ -1728,6 +1728,20 @@
   probes, hashes input snapshots and rejects incomplete or duplicate cases.
   This matrix uses an ISO kernel and persistent disposable root overlays.
 
+- [x] Run every obligatory make target on this host and record what each returned.
+  `make` builds the four binaries with the host gcc; `make man` renders all nine man
+  pages; `make llm.txt` regenerates the file and tests/llm-check.sh confirms it matches
+  its nine sources; `make check` passes the fixture suite in two and a half minutes and
+  `make check-fixtures` is the same suite under its own name; `make check-root` runs the
+  root-touching static fixtures and prints `static install fixtures passed`.
+  `make check-install` passes the installer plan, menu and disk fixtures.
+  `make check-qemu ARCH=i686` boots the i686 dual-libc ISO built from the pinned kernel
+  under QEMU/TCG and writes a passing holy-qemu-report-2, and `make check-qemu
+  ARCH=x86_64` does the same for the x86_64 dual-libc ISO. `make check-hardware` returns
+  6 on this host with `installed Holy database required` because the release gate needs
+  an installed system, while `HARDWARE_SCOPE=host make check-hardware` passes the
+  nouveau, NVK and OpenGL presentation probes on the real GPU. Nothing above is a stub:
+  a target with a missing tool returns a requirement error rather than zero.
 - [x] Run current prototype fixtures under GCC, TCC and Clang ASan/UBSan.
 - [x] Boot the i686 static core with kernel 7.2.7, BusyBox, dinit, mdevd and
   static holypkg from a BIOS optical ISO under QEMU/TCG. The guest checks PID 1,
