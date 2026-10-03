@@ -101,6 +101,11 @@ int renameat(int from, const char *old, int to, const char *name)
            leaves the instance saved and its private manifest not written yet */
         if (fault("private-files-after") && !strcmp(old, "files") &&
             !strcmp(name, "package-files")) stop();
+        /* the rewritten manifest moves into place before its transform record is written,
+           so a crash here leaves a sound instance whose search path is already settled
+           and whose record the resumed transaction still has to state */
+        if (fault("rewrite-files-after") && !strcmp(name, "files") &&
+            !strncmp(old, ".holy-tmp-", 10)) stop();
     }
     return result;
 }

@@ -124,7 +124,7 @@
   process held and the apply never returned. `holy_state_visit` is now split so a
   caller that already holds the lock reads through it, and the fixture runs the apply
   under a watchdog so the hang fails the run instead of stalling it.
-- [ ] Carry a consumer's search-path rewrite through one set transaction, so a
+- [x] Carry a consumer's search-path rewrite through one set transaction, so a
   placement and the rewrite that makes its consumers work are one reviewed decision
   instead of a placement followed by a separate `holypkg patch`.
   `db plan-set`/`db apply-set` take `--search CONSUMER=DIR`, the plan prints a
@@ -140,16 +140,34 @@
   payload carries the new size as well as the new hash, because patchelf grows the file
   it rewrites, and the instance records `holy-rewrite-transform-1` beside its
   `package-files` the way a placement records `holy-private-transform-1`.
-  Worked end to end by hand on the ELF fixture: the apply commits at generation 3, the
-  consumer carries `/usr/lib/holy/private/<artifact>/usr/lib` in DT_RUNPATH, and
-  `db check` finds the file's size and digest matching. It does not land, because the
-  installed graph is the part still open. The SONAME provider edge for the consumer
-  still names the artifact that owned the library at the public path, while the
-  consumer's search path now leads to the private copy the displacing artifact owns, so
-  `db check` answers `unknown-loader-context` and status 4 for that consumer. Settling
-  it means re-pointing the provider edge in the same transaction, which is a change to
-  the installed graph and not to a manifest row, and it needs its own review. The diff
-  is kept at /tmp/opencode/search-wip2.patch rather than committed half working.
+  Settling the graph was the part that stayed open, and it is now part of the save
+  rather than a repair afterwards: `graph_expected` derives the record an instance
+  keeps by moving every payload this artifact relocated to its private path and
+  re-pointing every SONAME edge of a consumer whose search path the review settled at
+  the artifact that owns the private copy. Both the apply and the recovery compare an
+  instance against that derived record, so a transaction that was reviewed as settled
+  is one the root can prove. The journal keeps the decision in the shape the plan
+  settled it, and a recovery repeats exactly that rewrite; the walk that finds undecided
+  consumers is a review and does not run there, which also sidesteps its refusal of a
+  root with a transaction pending.
+  `tests/private-set.sh` runs the whole thing on real ELF fixtures: the apply commits,
+  the consumer carries `/usr/lib/holy/private/<artifact>/usr/lib` in DT_RUNPATH, the
+  manifest row matches the file on disk, the edge names the artifact that owns the
+  private copy, `db rm` refuses to remove it while the consumer needs it, and
+  `db check --all` passes. A `rewrite-files-after` fault in tests/update-fault.c kills
+  the apply between the rewritten manifest moving in and its transform record being
+  written, and recovery resumes in the `search` phase, states the missing record and
+  leaves a root that checks.
+  Three defects fell out of writing the fixture. `state_visit_locked` returns zero when
+  a visit completed, and the installed-consumer walk read that as a failure, so a walk
+  that finished was reported as one that failed; the placement case only hid it by
+  preferring the decision it had already found. `search_directories` replaced the
+  loader's default directories with the runpath a file states instead of putting them
+  first, so a consumer whose runpath answered for one library lost libc from the
+  system directories and `db check` reported `unknown-loader-context` for it. And a
+  placed artifact's graph rows still named the public path after its manifest moved to
+  the private one, which made the installed entry unreadable rather than merely
+  unsettled.
 - [x] Rewrite the interpreter, RPATH or RUNPATH, SONAME and DT_NEEDED of one file
   through patchelf, with no second rewriter in this repository. `holypkg patch`
   reads the facts the file states, states the argv patchelf would run and runs it
@@ -534,10 +552,10 @@
   private providers, interpreter handling and explicit conflict decisions. The
   private placement of a colliding file, the patchelf rewrite of a consumer's
   search path and the consumer walk that refuses to strand a program are all done
-  and their limits are stated in man/holypkg.8. What is not done is the manager
-  choosing those decisions itself: building a consistent private library set for
-  one ABI and carrying placement and rewrite through one set transaction instead of
-  as two commands.
+  and their limits are stated in man/holypkg.8, and the placement and the rewrite are
+  now one set transaction. What is not done is the manager choosing those decisions
+  itself: building a consistent private library set for one ABI, which is a solver
+  question rather than a review question.
 - [x] Accept nonempty HOLY/transform as an immutable provenance record in local
   solve, single-package planning, set installation and removal. The installer
   verifies the already transformed payload and does not execute the record.

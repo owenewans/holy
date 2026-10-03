@@ -67,7 +67,9 @@ int holy_state_finish_apply(const char *root_path);
 int holy_state_owner(const char *path, const char *root_path);
 
 /* borrowed arrays: source bindings and exact hashes accepting non-native placement.
-   architecture decisions apply only to newly installed artifacts in this set. */
+   architecture decisions apply only to newly installed artifacts in this set. a search
+   decision names the consumer whose search path is set to a private directory, and it
+   is only settled alongside a placement. */
 int holy_state_set(const char *const *digests, size_t count, const char *choice,
                    const char *approved, const char *root_path,
                    const char *const *bindings, size_t binding_count,
@@ -76,6 +78,7 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
                    const char *const *skipped_hooks, size_t skipped_count,
                    const char *const *accepted_service, size_t service_count,
                    const char *const *placements, size_t placement_count,
+                   const char *const *searches, size_t search_count,
                    char plan_hash[65]);
 /* binds newly selected catalog artifacts to one active registered source. */
 int holy_state_set_source(const char *const *digests, size_t count,

@@ -243,7 +243,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg db apply --root DIRECTORY
 .br
-.B holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] [--private ARTIFACT=PATH ...] --root DIRECTORY
+.B holypkg db plan-set ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] [--private ARTIFACT=PATH ...] [--search ARTIFACT=DIRECTORY ...] --root DIRECTORY
 .br
 .B holypkg db transactions reports every transaction this root committed. A commit
 leaves a directory named for the plan it committed with, a committed file
@@ -260,7 +260,11 @@ The record a set keeps is its journal without the phase line, since that line
 is where the transaction stopped rather than a decision it was reviewed with.
 Every decision line is printed as the record holds it, so this command
 restates nothing: artifact, binding, catalog-index, accept-arch,
-accept-privileged, skip-hooks, service and accept-broken. The facts are the
+accept-privileged, skip-hooks, service, private and accept-broken. A search
+decision is kept as the plan settled it, naming the file whose search path
+changes, the library it names, the artifact that owns the private copy and
+the directory it moved to, so a recovery repeats that rewrite instead of
+resolving the decision again against a root that has already changed. The facts are the
 generation the transaction was reviewed at, the artifact count of a set or
 the artifact of a removal, and the old and new artifact of a replacement.
 Transactions are in identity order. --json uses the holy-transactions-1
@@ -268,7 +272,7 @@ schema with one object per transaction and a summary object. A root without
 a usable database is 6.
 
 .PP
-db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] [--private ARTIFACT=PATH ...] --root DIRECTORY
+db apply-set PLAN_SHA256 ROOT_SHA256 [CANDIDATE_SHA256...] [--choose ID=SHA256] [--source ARTIFACT=SOURCE_ID ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] [--private ARTIFACT=PATH ...] [--search ARTIFACT=DIRECTORY ...] --root DIRECTORY
 .br
 .B holypkg db recover --finish-set|--continue-set --root DIRECTORY
 .br
@@ -1358,11 +1362,12 @@ published it. db status returns 5 for a recognized set journal.
 A set transaction states the mutation phase it reached as the last line of its
 journal:
 
-phase applying|instances|record|generation
+phase applying|search|instances|record|generation
 
 The transaction rewrites the journal at each phase, so a crash leaves the root
-the phase the transaction had proved. applying is payload and instances, after
-which the decisions record is retained, then the generation is published.
+the phase the transaction had proved. applying is payload, search is the search
+paths the review settled, instances follows both, after which the decisions
+record is retained, then the generation is published.
 Recovery reads that phase and states it:
 
 resumed-phase PHASE
@@ -1370,7 +1375,9 @@ recovered-set SHA256 generation GENERATION artifacts COUNT phase PHASE
 
 A phase past applying means every instance the set installs is already there,
 so recovery writes no payload again and refuses an artifact that is missing
-rather than repeating one. --finish-set verifies cached artifacts, the original
+rather than repeating one. A phase at or past search repeats each settled search
+decision whose instance does not yet carry its transform record, against the
+file the previous run left behind. --finish-set verifies cached artifacts, the original
 plan hash, installed metadata/graphs and actual payloads before completing
 generation publication and removing the journal. --continue-set additionally
 installs packages that have no installed instance yet, after checking the whole
@@ -3087,11 +3094,38 @@ arrives is a consumer too, so a program that needed the library before the secon
 provider showed up is still named. A provider the walk must not walk is the
 displacing artifact itself.
 .PP
-Changing the search paths of the consumers of a displaced file needs patchelf and
-is not part of this decision. A consumer the plan names still has to be told where the
-private directory is, and this command is how, one file at a time, outside the
-transaction that placed it. Carrying both in one set is recorded as open on the
-roadmap. The private file is reachable through
+A placement strands every program that needs the file, so the search decision belongs
+to the same transaction: --search ARTIFACT=DIRECTORY states that the consumer's
+search path becomes DIRECTORY, which has to be the directory one of the placements in
+the same set produced. The directory is absolute, since a search path carrying a slash
+that is not absolute resolves against the process loading the file rather than
+against the installed root. A search decision without a placement, a directory no
+placement produced and a consumer the walk did not find are all refused, so a
+decision that settles nothing cannot be approved; a walk that finds a consumer the
+caller did not name ends the plan with status 3 and names the exact flag that settles
+it. The plan prints one search line per settled consumer,
+search ARTIFACT PATH DIRECTORY, the plan hash covers the decisions, and an apply that
+repeats the plan without them names another plan rather than dropping them.
+.PP
+The apply runs the rewrites through the module that states patchelf's argv, in a
+search phase of its own between the payloads and the instances, so a crash inside one
+resumes inside it rather than repeating a placement. The manifest row of a rewritten
+payload carries the size and digest the rewrite produced, since patchelf grows the
+file it writes; the manifest the package shipped is kept as package-files and the
+record that reached the root as files, with a holy-rewrite-transform-1 record naming
+both digests beside the file it changed and the plan the decision was made in. An
+instance that already carries a placement's record keeps that one and states the
+rewrite beside it. A file that already states the decided search path is the state a
+resumed run expects, so recovery repeats the decision and finds it settled.
+.PP
+The graph an instance saves is the graph the transaction settles rather than the one
+the resolver derived: a relocated payload is named where it now lives, and a consumer
+whose search path changed names the artifact that owns the private copy. Removing
+that artifact is refused while the consumer needs it, since the edge is a real
+requirement and not a note about what used to be installed. A loader searches a
+stated search path before its own default directories rather than instead of them, so
+a runpath that answered for one library still leaves libc resolvable from the system
+directories. The private file is reachable through
 "holypkg run SOURCE:PACKAGE -- COMMAND", which puts the private bin directory
 first on PATH, or through an explicit --view bind, and a binary that names an
 absolute helper path has to be started through that view.

@@ -181,9 +181,55 @@ expect 3 "$bin" db plan-set "$other" "$libanswer" --private "$other=usr/lib/libh
     --root "$root2"
 grep -qx "consumer $libanswer usr/lib/libanswer.so.1 needs libhelper.so.1 from $other unreachable scope soname" "$tmp/out"
 test "$(grep -c '^consumer ' "$tmp/out")" -eq 1
-grep -q "decision-required placement strands 1 programs" "$tmp/err"
-grep -q "holypkg patch CONSUMER --runpath DIR" "$tmp/err"
+grep -q "decision-required placement strands $libanswer usr/lib/libanswer.so.1" "$tmp/err"
+grep -q -- "--search $libanswer DIR settles it in this transaction" "$tmp/err"
 test -f "$root2/usr/lib/libhelper.so.1"
+
+search_dir="/usr/lib/holy/private/$other/usr/lib"
+# a search decision for a directory no placement produced settles nothing
+expect 3 "$bin" db plan-set "$other" "$libanswer" --private "$other=usr/lib/libhelper.so.1" \
+    --search "$libanswer=/usr/lib/holy/private/0000000000000000000000000000000000000000000000000000000000000000/usr/lib" \
+    --root "$root2"
+grep -q "this placement put the library in $search_dir" "$tmp/err"
+
+# and a decision naming a consumer nothing strands is refused as well
+expect 3 "$bin" db plan-set "$other" "$libanswer" --private "$other=usr/lib/libhelper.so.1" \
+    --search "$other=/usr/lib/holy/private/$other/usr/lib" --root "$root2"
+grep -q "settles nothing" "$tmp/err"
+
+# the placement and the search path are one decision: the plan names the file that changes,
+# carries the decision in its hash, and the apply rewrites it in the same transaction
+expect 0 "$bin" db plan-set "$other" "$libanswer" --private "$other=usr/lib/libhelper.so.1" \
+    --search "$libanswer=$search_dir" --root "$root2"
+grep -qx "search $libanswer usr/lib/libanswer.so.1 $search_dir" "$tmp/out"
+search_plan=$(plan_hash)
+test "${#search_plan}" -eq 64
+# an apply that repeats the plan without the decision names another plan
+expect 3 "$bin" db apply-set "$search_plan" "$other" "$libanswer" \
+    --private "$other=usr/lib/libhelper.so.1" --root "$root2"
+expect 0 "$bin" db apply-set "$search_plan" "$other" "$libanswer" \
+    --private "$other=usr/lib/libhelper.so.1" --search "$libanswer=$search_dir" --root "$root2"
+grep -q "rewrote search-path usr/lib/libanswer.so.1 $search_dir" "$tmp/out"
+# the consumer now resolves the private copy, so the root checks without a broken edge
+expect 0 "$bin" db check --all --root "$root2"
+grep -qx "format holy-rewrite-transform-1" \
+    "$root2/var/lib/holypkg/installed/$libanswer/config-state"
+grep -q "^installed [0-9a-f]\\{64\\}$" \
+    "$root2/var/lib/holypkg/installed/$libanswer/config-state"
+# the manifest row follows the file patchelf grew, and the packaged manifest is kept
+row=$(grep '^file "usr/lib/libanswer.so.1"' "$root2/var/lib/holypkg/installed/$libanswer/files")
+test "$(echo "$row" | awk '{print $8}')" = "$(stat -c %s "$root2/usr/lib/libanswer.so.1")"
+test "$(echo "$row" | awk '{print $9}')" = \
+    "$(sha256sum "$root2/usr/lib/libanswer.so.1" | cut -d ' ' -f 1)"
+test -f "$root2/var/lib/holypkg/installed/$libanswer/package-files"
+# the edge names the artifact that owns the private copy now
+grep -Eq "^edge \"$libanswer\" \"elf-[0-9a-f]{64}\" \"$other\" \"usr/lib/libanswer.so.1\" \"soname\" \"libhelper.so.1\"" \
+    "$root2/var/lib/holypkg/installed/$libanswer/graph"
+# and the artifact that owns the private copy is a provider like any other: removing it
+# would strand the consumer the review settled, so the root refuses
+expect 3 "$bin" db rm "$other" --root "$root2"
+grep -q "provider $other still required by $libanswer" "$tmp/err"
+expect 0 "$bin" db check --all --root "$root2"
 
 # a crash between saving an instance and recording its placement leaves the payload under
 # the private root and a manifest that names the public path. the root then contradicts
@@ -226,6 +272,38 @@ expect 0 "$bin" db rm "$crashb" --root "$root4"
 test ! -e "$root4/usr/lib/holy/private/$crashb/usr/bin/prog"
 test "$(cat "$root4/usr/bin/prog")" = one
 expect 0 "$bin" db check --all --root "$root4"
+
+# a crash between the rewritten manifest moving in and its transform record being written
+# leaves a sound instance whose search path is already settled. the transaction resumes in
+# the phase it stopped in and states the record the root is missing.
+root6="$tmp/root6"
+mkdir -p "$root6"
+"$bin" db init --root "$root6" > "$tmp/out"
+for artifact in runtime libanswer; do
+    "$bin" cache stage "local:$tmp/$artifact.holy" --root "$root6" > "$tmp/out"
+done
+install_set "$root6" "$runtime"
+install_set "$root6" "$libanswer"
+"$bin" cache stage "local:$tmp/other.holy" --root "$root6" > "$tmp/out"
+expect 0 "$bin" db plan-set "$other" "$libanswer" \
+    --private "$other=usr/lib/libhelper.so.1" --search "$libanswer=$search_dir" --root "$root6"
+crash_search=$(sed -n 's/^plan-set .* sha256 \([0-9a-f]*\) read-only$/\1/p' "$tmp/out")
+if env LD_PRELOAD="$tmp/fault.so" HOLY_UPDATE_FAULT=rewrite-files-after \
+       "$bin" db apply-set "$crash_search" "$other" "$libanswer" \
+          --private "$other=usr/lib/libhelper.so.1" --search "$libanswer=$search_dir" \
+          --root "$root6" > "$tmp/out" 2> "$tmp/err"; then
+    echo "the fault did not interrupt the search phase" >&2
+    cat "$tmp/out" "$tmp/err" >&2
+    exit 1
+fi
+# the search path is settled and the manifest carries the digest the rewrite produced, while
+# the transform record the root needs to read that is still missing
+test -f "$root6/var/lib/holypkg/installed/$libanswer/package-files"
+test ! -e "$root6/var/lib/holypkg/installed/$libanswer/config-state"
+expect 0 "$bin" db recover --continue-set --root "$root6"
+grep -qx "resumed-phase search" "$tmp/out"
+grep -qx "format holy-rewrite-transform-1" "$root6/var/lib/holypkg/installed/$libanswer/config-state"
+expect 0 "$bin" db check --all --root "$root6"
 
 # the consumer walk reads the installed artifacts, and apply-set holds the state lock
 # exclusively while it plans. a walk that took the shared lock again on a second

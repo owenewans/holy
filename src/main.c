@@ -161,7 +161,7 @@ static int add_local(int argc, char **argv)
                             accepted_arch, arch_count,
                             accepted_privileged, privileged_count,
                             skipped_hooks, skipped_count,
-                            accepted_service, service_count, NULL, 0, plan);
+                            accepted_service, service_count, NULL, 0, NULL, 0, plan);
     if (result) goto done;
     if (!yes) {
         if (noninteractive || !isatty(STDIN_FILENO)) {
@@ -181,7 +181,7 @@ static int add_local(int argc, char **argv)
                             accepted_arch, arch_count,
                             accepted_privileged, privileged_count,
                             skipped_hooks, skipped_count,
-                            accepted_service, service_count, NULL, 0, NULL);
+                            accepted_service, service_count, NULL, 0, NULL, 0, NULL);
 done:
     if (result == 2)
         fputs("usage: holypkg add local:FILE [--candidate local:FILE ...] [--choose ID=SHA256] [--associate-source ALIAS] [--associate SHA256=ALIAS ...] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--skip-hooks SHA256 ...] [--accept-service UNIT ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
@@ -2719,7 +2719,9 @@ rollback_usage:
         }
         result = holy_rewrite_prepare(tool, file, change, count, &plan);
         for (i = 0; i < (int)count; ++i) { free(change[i].from); free(change[i].to); }
-        if (result != 1) { holy_rewrite_free(&plan); return result > 0 ? result : 1; }
+        /* a file that already states the change is a refusal like any other, so the
+           status a caller reads is the operation's own rather than the module's */
+        if (result != 1) { holy_rewrite_free(&plan); return result > 0 && result != 3 ? result : 1; }
         holy_rewrite_print(&plan);
         if (!approved) { holy_rewrite_free(&plan); return 0; }
         if (strcmp(plan.hash, approved)) {
@@ -3056,9 +3058,9 @@ update_done:
         int end = argc - 2;
         const char *choice = NULL;
         const char **digests, **bindings, **accepted_arch, **accepted_privileged, **skipped_hooks;
-        const char **accepted_service, **placements;
+        const char **accepted_service, **placements, **searches;
         size_t count = 0, binding_count = 0, accepted_count = 0, privileged_count = 0, skipped_count = 0;
-        size_t service_count = 0, placement_count = 0;
+        size_t service_count = 0, placement_count = 0, search_count = 0;
         int i, result = 2;
         if (strcmp(argv[argc - 2], "--root")) return 2;
         digests = calloc((size_t)argc, sizeof *digests);
@@ -3068,10 +3070,12 @@ update_done:
         skipped_hooks = calloc((size_t)argc, sizeof *skipped_hooks);
         accepted_service = calloc((size_t)argc, sizeof *accepted_service);
         placements = calloc((size_t)argc, sizeof *placements);
+        searches = calloc((size_t)argc, sizeof *searches);
         if (!digests || !bindings || !accepted_arch || !accepted_privileged || !skipped_hooks ||
-            !accepted_service || !placements) {
+            !accepted_service || !placements || !searches) {
             free(digests); free(bindings); free(accepted_arch); free(accepted_privileged);
-            free(skipped_hooks); free(accepted_service); free(placements); return 1;
+            free(skipped_hooks); free(accepted_service); free(placements); free(searches);
+            return 1;
         }
         for (i = start; i < end; ++i) {
             if (!strcmp(argv[i], "--choose")) {
@@ -3095,6 +3099,9 @@ update_done:
             } else if (!strcmp(argv[i], "--private")) {
                 if (++i >= end) goto set_done;
                 placements[placement_count++] = argv[i];
+            } else if (!strcmp(argv[i], "--search")) {
+                if (++i >= end) goto set_done;
+                searches[search_count++] = argv[i];
             } else if (argv[i][0] == '-') goto set_done;
             else digests[count++] = argv[i];
         }
@@ -3104,10 +3111,11 @@ update_done:
                                           accepted_privileged, privileged_count,
                                           skipped_hooks, skipped_count,
                                           accepted_service, service_count,
-                                          placements, placement_count, NULL);
+                                          placements, placement_count,
+                                          searches, search_count, NULL);
 set_done:
         free(digests); free(bindings); free(accepted_arch); free(accepted_privileged);
-        free(skipped_hooks); free(accepted_service); free(placements);
+        free(skipped_hooks); free(accepted_service); free(placements); free(searches);
         return result;
     }
     if (argc == 6 && !strcmp(argv[1], "db") &&

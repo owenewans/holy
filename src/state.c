@@ -26,6 +26,8 @@
 #include "../backends/rpm-version.h"
 #include "change.h"
 #include "private.h"
+#include "rewrite.h"
+#include "../backends/shrecipe.h"
 
 #include <archive.h>
 #include <archive_entry.h>
@@ -285,18 +287,22 @@ done:
     return ok;
 }
 
-static int config_state_valid(int item, const char *artifact)
+/* one shape, three formats: a record that states what an artifact shipped beside what the
+   root carries, whether the change came from a hook, a placement or a rewritten search
+   path. the digests it names are proved against the two manifests it sits between. */
+static int transform_state_valid(int item, const char *artifact, const char *record_name,
+                                 const char *const *formats, size_t format_count)
 {
-    char source[65], raw[65], installed[65], plan[65], actual[65];
-    char *record = update_record(item, "config-state");
-    int ok = 0;
+    char format[65], source[65], raw[65], installed[65], plan[65], actual[65];
+    char *record = update_record(item, record_name);
+    size_t i;
+    int ok = 0, matched = 0;
     if (!record) return 0;
-    if ((sscanf(record,
-                "format holy-config-transform-1\nsource %64[0-9a-f]\nraw %64[0-9a-f]\ninstalled %64[0-9a-f]\nplan %64[0-9a-f]\n",
-                source, raw, installed, plan) != 4 &&
-         sscanf(record,
-                "format holy-private-transform-1\nsource %64[0-9a-f]\nraw %64[0-9a-f]\ninstalled %64[0-9a-f]\nplan %64[0-9a-f]\n",
-                source, raw, installed, plan) != 4) ||
+    for (i = 0; i < format_count && !matched; ++i)
+        matched = sscanf(record,
+                "format %64s\nsource %64[0-9a-f]\nraw %64[0-9a-f]\ninstalled %64[0-9a-f]\nplan %64[0-9a-f]\n",
+                format, source, raw, installed, plan) == 5 && !strcmp(format, formats[i]);
+    if (!matched ||
         !valid_digest(source) || !valid_digest(raw) || !valid_digest(installed) ||
         !valid_digest(plan) ||
         strcmp(source, artifact) ||
@@ -306,6 +312,26 @@ static int config_state_valid(int item, const char *artifact)
 done:
     free(record);
     return ok;
+}
+
+/* the record beside a placed manifest: a hook change, a relocation or a rewritten path */
+static int config_state_valid(int item, const char *artifact)
+{
+    static const char *const formats[] = { "holy-config-transform-1",
+                                           "holy-private-transform-1",
+                                           "holy-rewrite-transform-1" };
+    return transform_state_valid(item, artifact, "config-state", formats,
+                                 sizeof formats / sizeof *formats);
+}
+
+/* a consumer whose search path was rewritten keeps its own record when it already carries
+   the placement's, so the two facts are stated separately rather than one overwriting the
+   other */
+static int rewrite_state_valid(int item, const char *artifact)
+{
+    static const char *const formats[] = { "holy-rewrite-transform-1" };
+    return transform_state_valid(item, artifact, "rewrite-transform", formats,
+                                 sizeof formats / sizeof *formats);
 }
 
 static int graph_digest(int item, char output[65])
@@ -422,9 +448,24 @@ static int installed_valid(int dir)
             errno = 0;
             has_source = !fstatat(item, "package-files", &source, AT_SYMLINK_NOFOLLOW);
             if (!has_source && errno != ENOENT) ok = 0;
-            if (has_transform != has_source || (has_transform &&
+            /* the transform record names both manifests, so it cannot stand without the
+               packaged one. the packaged manifest on its own is the state a rewrite is in
+               the middle of: the record is copied aside first and the transform written
+               last, so every moment in between is sound rather than unprovable */
+            if ((has_transform && !has_source) || (has_transform &&
                 (!S_ISREG(transformed.st_mode) || !S_ISREG(source.st_mode) ||
                  !config_state_valid(item, entry->d_name)))) ok = 0;
+            {
+                struct stat rewritten;
+                int has_rewrite;
+                errno = 0;
+                has_rewrite = !fstatat(item, "rewrite-transform", &rewritten,
+                                       AT_SYMLINK_NOFOLLOW);
+                if (!has_rewrite && errno != ENOENT) ok = 0;
+                if (has_rewrite && (!S_ISREG(rewritten.st_mode) || (rewritten.st_mode & 0022) ||
+                    (rewritten.st_uid != 0 && rewritten.st_uid != geteuid()) ||
+                    !has_source || !rewrite_state_valid(item, entry->d_name))) ok = 0;
+            }
         }
         if (ok) {
             DIR *members = fdopendir(dup(item));
@@ -2408,6 +2449,471 @@ done:
    package shipped as package-files and the record it actually installed as files. the
    transform record names both digests, which is the same shape the preserved-config
    transform uses, so every reader of an instance already understands it. */
+/* one settled search decision: the consumer file whose search path the review changed, the
+   provider that lost the library and the private directory that now holds it. the plan
+   named all three, so the apply repeats exactly that and nothing else. */
+struct settled_search {
+    char *consumer;
+    char *path;
+    char *provider;
+    char *soname;
+    char *directory;
+};
+
+static void settled_search_free(struct settled_search *entry)
+{
+    free(entry->consumer);
+    free(entry->path);
+    free(entry->provider);
+    free(entry->soname);
+    free(entry->directory);
+    memset(entry, 0, sizeof *entry);
+}
+
+/* the digest and size of an installed file, read from the payload itself, since a rewrite
+   changes both and the record the caller holds was written before it ran */
+static int installed_file_facts(int root, const char *path, char hash[65], off_t *size)
+{
+    unsigned char buffer[65536], digest[32];
+    EVP_MD_CTX *context = EVP_MD_CTX_new();
+    struct stat st;
+    size_t total = 0, i;
+    unsigned int length = 0;
+    ssize_t got;
+    int fd = openat(root, path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    int ok = 0;
+    if (fd < 0 || !context || fstat(fd, &st) || !S_ISREG(st.st_mode) ||
+        st.st_size < 1 || st.st_size > 64 * 1024 * 1024 ||
+        EVP_DigestInit_ex(context, EVP_sha256(), NULL) != 1) goto done;
+    while ((got = read(fd, buffer, sizeof buffer)) != 0) {
+        if (got < 0) { if (errno == EINTR) continue; goto done; }
+        total += (size_t)got;
+        if (total != (size_t)st.st_size || EVP_DigestUpdate(context, buffer, (size_t)got) != 1)
+            goto done;
+    }
+    if (EVP_DigestFinal_ex(context, digest, &length) != 1 || length != 32) goto done;
+    for (i = 0; i < 32; ++i) snprintf(hash + i * 2, 3, "%02x", digest[i]);
+    *size = st.st_size;
+    ok = 1;
+done:
+    EVP_MD_CTX_free(context);
+    if (fd >= 0) close(fd);
+    return ok;
+}
+
+/* a record field that needs no quoting is written bare, which is how the packer and the
+   placement writer already state a manifest row */
+static void record_bare(FILE *stream, const char *value)
+{
+    const unsigned char *p = (const unsigned char *)value;
+    int bare = *p != '\0';
+    for (; bare && *p; ++p)
+        if (*p <= ' ' || *p == '"' || *p == '\\' || *p >= 127) bare = 0;
+    if (bare) fputs(value, stream);
+    else holy_token(stream, value);
+}
+
+/* a graph row is the keyword bare and every field quoted, as the resolver writes it */
+static int emit_graph_row(FILE *stream, char **v, size_t count)
+{
+    size_t i;
+    for (i = 0; i < count; ++i) {
+        if (i && fputc(' ', stream) == EOF) return 0;
+        if (i) holy_token(stream, v[i]);
+        else if (fputs(v[i], stream) == EOF) return 0;
+        if (ferror(stream)) return 0;
+    }
+    return fputc('\n', stream) != EOF;
+}
+
+/* the digest one manifest row states for a path, read from the packaged record rather than
+   from the file on disk, since a resume needs the number a previous run wrote down */
+static int manifest_row_hash(const char *record, size_t length, const char *path,
+                             char hash[65])
+{
+    size_t start = 0, number = 0;
+    int found = 0;
+    while (start < length && !found) {
+        const char *end = memchr(record + start, '\n', length - start);
+        size_t bytes = end ? (size_t)(end - record - start) : length - start;
+        char **v = NULL, *error = NULL;
+        size_t count = 0;
+        ++number;
+        if (memchr(record + start, 0, bytes) ||
+            !holy_lex(record + start, bytes, &v, &count, "installed/files", number, &error)) {
+            free(error);
+            holy_tokens_free(v, count);
+            return 0;
+        }
+        free(error);
+        if (count == 12 && !strcmp(v[0], "file") && !strcmp(v[1], path) &&
+            valid_digest(v[8])) { memcpy(hash, v[8], 65); found = 1; }
+        holy_tokens_free(v, count);
+        start += bytes + !!end;
+    }
+    return found;
+}
+
+/* a manifest row is the keyword and the path quoted and the rest bare, as the packer
+   writes it, so a rewritten record stays the shape every other reader already expects */
+static int emit_manifest_row(FILE *stream, char **v, size_t count)
+{
+    size_t i;
+    if (count < 2 || fputs(v[0], stream) == EOF || fputc(' ', stream) == EOF) return 0;
+    holy_token(stream, v[1]);
+    for (i = 2; i < count; ++i) {
+        if (fputc(' ', stream) == EOF || ferror(stream)) return 0;
+        record_bare(stream, v[i]);
+    }
+    return !ferror(stream) && fputc('\n', stream) != EOF;
+}
+
+/* the manifest row of a rewritten payload carries the size and the digest the rewrite
+   produced, since patchelf grows the file it writes and a row that kept the packaged
+   numbers would check a payload that is not there. every other row is copied as written. */
+static int rewrite_manifest_row(const char *record, size_t length, const char *path,
+                                off_t size, const char *hash, char **out, size_t *out_length)
+{
+    FILE *stream;
+    size_t start = 0, number = 0, replaced = 0;
+    int ok = 0;
+    *out = NULL;
+    *out_length = 0;
+    stream = open_memstream(out, out_length);
+    if (!stream) return 0;
+    while (start < length) {
+        const char *end = memchr(record + start, '\n', length - start);
+        size_t bytes = end ? (size_t)(end - record - start) : length - start;
+        char **v = NULL, *error = NULL;
+        size_t count = 0;
+        ++number;
+        if (memchr(record + start, 0, bytes) ||
+            !holy_lex(record + start, bytes, &v, &count, "installed/files", number, &error)) {
+            free(error);
+            goto done;
+        }
+        free(error);
+        if (count == 12 && !strcmp(v[0], "file") && !strcmp(v[1], path)) {
+            char number_text[32];
+            snprintf(number_text, sizeof number_text, "%lld", (long long)size);
+            free(v[7]);
+            free(v[8]);
+            v[7] = strdup(number_text);
+            v[8] = strdup(hash);
+            if (!v[7] || !v[8]) { holy_tokens_free(v, count); goto done; }
+            if (!emit_manifest_row(stream, v, count)) { holy_tokens_free(v, count); goto done; }
+            ++replaced;
+        } else if (fwrite(record + start, 1, bytes + !!end, stream) != bytes + !!end) {
+            holy_tokens_free(v, count);
+            goto done;
+        }
+        holy_tokens_free(v, count);
+        start += bytes + !!end;
+    }
+    /* a decision for a row the record does not carry would leave a rewritten payload no
+       row at all, so it is refused rather than half recorded */
+    ok = replaced == 1;
+done:
+    if (fclose(stream)) ok = 0;
+    if (!ok) { free(*out); *out = NULL; *out_length = 0; }
+    return ok;
+}
+
+/* the instance header carries the digest of every record beside it, so a record that changed
+   has its own line rewritten and the rest of the header left exactly as it was */
+static int replace_state_field(int item, const char *key, const char *value)
+{
+    char buffer[8192], *updated = NULL, *line;
+    struct stat st;
+    size_t updated_length = 0, key_length = strlen(key);
+    ssize_t got;
+    FILE *stream;
+    int fd = openat(item, "state", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    int ok = 0, seen = 0;
+    if (fd < 0) return 0;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 24 ||
+        st.st_size >= (off_t)sizeof buffer) { close(fd); return 0; }
+    got = read(fd, buffer, sizeof buffer - 1);
+    close(fd);
+    if (got != st.st_size || buffer[got - 1] != '\n' || memchr(buffer, 0, (size_t)got)) return 0;
+    buffer[got] = '\0';
+    stream = open_memstream(&updated, &updated_length);
+    if (!stream) return 0;
+    for (line = buffer; *line; ) {
+        char *end = strchr(line, '\n');
+        size_t bytes = end ? (size_t)(end - line) : strlen(line);
+        if (bytes > key_length && !strncmp(line, key, key_length) &&
+            line[key_length] == ' ') {
+            ++seen;
+            if (fprintf(stream, "%s %s\n", key, value) < 0) { fclose(stream); goto done; }
+        } else if (fwrite(line, 1, bytes + !!end, stream) != bytes + !!end) {
+            fclose(stream);
+            goto done;
+        }
+        if (!end) break;
+        line = end + 1;
+    }
+    if (fclose(stream) || seen != 1) goto done;
+    ok = update_replace(item, "state", updated);
+done:
+    free(updated);
+    return ok;
+}
+
+/* the installed graph is text the manager wrote, so a decision that changes what a file
+   resolves to changes one line of it. the reader walks the record, lets the caller decide
+   what a row should say, and writes it back with the header digest that names it. */
+typedef int (*graph_rewrite)(char **fields, size_t count, void *context);
+
+static int graph_walk(char **record, size_t *length, graph_rewrite change, void *context,
+                      size_t *changed)
+{
+    char *updated = NULL, *line, *error = NULL;
+    size_t updated_length = 0, number = 0, rewritten = 0;
+    FILE *stream = open_memstream(&updated, &updated_length);
+    int ok = 0;
+    if (!stream) return 0;
+    for (line = *record; *line; ) {
+        char *end = strchr(line, '\n');
+        size_t bytes = end ? (size_t)(end - line) : strlen(line);
+        char **v = NULL;
+        size_t count = 0;
+        int row;
+        ++number;
+        if (!holy_lex(line, bytes, &v, &count, "installed/graph", number, &error)) {
+            free(error);
+            fclose(stream);
+            goto done;
+        }
+        free(error);
+        row = count ? change(v, count, context) : 0;
+        if (row < 0) { holy_tokens_free(v, count); fclose(stream); goto done; }
+        if (row) {
+            if (!emit_graph_row(stream, v, count)) {
+                holy_tokens_free(v, count);
+                fclose(stream);
+                goto done;
+            }
+            ++rewritten;
+        } else if (fwrite(line, 1, bytes + !!end, stream) != bytes + !!end) {
+            holy_tokens_free(v, count);
+            fclose(stream);
+            goto done;
+        }
+        holy_tokens_free(v, count);
+        if (!end) break;
+        line = end + 1;
+    }
+    if (fclose(stream)) goto done;
+    free(*record);
+    *record = updated;
+    *length = updated_length;
+    updated = NULL;
+    if (changed) *changed = rewritten;
+    ok = 1;
+done:
+    free(updated);
+    return ok;
+}
+
+static int rewrite_graph_record(int item, graph_rewrite change, void *context)
+{
+    char buffer[65536], *record = NULL, digest[65];
+    struct stat st;
+    size_t length = 0, rewritten = 0;
+    ssize_t got;
+    int fd = openat(item, "graph", O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+    int result = -1;
+    if (fd < 0) return -1;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size < 1 ||
+        st.st_size >= (off_t)sizeof buffer) { close(fd); return -1; }
+    got = read(fd, buffer, sizeof buffer - 1);
+    close(fd);
+    if (got != st.st_size || buffer[got - 1] != '\n' || memchr(buffer, 0, (size_t)got)) return -1;
+    buffer[got] = '\0';
+    if (!(record = strndup(buffer, (size_t)got))) return -1;
+    if (!graph_walk(&record, &length, change, context, &rewritten)) goto done;
+    /* a record nothing changed is left exactly as it was: some placements relocate a
+       payload no edge names, and that is a fact about the graph rather than a fault */
+    if (rewritten &&
+        (!update_replace(item, "graph", record) ||
+         !instance_record_digest(item, "graph", digest) ||
+         !replace_state_field(item, "graph", digest))) goto done;
+    result = (int)rewritten;
+done:
+    free(record);
+    return result;
+}
+
+/* a relocated payload is named by the path it now lives at, so every edge of this
+   artifact that names the public path it lost follows the file to its private one */
+struct relocate_context {
+    const char *artifact;
+    const struct holy_private_places *places;
+};
+
+static int relocate_graph_row(char **v, size_t count, void *context)
+{
+    struct relocate_context *state = context;
+    size_t i;
+    char *target;
+    if (count != 7 || strcmp(v[0], "edge") || strcmp(v[1], state->artifact)) return 0;
+    for (i = 0; i < state->places->count; ++i) {
+        const struct holy_private_place *place = &state->places->place[i];
+        char moved[PRIVATE_PATH_LIMIT];
+        if (strcmp(place->artifact, state->artifact) || strcmp(v[4], place->path)) continue;
+        if (!holy_private_target(place->artifact, place->path, moved, sizeof moved)) return -1;
+        if (!(target = strdup(moved))) return -1;
+        free(v[4]);
+        v[4] = target;
+        return 1;
+    }
+    return 0;
+}
+
+/* the consumer's search path now leads to the private copy, so the edge that named the
+   artifact owning the public path is re-pointed at the artifact that owns the private one.
+   that is a change to the installed graph rather than a manifest row, and it belongs to
+   the same transaction, since a root that names a provider the loader cannot reach is not
+   one this manager calls settled. */
+struct repoint_context {
+    const struct settled_search *entry;
+    const char *owner;
+};
+
+static int repoint_graph_row(char **v, size_t count, void *context)
+{
+    struct repoint_context *state = context;
+    char *owner;
+    if (count != 7 || strcmp(v[0], "edge") || strcmp(v[1], state->entry->consumer) ||
+        strcmp(v[4], state->entry->path) || strcmp(v[5], "soname") ||
+        strcmp(v[6], state->entry->soname)) return 0;
+    if (!(owner = strdup(state->owner))) return -1;
+    free(v[3]);
+    v[3] = owner;
+    return 1;
+}
+
+static int repoint_search_edge(int item, const struct settled_search *entry, const char *owner)
+{
+    struct repoint_context context = { entry, owner };
+    /* a row that names this consumer, this file and this library is the one the decision
+       changes, and a root that has no such row is left describing something else */
+    return rewrite_graph_record(item, repoint_graph_row, &context) == 1;
+}
+
+/* one settled decision becomes one reviewed rewrite: the module that states patchelf's argv
+   runs it, the manifest row follows the file it grew, the transform is recorded beside the
+   instance, and the graph edge follows the file the loader will search. */
+static int apply_settled_search(int installed, int root, const char *root_path,
+                                const struct settled_search *entry, const char *transaction,
+                                int resume)
+{
+    struct holy_rewrite plan;
+    struct holy_rewrite_change change;
+    char raw[65], rewritten[65], packaged[65], present[65], file[PRIVATE_PATH_LIMIT + 512];
+    char *record = NULL, *updated = NULL;
+    size_t length = 0, updated_length = 0;
+    off_t size;
+    struct stat st;
+    int item = -1, prepared, result = 0;
+
+    item = child_dir(installed, entry->consumer, 0);
+    if (item < 0) return 0;
+    /* the record the instance carries is the manifest of the packaged payload, and the
+       payload on disk is about to stop matching it */
+    if (!(record = update_record(item, "files"))) goto done;
+    if (!installed_file_facts(root, entry->path, raw, &size)) goto done;
+    /* the packaged manifest is what the source artifact shipped, so its row is the digest
+       a resumed run still reports even when the file on disk was already rewritten */
+    if (fstatat(item, "package-files", &st, AT_SYMLINK_NOFOLLOW) == 0) {
+        char *shipped = update_record(item, "package-files");
+        int read = shipped && manifest_row_hash(shipped, strlen(shipped), entry->path, raw);
+        free(shipped);
+        if (!read) goto done;
+    }
+    if (snprintf(file, sizeof file, "%s/%s", root_path, entry->path) >= (int)sizeof file) {
+        fprintf(stderr, "holypkg: the path of %s is too long to rewrite\n", entry->path);
+        goto done;
+    }
+    memset(&change, 0, sizeof change);
+    change.kind = HOLY_REWRITE_RUNPATH;
+    change.to = entry->directory;
+    prepared = holy_rewrite_prepare("patchelf", file, &change, 1, &plan);
+    if (prepared != 1) {
+        /* a resumed transaction runs the decision again, and a file that already states it
+           is the state the previous run reached rather than a contradiction */
+        if (prepared != 3 || !resume) {
+            fprintf(stderr, "holypkg: %s\n", prepared == 3 ?
+                    "that search path is already what the decision names" :
+                    "the search path of this file is not one this manager can state for review");
+            holy_rewrite_free(&plan);
+            goto done;
+        }
+        holy_rewrite_free(&plan);
+    } else {
+        if (holy_rewrite_apply(&plan) != 0) {
+            fprintf(stderr, "holypkg: the search path of %s was not rewritten\n", entry->path);
+            holy_rewrite_free(&plan);
+            goto done;
+        }
+        holy_rewrite_free(&plan);
+    }
+    if (!installed_file_facts(root, entry->path, rewritten, &size)) goto done;
+    if (!rewrite_manifest_row(record, strlen(record), entry->path, size, rewritten,
+                              &updated, &updated_length)) {
+        fprintf(stderr, "holypkg: %s carries no manifest row to rewrite\n", entry->path);
+        goto done;
+    }
+    /* the packaged manifest is kept beside the rewritten one, so the digest of the source
+       artifact and the digest of what the root carries stay separate facts. the packaged
+       copy is written while the record it copies is still the installed one, and the
+       rewritten record moves in afterwards, so the instance always carries a whole
+       manifest and a crash between the two is a transaction that has not finished rather
+       than an instance that cannot be read. an instance that already carries the
+       placement's record keeps that one and states this rewrite beside it. */
+    if (fstatat(item, "package-files", &st, AT_SYMLINK_NOFOLLOW)) {
+        if (errno != ENOENT || !update_replace(item, "package-files", record)) goto done;
+    }
+    if (!update_replace(item, "files", updated)) goto done;
+    /* the transform states the same digests the other two records state, so one reader
+       proves all three, and then the two payload digests the rewrite itself produced */
+    if (!instance_record_digest(item, "package-files", packaged) ||
+        !instance_record_digest(item, "files", present)) goto done;
+    length = (size_t)snprintf(NULL, 0,
+        "format holy-rewrite-transform-1\nsource %s\nraw %s\ninstalled %s\nplan %s\n"
+        "file %s\npayload %s\nrewritten %s\n",
+        entry->consumer, packaged, present, transaction, entry->path, raw, rewritten);
+    if (length) {
+        char *transform = malloc(length + 1);
+        const char *name;
+        if (!transform) goto done;
+        snprintf(transform, length + 1,
+            "format holy-rewrite-transform-1\nsource %s\nraw %s\ninstalled %s\nplan %s\n"
+            "file %s\npayload %s\nrewritten %s\n",
+            entry->consumer, packaged, present, transaction, entry->path, raw, rewritten);
+        name = fstatat(item, "config-state", &st, AT_SYMLINK_NOFOLLOW) ? "config-state" :
+               "rewrite-transform";
+        if (!update_replace(item, name, transform)) {
+            free(transform);
+            goto done;
+        }
+        free(transform);
+    }
+    if (!repoint_search_edge(item, entry, entry->provider)) {
+        fprintf(stderr, "holypkg: the installed graph of %s names no edge to re-point for %s\n",
+                entry->consumer, entry->soname);
+        goto done;
+    }
+    printf("rewrote search-path %s %s\n", entry->path, entry->directory);
+    result = 1;
+done:
+    free(record);
+    free(updated);
+    if (item >= 0) close(item);
+    return result;
+}
+
 static int save_placed_files(int item, const char *snapshot, const char *artifact,
                              const struct holy_private_places *places,
                              const char *transaction)
@@ -4156,10 +4662,13 @@ struct service_list {
     size_t count;
 };
 
+struct settled_search;
 struct install_set {
     struct holy_resolution resolution;
     struct set_item *items;
     size_t count, paths;
+    struct settled_search *settled;   /* the search decisions this plan settles */
+    size_t settled_count;
     struct holy_conflict_claims capabilities;
     size_t capability_findings;
     int capability_complete;   /* every installed instance was read into the claims */
@@ -4197,6 +4706,8 @@ struct set_journal {
     size_t service_count;
     char **placements;            /* the placements the review displaced a file for */
     size_t placement_count;
+    char **searches;              /* the search paths the review settled with them */
+    size_t search_count;
 };
 
 static void service_list_free(struct service_list *list)
@@ -4209,6 +4720,90 @@ static void service_list_free(struct service_list *list)
     free(list->items);
     list->items = NULL;
     list->count = 0;
+}
+
+/* one search decision as the plan settled it: the file whose search path changes, the
+   library it names, the artifact that owns the private copy and the directory it moved
+   to. the journal states it in this shape and a recovery reads it back unchanged. */
+static int search_decision_parse(const char *text, struct settled_search *entry)
+{
+    char **v = NULL, *error = NULL;
+    size_t count = 0;
+    int ok = 0;
+    memset(entry, 0, sizeof *entry);
+    if (!holy_lex(text, strlen(text), &v, &count, "set-journal/search", 1, &error)) {
+        free(error);
+        holy_tokens_free(v, count);
+        return 0;
+    }
+    free(error);
+    if (count == 5 && valid_digest(v[0]) && valid_owner_path(v[1]) && *v[2] &&
+        !strchr(v[2], ' ') && valid_digest(v[3]) && holy_private_search_directory(v[4])) {
+        entry->consumer = strdup(v[0]);
+        entry->path = strdup(v[1]);
+        entry->soname = strdup(v[2]);
+        entry->provider = strdup(v[3]);
+        entry->directory = strdup(v[4]);
+        ok = entry->consumer && entry->path && entry->soname && entry->provider && entry->directory;
+    }
+    if (!ok) settled_search_free(entry);
+    holy_tokens_free(v, count);
+    return ok;
+}
+
+/* a journal only states decisions this root could have made: a search path names a
+   consumer that is either part of the set or already installed */
+static int search_decision_valid(const char *text)
+{
+    struct settled_search entry;
+    return search_decision_parse(text, &entry) && (settled_search_free(&entry), 1);
+}
+
+static int decision_consumer_known(int dir, const char *text)
+{
+    struct settled_search entry;
+    int installed, item, known = 0;
+    if (!search_decision_parse(text, &entry)) return 0;
+    installed = child_dir(dir, "installed", 0);
+    item = installed < 0 ? -1 : child_dir(installed, entry.consumer, 0);
+    known = item >= 0;
+    if (item >= 0) close(item);
+    if (installed >= 0) close(installed);
+    settled_search_free(&entry);
+    return known;
+}
+
+/* the graph one instance carries is the graph this transaction settled, not the one the
+   resolver derived: a relocated payload is named where it now lives, and a consumer whose
+   search path the review changed names the artifact that owns the private copy. both are
+   decisions the plan already carries, so the record is written once, at the save, and an
+   instance describes the root the transaction is about to leave behind. */
+static int graph_expected(const struct install_set *set, const char *artifact,
+                          char **out, size_t *length)
+{
+    struct relocate_context relocate = { artifact, &set->places };
+    char *record = NULL;
+    size_t size = 0, i;
+    int ok = 1;
+    *out = NULL;
+    *length = 0;
+    if (!set->graph) return 0;
+    record = strndup(set->graph, set->graph_length);
+    if (!record) return 0;
+    size = set->graph_length;
+    for (i = 0; i < set->settled_count && ok; ++i) {
+        struct repoint_context repoint;
+        if (strcmp(set->settled[i].consumer, artifact)) continue;
+        repoint.entry = &set->settled[i];
+        repoint.owner = set->settled[i].provider;
+        ok = graph_walk(&record, &size, repoint_graph_row, &repoint, NULL);
+    }
+    if (ok && set->places.count)
+        ok = graph_walk(&record, &size, relocate_graph_row, &relocate, NULL);
+    if (!ok) { free(record); return 0; }
+    *out = record;
+    *length = size;
+    return 1;
 }
 
 static void free_set(struct install_set *set)
@@ -4225,6 +4820,8 @@ static void free_set(struct install_set *set)
         free(set->claims[i].artifact);
     }
     free(set->claims);
+    for (i = 0; i < set->settled_count; ++i) settled_search_free(&set->settled[i]);
+    free(set->settled);
     holy_private_places_free(&set->places);
     holy_conflict_claims_free(&set->capabilities);
     free(set->items);
@@ -4380,6 +4977,7 @@ struct stranded_consumer {
     char *provider;
     char *soname;
     char *path;
+    char *placed;                 /* the public path this consumer's provider loses */
 };
 
 struct consumer_scan {
@@ -4388,6 +4986,7 @@ struct consumer_scan {
     const char *consumer;
     const char *provider;
     const char *soname;
+    const char *placed;            /* the public path the provider loses, when the walk knows */
     int failed;
 };
 
@@ -4407,12 +5006,14 @@ static int record_consumer(void *context, const char *path, const char *needed)
         entry->consumer = strdup(scan->consumer);
         entry->provider = strdup(scan->provider);
         entry->soname = strdup(scan->soname);
+        entry->placed = scan->placed ? strdup(scan->placed) : NULL;
     }
     if (!entry || !entry->path || !entry->consumer || !entry->provider || !entry->soname) {
         free(entry->path);
         free(entry->consumer);
         free(entry->provider);
         free(entry->soname);
+        free(entry->placed);
         free(entry);
         scan->failed = 1;
         return 0;
@@ -4429,6 +5030,7 @@ static void free_consumers(struct consumer_scan *scan)
         free(scan->item[i]->consumer);
         free(scan->item[i]->provider);
         free(scan->item[i]->soname);
+        free(scan->item[i]->placed);
         free(scan->item[i]);
     }
     free(scan->item);
@@ -4472,12 +5074,43 @@ static int installed_consumer(void *context, int root, int item, const char *dig
     return 0;
 }
 
+/* the decision the review has to make for one stranded consumer: the directory that holds
+   the private copy, which is the directory part of the placement target its provider lost. */
+static char *search_directory_for(const struct install_set *set,
+                                  const struct stranded_consumer *entry)
+{
+    size_t i;
+    for (i = 0; i < set->places.count; ++i) {
+        char target[PRIVATE_PATH_LIMIT + 2], *directory;
+        if (strcmp(set->places.place[i].artifact, entry->provider)) continue;
+        if (!entry->placed || strcmp(set->places.place[i].path, entry->placed)) continue;
+        /* the target the placement builds is root-relative, while a search path that is
+           not absolute resolves against the process loading the file rather than against
+           the installed root, so the decision names the absolute form of the same place */
+        if (!holy_private_target(entry->provider, entry->placed, target + 1,
+                                 sizeof target - 1)) continue;
+        target[0] = '/';
+        directory = holy_private_directory(target);
+        if (directory) return directory;
+    }
+    return NULL;
+}
+
+/* a placement and its search paths are one decision, so the walk reports what is still
+   undecided and settles the rest against the directories the placements produced. a
+   decision for a consumer the walk did not find settles nothing and is refused. */
 static int set_private_consumers(struct install_set *set, int root, int dir,
-                                 const char *root_path)
+                                 const char *root_path,
+                                 const struct holy_private_searches *searches, int completed)
 {
     struct consumer_scan scan = {0};
+    struct holy_private_searches settled = {0};
     size_t i, j;
     int result = 0;
+    /* a recovery is not a review: the journal states which consumers the transaction
+       settled and why, and the walk that finds undecided ones cannot run here anyway
+       since it refuses a root with a transaction pending, which is this state */
+    if (completed) return 0;
     for (i = 0; i < set->places.count && !scan.failed; ++i) {
         const struct holy_private_place *place = &set->places.place[i];
         const char *snapshot = NULL;
@@ -4494,6 +5127,7 @@ static int set_private_consumers(struct install_set *set, int root, int dir,
             scan.consumer = set->items[j].identity.digest;
             scan.provider = place->artifact;
             scan.soname = soname;
+            scan.placed = place->path;
             if (!holy_private_consumers(set->items[j].snapshot, soname,
                                         record_consumer, &scan)) scan.failed = 1;
         }
@@ -4502,27 +5136,80 @@ static int set_private_consumers(struct install_set *set, int root, int dir,
             unsigned long long generation = 0;
             scan.provider = place->artifact;
             scan.soname = soname;
+            scan.placed = place->path;
             /* this runs inside the set transaction, which already holds the state lock,
                so the walk reads through that descriptor rather than taking the shared
-               lock again on a second one */
-            if (!state_visit_locked(root, dir, installed_consumer, &installed, &generation))
-                installed.failed = 1;
+               lock again on a second one. the visit returns zero when it completed and a
+               status when it did not, so a zero here is the walk finishing */
+            {
+                int rc = state_visit_locked(root, dir, installed_consumer, &installed,
+                                            &generation);
+                if (rc) installed.failed = 1;
+            }
             if (installed.failed) scan.failed = 1;
         }
     }
-    for (i = 0; i < scan.count; ++i) {
+    /* a decision is only settled when it names a directory one of these placements produced
+       and a consumer this walk found, so both directions are checked before anything is
+       treated as reviewed */
+    for (i = 0; i < searches->count && !result; ++i) {
+        size_t k;
+        for (k = 0; k < scan.count; ++k)
+            if (!strcmp(scan.item[k]->consumer, searches->search[i].consumer)) break;
+        if (k == scan.count) {
+            fprintf(stderr, "holypkg: the search decision for %s settles nothing; no program"
+                            " it ships needs a displaced library\n",
+                    searches->search[i].consumer);
+            result = 3;
+        } else if (!holy_private_search_add(&settled, searches->search[i].consumer,
+                                            searches->search[i].directory)) {
+            fprintf(stderr, "holypkg: the search decision for %s names %s, which is not a"
+                            " directory this placement produced\n",
+                    searches->search[i].consumer, searches->search[i].directory);
+            result = 3;
+        }
+    }
+    for (i = 0; i < scan.count && !result; ++i) {
         struct stranded_consumer *entry = scan.item[i];
+        char *directory = search_directory_for(set, entry);
+        const char *decided = holy_private_search_lookup(&settled, entry->consumer);
+        if (decided && directory && !strcmp(decided, directory)) {
+            struct settled_search *record = realloc(set->settled,
+                                            (set->settled_count + 1) * sizeof *record);
+            printf("search %s %s %s\n", entry->consumer, entry->path, decided);
+            free(directory);
+            if (!record) { result = 1; break; }
+            set->settled = record;
+            record = &record[set->settled_count];
+            memset(record, 0, sizeof *record);
+            record->consumer = strdup(entry->consumer);
+            record->path = strdup(entry->path);
+            record->provider = strdup(entry->provider);
+            record->soname = strdup(entry->soname);
+            record->directory = strdup(decided);
+            if (!record->consumer || !record->path || !record->provider || !record->soname ||
+                !record->directory) { settled_search_free(record); result = 1; break; }
+            ++set->settled_count;
+            continue;
+        }
+        if (decided && directory) {
+            fprintf(stderr, "holypkg: the search decision for %s names %s, and this"
+                            " placement put the library in %s\n",
+                    entry->consumer, decided, directory);
+            free(directory);
+            result = 3;
+            continue;
+        }
+        free(directory);
         printf("consumer %s %s needs %s from %s unreachable scope soname\n",
                entry->consumer, entry->path, entry->soname, entry->provider);
-    }
-    if (scan.count) {
-        fprintf(stderr, "holypkg: decision-required placement strands %zu programs;"
-                        " holypkg patch CONSUMER --runpath DIR makes each reachable\n",
-                scan.count);
+        fprintf(stderr, "holypkg: decision-required placement strands %s %s;"
+                        " --search %s DIR settles it in this transaction\n",
+                entry->consumer, entry->path, entry->consumer);
         result = 3;
-    } else if (scan.failed) {
-        result = 6;
     }
+    if (!result && !scan.count && searches->count) result = 3;
+    if (scan.failed) result = 6;
     free_consumers(&scan);
     return result;
 }
@@ -4644,13 +5331,34 @@ static int default_loader_directories(const char *machine, char ***directories, 
 
 /* the search list of one consumer: its own runpath when it states one, and the
    loader default otherwise */
+/* a path the file states is searched before the loader's defaults rather than instead of
+   them: a runpath names where to look first, not where to stop, so libc still resolves
+   from the system directories after a private copy answered for one library */
 static int search_directories(const struct holy_elf_info *elf, const char *consumer,
                               char ***directories, size_t *count)
 {
+    char **stated = NULL, **defaults = NULL, **built;
+    size_t stated_count = 0, default_count = 0, i;
     *directories = NULL;
     *count = 0;
-    if (loader_directories(elf, consumer, directories, count)) return 1;
-    return default_loader_directories(holy_elf_machine(elf), directories, count);
+    (void)loader_directories(elf, consumer, &stated, &stated_count);
+    if (!default_loader_directories(holy_elf_machine(elf), &defaults, &default_count)) {
+        free_loader_directories(stated, stated_count);
+        return 0;
+    }
+    built = calloc(stated_count + default_count, sizeof *built);
+    if (!built) {
+        free_loader_directories(stated, stated_count);
+        free_loader_directories(defaults, default_count);
+        return 0;
+    }
+    for (i = 0; i < stated_count; ++i) built[i] = stated[i];
+    for (i = 0; i < default_count; ++i) built[stated_count + i] = defaults[i];
+    free(stated);
+    free(defaults);
+    *directories = built;
+    *count = stated_count + default_count;
+    return 1;
 }
 
 static int loader_file_match(const char *directory, const char *path,
@@ -5437,6 +6145,7 @@ static int build_set(const char *root_path, int root, int dir,
                       const char *const *accepted_privileged, size_t privileged_count,
                       const char *const *skipped_hooks, size_t skipped_count,
                       struct holy_private_places *places,
+                      const struct holy_private_searches *searches,
                       const struct holy_override_record_info *override_records,
                       size_t override_record_count,
                       struct install_set *set)
@@ -5731,7 +6440,7 @@ static int build_set(const char *root_path, int root, int dir,
     }
     if (!set_claims_valid(set)) { result = 4; goto done; }
     if (set->places.count &&
-        (result = set_private_consumers(set, root, dir, root_path))) goto done;
+        (result = set_private_consumers(set, root, dir, root_path, searches, completed))) goto done;
     for (i = 0; i < set->count; ++i)
         if (!holy_conflict_claims_package(&set->capabilities, set->items[i].snapshot,
                                           set->items[i].identity.digest)) { result = 6; goto done; }
@@ -5764,6 +6473,15 @@ static int build_set(const char *root_path, int root, int dir,
         int length = snprintf(line, sizeof line, "override %s %s %s %s\n",
                               set->overrides[i].name, set->overrides[i].path,
                               set->overrides[i].file, set->overrides[i].patch);
+        if (length < 0 || (size_t)length >= sizeof line ||
+            !hash_text(plan.hash, line)) goto done;
+    }
+    /* the search decision is hashed with the rest of the review, so an apply that repeats
+       the plan without it names a different plan rather than dropping it */
+    for (i = 0; i < searches->count; ++i) {
+        char line[512];
+        int length = snprintf(line, sizeof line, "search %s %s\n",
+                              searches->search[i].consumer, searches->search[i].directory);
         if (length < 0 || (size_t)length >= sizeof line ||
             !hash_text(plan.hash, line)) goto done;
     }
@@ -5804,6 +6522,8 @@ static void free_set_journal(struct set_journal *journal)
     free(journal->accepted_service);
     for (i = 0; i < journal->placement_count; ++i) free(journal->placements[i]);
     free(journal->placements);
+    for (i = 0; i < journal->search_count; ++i) free(journal->searches[i]);
+    free(journal->searches);
     memset(journal, 0, sizeof *journal);
 }
 
@@ -5826,7 +6546,9 @@ static int set_choice_valid(const char *choice)
 
 /* the phases a set transaction passes through, in order. the journal states the one it
    reached, so recovery resumes there instead of re-deriving where the crash fell. */
-static const char *const set_phases[] = { "applying", "instances", "record", "generation" };
+/* the search phase sits between the payloads and the instances, so a crash inside a
+   rewrite resumes inside it rather than repeating a placement */
+static const char *const set_phases[] = { "applying", "search", "instances", "record", "generation" };
 
 static int phase_valid(const char *phase)
 {
@@ -5853,6 +6575,7 @@ static int write_set_journal(int transactions, unsigned long long generation,
                              const char *const *skipped_hooks, size_t skipped_count,
                              const char *const *accepted_service, size_t service_count,
                              const char *const *placements, size_t placement_count,
+                             const struct settled_search *settled, size_t settled_count,
                              const char *phase)
 {
     char *record = NULL;
@@ -5861,12 +6584,12 @@ static int write_set_journal(int transactions, unsigned long long generation,
     int ok = 1;
     if (!stream || !phase_valid(phase)) return 0;
     if (fprintf(stream, "format holy-set-journal-%d\ngeneration %llu\nplan %s\nroot %s\nchoice %s\n",
-                placement_count ? 8 : service_count ? 7 : skipped_count ? 6 :
+                settled_count ? 9 : placement_count ? 8 : service_count ? 7 : skipped_count ? 6 :
                 set->catalog_index[0] ? 5 :
                 privileged_count ? 4 : accepted_count ? 3 : set->binding_count ? 2 : 1,
                 generation, set->hash, set->resolution.root, choice ? choice : "-") < 0) ok = 0;
     if ((accepted_count || privileged_count || skipped_count || service_count ||
-         placement_count || set->catalog_index[0]) &&
+         placement_count || settled_count || set->catalog_index[0]) &&
         fprintf(stream, "host %s\n", set->host) < 0) ok = 0;
     if (set->catalog_index[0] &&
         fprintf(stream, "catalog-index %s\n", set->catalog_index) < 0) ok = 0;
@@ -5886,6 +6609,13 @@ static int write_set_journal(int transactions, unsigned long long generation,
        private targets instead of resolving the decision again */
     for (i = 0; i < placement_count && ok; ++i)
         if (fprintf(stream, "private %s\n", placements[i]) < 0) ok = 0;
+    /* the search decision is recorded as the plan settled it: the file whose search path
+       changes, the library it names, the artifact that owns the private copy and the
+       directory it moved to. a recovery repeats exactly that rewrite rather than
+       resolving the decision again against a root that has already changed */
+    for (i = 0; i < settled_count && ok; ++i)
+        if (fprintf(stream, "search %s %s %s %s %s\n", settled[i].consumer, settled[i].path,
+                    settled[i].soname, settled[i].provider, settled[i].directory) < 0) ok = 0;
     if (fprintf(stream, "phase %s\n", phase) < 0) ok = 0;
     if (fclose(stream)) ok = 0;
     /* the journal is rewritten as the transaction advances, so it is replaced rather
@@ -5955,7 +6685,8 @@ static int read_set_journal(int dir, struct set_journal *journal)
             memchr(line, 0, (size_t)got)) goto done;
         line[got - 1] = 0;
         if (number == 0) {
-            if (!strcmp(line, "format holy-set-journal-8")) version = 8;
+            if (!strcmp(line, "format holy-set-journal-9")) version = 9;
+            else if (!strcmp(line, "format holy-set-journal-8")) version = 8;
             else if (!strcmp(line, "format holy-set-journal-7")) version = 7;
             else if (!strcmp(line, "format holy-set-journal-6")) version = 6;
             else if (!strcmp(line, "format holy-set-journal-5")) version = 5;
@@ -6050,7 +6781,7 @@ static int read_set_journal(int dir, struct set_journal *journal)
             next[journal->service_count] = strdup(line + 8);
             if (!next[journal->service_count]) goto done;
             ++journal->service_count;
-        } else if (version == 8 && !strncmp(line, "private ", 8)) {
+        } else if (version >= 8 && !strncmp(line, "private ", 8)) {
             char artifact[65], *path = NULL;
             char **next;
             size_t i;
@@ -6071,6 +6802,25 @@ static int read_set_journal(int dir, struct set_journal *journal)
             next[journal->placement_count] = strdup(line + 8);
             if (!next[journal->placement_count]) goto done;
             ++journal->placement_count;
+        } else if (version == 9 && !strncmp(line, "search ", 7)) {
+            char **next;
+            size_t i;
+            if (journal->accepted_count || journal->privileged_count || journal->skipped_count ||
+                journal->service_count || journal->binding_count ||
+                !search_decision_valid(line + 7) ||
+                journal->search_count >= journal->count) { goto done; }
+            /* the consumer is often already installed, since the program that needs a
+               displaced library was installed before the package that displaces it, so a
+               decision names an instance of the root as well as an artifact of the set */
+            if (!decision_consumer_known(dir, line + 7)) { goto done; }
+            for (i = 0; i < journal->search_count; ++i)
+                if (!strcmp(line + 7, journal->searches[i])) { goto done; }
+            next = realloc(journal->searches, (journal->search_count + 1) * sizeof *next);
+            if (!next) goto done;
+            journal->searches = next;
+            next[journal->search_count] = strdup(line + 7);
+            if (!next[journal->search_count]) goto done;
+            ++journal->search_count;
         } else if (!strncmp(line, "phase ", 6)) {
             /* the phase closes the journal, so a record that named one twice or named
                an unknown one is not a journal this root wrote */
@@ -6119,7 +6869,8 @@ static int read_set_journal(int dir, struct set_journal *journal)
          (version == 5 && journal->catalog_index[0] && journal->binding_count) ||
          (version == 6 && journal->skipped_count) ||
          (version == 7 && journal->service_count) ||
-         (version == 8 && journal->placement_count))) result = 1;
+         (version == 8 && journal->placement_count) ||
+         (version == 9 && journal->search_count))) result = 1;
 done:
     free(line);
     if (stream) fclose(stream);
@@ -6267,10 +7018,12 @@ static int state_set(const char *const *digests, size_t count, const char *choic
                      const char *const *skipped_hooks, size_t skipped_count,
                      const char *const *accepted_service, size_t service_count,
                      const char *const *placements, size_t placement_count,
+                     const char *const *searches, size_t search_count,
                      char plan_hash[65], int quiet)
 {
     struct install_set set = {0};
     struct holy_private_places places = {0};
+    struct holy_private_searches findings = {0};
     struct holy_override_record_info *override_records = NULL;
     size_t override_record_count = 0;
     unsigned long long generation;
@@ -6301,6 +7054,24 @@ static int state_set(const char *const *digests, size_t count, const char *choic
         }
         free(path);
     }
+    /* a search decision names the consumer and the directory its displaced library moved
+       to, so it is resolved beside the placements and refused on its own if it is bad */
+    for (i = 0; i < search_count; ++i) {
+        char consumer[65];
+        char *directory = NULL;
+        if (!holy_private_search_parse(searches[i], consumer, &directory) ||
+            !holy_private_search_add(&findings, consumer, directory)) {
+            free(directory);
+            result = 2;
+            goto done;
+        }
+        free(directory);
+    }
+    if (search_count && !placement_count) {
+        fprintf(stderr, "holypkg: a search decision needs the placement it was made for\n");
+        result = 2;
+        goto done;
+    }
     /* the override store is read before the database lock, since the plan binds what
        the store says and the read must not wait for a lock this call takes */
     if (dir >= 0 && holy_override_records(root_path, &override_records,
@@ -6316,7 +7087,7 @@ static int state_set(const char *const *digests, size_t count, const char *choic
     result = build_set(root_path, root, dir, generation, digests, count, choice, 0, bindings, binding_count,
                        default_source_id, catalog_index,
                        accepted_arch, accepted_count, accepted_privileged, privileged_count,
-                       skipped_hooks, skipped_count, &places, override_records,
+                       skipped_hooks, skipped_count, &places, &findings, override_records,
                        override_record_count, &set);
     if (result) goto done;
     if (!quiet && !set_service_consent(&set, accepted_service, service_count))
@@ -6365,7 +7136,8 @@ static int state_set(const char *const *digests, size_t count, const char *choic
                            accepted_arch, accepted_count,
                            accepted_privileged, privileged_count,
                            skipped_hooks, skipped_count,
-                           accepted_service, service_count, placements, placement_count, "applying")) {
+                           accepted_service, service_count, placements, placement_count,
+                           set.settled, set.settled_count, "applying")) {
         struct stat st;
         result = fstatat(transactions, "set-journal", &st, AT_SYMLINK_NOFOLLOW) ? 1 : 5;
         goto done;
@@ -6377,6 +7149,8 @@ static int state_set(const char *const *digests, size_t count, const char *choic
         size_t placed = set.places.count ?
                         holy_private_places_artifact(&set.places, item->identity.digest) : 0;
         struct holy_install_placement *placements = NULL;
+        char *graph = NULL;
+        size_t graph_length = 0;
         int item_result = 0;
         if (item->reused) continue;
         if (placed) {
@@ -6396,12 +7170,17 @@ static int state_set(const char *const *digests, size_t count, const char *choic
             item_result = holy_install_payload(item->snapshot, root, item->privileged);
         }
         free(placements);
-        if (!item_result ||
+        if (!graph_expected(&set, item->identity.digest, &graph, &graph_length) ||
+            !item_result ||
             !save_instance(installed, item->identity.digest, item->snapshot, generation,
-                           set.graph, set.graph_length,
+                           graph, graph_length,
                            strcmp(item->identity.digest, set.resolution.root) ? "dependency" : "explicit",
                            item->source_record, item->architecture[0] ? item->architecture : NULL,
-                           item->privileged, item->skipped_hooks)) goto done;
+                           item->privileged, item->skipped_hooks)) {
+            free(graph);
+            goto done;
+        }
+        free(graph);
         if (placed) {
             int saved = child_dir(installed, item->identity.digest, 0);
             int recorded = saved >= 0 &&
@@ -6412,13 +7191,27 @@ static int state_set(const char *const *digests, size_t count, const char *choic
         }
         printf("applied %s\n", item->identity.digest);
     }
+    /* the payloads are in place and the search paths are not, so the rewrites run in their
+       own phase: a crash inside one resumes here rather than repeating a placement */
+    if (set.settled_count) {
+        if (!write_set_journal(transactions, generation, &set, choice,
+                               accepted_arch, accepted_count,
+                               accepted_privileged, privileged_count,
+                               skipped_hooks, skipped_count,
+                               accepted_service, service_count, placements, placement_count,
+                               set.settled, set.settled_count, "search")) goto done;
+        for (i = 0; i < set.settled_count; ++i)
+            if (!apply_settled_search(installed, root, root_path, &set.settled[i], set.hash, 0))
+                goto done;
+    }
     /* every instance is in place, which is the phase a crash after this point resumes
        from: recovery checks them and finishes the transaction */
     if (!write_set_journal(transactions, generation, &set, choice,
                            accepted_arch, accepted_count,
                            accepted_privileged, privileged_count,
                            skipped_hooks, skipped_count,
-                           accepted_service, service_count, placements, placement_count, "instances")) goto done;
+                           accepted_service, service_count, placements, placement_count,
+                           set.settled, set.settled_count, "instances")) goto done;
     /* the journal the transaction used becomes its decisions record, and the directory
        name is the plan it was made with, so the root keeps what the set was reviewed
        with. the record is written before the journal is dropped, so a crash leaves the
@@ -6428,13 +7221,15 @@ static int state_set(const char *const *digests, size_t count, const char *choic
                            accepted_arch, accepted_count,
                            accepted_privileged, privileged_count,
                            skipped_hooks, skipped_count,
-                           accepted_service, service_count, placements, placement_count, "record") ||
+                           accepted_service, service_count, placements, placement_count,
+                           set.settled, set.settled_count, "record") ||
         !set_generation(dir, generation + 1) ||
         !write_set_journal(transactions, generation, &set, choice,
                            accepted_arch, accepted_count,
                            accepted_privileged, privileged_count,
                            skipped_hooks, skipped_count,
-                           accepted_service, service_count, placements, placement_count, "generation") ||
+                           accepted_service, service_count, placements, placement_count,
+                           set.settled, set.settled_count, "generation") ||
         unlinkat(transactions, "set-journal", 0) || fsync(transactions)) goto done;
     printf("committed-set %s generation %llu artifacts %zu\n", set.hash, generation + 1, set.count);
     result = 0;
@@ -6458,13 +7253,14 @@ int holy_state_set(const char *const *digests, size_t count, const char *choice,
                    const char *const *skipped_hooks, size_t skipped_count,
                    const char *const *accepted_service, size_t service_count,
                    const char *const *placements, size_t placement_count,
+                   const char *const *searches, size_t search_count,
                    char plan_hash[65])
 {
     return state_set(digests, count, choice, approved, root_path, bindings,
                      binding_count, NULL, NULL, accepted_arch, accepted_count,
                      accepted_privileged, privileged_count, skipped_hooks, skipped_count,
                      accepted_service, service_count, placements, placement_count,
-                     plan_hash, 0);
+                     searches, search_count, plan_hash, 0);
 }
 
 int holy_state_set_source(const char *const *digests, size_t count,
@@ -6480,7 +7276,7 @@ int holy_state_set_source(const char *const *digests, size_t count,
     return state_set(digests, count, choice, approved, root_path, NULL, 0,
                      source_id, catalog_index, accepted_arch, accepted_count,
                      accepted_privileged, privileged_count, NULL, 0,
-                     accepted_service, service_count, NULL, 0,
+                     accepted_service, service_count, NULL, 0, NULL, 0,
                      plan_hash, 0);
 }
 
@@ -6499,7 +7295,7 @@ int holy_state_set_source_bindings(const char *const *digests, size_t count,
                      bindings, binding_count, source_id, catalog_index,
                      accepted_arch, accepted_count,
                      accepted_privileged, privileged_count, NULL, 0,
-                     accepted_service, service_count, NULL, 0,
+                     accepted_service, service_count, NULL, 0, NULL, 0,
                      plan_hash, 0);
 }
 
@@ -6518,7 +7314,7 @@ int holy_state_probe_source_bindings(const char *const *digests, size_t count,
                      bindings, binding_count, source_id, catalog_index,
                      accepted_arch, accepted_count,
                      accepted_privileged, privileged_count, NULL, 0,
-                     accepted_service, service_count, NULL, 0, NULL, 1);
+                     accepted_service, service_count, NULL, 0, NULL, 0, NULL, 1);
 }
 
 static int instance_matches_snapshot(int item, const char *snapshot)
@@ -6650,6 +7446,7 @@ static int recover_set(const char *root_path, int resume)
     const char **digests = NULL;
     unsigned char *present = NULL;
     struct holy_private_places places = {0};
+    struct holy_private_searches found = {0};
     size_t i, j, phase = 0;
     struct utsname host;
     int root = -1, dir = -1, installed = -1, transactions = -1, result = 5, phased = 0;
@@ -6678,11 +7475,23 @@ static int recover_set(const char *root_path, int resume)
         }
         free(path);
     }
+    /* the search decisions come back with the plan they were hashed into, so the resumed
+       build produces the hash the journal carries */
+    for (i = 0; i < journal.search_count; ++i) {
+        struct settled_search entry;
+        int added;
+        if (!search_decision_parse(journal.searches[i], &entry)) {
+            goto done;
+        }
+        added = holy_private_search_add(&found, entry.consumer, entry.directory);
+        settled_search_free(&entry);
+        if (!added) goto done;
+    }
     if (!set_resume_placements(root_path, dir, &journal, &places) || !installed_valid(dir)) {
         result = 1;
         goto done;
     }
-    if (journal.host[0] && (uname(&host) || strcmp(host.machine, journal.host))) goto done;
+    if (journal.host[0] && (uname(&host) || strcmp(host.machine, journal.host))) { goto done; }
     digests = calloc(journal.count, sizeof *digests);
     present = calloc(journal.count, 1);
     if (!digests || !present) { result = 1; goto done; }
@@ -6696,7 +7505,7 @@ static int recover_set(const char *root_path, int resume)
                   (const char *const *)journal.accepted_arch, journal.accepted_count,
                   (const char *const *)journal.accepted_privileged, journal.privileged_count,
                   (const char *const *)journal.skipped_hooks, journal.skipped_count,
-                  &places, override_records, override_record_count, &set) ||
+                  &places, &found, override_records, override_record_count, &set) ||
         set.count != journal.count || strcmp(set.hash, journal.hash)) goto done;
     /* a journal names the consent it was reviewed with; a set that starts a service
        without one is refused here too, so a hand edited journal places no unit */
@@ -6707,12 +7516,13 @@ static int recover_set(const char *root_path, int resume)
     }
     installed = child_dir(dir, "installed", 0);
     transactions = child_dir(dir, "transactions", 0);
-    if (installed < 0 || transactions < 0) goto done;
+    if (installed < 0 || transactions < 0) { goto done; }
     for (i = 0; i < set.count; ++i) {
         char graph[65], expected[65];
+        char *settled = NULL;
         unsigned char hash[32];
         unsigned int length;
-        size_t k;
+        size_t settled_length = 0, k;
         struct stat st;
         int item, files, ok;
         const struct set_item *candidate = &set.items[i];
@@ -6727,21 +7537,24 @@ static int recover_set(const char *root_path, int resume)
             ok = claims.hash && EVP_DigestInit_ex(claims.hash, EVP_sha256(), NULL) == 1 &&
                  holy_verify_visit(candidate->snapshot, plan_entry, &claims);
             EVP_MD_CTX_free(claims.hash);
-            if (!ok) goto done;
+            if (!ok) { goto done; }
             continue;
         }
         present[i] = 1;
         item = child_dir(installed, candidate->identity.digest, 0);
         files = item < 0 ? -1 : openat(item, "files", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
-        ok = files >= 0 && instance_state_generation(item, candidate->identity.digest, &recorded) &&
+        ok = files >= 0 && graph_expected(&set, candidate->identity.digest, &settled,
+                                          &settled_length) &&
+             instance_state_generation(item, candidate->identity.digest, &recorded) &&
              instance_source_matches(item, candidate->source_record) &&
              instance_architecture_matches(item, candidate->architecture) &&
              recorded == journal.generation + 1 && graph_digest(item, graph) &&
              instance_reason_matches(item, strcmp(candidate->identity.digest, set.resolution.root) ?
                                      "dependency" : "explicit") &&
              instance_matches_snapshot(item, candidate->snapshot) &&
-             EVP_Digest(set.graph, set.graph_length, hash, &length, EVP_sha256(), NULL) == 1 &&
+             EVP_Digest(settled, settled_length, hash, &length, EVP_sha256(), NULL) == 1 &&
              length == 32;
+        free(settled);
         if (ok) {
             for (k = 0; k < 32; ++k) snprintf(expected + k * 2, 3, "%02x", hash[k]);
             ok = !strcmp(expected, graph) && exclusive_claims(installed, candidate->identity.digest, files) == 1 &&
@@ -6749,34 +7562,74 @@ static int recover_set(const char *root_path, int resume)
         }
         if (files >= 0) close(files);
         if (item >= 0) close(item);
-        if (!ok) goto done;
+        if (!ok) { goto done; }
     }
     for (i = 0; i < set.count; ++i) if (!present[i]) {
         const struct set_item *item = &set.items[i];
+        char *graph = NULL;
+        size_t graph_length = 0;
         /* a phase past the instances cannot be missing one, since the phase line is
            written after the last instance the transaction saved */
-        if (phase >= 1 || !holy_install_payload_missing(item->snapshot, root) ||
+        if (phase >= phase_index("search") || !holy_install_payload_missing(item->snapshot, root) ||
+            !graph_expected(&set, item->identity.digest, &graph, &graph_length) ||
             !save_instance(installed, item->identity.digest, item->snapshot, journal.generation,
-                           set.graph, set.graph_length,
+                           graph, graph_length,
                            strcmp(item->identity.digest, set.resolution.root) ? "dependency" : "explicit",
                            item->source_record, item->architecture[0] ? item->architecture : NULL,
-                           item->privileged, item->skipped_hooks))
+                           item->privileged, item->skipped_hooks)) {
+            free(graph);
             goto done;
+        }
+        free(graph);
         if (holy_private_places_artifact(&places, item->identity.digest)) {
             int saved = child_dir(installed, item->identity.digest, 0);
             int recorded = saved >= 0 &&
                 save_placed_files(saved, item->snapshot, item->identity.digest, &places, set.hash);
             if (saved >= 0) close(saved);
-            if (!recorded) goto done;
+            if (!recorded) { goto done; }
         }
         printf("resumed %s\n", item->identity.digest);
+    }
+    /* the decisions the journal states are the ones this transaction settled, and the
+       graph every instance saved was derived from them, so they are read back before the
+       phase below compares or repeats them */
+    for (i = 0; i < journal.search_count; ++i) {
+        struct settled_search entry, *grown = realloc(set.settled,
+                                        (set.settled_count + 1) * sizeof *grown);
+        if (!grown || !search_decision_parse(journal.searches[i], &entry)) {
+            free(grown);
+            goto done;
+        }
+        set.settled = grown;
+        set.settled[set.settled_count++] = entry;
+    }
+    /* the search phase is resumed where it stopped: a decision whose instance already
+       carries the transform this plan named is done, and one that does not is repeated
+       against the file the previous run left behind */
+    if (phase >= phase_index("search") && set.settled_count) {
+        for (i = 0; i < set.settled_count; ++i) {
+            const struct settled_search *entry = &set.settled[i];
+            struct stat st;
+            int item = child_dir(installed, entry->consumer, 0), recorded = 0;
+            if (item >= 0) {
+                recorded = fstatat(item, "config-state", &st, AT_SYMLINK_NOFOLLOW) == 0
+                    ? config_state_valid(item, entry->consumer) :
+                    fstatat(item, "rewrite-transform", &st, AT_SYMLINK_NOFOLLOW) == 0
+                    ? rewrite_state_valid(item, entry->consumer) : 0;
+                if (!recorded &&
+                    !apply_settled_search(installed, root, root_path, entry, set.hash, 1))
+                    recorded = -1;
+                close(item);
+            }
+            if (recorded < 0) { goto done; }
+        }
     }
     /* a recovered set leaves the same record a committed one does, with the generation
        it resumed from, so the root keeps what both were reviewed with. a phase that got
        past the record has it already, and writing it again must find the same text. */
-    if (!retain_set_record(transactions, &set)) goto done;
-    if (generation == journal.generation && !set_generation(dir, generation + 1)) goto done;
-    if (fsync(dir) || unlinkat(transactions, "set-journal", 0) || fsync(transactions)) goto done;
+    if (!retain_set_record(transactions, &set)) { goto done; }
+    if (generation == journal.generation && !set_generation(dir, generation + 1)) { goto done; }
+    if (fsync(dir) || unlinkat(transactions, "set-journal", 0) || fsync(transactions)) { goto done; }
     printf("recovered-set %s generation %llu artifacts %zu phase %s\n",
            set.hash, journal.generation + 1, set.count, journal.phase);
     result = 0;
@@ -8792,7 +9645,7 @@ static int rollback_set_review(const char *transaction, char **digests, size_t c
                             NULL, root_path, NULL, 0,
                             arch_list, arch ? 1 : 0, privileged_list, privileged ? 1 : 0,
                             hooks, decisions.hook_count,
-                            services, decisions.service_count, NULL, 0, plan);
+                            services, decisions.service_count, NULL, 0, NULL, 0, plan);
     free(hooks);
     free(services);
     rollback_decisions_free(&decisions);
@@ -8834,7 +9687,7 @@ static int rollback_set_apply(const char *transaction, const char *approved,
                             approved, root_path, NULL, 0,
                             arch_list, arch ? 1 : 0, privileged_list, privileged ? 1 : 0,
                             hooks, decisions.hook_count,
-                            services, decisions.service_count, NULL, 0, NULL);
+                            services, decisions.service_count, NULL, 0, NULL, 0, NULL);
     free(hooks);
     free(services);
     rollback_decisions_free(&decisions);

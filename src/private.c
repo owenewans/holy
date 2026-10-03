@@ -14,7 +14,7 @@
 #include <unistd.h>
 
 #define PRIVATE_PLACES 65536
-#define PRIVATE_PATH 4096
+#define PRIVATE_PATH PRIVATE_PATH_LIMIT
 
 /* the private root is a lexical prefix, so a path that names it already sits in
    somebody's private tree and a placement may not nest a second one */
@@ -511,4 +511,110 @@ int holy_private_consumers(const char *snapshot, const char *soname,
     scan.visit = visit;
     scan.context = context;
     return walk(snapshot, &scan);
+}
+
+/* a directory a search path may name: absolute, under the private root, and with no
+   empty, relative or dotted component, since a loader would resolve those against
+   something other than the installed root. the root constant is root-relative, so the
+   absolute form is checked one leading slash further in. */
+static int private_directory_valid(const char *directory)
+{
+    const char *cursor;
+    size_t length = strlen(directory);
+    if (length <= sizeof HOLY_PRIVATE_ROOT || directory[0] != '/' ||
+        strncmp(directory + 1, HOLY_PRIVATE_ROOT, sizeof HOLY_PRIVATE_ROOT - 1) ||
+        directory[length - 1] == '/' || strstr(directory, "//") || strstr(directory, ".."))
+        return 0;
+    /* the leading slash is the absolute form, not an empty first component */
+    for (cursor = directory + 1; *cursor; ) {
+        const char *slash = strchr(cursor, '/');
+        size_t part = slash ? (size_t)(slash - cursor) : strlen(cursor);
+        if (!part) return 0;
+        if (memchr(cursor, ' ', part) || memchr(cursor, '\\', part)) return 0;
+        if (!slash) break;
+        cursor = slash + 1;
+    }
+    return 1;
+}
+
+int holy_private_search_directory(const char *directory)
+{
+    return directory && private_directory_valid(directory);
+}
+
+char *holy_private_directory(const char *path)
+{
+    const char *slash = path ? strrchr(path, '/') : NULL;
+    size_t length;
+    char *directory;
+    if (!slash || slash == path) return NULL;
+    length = (size_t)(slash - path);
+    directory = malloc(length + 1);
+    if (!directory) return NULL;
+    memcpy(directory, path, length);
+    directory[length] = '\0';
+    return directory;
+}
+
+int holy_private_search_add(struct holy_private_searches *searches, const char *consumer,
+                            const char *directory)
+{
+    struct holy_private_search *grown;
+    size_t i;
+    if (!searches || !consumer || !directory) return 0;
+    if (strlen(consumer) != 64 || !private_directory_valid(directory)) return 0;
+    for (i = 0; i < searches->count; ++i)
+        if (!strcmp(searches->search[i].consumer, consumer)) return 0;
+    grown = realloc(searches->search, (searches->count + 1) * sizeof *grown);
+    if (!grown) return 0;
+    searches->search = grown;
+    memset(&grown[searches->count], 0, sizeof *grown);
+    memcpy(grown[searches->count].consumer, consumer, 65);
+    grown[searches->count].directory = strdup(directory);
+    if (!grown[searches->count].directory) return 0;
+    ++searches->count;
+    return 1;
+}
+
+int holy_private_search_parse(const char *text, char consumer[65], char **directory)
+{
+    const char *equals;
+    size_t length;
+    *directory = NULL;
+    if (!text) return 0;
+    equals = strchr(text, '=');
+    if (!equals || equals - text != 64) return 0;
+    memcpy(consumer, text, 64);
+    consumer[64] = '\0';
+    length = strlen(equals + 1);
+    if (!length || !private_directory_valid(equals + 1)) return 0;
+    *directory = strdup(equals + 1);
+    return *directory != NULL;
+}
+
+const char *holy_private_search_lookup(const struct holy_private_searches *searches,
+                                       const char *consumer)
+{
+    size_t i;
+    if (!searches || !consumer) return NULL;
+    for (i = 0; i < searches->count; ++i)
+        if (!strcmp(searches->search[i].consumer, consumer)) return searches->search[i].directory;
+    return NULL;
+}
+
+void holy_private_searches_print(const struct holy_private_searches *searches, size_t count)
+{
+    size_t i;
+    for (i = 0; i < count && i < searches->count; ++i)
+        printf("search %s %s\n", searches->search[i].consumer, searches->search[i].directory);
+}
+
+void holy_private_searches_free(struct holy_private_searches *searches)
+{
+    size_t i;
+    if (!searches) return;
+    for (i = 0; i < searches->count; ++i) free(searches->search[i].directory);
+    free(searches->search);
+    searches->search = NULL;
+    searches->count = 0;
 }

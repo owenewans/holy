@@ -35,8 +35,9 @@ struct holy_rewrite {
 /* reads the file and states the argv patchelf would run for these changes. a change
    the file already satisfies is refused rather than run as a no-op, since a plan that
    claims a rewrite that does not happen misleads the review. returns 1 with a plan,
-   0 when no change was stated, 2 for an invalid argument, 6 when the tool is
-   unavailable and -1 on an allocation or read failure. */
+   0 when no change was stated, 2 for an invalid argument, 3 when the file already
+   states what the change asks for, 6 when the tool is unavailable and -1 on an
+   allocation or read failure. */
 int holy_rewrite_prepare(const char *tool, const char *file,
                          const struct holy_rewrite_change *changes, size_t count,
                          struct holy_rewrite *plan);

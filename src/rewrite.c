@@ -236,6 +236,7 @@ int holy_rewrite_prepare(const char *tool, const char *file,
         if (current && !strcmp(current, changes[i].to)) {
             fprintf(stderr, "holypkg: the file already states %s %s\n",
                     name_for(changes[i].kind), changes[i].to);
+            result = 3;
             goto done;
         }
         plan->change[i].kind = changes[i].kind;

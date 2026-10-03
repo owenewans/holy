@@ -210,11 +210,11 @@ static int install_dependencies(struct holy_sandbox *sandbox,
        approval of a review the command line already is */
     result = holy_state_set(digests, count, NULL, NULL,
                             sandbox->deps, NULL, 0, NULL, 0, NULL, 0, NULL, 0, NULL, 0,
-                            NULL, 0, plan);
+                            NULL, 0, NULL, 0, plan);
     if (!result)
         result = holy_state_set(digests, count, NULL, plan,
                                 sandbox->deps, NULL, 0, NULL, 0, NULL, 0, NULL, 0,
-                                NULL, 0, NULL, 0, NULL);
+                                NULL, 0, NULL, 0, NULL, 0, NULL);
     if (result) { complain("install the declared dependencies", NULL); goto done; }
     for (i = 0; i < count; ++i) printf("build-dependency %s installed\n", storage[i]);
     result = 0;
