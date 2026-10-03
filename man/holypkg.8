@@ -853,8 +853,10 @@ The members are one family because a name under two families, or under two
 architectures or libc runtimes, is the slot choice above and is still 3. The
 comparison is the family's own, for pacman, deb, apk, xbps, holy and rpm alike.
 --arch and --libc narrow the candidates before the family is read, so a choice of
-slot and a choice of version compose. repo requirements reads a name the same way
-and prints the same line before the package record it answers with. In JSON the choice is one
+slot and a choice of version compose. holypkg info SOURCE:PACKAGE and
+holypkg repo requirements DIRECTORY NAME read a name the same way and print the same
+line before the package record they answer with, and holypkg fetch
+SOURCE:PACKAGE writes the newest member to its --output directory. In JSON the choice is one
 holy-local-solve-1 family-choice event whose consumer and requirement are null,
 since the catalog resolved a name rather than a requirement, and which carries
 the provider, the slot, the family, the version and the member count.

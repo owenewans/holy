@@ -239,6 +239,60 @@ expect 0 "$bin" db slots --root "$rpm_root" --source "$rpm_source"
 grep -qx "slot epoched linux noarch nolibc source $rpm_source occupied $rpm_four version 4 versions 1 available $rpm_five version 5" "$tmp/out"
 expect 0 "$bin" db check --all --root "$rpm_root"
 
+# a name the catalog carries at two versions of one slot answers info and fetch with the
+# newest member and says which one it picked
+family_repo="$tmp/family-repo"
+mkdir -p "$family_repo"
+pack_family_member() {
+    version=$1 family=$2
+    rm -rf "$tree"
+    mkdir -p "$tree/HOLY" "$tree/DATA/usr/share"
+    printf 'format holy-package-1\nname familymember\nversion %s\nrelease 1\nos linux\narch noarch\nlibc nolibc\nx-version-family %s\n' \
+        "$version" "$family" > "$tree/HOLY/meta"
+    for field in deps provides hooks origin transform; do : > "$tree/HOLY/$field"; done
+    printf 'familymember %s\n' "$version" > "$tree/DATA/usr/share/familymember"
+    "$bin" manifest generate "$tree" --output "$tmp/files" > "$tmp/out"
+    mv "$tmp/files" "$tree/HOLY/files"
+    rm -f "$family_repo/familymember-$version.holy"
+    "$bin" pack "$tree" --output "$family_repo/familymember-$version.holy" > "$tmp/out"
+}
+pack_family_member 2 pacman
+pack_family_member 4 pacman
+"$bin" repo index "$family_repo" > "$tmp/out"
+"$bin" repo seal "$family_repo" > "$tmp/out"
+family_index=$(sed -n 's/^sha256 //p' "$family_repo/current")
+member_four=$(sha256sum "$family_repo/familymember-4.holy" | cut -d ' ' -f 1)
+family_root="$tmp/family-root"
+mkdir "$family_root"
+"$bin" db init --root "$family_root" > "$tmp/out"
+printf '[source familymember]\ntype holy-http\nurl "https://fixture.example/family/"\n' > "$tmp/family.conf"
+"$bin" source plan --config "$tmp/family.conf" --root "$family_root" > "$tmp/family.plan" 2> "$tmp/family.err"
+family_plan=$(sha256sum "$tmp/family.plan" | cut -d ' ' -f 1)
+family_source=$(sed -n 's/^add-source \([0-9a-f]*\) "familymember"$/\1/p' "$tmp/family.err")
+test "${#family_source}" -eq 64
+"$bin" source apply "$tmp/family.plan" --sha256 "$family_plan" --root "$family_root" > "$tmp/out"
+printf 'format holy-mirror-1\nurl "https://fixture.example/family/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$family_index" "$family_source" > "$family_repo/mirror-origin"
+"$bin" source catalog bind familymember "$family_repo" --root "$family_root" > "$tmp/out"
+expect 0 "$bin" info familymember:familymember --root "$family_root" > "$tmp/out"
+grep -qx "family-choice familymember provider=$member_four slot familymember linux noarch nolibc family pacman version 4 members 2 reason newest-in-family" "$tmp/out"
+grep -q "^package \"familymember\" \"4\"" "$tmp/out"
+rm -rf "$tmp/fetched"
+mkdir -p "$tmp/fetched"
+if ! "$bin" fetch familymember:familymember --output "$tmp/fetched" --root "$family_root" > "$tmp/out" 2> "$tmp/err"; then cat "$tmp/out" "$tmp/err"; exit 1; fi
+fetched=$(ls "$tmp/fetched")
+test "$(sha256sum "$tmp/fetched/$fetched" | cut -d ' ' -f 1)" = "$member_four"
+# two families under one name stay a choice for info as well
+pack_family_member 5 deb
+"$bin" repo index "$family_repo" > "$tmp/out"
+"$bin" repo seal "$family_repo" > "$tmp/out"
+family_index=$(sed -n 's/^sha256 //p' "$family_repo/current")
+printf 'format holy-mirror-1\nurl "https://fixture.example/family/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$family_index" "$family_source" > "$family_repo/mirror-origin"
+expect 0 "$bin" source catalog bind familymember "$family_repo" --root "$family_root" > "$tmp/out"
+if "$bin" info familymember:familymember --root "$family_root" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+grep -q 'architecture/ABI choice' "$tmp/err"
+
 # a root with no database is reported as unavailable, the same as db status
 if "$bin" db slots --root "$tmp/absent" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
 grep -qx 'holypkg: database status unavailable' "$tmp/err"

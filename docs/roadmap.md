@@ -523,7 +523,11 @@
   versions in two families stopped being a choice; the members have to share one.
   `holypkg repo requirements DIRECTORY NAME` carries the rule too, and prints
   the same line before the package record, so `--arch x86_64` and the newest
-  member compose there as well.
+  member compose there as well. `holypkg info SOURCE:PACKAGE` reads a name the
+  same way and prints the line before its record; `holypkg fetch
+  SOURCE:PACKAGE` already resolved one through the name loop the solve path
+  shares, so a catalog carrying one name at two versions of a slot writes the
+  newest member to its output directory.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions. The
   private placement of a colliding file, the patchelf rewrite of a consumer's

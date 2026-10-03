@@ -2081,6 +2081,28 @@ static int list_probe(const char *directory, const char *query,
                               provider_kind ? "candidates" : "packages");
         if (emit == 2) printf("{\"schema\":\"holy-repo-candidates-1\",\"type\":\"summary\",\"count\":%zu}\n", matches);
         if (emit == 3) {
+            if (matches > 1) {
+                /* the same version family the solve and requirements paths read: a name
+                   the catalog carries at two versions of one slot is one thing, and its
+                   newest member is the package the caller asked about */
+                size_t newest = family_root(objects, count, query,
+                                            stage ? stage->arch : NULL,
+                                            stage ? stage->libc : NULL);
+                if (newest < count) {
+                    size_t members = 0;
+                    for (j = 0; j < count; ++j)
+                        if (!strcmp(objects[j].identity.name, query) &&
+                            (!stage || !stage->arch ||
+                             !strcmp(objects[j].identity.arch, stage->arch)) &&
+                            (!stage || !stage->libc ||
+                             !strcmp(objects[j].identity.libc, stage->libc)))
+                            ++members;
+                    only = newest;
+                    matches = 1;
+                    /* info has no JSON form, so this is always the line */
+                    report_family_root(&objects[newest], query, members, 0);
+                }
+            }
             *solve_rc = matches > 1 ? 3 : matches ? 0 : 6;
             if (matches == 1 && !record(stdout, &objects[only])) goto done;
             if (matches != 1) {
