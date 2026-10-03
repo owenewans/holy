@@ -59,9 +59,12 @@ guest calls its disk subcommand on the disposable QEMU target and tests
 package plan/apply in a separate target root.
 .TP
 STORAGE_TOOLS_PACKAGE
-Native musl-static package with sfdisk, mkfs.fat, mke2fs and the Limine
-command, required by INSTALL_TEST=1. make bootstrap-storage builds it from
-pinned util-linux, dosfstools, e2fsprogs and Limine inputs.
+Native musl-static package with sfdisk, mkfs.fat, mke2fs, mkfs.btrfs,
+mkfs.xfs, mkfs.f2fs, mkswap, cryptsetup and the Limine command, required by
+INSTALL_TEST=1. The formatters and cryptsetup are the tools
+holyinstall(8) disk plan names. make bootstrap-storage builds it from pinned
+util-linux, dosfstools, e2fsprogs, f2fs-tools, LVM2, Limine, btrfs-progs,
+xfsprogs, cryptsetup, liburcu, inih, popt and json-c inputs.
 .TP
 DOAS_PACKAGE
 Native musl-static OpenDoas package with a root-owned setuid executable,
