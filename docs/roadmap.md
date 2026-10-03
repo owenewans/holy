@@ -1736,14 +1736,26 @@
   can fetch it. `tools/bootstrap-storage.sh` then built `holy-storage-tools.holy`
   here from those four inputs, and `tests/bootstrap-storage.sh` passes against
   it, so the statement that this package cannot be rebuilt on this host is gone.
-  The three filesystems and the encrypted root still need their own tools, and
-  building btrfs-progs here showed what that costs: the current release includes
-  `uuid/uuid.h`, `blkid/blkid.h` and `libudev.h` unconditionally, so a musl
-  static build needs util-linux's libuuid, libblkid and libsmartcols from the
-  same bootstrap plus a libudev header, and this repository has pinned none of
-  them yet. f2fs-tools publishes no release tarball at a URL a mirror serves, so
-  its source has to arrive as a git checkout the way util-linux does, and
-  cryptsetup needs libdevmapper before anything else.
+  The btrfs tool now ships: `tools/bootstrap-storage.sh` takes the btrfs-progs
+  release as a fifth input, verifies its digest, and builds `mkfs.btrfs` from it
+  against the libuuid, libblkid, libsmartcols and libext2fs that the two builds
+  above already produce, with zlib and zstd from the pinned static prefix. The
+  binary is a static x86-64 executable the classifier reads as `runtime nolibc`,
+  and the fixture proves it wrote a filesystem rather than only that it is there:
+  it creates one and reads the `_BHRfS_M` superblock magic back. That is what
+  `src/disk.c` already runs for `gpt-btrfs`, so a btrfs guest can now be prepared
+  by the tools this repository builds.
+  The other three are named with what each one needs. btrfs-progs includes
+  `uuid/uuid.h`, `blkid/blkid.h` and, without `--disable-libudev`, `libudev.h`
+  unconditionally, which is why its build reuses the headers and archives of the
+  builds above rather than a host's. xfsprogs 6.12 needs `ini.h` and `urcu.h`,
+  and liburcu's upstream is not reachable from this host, so xfs waits on that.
+  f2fs-tools publishes no release tarball at a URL a mirror serves, so its
+  source has to arrive as a git checkout the way util-linux does. cryptsetup
+  needs libdevmapper before anything else, and mkswap still wants util-linux's
+  swapon binary, which this bootstrap does not build yet.
+  What is not done is the boot itself: a btrfs, xfs or f2fs guest has still not
+  been started in QEMU from an image this repository built.
   The kernel already enables BTRFS_FS, XFS_FS and F2FS_FS built in, and a LUKS2
   root needs DM_CRYPT and CRYPTO_XTS added to that fragment before it can boot.
   The implemented blank-disk GPT/ext4/FAT path uses

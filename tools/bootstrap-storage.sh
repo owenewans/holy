@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 umask 022
-test "$#" -eq 7 || {
-    echo 'usage: bootstrap-storage.sh HOLYPKG UTIL-LINUX-GIT DOSFSTOOLS-GIT E2FSPROGS-GIT LIMINE-BINARY-TAR STATIC-PREFIX OUTPUT' >&2
+test "$#" -eq 8 || {
+    echo 'usage: bootstrap-storage.sh HOLYPKG UTIL-LINUX-GIT DOSFSTOOLS-GIT E2FSPROGS-GIT LIMINE-BINARY-TAR BTRFS-PROGS-TAR STATIC-PREFIX OUTPUT' >&2
     exit 2
 }
 bin=$(realpath "$1")
@@ -10,7 +10,8 @@ util=$(realpath "$2")
 dos=$(realpath "$3")
 e2=$(realpath "$4")
 limine_archive=$(realpath "$5")
-prefix=$(realpath "$6")
+btrfs_archive=$(realpath "$6")
+prefix=$(realpath "$7")
 arch=${ARCH:-x86_64}
 case "$arch" in
     x86_64) package_arch=x86_64 ;;
@@ -26,12 +27,14 @@ test "$(git -C "$dos" rev-parse HEAD)" = 697f7692c951173c1b732901e13f72bd3182d57
 test "$(git -C "$e2" rev-parse HEAD)" = 7ee1d505ef3b37831215f490411f346fe57e9053
 printf '%s  %s\n' 9a738586bff5790bd8bfef4a4868a2939cba3f81f22f121306d668c97f1c85d8 \
     "$limine_archive" | sha256sum -c -
+printf '%s  %s\n' b3ba5b06b551831fd5be1fa73496db3f865bb388caccf396e084bd8dc64687a0 \
+    "$btrfs_archive" | sha256sum -c -
 for tool in git tar make autoreconf asciidoctor sha256sum; do
     command -v "$tool" >/dev/null || { echo "$tool required" >&2; exit 6; }
 done
-mkdir -p "$(dirname "$7")"
-mkdir "$7"
-out=$(realpath "$7")
+mkdir -p "$(dirname "$8")"
+mkdir "$8"
+out=$(realpath "$8")
 work="$out/work"
 mkdir "$work"
 started=$(date +%s)
@@ -54,6 +57,8 @@ printf 'util-linux-commit %s\ndosfstools-commit %s\ne2fsprogs-commit %s\n' \
     "$(git -C "$e2" rev-parse HEAD)" >> "$out/build.record"
 printf 'limine-binary-sha256 %s\n' \
     9a738586bff5790bd8bfef4a4868a2939cba3f81f22f121306d668c97f1c85d8 >> "$out/build.record"
+printf 'btrfs-progs-sha256 %s\n' \
+    b3ba5b06b551831fd5be1fa73496db3f865bb388caccf396e084bd8dc64687a0 >> "$out/build.record"
 sha256sum "$prefix/build.record" "$0" >> "$out/build.record"
 cc="$prefix/bin/holy-musl-gcc"
 (
@@ -84,6 +89,33 @@ mkdir "$work/e2-build"
         --disable-fuse2fs --disable-uuidd
     make -j"${JOBS:-2}"
 )
+# btrfs-progs names uuid, blkid and the ext2fs headers of the two builds above, so the
+# headers and archives they produced are staged where its kernel objects can reach them.
+# its own build puts every object under $(CFLAGS) only, so the include path belongs there.
+deps="$work/deps"
+mkdir -p "$deps/include/uuid" "$deps/include/blkid" "$deps/include/ext2fs"
+cp "$work/util-linux/libuuid/src/uuid.h" "$deps/include/uuid/uuid.h"
+cp "$work/util-build/libblkid/src/blkid.h" "$deps/include/blkid/blkid.h"
+cp "$work/e2fsprogs/lib/ext2fs/ext2_fs.h" "$deps/include/ext2fs/ext2_fs.h"
+cp "$work/e2fsprogs/lib/ext2fs/ext2_ext_attr.h" "$deps/include/ext2fs/ext2_ext_attr.h"
+for archive in "$work/util-build/.libs/libuuid.a" "$work/util-build/.libs/libblkid.a" \
+    "$work/util-build/.libs/libsmartcols.a" "$work/e2-build/lib/libext2fs.a" \
+    "$work/e2-build/lib/libcom_err.a" "$prefix/lib/libz.a" "$prefix/lib/libzstd.a"; do
+    cp "$archive" "$deps/"
+done
+tar -xf "$btrfs_archive" -C "$work"
+btrfs_source=$(find "$work" -maxdepth 1 -type d -name 'btrfs-progs-*' | head -1)
+test -n "$btrfs_source"
+(
+    cd "$btrfs_source"
+    ./autogen.sh
+    CC="$cc" CFLAGS="-O2 -I$deps/include -I$prefix/include" \
+        LDFLAGS="-static -L$deps -L$prefix/lib" \
+        LIBS="$deps/libsmartcols.a $deps/libcom_err.a $deps/libext2fs.a" \
+        ./configure --prefix=/usr --disable-tests --disable-backtrace --disable-lzo \
+            --disable-libudev
+    make -j"${JOBS:-2}" mkfs.btrfs
+)
 tar -xf "$limine_archive" -C "$work"
 make -C "$work/limine-binary" CC="$cc" CFLAGS=-O2 LDFLAGS=-static
 tree="$work/package"
@@ -93,7 +125,8 @@ cp "$work/util-build/sfdisk.static" "$tree/DATA/usr/bin/sfdisk"
 cp "$work/dosfstools/src/mkfs.fat" "$tree/DATA/usr/bin/mkfs.fat"
 cp "$work/e2-build/misc/mke2fs" "$tree/DATA/usr/bin/mke2fs"
 cp "$work/limine-binary/limine" "$tree/DATA/usr/bin/limine"
-for name in sfdisk mkfs.fat mke2fs limine; do
+cp "$btrfs_source/mkfs.btrfs" "$tree/DATA/usr/bin/mkfs.btrfs"
+for name in sfdisk mkfs.fat mke2fs limine mkfs.btrfs; do
     "$bin" elf "$tree/DATA/usr/bin/$name" > "$out/$name.elf"
     grep -qx 'runtime nolibc' "$out/$name.elf"
     grep -qx 'e_type 2' "$out/$name.elf"
@@ -111,6 +144,7 @@ cp "$work/util-linux/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/
 cp "$work/dosfstools/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/dosfstools-COPYING"
 cp "$work/e2fsprogs/NOTICE" "$tree/DATA/usr/share/licenses/holy-storage-tools/e2fsprogs-NOTICE"
 cp "$work/e2fsprogs/lib/uuid/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/e2fsprogs-uuid-COPYING"
+cp "$btrfs_source/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/btrfs-progs-COPYING"
 cat > "$tree/HOLY/meta" <<EOF
 format holy-package-1
 name holy-storage-tools
