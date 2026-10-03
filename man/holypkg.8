@@ -6,7 +6,7 @@ holypkg \- Holy local package tooling prototype
 .br
 .B holypkg add SOURCE:PACKAGE [--arch ARCH] [--libc LIBC] [--catalog MIRROR] [--candidate SOURCE:PACKAGE ...] [--candidate-provider SOURCE:KIND:NAME ...] [--candidate-local SOURCE=FILE.holy ...] [--choose ID=SHA256] [--answers FILE] [--accept-arch SHA256 ...] [--accept-privileged SHA256 ...] [--accept-service UNIT ...] [--root DIRECTORY] [--prepare | --yes] [--noninteractive]
 .br
-.B holypkg up SOURCE:PACKAGE [SOURCE:PACKAGE ...] [--prepare] [--output NEW_FILE] [--catalog MIRROR] [--choose SHA256 | SOURCE:PACKAGE=SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--accept-service UNIT ...] [--root DIRECTORY] [--yes] [--noninteractive]
+.B holypkg up SOURCE:PACKAGE [SOURCE:PACKAGE ...] [--all] [--prepare] [--output NEW_FILE] [--catalog MIRROR] [--choose SHA256 | SOURCE:PACKAGE=SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--accept-service UNIT ...] [--root DIRECTORY] [--yes] [--noninteractive]
 .br
 .B holypkg apply PLAN --sha256 PLAN_SHA256 [--root DIRECTORY]
 .br
@@ -1612,6 +1612,14 @@ architecture and privileged-file decisions. Without a terminal or with
 --output selects its path; otherwise up creates a private temporary plan path.
 Successful direct application removes that temporary file. --prepare only
 writes the plan and retains its temporary path; --yes is invalid with it.
+.PP
+--all takes no reference and updates every installed slot at once, as one
+plan and one transaction. The slots are read from the installed set, and each
+is prepared by the same path an explicit reference uses, so a slot with no
+newer candidate prints up-to-date and is left out of the plan. A slot delivered
+locally has no source and names nothing, and --arch or --libc excludes the
+slots they name. Naming a reference as well is 2, since the narrower list
+would be silently dropped.
 .PP
 Preparation writes a new mode-0600 plan file. It names every reference it
 resolved as a slot block:

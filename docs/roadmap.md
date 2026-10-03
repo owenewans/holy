@@ -438,7 +438,7 @@
   `why SOURCE:PACKAGE`. Report an unreachable dependency as orphan and reject
   incomplete or malformed graphs. The source-instance and orphan fixtures
   cover graph traversal after package removal.
-- [ ] Complete source-aware installed slots and version families; extend transactions to
+- [x] Complete source-aware installed slots and version families; extend transactions to
   replacements, complete dynamic-library contexts and grouped removal. The
   explicit --accept-broken removal path now retains consumers and reports their
   broken edges, and a committed set, removal or replacement leaves the decisions it was
@@ -798,8 +798,15 @@
 - [x] Apply a single-slot `up SOURCE:PACKAGE` in one invocation through the
   same hashed plan and checked apply path. Print the full plan, require a
   terminal decision or scoped --yes, and retain it for noninteractive review.
-  The direct path tests both approval and decision-required behavior; updating
-  all installed slots together remains open.
+  The direct path tests both approval and decision-required behavior.
+  `holypkg up --all` takes no reference and prepares every installed slot in one
+  plan and one transaction: the slots are read from the installed set through
+  `holy_state_visit_slots`, which carries the alias a reference needs, and each
+  goes through the same `up_select_slot` path an explicit reference uses, so a
+  slot with nothing newer still prints `up-to-date` and stays out of the plan. A
+  locally delivered slot has no source and names nothing, `--arch` and `--libc`
+  exclude the slots they name, and naming a reference as well is 2 because the
+  narrower list would be silently dropped.
 - [x] Read the pinned catalog index for an installed source slot and stage only
   matching name/os/arch/libc versions during update preparation. Verify those
   archives against the index before planning; keep the full catalog validation

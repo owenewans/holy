@@ -11,6 +11,23 @@ int holy_state_status(const char *root_path, int json);
 /* the installed slots with the version family each holds, read-only */
 int holy_state_slots(const char *root_path, int json,
                      const char *const *sources, size_t source_count);
+
+/* one installed slot a caller can name as an update reference. a slot delivered
+   locally has no source and no alias, so it is reported with an empty alias and a
+   caller that needs a reference skips it. the strings are borrowed for the callback,
+   and the visitor returns 0 to continue like every other visit here, since a non-zero
+   value stops the walk and becomes the status of the whole visit. */
+struct holy_state_slot_ref {
+    char source_id[65];
+    char alias[128];
+    char name[128];
+    char arch[32];
+    char libc[32];
+    char digest[65];
+};
+typedef int (*holy_slot_ref_visit)(void *, const struct holy_state_slot_ref *);
+/* visits every installed slot. the same status holy_state_slots returns. */
+int holy_state_visit_slots(const char *root_path, holy_slot_ref_visit visit, void *context);
 /* reserve one cached object at the current generation; no payload mutation. */
 int holy_state_reserve(const char *digest, const char *root_path);
 /* discard only the recognized prepared reservation. */

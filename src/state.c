@@ -1544,6 +1544,46 @@ done:
     return result;
 }
 
+/* an installed slot a caller can name as an update reference, so the walk adapts the
+   instance visitor to a slot visitor without a second pass over the state directory */
+struct slot_ref_context {
+    const char *root_path;
+    holy_slot_ref_visit visit;
+    void *context;
+};
+
+static int slot_ref_collect(void *context, int root, int item, const char *digest)
+{
+    struct slot_ref_context *state = context;
+    struct holy_state_slot_ref ref;
+    (void)root;
+    memset(&ref, 0, sizeof ref);
+    if (strlen(digest) != 64 || !valid_digest(digest) ||
+        !instance_meta_field(item, "name", ref.name, sizeof ref.name) ||
+        !instance_meta_field(item, "arch", ref.arch, sizeof ref.arch) ||
+        !instance_meta_field(item, "libc", ref.libc, sizeof ref.libc) ||
+        !installed_source_id(item, ref.source_id)) return 0;
+    memcpy(ref.digest, digest, 64);
+    /* a slot delivered locally has no source to ask, so it carries an empty alias and a
+       caller naming a reference from it has nothing to name */
+    if (!strcmp(ref.source_id, "-") ||
+        holy_source_alias_for_id(state->root_path, ref.source_id, ref.alias))
+        ref.alias[0] = 0;
+    return state->visit(state->context, &ref);
+}
+
+int holy_state_visit_slots(const char *root_path, holy_slot_ref_visit visit, void *context)
+{
+    struct slot_ref_context state;
+    unsigned long long generation;
+    if (!root_path || !*root_path || !visit) return 2;
+    state.root_path = root_path;
+    state.visit = visit;
+    state.context = context;
+    /* the walk reads the generation and the caller has no use for it, so it lands here */
+    return holy_state_visit(root_path, slot_ref_collect, &state, &generation);
+}
+
 int holy_state_find_slot(const char *root_path, const char *source_id,
                          const char *name, const char *arch, const char *libc,
                          char digest[65])

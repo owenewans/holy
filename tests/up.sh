@@ -94,6 +94,18 @@ grep -qx "source-id $source_id" "$tmp/up.plan"
 grep -qx "index $index" "$tmp/up.plan"
 grep -qx "old $old" "$tmp/up.plan"
 grep -qx "new $next" "$tmp/up.plan"
+# --all reaches the same slot from the installed set and prepares the same plan, so the
+# one-slot reference is not a second path through the code
+expect 0 "$bin" up --all --prepare --output "$tmp/all.plan" --root "$root"
+cmp "$tmp/up.plan" "$tmp/all.plan"
+grep -qx "prepared $plan $tmp/all.plan old $old new $next index $index" "$tmp/out"
+# naming a reference as well is two ways to say one thing, and the narrower list would be
+# dropped without a word
+expect 2 "$bin" up --all fixture:update-fixture --prepare --output "$tmp/both.plan" --root "$root"
+test ! -e "$tmp/both.plan"
+# a slot the arch excludes is not a reference, so the run has nothing to do
+expect 2 "$bin" up --all --arch x86 --prepare --output "$tmp/arch.plan" --root "$root"
+test ! -e "$tmp/arch.plan"
 grep -qx 'version 1' "$root/usr/share/update-fixture"
 package 9
 unlisted=$(sha256sum "$repo/update-9.holy" | cut -d ' ' -f 1)
@@ -144,6 +156,10 @@ grep -qx "source-id $source_id" "$root/var/lib/holypkg/installed/$next/state"
 expect 0 "$bin" db check --all --root "$root"
 expect 0 "$bin" up fixture:update-fixture --prepare --output "$tmp/no-newer" --root "$root"
 test ! -e "$tmp/no-newer"
+# nothing newer anywhere is the same answer for every installed slot at once
+expect 0 "$bin" up --all --prepare --output "$tmp/no-newer-all" --root "$root"
+grep -q "^up-to-date $source_id $next$" "$tmp/out"
+test ! -e "$tmp/no-newer-all"
 expect 0 "$bin" up fixture:update-fixture --prepare --choose "$old" --output "$tmp/downgrade.plan" --root "$root"
 downgrade=$(sha256sum "$tmp/downgrade.plan" | cut -d ' ' -f 1)
 expect 0 "$bin" apply "$tmp/downgrade.plan" --sha256 "$downgrade" --root "$root"

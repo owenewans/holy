@@ -200,6 +200,39 @@ static const char *up_slot_choice(const char *choice, const char *name)
     return equals + 1;
 }
 
+/* every installed slot a source can be asked about, as ALIAS:PACKAGE. a slot delivered
+   locally, or one whose source no longer has an alias, names nothing, and a slot the
+   caller's --arch or --libc excludes is left for the reference loop to refuse */
+struct up_all {
+    const char *root;
+    const char *arch;
+    const char *libc;
+    char **reference;
+    size_t count, limit;
+};
+
+static int up_all_slot(void *context, const struct holy_state_slot_ref *ref)
+{
+    struct up_all *all = context;
+    size_t length;
+    char **next;
+    /* zero continues, so a slot that names nothing is skipped rather than stopping the
+       walk over the rest of the installed set */
+    if (!ref->alias[0]) return 0;
+    if (all->arch && strcmp(all->arch, ref->arch)) return 0;
+    if (all->libc && strcmp(all->libc, ref->libc)) return 0;
+    if (all->count >= 65536) return 1;
+    length = strlen(ref->alias) + 1 + strlen(ref->name) + 1;
+    next = realloc(all->reference, (all->count + 1) * sizeof *next);
+    if (!next) return 1;
+    all->reference = next;
+    all->reference[all->count] = malloc(length);
+    if (!all->reference[all->count]) return 1;
+    snprintf(all->reference[all->count], length, "%s:%s", ref->alias, ref->name);
+    ++all->count;
+    return 0;
+}
+
 static int up_select_slot(struct up_slot *slot, const char *name, const char *root,
                           const char *catalog_option, const char *choice,
                           const char *arch, const char *libc,
@@ -326,8 +359,10 @@ int holy_up_command(int argc, char **argv)
     size_t *chosen = NULL, i, s, size = 0;
     char *inner = NULL, *plan = NULL, *temporary_dir = NULL, *temporary_plan = NULL;
     char inner_hash[65], plan_hash[65], answer[16];
+    struct up_all all = {NULL, NULL, NULL, NULL, 0, 0};
     int result = 2, prepared = 0, yes = 0, noninteractive = 0;
-    int root_seen = 0, up_to_date = 0;
+    int root_seen = 0, up_to_date = 0, every = 0;
+    size_t discovered = 0;
     FILE *stream = NULL;
     if (argc < 3) goto done;
     services = calloc((size_t)argc, sizeof *services);
@@ -343,7 +378,8 @@ int holy_up_command(int argc, char **argv)
     }
     for (i = 0; i < (size_t)argc; ++i) slots[i].dir = -1;
     for (i = 2; i < (size_t)argc; ++i) {
-        if (!strcmp(argv[i], "--prepare") && !prepared) prepared = 1;
+        if (!strcmp(argv[i], "--all") && !every) every = 1;
+        else if (!strcmp(argv[i], "--prepare") && !prepared) prepared = 1;
         else if (!strcmp(argv[i], "--output") && !output && i + 1 < (size_t)argc)
             output = argv[++i];
         else if (!strcmp(argv[i], "--catalog") && !catalog && i + 1 < (size_t)argc)
@@ -369,6 +405,29 @@ int holy_up_command(int argc, char **argv)
         } else {
             references[reference_count++] = argv[i];
         }
+    }
+    if (every) {
+        /* every installed slot is a reference, so naming one as well is two ways to say
+           the same thing and the narrower one would be silently dropped */
+        if (reference_count) goto done;
+        all.root = root;
+        all.arch = arch;
+        all.libc = libc;
+        /* a walk that found no slot is the empty reference list the guard below
+           refuses, so its status is not carried into result as success */
+        result = holy_state_visit_slots(root, up_all_slot, &all);
+        if (result || all.count > (size_t)argc) { result = result ? result : 1; goto done; }
+        if (!all.count) { result = 2; goto done; }
+        /* the walk owns its strings, so they are copied into the borrowed array the
+           reference loop reads and freed with it */
+        for (i = 0; i < all.count; ++i) {
+            references[i] = strdup(all.reference[i]);
+            if (!references[i]) { result = 1; goto done; }
+            ++reference_count;
+        }
+        /* only the entries the walk produced are owned here; a reference the caller
+           named points into argv and must not be freed */
+        discovered = reference_count;
     }
     if (!reference_count || (reference_count > 1 && choice && !strchr(choice, '=')) ||
         (prepared && yes) ||
@@ -486,14 +545,18 @@ int holy_up_command(int argc, char **argv)
     result = 0;
 done:
     if (result == 2)
-        fputs("usage: holypkg up SOURCE:PACKAGE [SOURCE:PACKAGE ...] [--prepare] [--output NEW_FILE] [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--accept-service UNIT ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
+        fputs("usage: holypkg up SOURCE:PACKAGE [SOURCE:PACKAGE ...] [--all] [--prepare] [--output NEW_FILE] [--catalog MIRROR] [--choose SHA256] [--arch ARCH] [--libc LIBC] [--accept-arch SHA256] [--accept-privileged SHA256] [--accept-service UNIT ...] [--root DIRECTORY] [--yes] [--noninteractive]\n", stderr);
     if (stream) fclose(stream);
     up_slots_free(slots, (size_t)argc);
     for (i = 0; i < (size_t)argc; ++i) up_selection_free(&work[i]);
     free(work);
     free(chosen); free((void *)olds); free((void *)news);
     free(inner); free(plan);
-    free(temporary_plan); free(temporary_dir); free(services); free(references);
+    free(temporary_plan); free(temporary_dir); free(services);
+    for (i = 0; i < discovered; ++i) free((void *)references[i]);
+    for (i = 0; i < all.count; ++i) free(all.reference[i]);
+    free(all.reference);
+    free(references);
     return result;
 }
 static char *read_plan(int fd, size_t *size)
