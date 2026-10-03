@@ -1479,7 +1479,10 @@
   The path --output names must not exist, and a refusal to create it is 1 with
   the reason on standard error: a path a review already holds and a directory
   that cannot be opened want different next steps, so the status alone left the
-  operator to guess which one had happened.
+  operator to guess which one had happened. A reference up cannot place says so
+  too: a --arch or --libc that excludes the slot is named in the report rather
+  than left to read as a package the set never held, and a --catalog path that
+  cannot be opened names itself and the reason instead of answering 6 in silence.
   Root/VM trials stay open.
   The existing run launcher now derives private PATH directories from the
   selected installed manifest, so a public executable can invoke its own

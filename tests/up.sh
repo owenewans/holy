@@ -418,4 +418,29 @@ expect 0 "$bin" up --all --prepare --output "$tmp/group-none.plan" --root "$root
 test ! -e "$tmp/group-none.plan"
 grep -c '^up-to-date ' "$tmp/out"
 test "$(grep -c '^up-to-date ' "$tmp/out")" -eq 2
+# a reference the installed set does not hold, and one it holds under another arch, name
+# what is missing instead of leaving the status to be read
+expect 6 "$bin" up fixture:absent --prepare --output "$tmp/absent.plan" --root "$root"
+grep -qx 'holypkg: installed source slot unavailable for absent' "$tmp/err"
+test ! -e "$tmp/absent.plan"
+# the same reference under an architecture or libc it is not installed for says which
+# narrowing excluded it, since the bare refusal reads as a name that is not installed
+expect 6 "$bin" up fixture:alpha --arch aarch64 --prepare --output "$tmp/arch.plan" \
+    --root "$root"
+grep -qx 'holypkg: installed source slot unavailable for alpha (architecture aarch64)' \
+    "$tmp/err"
+test ! -e "$tmp/arch.plan"
+expect 6 "$bin" up fixture:alpha --libc glibc --prepare --output "$tmp/libc.plan" \
+    --root "$root"
+grep -qx 'holypkg: installed source slot unavailable for alpha (libc glibc)' "$tmp/err"
+expect 6 "$bin" up fixture:alpha --arch aarch64 --libc glibc --prepare \
+    --output "$tmp/both.plan" --root "$root"
+grep -qx 'holypkg: installed source slot unavailable for alpha (architecture aarch64, libc glibc)' \
+    "$tmp/err"
+# a catalog that cannot be opened says which path and why, since --catalog names it
+expect 6 "$bin" up fixture:alpha --catalog "$tmp/absent-catalog" --prepare \
+    --output "$tmp/catalog.plan" --root "$root"
+grep -qx "holypkg: catalog $tmp/absent-catalog unavailable for source fixture: No such file or directory" \
+    "$tmp/err"
+test ! -e "$tmp/catalog.plan"
 printf 'source update preparation and apply fixtures passed\n'

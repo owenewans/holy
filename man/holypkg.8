@@ -1604,6 +1604,10 @@ version and release with the source _revision convention before comparison.
 An unparsable version or an older index without comparator metadata still
 needs an explicit choice.
 An absent old artifact, missing source slot or changed catalog is reported.
+A reference whose --arch or --libc excludes the slot that is installed says so
+in that report, since the same reference is installed under another one and the
+bare refusal reads as a name the set does not hold. A --catalog path that
+cannot be opened is 6 and names that path and the reason.
 Without --prepare, up prints the full proposed plan, saves it, then asks for
 approval before applying the exact file and hash through the same apply command.
 --yes approves only that plan; it does not choose an ambiguous version or approve

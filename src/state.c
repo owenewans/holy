@@ -1628,8 +1628,23 @@ int holy_state_find_slot(const char *root_path, const char *source_id,
     if (errno) goto done;
     result = found > 1 ? 3 : found ? 0 : 6;
 done:
-    if (result) fprintf(stderr, "holypkg: installed source slot %s for %s\n",
-                        result == 3 ? "requires arch/libc choice" : "unavailable", name);
+    if (result) {
+        fprintf(stderr, "holypkg: installed source slot %s for %s",
+                result == 3 ? "requires arch/libc choice" : "unavailable", name);
+        /* a caller that narrowed the search has to be told so, since the reference may
+           well be installed under another architecture and the bare refusal reads as
+           a name that is simply not installed */
+        if (result != 3 && (arch || libc)) {
+            fputs(" (", stderr);
+            if (arch) fprintf(stderr, "architecture %s", arch);
+            if (libc) {
+                if (arch) fputs(", ", stderr);
+                fprintf(stderr, "libc %s", libc);
+            }
+            fputc(')', stderr);
+        }
+        fputc('\n', stderr);
+    }
     if (list) closedir(list);
     if (installed >= 0) close(installed);
     if (database >= 0) close(database);

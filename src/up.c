@@ -275,9 +275,23 @@ static int up_select_slot(struct up_slot *slot, const char *name, const char *ro
     canonical = realpath(catalog, NULL);
     slot->catalog = canonical;
     slot->dir = canonical ? open(canonical, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) : -1;
-    if (slot->dir < 0 || flock(slot->dir, LOCK_SH)) { result = 6; goto done; }
+    if (slot->dir < 0 || flock(slot->dir, LOCK_SH)) {
+        fprintf(stderr, "holypkg: catalog %s unavailable for source %s: %s\n",
+                catalog, slot->alias, strerror(errno));
+        result = 6;
+        goto done;
+    }
     result = holy_source_catalog(root, slot->alias, canonical, actual_id);
-    if (result || strcmp(source_id, actual_id)) { result = 3; goto done; }
+    if (result || strcmp(source_id, actual_id)) {
+        /* both the lookup and the slot read the registry, so a source-id that moved
+           between them means the source was re-registered while this run was reading
+           it, and the slot it named is not the slot the source now serves */
+        if (!result)
+            fprintf(stderr, "holypkg: source %s serves id %s, not the %s this slot names\n",
+                    slot->alias, actual_id, source_id);
+        result = 3;
+        goto done;
+    }
     result = holy_repo_slot_candidates(canonical, &work->old, &work->candidates);
     if (result) {
         if (result == 6)
@@ -287,7 +301,21 @@ static int up_select_slot(struct up_slot *slot, const char *name, const char *ro
     for (i = 0; i < work->candidates.count; ++i) {
         struct holy_package_identity *candidate = &work->candidates.items[i];
         int order = 0;
-        if (!same_slot(&work->old, candidate)) { result = 1; goto done; }
+        if (!same_slot(&work->old, candidate)) {
+            /* the repo layer filters candidates by the whole slot already, so this only
+               fires if that filter is ever weakened, and the two sets of coordinates
+               are what a disagreement would show */
+            fprintf(stderr, "holypkg: catalog offers %s %s/%s/%s outside the slot %s/%s/%s\n",
+                    candidate->digest,
+                    candidate->os ? candidate->os : "-",
+                    candidate->arch ? candidate->arch : "-",
+                    candidate->libc ? candidate->libc : "-",
+                    work->old.os ? work->old.os : "-",
+                    work->old.arch ? work->old.arch : "-",
+                    work->old.libc ? work->old.libc : "-");
+            result = 1;
+            goto done;
+        }
         ++compatible;
         if (!strcmp(candidate->digest, slot->old_digest)) {
             old_present = 1;

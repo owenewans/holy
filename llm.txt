@@ -1402,7 +1402,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=4444527bb4149c333dbc4b6d426b1b2ed5b28feb0d1bec7461d0da541ccecdb2
+holypkg.8 source=holy version=development sha256=0d142139db0c8b65ae72507d2e596e5557d469b7f41cff8dc1a4c258565bb8ab
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -2969,15 +2969,19 @@ DESCRIPTION
      lease  with  the  source  _revision  convention  before comparison.  An un-
      parsable version or an older index without comparator metadata still  needs
      an explicit choice.  An absent old artifact, missing source slot or changed
-     catalog  is reported.  Without --prepare, up prints the full proposed plan,
-     saves it, then asks for approval before applying the exact	 file  and  hash
-     through the same apply command.  --yes approves only that plan; it does not
-     choose an ambiguous version or approve architecture and privileged-file de-
-     cisions.  Without a terminal or with --noninteractive, missing approval re-
-     turns 3 and leaves the plan file for review.  --output  selects  its  path;
-     otherwise	up creates a private temporary plan path.  Successful direct ap-
-     plication removes that temporary file. --prepare only writes the  plan  and
-     retains its temporary path; --yes is invalid with it.
+     catalog  is reported.  A reference whose --arch or --libc excludes the slot
+     that is installed says so in that report, since the same reference	 is  in-
+     stalled under another one and the bare refusal reads as a name the set does
+     not  hold.	 A --catalog path that cannot be opened is 6 and names that path
+     and the reason.  Without --prepare, up prints the full proposed plan, saves
+     it, then asks for approval before applying the exact file and hash	 through
+     the  same apply command.  --yes approves only that plan; it does not choose
+     an ambiguous version or approve architecture and privileged-file decisions.
+     Without a terminal or with --noninteractive, missing approval returns 3 and
+     leaves the plan file for review.  --output selects its path;  otherwise  up
+     creates  a	 private temporary plan path.  Successful direct application re-
+     moves that temporary file. --prepare only writes the plan and  retains  its
+     temporary path; --yes is invalid with it.
 
      --all  takes  no reference and updates every installed slot at once, as one
      plan and one transaction. The slots are read from the  installed  set,  and
