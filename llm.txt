@@ -1397,7 +1397,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=be82132a4a01a91bec71a05c83e9ba453e74100fc406caf5aa85c3d1dd4a0fc1
+holypkg.8 source=holy version=development sha256=fda45a8c2c78522c186f52b31c9f6eb907b563527eb5d2bb142dc1b180afe933
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -2195,11 +2195,12 @@ DESCRIPTION
      architectures  or	libc  runtimes, is the slot choice above and is still 3.
      The comparison is the family's own, for pacman, deb, apk,	xbps,  holy  and
      rpm  alike.   --arch  and --libc narrow the candidates before the family is
-     read, so a choice of slot and a choice of	version	 compose.  In  JSON  the
-     choice is one holy-local-solve-1 family-choice event whose consumer and re-
-     quirement	are  null,  since  the catalog resolved a name rather than a re-
-     quirement, and which carries the provider, the slot, the family,  the  ver-
-     sion and the member count.
+     read, so a choice of slot and a choice of version	compose.  repo	require-
+     ments reads a name the same way and prints the same line before the package
+     record  it	 answers with. In JSON the choice is one holy-local-solve-1 fam-
+     ily-choice event whose consumer and requirement are null, since the catalog
+     resolved a name rather than a requirement, and which carries the  provider,
+     the slot, the family, the version and the member count.
 
    Installed documentation
      holypkg  docs --root DIRECTORY --output FILE creates a new holy-docs-1 bun-

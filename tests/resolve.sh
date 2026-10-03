@@ -434,30 +434,33 @@ if "$bin" db rm "$soname_hash" --root "$tmp/soname-rootfs" > "$tmp/out" 2> "$tmp
 # a name the catalog carries twice under one version family is one thing at two
 # versions, so the catalog resolves it to the newer member and says so
 build_family() {
-    name=$1 version=$2 family=$3
+    build_family_arch "$1" "$2" "$3" noarch
+}
+build_family_arch() {
+    name=$1 version=$2 family=$3 arch=$4
     cat > "$tmp/payload/HOLY/meta" <<EOF
 format holy-package-1
 name $name
 version $version
 release 1
 os linux
-arch noarch
+arch $arch
 libc nolibc
 x-version-family $family
 EOF
-    tar -cf "$tmp/$name-$version-$family.tar" -C "$tmp/payload" HOLY DATA
-    lz4 -q "$tmp/$name-$version-$family.tar" "$tmp/$name-$version-$family.holy"
+    tar -cf "$tmp/$name-$version-$family-$arch.tar" -C "$tmp/payload" HOLY DATA
+    lz4 -q "$tmp/$name-$version-$family-$arch.tar" "$tmp/$name-$version-$family-$arch.holy"
 }
 printf 'require b-1 root package b any any any - b metadata\n' > "$tmp/payload/HOLY/deps"
 build_family root 1 pacman
 build_family root 3 pacman
 : > "$tmp/payload/HOLY/deps"
-root_old_hash=$(sha256sum "$tmp/root-1-pacman.holy")
+root_old_hash=$(sha256sum "$tmp/root-1-pacman-noarch.holy")
 root_old_hash=${root_old_hash%% *}
-root_new_hash=$(sha256sum "$tmp/root-3-pacman.holy")
+root_new_hash=$(sha256sum "$tmp/root-3-pacman-noarch.holy")
 root_new_hash=${root_new_hash%% *}
 mkdir "$tmp/repo-family"
-cp "$tmp/root-1-pacman.holy" "$tmp/root-3-pacman.holy" "$tmp/b-1.holy" "$tmp/unused-1.holy" "$tmp/repo-family/"
+cp "$tmp/root-1-pacman-noarch.holy" "$tmp/root-3-pacman-noarch.holy" "$tmp/b-1.holy" "$tmp/unused-1.holy" "$tmp/repo-family/"
 "$bin" repo index "$tmp/repo-family" > "$tmp/out"
 "$bin" repo seal "$tmp/repo-family" > "$tmp/out"
 "$bin" repo solve "$tmp/repo-family" root > "$tmp/out"
@@ -471,18 +474,40 @@ grep -Fqx "{\"schema\":\"holy-local-solve-1\",\"type\":\"selected\",\"sha256\":\
 # a member of another family under the same name is a different thing, so the catalog
 # asks rather than choosing between them
 build_family root 4 rpm
-cp "$tmp/root-4-rpm.holy" "$tmp/repo-family/"
+cp "$tmp/root-4-rpm-noarch.holy" "$tmp/repo-family/"
 "$bin" repo index "$tmp/repo-family" > "$tmp/out"
 "$bin" repo seal "$tmp/repo-family" > "$tmp/out"
 if "$bin" repo solve "$tmp/repo-family" root --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"decision-required"}' "$tmp/out"
+# a name two versions of one slot answers the requirements query the same way
+rm -rf "$tmp/repo-req"
+mkdir "$tmp/repo-req"
+cp "$tmp/root-1-pacman-noarch.holy" "$tmp/root-3-pacman-noarch.holy" "$tmp/repo-req/"
+"$bin" repo index "$tmp/repo-req" > "$tmp/out"
+"$bin" repo seal "$tmp/repo-req" > "$tmp/out"
+"$bin" repo requirements "$tmp/repo-req" root > "$tmp/out"
+grep -q "^family-choice root provider=$root_new_hash slot root linux noarch nolibc family pacman version 3 members 2 reason newest-in-family$" "$tmp/out"
+grep -q "^package \"root\" \"3\"" "$tmp/out"
+grep -qx "requirements 1" "$tmp/out"
+# two slots under one name stay the architecture or ABI choice, and --arch settles them
+build_family_arch root 4 pacman x86_64
+rm -rf "$tmp/repo-slots"
+mkdir "$tmp/repo-slots"
+cp "$tmp/root-1-pacman-noarch.holy" "$tmp/root-3-pacman-noarch.holy" "$tmp/root-4-pacman-x86_64.holy" "$tmp/repo-slots/"
+"$bin" repo index "$tmp/repo-slots" > "$tmp/out"
+"$bin" repo seal "$tmp/repo-slots" > "$tmp/out"
+if "$bin" repo requirements "$tmp/repo-slots" root > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+grep -q 'architecture/ABI choice' "$tmp/err"
+"$bin" repo requirements "$tmp/repo-slots" root --arch x86_64 > "$tmp/out"
+grep -q "^package \"root\" \"4\" \"1\" \"linux\" \"x86_64\"" "$tmp/out"
+grep -qx "requirements 0" "$tmp/out"
 # an rpm catalog is compared with the rpm comparator too, so a name it carries twice
 # under one family is one thing at two versions there as well
 build_family root 1 rpm
 build_family root 3 rpm
 rm -rf "$tmp/repo-rpm"
 mkdir "$tmp/repo-rpm"
-cp "$tmp/root-1-rpm.holy" "$tmp/root-3-rpm.holy" "$tmp/repo-rpm/"
+cp "$tmp/root-1-rpm-noarch.holy" "$tmp/root-3-rpm-noarch.holy" "$tmp/repo-rpm/"
 "$bin" repo index "$tmp/repo-rpm" > "$tmp/out"
 "$bin" repo seal "$tmp/repo-rpm" > "$tmp/out"
 "$bin" repo solve "$tmp/repo-rpm" root --json > "$tmp/out" 2> "$tmp/err" || true

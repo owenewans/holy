@@ -518,6 +518,12 @@
   pacman, deb, apk, xbps, holy and rpm: `repo.c` left rpm out of both
   `indexed_version_matches` and the family comparator, so an rpm-backed catalog
   satisfied no version constraint and a name it carried twice stayed a choice.
+  `family_root` compared a candidate with its own comparator against a member of
+  another family, so rpm 4 against pacman 3 ordered and a name carrying three
+  versions in two families stopped being a choice; the members have to share one.
+  `holypkg repo requirements DIRECTORY NAME` carries the rule too, and prints
+  the same line before the package record, so `--arch x86_64` and the newest
+  member compose there as well.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions. The
   private placement of a colliding file, the patchelf rewrite of a consumer's

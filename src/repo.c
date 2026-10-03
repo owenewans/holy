@@ -1992,6 +1992,28 @@ static int list_probe(const char *directory, const char *query,
                 found = j;
                 ++matches;
             }
+            if (matches > 1) {
+                /* several versions of one slot are one thing at two versions, so the
+                   newest member answers the name. several slots are the architecture or
+                   ABI choice the caller makes with --arch or --libc */
+                size_t newest = family_root(objects, count, query,
+                                            stage ? stage->arch : NULL,
+                                            stage ? stage->libc : NULL);
+                if (newest < count) {
+                    size_t members = 0;
+                    for (j = 0; j < count; ++j)
+                        if (!strcmp(objects[j].identity.name, query) &&
+                            (!stage || !stage->arch ||
+                             !strcmp(objects[j].identity.arch, stage->arch)) &&
+                            (!stage || !stage->libc ||
+                             !strcmp(objects[j].identity.libc, stage->libc)))
+                            ++members;
+                    found = newest;
+                    matches = 1;
+                    /* repo requirements has no JSON form, so this is always the line */
+                    report_family_root(&objects[newest], query, members, 0);
+                }
+            }
             if (matches == 1) {
                 if (!record(stdout, &objects[found])) goto done;
                 for (j = 0; j < objects[found].requirement_count; ++j)
