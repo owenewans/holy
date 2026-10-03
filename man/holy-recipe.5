@@ -318,6 +318,14 @@ postinstall hook, so pre_install and post_install arrive as one hook.
 provides, conflicts and replaces, epoch, groups, noextract, validpgpkeys,
 options, non-SHA-256 checksums and architecture-specific source lists are
 preserved as x- records or reported as unknown.
+.PP
+A conditional block is reported with the line range it spans and its first line, since the
+converter evaluates none of it, and nothing inside it reaches the recipe: a
+depends+= inside an if leaves the dependency list as the records beside the block say it is.
+The conversion is then review-required. A statement that opens no block and is not a record,
+which is an append such as depends+=(...) or a closing keyword whose opener was never seen, is
+reported as an unreadable statement with its line. An unterminated function and an
+unterminated list are refused instead, since the reader cannot tell where either one ends.
 .SS Void template
 pkgname, version, revision, short_desc, homepage, license, maintainer and
 changelog are carried. distfiles is read as a list and $pkgname, $pkgbase,

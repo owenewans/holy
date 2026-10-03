@@ -1076,7 +1076,12 @@
   recipe through the normal engine and installs its split outputs.
   The converter also reads lists the way a shell does, so a comma inside an
   element belongs to its name, and a brace inside a parameter expansion does
-  not end a function body.
+  not end a function body. A conditional block is reported with the line range
+  it spans instead of refusing the file, since `if [ "$CARCH" = x86_64 ]; then
+  depends+=(libx11); fi` is ordinary in an AUR PKGBUILD and an operator needs a
+  review-required recipe naming those lines more than an error naming one line;
+  nothing inside the block reaches the recipe, so the dependency list stays what
+  the records beside it say it is.
   The Void template family converts as well: `holypkg convert template` and
   `holypkg import --format void` read the xbps-src template, carry its identity,
   dependency lists with their comparators, distfiles with their checksums and

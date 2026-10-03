@@ -266,6 +266,47 @@ license=('custom')
         assert 'output "pkgbuild-meta" metapackage' in \
             (root / "meta" / "pkgbuild-meta.recipe").read_text()
 
+        # a conditional dependency is reported with its lines rather than refused, and nothing
+        # inside the block reaches the recipe
+        write(root / "PKGBUILD-cond", """pkgname=pkgbuild-cond
+pkgver=1
+pkgrel=1
+arch=('x86_64')
+license=('MIT')
+depends=('glibc')
+if [ "$CARCH" = x86_64 ]; then
+  depends+=('libx11')
+else
+  depends+=('libx11')
+fi
+
+package() {
+  install -Dm644 /dev/null "$pkgdir/usr/share/pkgbuild-cond/marker"
+}
+""")
+        out = run("convert", root / "PKGBUILD-cond", "--source", "aur",
+                  "--output", root / "cond", status=3)
+        assert "converted pkgbuild-cond status review-required" in out
+        report = (root / "cond" / "conversion").read_text()
+        assert 'unknown conditional block PKGBUILD:7-11 if [ "$CARCH" = x86_64 ]; then' in report
+        assert "unknown 1" in report
+        recipe = (root / "cond" / "pkgbuild-cond.recipe").read_text()
+        assert 'depend "glibc" "any" "-"' in recipe
+        assert "libx11" not in recipe
+        # a closing keyword whose opener was never seen is named on its own line
+        write(root / "PKGBUILD-stray", """pkgname=pkgbuild-stray
+pkgver=1
+pkgrel=1
+arch=('x86_64')
+license=('MIT')
+fi
+""")
+        out = run("convert", root / "PKGBUILD-stray", "--source", "aur",
+                  "--output", root / "stray", status=3)
+        report = (root / "stray" / "conversion").read_text()
+        assert "unknown unreadable statement PKGBUILD:6 fi" in report
+        assert "status review-required" in report
+
         # malformed input and unusable arguments
         write(root / "PKGBUILD-bad", "pkgname=broken\npkgver=1\npkgrel=1\nbuild() {\n  true\n")
         run("convert", root / "PKGBUILD-bad", "--source", "aur",

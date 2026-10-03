@@ -39,6 +39,13 @@ struct kb_block {
     size_t last;
 };
 
+struct kb_condition {
+    char *text;
+    size_t line;
+    size_t last;
+    int unreadable;
+};
+
 struct pkgbuild {
     char *text;
     size_t length;
@@ -49,6 +56,8 @@ struct pkgbuild {
     size_t scalar_count;
     struct kb_block *blocks;
     size_t block_count;
+    struct kb_condition *conditions;
+    size_t condition_count;
 };
 
 static void free_list(struct kb_list *list)
@@ -74,6 +83,8 @@ static void pkgbuild_free(struct pkgbuild *pkg)
     free(pkg->lists);
     free(pkg->scalars);
     free(pkg->blocks);
+    for (i = 0; i < pkg->condition_count; ++i) free(pkg->conditions[i].text);
+    free(pkg->conditions);
     free(pkg->directory);
     free(pkg->text);
     memset(pkg, 0, sizeof *pkg);
@@ -324,6 +335,57 @@ static const char *block_end(const char *body, const char *stop)
     return NULL;
 }
 
+/* the first shell word of a line, compared the way the reader has to: a keyword counts only
+   when the line starts with it */
+static int word_is(const char *start, size_t size, const char *word)
+{
+    size_t i = 0, length = 0, wanted = strlen(word);
+    while (i < size && (start[i] == ' ' || start[i] == '\t')) ++i;
+    while (i + length < size && (isalnum((unsigned char)start[i + length]) ||
+                                 start[i + length] == '_')) ++length;
+    return length == wanted && !memcmp(start + i, word, length);
+}
+
+/* records one statement the reader cannot take as a record, a list or a function, and skips
+   what it opened. a conditional block is not read: nothing inside it is evaluated, so the
+   report names the lines instead. a block that never closes skips to the end of the file and
+   is reported the same way. */
+static int record_condition(struct pkgbuild *pkg, size_t line, size_t *offset, size_t *lines,
+                            const char *start, size_t size, int opener)
+{
+    struct kb_condition *grown = realloc(pkg->conditions,
+                                    (pkg->condition_count + 1) * sizeof *grown);
+    size_t last = line, depth = 1;
+    if (!grown) return 0;
+    pkg->conditions = grown;
+    memset(&pkg->conditions[pkg->condition_count], 0, sizeof *grown);
+    pkg->conditions[pkg->condition_count].text = copy_range(start, size);
+    if (!pkg->conditions[pkg->condition_count].text) return 0;
+    pkg->conditions[pkg->condition_count].line = line;
+    pkg->conditions[pkg->condition_count].unreadable = !opener;
+    if (opener) {
+        while (*offset < pkg->length && depth) {
+            char *row = pkg->text + *offset;
+            char *newline = memchr(row, '\n', pkg->length - *offset);
+            size_t row_size = newline ? (size_t)(newline - row) : pkg->length - *offset;
+            while (row_size && (row[row_size - 1] == '\r' || row[row_size - 1] == ' ' ||
+                                row[row_size - 1] == '\t')) --row_size;
+            ++*lines;
+            *offset += row_size + (newline ? 1 : 0);
+            last = *lines;
+            if (!row_size || row[0] == '#') continue;
+            if (word_is(row, row_size, "if") || word_is(row, row_size, "for") ||
+                word_is(row, row_size, "while") || word_is(row, row_size, "until") ||
+                word_is(row, row_size, "case")) ++depth;
+            else if (word_is(row, row_size, "fi") || word_is(row, row_size, "done") ||
+                     word_is(row, row_size, "esac")) --depth;
+        }
+    }
+    pkg->conditions[pkg->condition_count].last = last;
+    ++pkg->condition_count;
+    return 1;
+}
+
 /* reads name=value records, name=( ... ) lists and function bodies. */
 static int parse_pkgbuild(struct pkgbuild *pkg)
 {
@@ -333,6 +395,7 @@ static int parse_pkgbuild(struct pkgbuild *pkg)
         char *newline = memchr(start, '\n', pkg->length - offset);
         size_t size = newline ? (size_t)(newline - start) : pkg->length - offset;
         size_t name_length = 0, i;
+        int opens;
         char *cursor;
         ++line;
         offset += size + (newline ? 1 : 0);
@@ -342,10 +405,17 @@ static int parse_pkgbuild(struct pkgbuild *pkg)
         }
         if (!size || *start == '#') continue;
         cursor = start;
+        /* a conditional opens with a shell keyword that also reads as a name, so the keyword
+           is decided once and both paths below use it */
+        opens = word_is(start, size, "if") || word_is(start, size, "for") ||
+                word_is(start, size, "while") || word_is(start, size, "until") ||
+                word_is(start, size, "case");
         while (name_length < size && name_char(cursor[name_length], !name_length)) ++name_length;
         if (!name_length) {
-            fprintf(stderr, "holypkg: PKGBUILD:%zu: unsupported top level statement\n", line);
-            return 2;
+            /* a conditional block or any other statement that is not a record: reported with
+               its lines rather than refused, so the operator sees what the reader skipped */
+            if (!record_condition(pkg, line, &offset, &line, start, size, opens)) return 2;
+            continue;
         }
         if (name_length + 2 < size && cursor[name_length] == '(' && cursor[name_length + 1] == ')' &&
             isspace((unsigned char)cursor[name_length + 2])) {
@@ -381,8 +451,11 @@ static int parse_pkgbuild(struct pkgbuild *pkg)
             continue;
         }
         if (name_length >= size || cursor[name_length] != '=') {
-            fprintf(stderr, "holypkg: PKGBUILD:%zu: unsupported statement\n", line);
-            return 2;
+            /* the condition of a conditional whose keyword reads as a name, an append such as
+               depends+=(...), or a closing keyword whose opener was never seen: reported, and
+               a conditional opens here so its body is skipped with it */
+            if (!record_condition(pkg, line, &offset, &line, start, size, opens)) return 2;
+            continue;
         }
         {
             char *name = copy_range(start, name_length);
@@ -824,6 +897,15 @@ int holy_convert_pkgbuild(const char *input, const char *source, const char *out
                 note_add(&note, "unknown", "arch list PKGBUILD:%zu", arches->line);
             }
         }
+    }
+    for (k = 0; k < pkg.condition_count; ++k) {
+        review = 1;
+        if (pkg.conditions[k].unreadable)
+            note_add(&note, "unknown", "unreadable statement PKGBUILD:%zu %s",
+                     pkg.conditions[k].line, pkg.conditions[k].text);
+        else
+            note_add(&note, "unknown", "conditional block PKGBUILD:%zu-%zu %s",
+                     pkg.conditions[k].line, pkg.conditions[k].last, pkg.conditions[k].text);
     }
     note_add(&note, "carried", "name PKGBUILD:%zu", scalar_line(&pkg, "pkgbase") ?
              scalar_line(&pkg, "pkgbase") : scalar_line(&pkg, "pkgname"));
