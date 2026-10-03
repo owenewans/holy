@@ -1969,7 +1969,7 @@
   missing or unpinned. A missing tool and an artifact with no digest in
   `profiles/matrix-sources` are separate statuses, and neither turns the run
   green, so the report says what the host could not prove. `REQUIRE=1` turns
-  either into exit 6. On this host 44 cases pass, one is missing and none is
+  either into exit 6. On this host 44 cases pass, two are missing and none is
   unpinned:
   the C headers, crt objects, libc and linker under TCC, GCC and Clang; a C
   program linked against the project's own musl toolchain, which runs under the
@@ -1984,8 +1984,11 @@
   named; git, curl and openssl over a fixture CA with a refused bad CA; a name
   resolved through the libc; a locale archive loaded, its codeset read and a
   collation taken from it; an NSS passwd and group answer with `getgrouplist`;
-  a PAM handle opened against a real service; a headless Firefox screenshot and
-  a window that stayed up on the session display; a compute shader that wrote
+  a PAM handle opened against a real service; a headless Firefox screenshot, and
+  a Firefox on the X server whose window received a synthesised key, whose page
+  named that keystroke in its title and whose pixels changed afterwards, with the
+  same page rendered once with its text and once with the text hidden so a font
+  had to be what rasterized the glyphs; a compute shader that wrote
   4096 values through llvmpipe and again through NVK, both read back and
   compared, and an OpenGL triangle whose gradient came back from the readback
   under zink, so the graphics rows name the driver that drew rather than a
@@ -1995,7 +1998,10 @@
   the audio server listed as a sink input while it played, rather than a tone a
   client claimed it sent. The Wayland session row is missing and names what it
   needs: this session is Wayland, but input for it needs wlrctl, dotool, wtype
-  or libei, and none is installed here; GNU Chess 6.2.9 built
+  or libei, and none is installed here. The Rust musl row is missing and names the
+  directory that is absent, and builds and runs a musl binary the day a target
+  appears. The public HTTPS row is separate from the fixture CA row and reaches
+  this project's own repository endpoint over a verified chain; GNU Chess 6.2.9 built
   from its pin for x86_64 and for i686, each driven over the xboard line
   protocol on a pty until the engine answered both scripted moves, which is the
   fix for a fixture that only piped a move list into a program that buffers it

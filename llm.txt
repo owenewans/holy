@@ -1,4 +1,4 @@
-holy-agent.7 source=holy version=development sha256=0a5815412f265b300e694253ff1c7e20808cdaa7e49d463c7ac50c2a23a2ac6f
+holy-agent.7 source=holy version=development sha256=325c0b9f084d7dd67dcae19787d7bcb0f037fc964208f9b3e8b0da850da67743
 HOLY-AGENT(7)			      Holy			   HOLY-AGENT(7)
 
 NAME
@@ -144,6 +144,14 @@ DESCRIPTION
      XTEST path; session-audio plays  a	 short	low-level  tone	 and  reads  the
      server's  own  sink-input list while it runs, because a client that wrote a
      stream nothing consumed still exits cleanly.
+
+     gui-firefox-session drives the browser instead  of	 watching  it.	The  row
+     starts  it	 on  the X server, synthesises a key into its window with XTEST,
+     reads the page's title back to see that the keystroke arrived and reads the
+     window's own pixels back to see that something was drawn, then renders  one
+     page  with its text and one with the text hidden and asks the two images to
+     differ, which is what a font rasterizing glyphs looks like from outside the
+     browser. A row that keeps a window up for a fixed time proves none of that.
 
 WHAT A REPORT MAY CLAIM
      A tool version proves the tool is present. It  does  not  prove  a	 library

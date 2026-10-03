@@ -122,6 +122,13 @@ session-wayland says which of a compositor and a virtual keyboard protocol is ab
 synthesising input for a Wayland session is not the XTEST path;
 session-audio plays a short low-level tone and reads the server's own sink-input list while it
 runs, because a client that wrote a stream nothing consumed still exits cleanly.
+.PP
+gui-firefox-session drives the browser instead of watching it. The row starts it on the X
+server, synthesises a key into its window with XTEST, reads the page's title back to see that
+the keystroke arrived and reads the window's own pixels back to see that something was drawn,
+then renders one page with its text and one with the text hidden and asks the two images to
+differ, which is what a font rasterizing glyphs looks like from outside the browser. A row
+that keeps a window up for a fixed time proves none of that.
 .SH WHAT A REPORT MAY CLAIM
 A tool version proves the tool is present. It does not prove a library loads, a native
 module resolves, a bootloader can read a filesystem, or a kernel can reach its root device.

@@ -9,6 +9,7 @@ for). A missing or unpinned case never turns the run green, so the report says w
 host could not prove instead of hiding it.
 """
 import argparse
+import hashlib
 import json
 import os
 import pty
@@ -114,6 +115,15 @@ def write(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
     return path
+
+
+def digest(path):
+    """the sha256 of one file, read in chunks since an image does not fit in a line"""
+    value = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            value.update(block)
+    return value.hexdigest()
 
 
 # ---------------------------------------------------------------- C and C++
@@ -336,13 +346,44 @@ def rust_case(case, work):
 
 
 def rust_musl_case(case, work):
+    """a musl target is proved by a program built for it and run, not by rustc naming a
+    sysroot, so the row looks for the target's standard library and says what is missing"""
     if not need(case, "rustc"):
-        case.missing("rustc not installed")
         return
-    code, out, _, _ = run(["rustc", "--print", "target-libdir"])
-    case.reason = ("rustc reports its sysroot, but no musl target is installed here, so a "
-                   "musl Rust build is untested; rustup target add "
-                   "x86_64-unknown-linux-musl is what supplies one")
+    if not need(case, "cargo"):
+        return
+    target = "x86_64-unknown-linux-musl"
+    code, out, _, _ = run(["rustc", "--print", "target-libdir", "--target", target])
+    library = out.strip()
+    if code or not library:
+        case.missing(f"rustc does not know the {target} target")
+        return
+    if not Path(library).is_dir():
+        case.missing(f"{target} has no standard library at {library}; rustup target add "
+                     f"{target} is what supplies one")
+        return
+    project = work / "rust" / "holy-matrix-musl"
+    write(project / "Cargo.toml", RUST_CARGO)
+    write(project / "src" / "lib.rs", RUST_LIB)
+    write(project / "src" / "main.rs", RUST_BIN)
+    env = {"CARGO_NET_OFFLINE": "true", "CARGO_HOME": str(work / "rust" / "cargo-home"),
+           "CARGO_TARGET_DIR": str(project / "target")}
+    code, out, err, _ = run(["cargo", "build", "--release", "--target", target], cwd=project,
+                            env=env, log=work / "logs" / f"{case.name}.build.log")
+    binary = project / "target" / target / "release" / "holy-matrix"
+    if code or not binary.is_file():
+        case.fail(f"a {target} build produced no binary: {rc_text(err)}")
+        return
+    code, out, _ = run([str(binary)], timeout=120, log=work / "logs" / f"{case.name}.run.log")
+    if code or "answer 42" not in out:
+        case.fail(f"the {target} binary did not run: rc={code}")
+        return
+    code, out, _, _ = run(["file", "-b", str(binary)])
+    interpreter = ""
+    if "interpreter" in out:
+        interpreter = out.split("interpreter ")[1].split(",")[0].strip()
+    case.reason = (f"a {target} binary ran; interpreter "
+                   f"{interpreter or 'none (static)'}")
 
 
 def go_toolchain():
@@ -988,6 +1029,160 @@ def pam_case(case, work):
     case.reason = answer
 
 
+FIREFOX_INPUT_PAGE = """<!doctype html>
+<html><head><title>holy-matrix-input</title>
+<style>html,body{margin:0;height:100%}body{background:#102030;color:#e0e0e0;font:48px monospace}
+div{padding:40px}</style></head>
+<body><div id="out">waiting</div>
+<script>
+document.addEventListener('keydown', function (event) {
+  document.getElementById('out').textContent = 'typed ' + event.key;
+  document.title = 'holy-matrix-input typed ' + event.key;
+  document.body.style.background = '#803020';
+});
+</script></body></html>
+"""
+
+FIREFOX_FONT_PAGE = """<!doctype html>
+<html><head><title>holy-matrix-font</title>
+<style>html,body{margin:0}body{background:#ffffff}
+div{padding:24px;font:64px monospace;color:#101010}</style></head>
+<body><div id="glyphs">Hamburgefonstiv 0123</div>
+<script>
+if (location.search.indexOf('hidden') >= 0)
+  document.getElementById('glyphs').style.visibility = 'hidden';
+</script></body></html>
+"""
+
+
+def x11_helper(case, work):
+    """the helper that finds a window by title, sends it a key and writes its image out, so
+    the GUI rows need no window tool of their own"""
+    if not need(case, "cc"):
+        return None
+    directory = work / "session"
+    directory.mkdir(parents=True, exist_ok=True)
+    binary = directory / "x11-window"
+    if not binary.is_file():
+        libraries = pkg_config("xtst", "--libs") + pkg_config("x11", "--libs") or ["-lXtst", "-lX11"]
+        code, out, err, _ = run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-o", str(binary),
+                                 str(SESSIONS / "x11-window.c"),
+                                 *pkg_config("x11", "--cflags"), *pkg_config("xtst", "--cflags"),
+                                 *libraries],
+                                log=work / "logs" / "x11-helper.build.log")
+        if code:
+            case.missing(f"the X11 helper did not build; the XTest headers are absent: "
+                         f"{rc_text(err)}")
+            return None
+    return binary
+
+
+def firefox_session_case(case, work):
+    """the browser in the session, driven rather than watched: a key is synthesised into its
+    window, the page records it in its title, and the window's own pixels are read back before
+    and after so a row cannot pass on a window that merely stayed up. the font check renders
+    one page with its text and one with the text hidden, and asks the two images to differ."""
+    browser = shutil.which("firefox") or shutil.which("firefox-esr")
+    if not browser:
+        case.missing("firefox not installed")
+        return
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        case.missing("no DISPLAY or WAYLAND_DISPLAY for a GUI session")
+        return
+    helper = x11_helper(case, work)
+    if not helper:
+        return
+    display = os.environ.get("DISPLAY")
+    if not display:
+        case.missing("no DISPLAY; XTEST reaches an X server, and this session offers only "
+                     "Wayland to this case")
+        return
+    page = write(work / "page-input.html", FIREFOX_INPUT_PAGE)
+    profile = work / "firefox-profile-input"
+    profile.mkdir(parents=True, exist_ok=True)
+    log = (work / "logs" / f"{case.name}.log").open("w")
+    # a Wayland session needs the browser on X for XTEST to reach it, and MOZ_ENABLE_WAYLAND=0
+    # is what says so rather than the compositor guessing. the session environment is kept,
+    # since a browser started without DISPLAY refuses to start at all
+    merged = dict(os.environ)
+    merged["MOZ_ENABLE_WAYLAND"] = "0"
+    browser_process = subprocess.Popen([browser, "--profile", str(profile), "--no-remote",
+                                        page.as_uri()], stdout=log, stderr=subprocess.STDOUT,
+                                       env=merged)
+    helper_env = {"DISPLAY": display}
+    try:
+        window = None
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline and browser_process.poll() is None:
+            code, out, err, _ = run([str(helper), "find", "holy-matrix-input"], env=helper_env,
+                                    timeout=60)
+            candidate = out.strip().splitlines()[0].strip() if code == 0 and out.strip() else ""
+            if candidate.isdigit():
+                window = candidate
+                break
+            time.sleep(1)
+        if not window:
+            case.fail("the browser opened no window titled with the page name")
+            return
+        before = work / "gui-before.ppm"
+        after = work / "gui-after.ppm"
+        code, out, err, _ = run([str(helper), "shot", window, str(before)], env=helper_env,
+                                timeout=120)
+        if code or not before.is_file():
+            case.fail(f"the window image did not read back: rc={code}")
+            return
+        code, out, err, _ = run([str(helper), "send-key", "holy-matrix-input", "a"],
+                                env=helper_env, timeout=60)
+        if code:
+            case.fail(f"the key was not synthesised: rc={code}: {rc_text(err)}")
+            return
+        typed = False
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            code, out, err, _ = run([str(helper), "list"], env=helper_env, timeout=60)
+            if "typed a" in out:
+                typed = True
+                break
+            time.sleep(1)
+        code, out, err, _ = run([str(helper), "shot", window, str(after)], env=helper_env,
+                                timeout=120)
+        if code or not after.is_file():
+            case.fail(f"the second window image did not read back: rc={code}")
+            return
+        if not typed:
+            case.fail("the page never saw the key: its title still names no keystroke")
+            return
+        if digest(after) == digest(before):
+            case.fail("the window pixels are unchanged, so the keystroke drew nothing")
+            return
+    finally:
+        browser_process.terminate()
+        try:
+            browser_process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            browser_process.kill()
+        log.close()
+    font_page = write(work / "page-font.html", FIREFOX_FONT_PAGE)
+    shots = []
+    for label, query in (("shown", ""), ("hidden", "?hidden")):
+        profile = work / f"firefox-profile-font-{label}"
+        profile.mkdir(parents=True, exist_ok=True)
+        image = work / f"font-{label}.png"
+        run([browser, "--profile", str(profile), "--no-remote", "--screenshot", str(image),
+             font_page.as_uri() + query], timeout=420, pipe=False,
+            log=work / "logs" / f"{case.name}.font-{label}.log")
+        if not image.is_file() or image.stat().st_size < 512:
+            case.fail(f"the {label} render produced no image")
+            return
+        shots.append((label, image.stat().st_size))
+    if shots[0][1] == shots[1][1]:
+        case.fail("the page rendered the same image with its text hidden, so no font drew it")
+        return
+    case.reason = (f"a keystroke reached the page, whose title named it, and the window pixels "
+                   f"changed; the same text rendered {shots[0][1]} bytes and hidden text "
+                   f"{shots[1][1]}, so a font rasterized the glyphs")
+
+
 def firefox_case(case, work, headless):
     browser = shutil.which("firefox") or shutil.which("firefox-esr")
     if not browser:
@@ -1052,6 +1247,38 @@ def have_package(package):
     if not shutil.which("pkg-config"):
         return False
     return subprocess.run(["pkg-config", "--exists", package]).returncode == 0
+
+
+PUBLIC_HTTPS = "https://api.github.com/repos/owenewans/holy"
+
+
+def public_https_case(case, work):
+    """the network outside the fixture, kept in its own row: a fixture CA proves the verifier
+    and the chain this repository serves, and says nothing about a public host. a host with no
+    route out is missing, since nothing was proven, while a route that fails verification or
+    returns an error is a failure of the host it reached."""
+    if not need(case, "curl"):
+        return
+    code, out, err, _ = run(["curl", "-sS", "--fail", "--max-time", "30", "-o", "/dev/null",
+                             "-w", "%{http_code} %{ssl_verify_result}", PUBLIC_HTTPS],
+                            timeout=90, log=work / "logs" / f"{case.name}.log")
+    combined = (out + err).strip()
+    if "Could not resolve host" in combined or "Connection refused" in combined or \
+            "Network is unreachable" in combined or "No route to host" in combined:
+        case.missing(f"no route to {PUBLIC_HTTPS}: {combined.splitlines()[-1:]}")
+        return
+    if code:
+        case.fail(f"{PUBLIC_HTTPS} did not answer over verified TLS: rc={code} {combined}")
+        return
+    fields = combined.split()
+    if len(fields) < 2:
+        case.fail(f"curl reported {combined!r}, which names neither a status nor a verdict")
+        return
+    status, verified = fields[0], fields[1]
+    if not status.startswith("2") or verified != "0":
+        case.fail(f"{PUBLIC_HTTPS} answered {status} with verify result {verified}")
+        return
+    case.reason = f"{PUBLIC_HTTPS} answered {status} with the chain verified"
 
 
 def named_fields(line):
@@ -1774,11 +2001,12 @@ CASES = [
     ("node-native-addon", "language", lambda c, w: node_case(c, w, True)),
     ("network-git-curl-openssl", "network", git_fixture_case),
     ("network-dns-glibc", "network", lambda c, w: dns_case(c, w, "gcc")),
+    ("network-public-https", "network", public_https_case),
     ("system-locale", "system", locale_case),
     ("system-nss", "system", nss_case),
     ("system-pam", "system", pam_case),
     ("gui-firefox-headless", "gui", lambda c, w: firefox_case(c, w, True)),
-    ("gui-firefox-session", "gui", lambda c, w: firefox_case(c, w, False)),
+    ("gui-firefox-session", "gui", firefox_session_case),
     ("session-x11", "session", x11_session_case),
     ("session-wayland", "session", wayland_session_case),
     ("session-audio", "session", audio_case),
