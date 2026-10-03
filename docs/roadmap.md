@@ -1752,8 +1752,15 @@
   and liburcu's upstream is not reachable from this host, so xfs waits on that.
   f2fs-tools publishes no release tarball at a URL a mirror serves, so its
   source has to arrive as a git checkout the way util-linux does. cryptsetup
-  needs libdevmapper before anything else, and mkswap still wants util-linux's
-  swapon binary, which this bootstrap does not build yet.
+  needs libdevmapper before anything else. XFS also needs two things the pinned
+  util-linux cannot give: liburcu, whose own upstream is not reachable from this
+  host although a repack is, and musl, because xfsprogs' `libxfs/rdwr.c` uses
+  `off64_t` from `sys/types.h`, which musl only defines as a macro in aio.h,
+  dirent.h and fcntl.h; a release that also wants `stx_atomic_write_unit` from
+  `struct statx` is further out of reach. Swap needs util-linux's mkswap, which
+  the pinned commit declares neither as a static program nor under
+  `--disable-all-programs`, and the plan does not yet hash it even though the
+  apply runs it.
   The disk plan reaches that tool for a btrfs layout on a block device: with the
   package's sfdisk, mkfs.fat, mke2fs and mkfs.btrfs installed where
   `src/disk.c` runs them, `holyinstall disk plan` hashes each tool and records
