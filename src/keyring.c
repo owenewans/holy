@@ -6,7 +6,7 @@
    holds public material only, and var/lib/holypkg is reserved from payload
    ownership, so no package can place a file beside an enrolled key. */
 
-#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
 #include "keyring.h"
 #include "state.h"
 
@@ -145,6 +145,7 @@ static int is_key(const unsigned char *data, size_t size)
 
 struct key_record {
     char digest[65];
+    char keyname[80];
     size_t bytes;
     int changed;
 };
@@ -160,6 +161,17 @@ static int read_record(int keys, const char *name, struct key_record *record)
     record->bytes = size;
     if (!digest_of(data, size, record->digest)) record->digest[0] = 0;
     free(data);
+    /* the file name the key was enrolled from, since an apk index names its signature
+       after the key file and a reader that looked for the enrolled name would not
+       find it. an enrollment without the sidecar keeps the name it has. */
+    if (name_path(name, ".name", path, sizeof path) &&
+        read_bytes_at(keys, path, &side, &side_size)) {
+        size_t take = side_size < sizeof record->keyname ? side_size : sizeof record->keyname - 1;
+        memcpy(record->keyname, side, take);
+        record->keyname[take] = 0;
+        record->keyname[strcspn(record->keyname, "\n\r \t")] = 0;
+        free(side);
+    }
     if (!name_path(name, ".digest", path, sizeof path) ||
         !read_bytes_at(keys, path, &side, &side_size)) {
         record->changed = 1;
@@ -250,6 +262,63 @@ int holy_keyring_path(const char *root_path, const char *name, char *out, size_t
     return result;
 }
 
+int holy_keyring_keyname(const char *root_path, const char *key_path, char *out, size_t size)
+{
+    char enrolled[4096];
+    size_t root_length = 0, prefix_length = sizeof keys_path;
+    const char *name, *slash;
+    int status = 0, keys, found = 0;
+    struct key_record record;
+    if (!key_path || !out || !size) return 0;
+    slash = strrchr(key_path, '/');
+    name = slash ? slash + 1 : key_path;
+    /* a key file names itself, and only a path inside this root's key store asks the
+       store which file the key was enrolled from */
+    if (root_path && *root_path) {
+        root_length = strlen(root_path);
+        while (root_length > 1 && root_path[root_length - 1] == '/') --root_length;
+    }
+    if (root_length + 1 + prefix_length >= sizeof enrolled) return 0;
+    memcpy(enrolled, root_path, root_length);
+    enrolled[root_length] = '/';
+    memcpy(enrolled + root_length + 1, keys_path, prefix_length - 1);
+    enrolled[root_length + prefix_length] = 0;
+    if (strncmp(key_path, enrolled, strlen(enrolled)) || key_path[strlen(enrolled)] != '/' ||
+        strchr(key_path + strlen(enrolled) + 1, '/')) {
+        slash = strrchr(name, '/');
+        if (slash) name = slash + 1;
+        if (!*name || strlen(name) >= size) return 0;
+        strcpy(out, name);
+        return 1;
+    }
+    keys = open_keys(root_path, 0, &status);
+    if (keys < 0) return 0;
+    if (read_record(keys, key_path + strlen(enrolled) + 1, &record) &&
+        record.keyname[0] && strlen(record.keyname) < size) {
+        strcpy(out, record.keyname);
+        found = 1;
+    }
+    close(keys);
+    if (!found) return 0;
+    return 1;
+}
+
+char *holy_keyring_resolve(const char *root_path, const char *value)
+{
+    char enrolled[4096];
+    struct stat st;
+    if (!value || !*value) return NULL;
+    /* a readable file is what the value names, since every reader takes a path and a
+       caller that has a key file should not have to enroll it first */
+    if (!stat(value, &st) && S_ISREG(st.st_mode)) return realpath(value, NULL);
+    if (!holy_keyring_name(value)) return NULL;
+    if (holy_keyring_path(root_path, value, enrolled, sizeof enrolled) != 1) {
+        fprintf(stderr, "holypkg: %s: no enrolled key\n", value);
+        return NULL;
+    }
+    return realpath(enrolled, NULL);
+}
+
 int holy_keyring_add(const char *root_path, const char *name, const char *file,
                      int replace)
 {
@@ -257,8 +326,16 @@ int holy_keyring_add(const char *root_path, const char *name, const char *file,
     size_t size = 0;
     struct key_record record;
     char digest[65];
+    char key_file_name[80];
+    const char *slash;
     int status = 0, keys, existing;
     if (!holy_keyring_name(name) || !file || !*file) return 2;
+    /* the file name travels with the key, since an apk index names its signature after
+       the key file rather than after the name it was enrolled under */
+    slash = strrchr(file, '/');
+    slash = slash ? slash + 1 : file;
+    if (!*slash || strlen(slash) >= sizeof key_file_name) return 2;
+    strcpy(key_file_name, slash);
     if (!read_bytes(file, &data, &size) || !size) {
         fprintf(stderr, "holypkg: public key file unreadable: %s\n", file);
         return 4;
@@ -284,8 +361,11 @@ int holy_keyring_add(const char *root_path, const char *name, const char *file,
         return 3;
     }
     if (!write_file(keys, name, NULL, data, size) ||
-        !write_file(keys, name, ".digest", digest, 64) || fsync(keys)) {
+        !write_file(keys, name, ".digest", digest, 64) ||
+        !write_file(keys, name, ".name", key_file_name, strlen(key_file_name)) ||
+        fsync(keys)) {
         unlinkat(keys, name, 0);
+        unlinkat(keys, ".", 1);
         fprintf(stderr, "holypkg: key not enrolled\n");
         close(keys); free(data);
         return 1;
@@ -327,7 +407,7 @@ int holy_keyring_list(const char *root_path, int json)
             struct key_record record;
             const char *suffix = strrchr(entry->d_name, '.');
             if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-            if (suffix && !strcmp(suffix, ".digest")) continue;
+            if (suffix && (!strcmp(suffix, ".digest") || !strcmp(suffix, ".name"))) continue;
             if (!holy_keyring_name(entry->d_name) ||
                 !read_record(keys, entry->d_name, &record)) { errno = 0; continue; }
             if (json)

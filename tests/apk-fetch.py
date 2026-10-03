@@ -279,6 +279,21 @@ with tempfile.TemporaryDirectory() as scratch:
         run(*signed_sync, "--public-key", wrong_key_dir / signing_pub.name, status=4)
         run(*signed_sync, "--public-key", signing_pub)
         assert "verification rsa-sha256" in (tmp / "signed-catalog/conversion").read_text()
+        # the same key enrolled under a name, so one key file backs the source and the
+        # commands that verify with it without repeating its path
+        run("key", "add", "signing-key", signing_pub, "--root", signed_root)
+        enrolled_sync = ("apk", "sync", "signed", "extra", "--root", signed_root,
+                         "--output", tmp / "enrolled-catalog", "--ca-file", tmp / "cert.pem")
+        run(*enrolled_sync, "--public-key", "signing-key")
+        assert "verification rsa-sha256" in (tmp / "enrolled-catalog/conversion").read_text()
+        absent = list(enrolled_sync)
+        absent[absent.index("--output") + 1] = tmp / "absent-key-catalog"
+        run(*absent, "--public-key", "absent-key", status=2)
+        assert not (tmp / "absent-key-catalog").exists()
+        absent = list(enrolled_sync)
+        absent[absent.index("--output") + 1] = tmp / "absent-key-catalog"
+        run(*absent, "--public-key", "absent-key", status=2)
+        assert not (tmp / "absent-key-catalog").exists()
         run("sync", "signed", "--root", signed_root,
             "--output", tmp / "generic-ambiguous-sync", status=3)
         run("sync", "signed", "--repo", "main", "--root", signed_root,

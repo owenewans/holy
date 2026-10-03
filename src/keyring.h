@@ -21,4 +21,14 @@ int holy_keyring_path(const char *root_path, const char *name, char *out, size_t
 /* 1 the name is a usable enrolled key name. */
 int holy_keyring_name(const char *name);
 
+/* the path a public-key value names: the readable file itself, or the key enrolled
+   under that name in ROOT. the caller owns the returned path and frees it, and NULL
+   is a value that is neither, which the command reports rather than guessing. */
+char *holy_keyring_resolve(const char *root_path, const char *value);
+
+/* the file name a reader should call the key at. an apk index names its signature after
+   the key file, so a key enrolled under another name is verified under the name it was
+   enrolled from rather than the name it is stored under. */
+int holy_keyring_keyname(const char *root_path, const char *key_path, char *out, size_t size);
+
 #endif

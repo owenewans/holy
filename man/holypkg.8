@@ -3178,6 +3178,13 @@ enrolled key changed, rather than a key the enrollment did not record. The froze
 source record is the digest the key file has, so a source enrolled by name and
 the same source enrolled by path freeze the same source identity. Every other
 public-key value stays a path resolved as before.
+.PP
+A --public-key value on a command that names a target root is resolved the same
+way: a readable file is that file, and a usable key name is the key enrolled
+under it. A name nothing enrolled is a usage error rather than a silent path, and
+the key is then verified under the file name it was enrolled from rather than the
+name it is stored under, since an apk index names its signature after the key
+file. The enrollment records that file name beside the key bytes and the digest.
 .SH PLAN TEST
 test verifies one saved update plan against a target root without changing it. The
 plan is the fixed set up --prepare leaves behind, so the inputs are already decided

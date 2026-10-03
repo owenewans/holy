@@ -1613,7 +1613,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=452cb48230375cc70c8c5b20a52f66f410050e5be185b9139bf537bd8f0958d6
+holypkg.8 source=holy version=development sha256=cd2e9f45607bb46acd39a0ba70ca87bb44ec1055626a2f57cdf1afa2f3678328
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -4775,6 +4775,14 @@ ENROLLED KEYS
      has,  so  a  source  enrolled  by name and the same source enrolled by path
      freeze the same source identity. Every other public-key value stays a  path
      resolved as before.
+
+     A	--public-key value on a command that names a target root is resolved the
+     same way: a readable file is that file, and a usable key name  is	the  key
+     enrolled  under  it. A name nothing enrolled is a usage error rather than a
+     silent path, and the key is then verified under the file name  it	was  en-
+     rolled  from  rather  than	 the name it is stored under, since an apk index
+     names its signature after the key file. The enrollment  records  that  file
+     name beside the key bytes and the digest.
 
 PLAN TEST
      test  verifies one saved update plan against a target root without changing

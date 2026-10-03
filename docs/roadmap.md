@@ -992,9 +992,15 @@
   produces. The git-source fixture enrolls the fixture key, plans and syncs the
   source by name, and covers an unknown name, a traversing name, a file that is
   not a key, a tampered enrollment, an unconfirmed removal and a replacement
-  decision. An enrolled RSA keyring still names a file for every command that
-  verifies with it, since the apk, apt and xbps readers take a path;
-  automatic provider selection remains open.
+  decision. A --public-key value on a command that names a target root now
+  resolves the same way a source value does: a readable file is that file, and a
+  usable key name is the key enrolled under it, which is what the open end above
+  asked for. The apk reader needed one more thing for it: an index names its
+  signature after the key file, so the enrollment records that file name beside
+  the key bytes and the digest, and a key resolved by name is verified under the
+  name it was enrolled from. The apk fixture enrolls its signing key and syncs a
+  second repo by that name, and an absent name is a usage error. Automatic
+  provider selection remains open.
   `holypkg index` now answers the two questions the planner answers internally: it
   names the installed artifacts that own a path and the artifacts that declare a
   capability, and it prints the whole index when given no selector. A name with

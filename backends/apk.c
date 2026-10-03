@@ -1,6 +1,7 @@
 #define _XOPEN_SOURCE 700
 #include "apk.h"
 #include "../src/config.h"
+#include "../src/keyring.h"
 #include "../src/stage.h"
 #include "../src/fetch.h"
 #include "../src/source.h"
@@ -1008,8 +1009,11 @@ int holy_apk_bind(const char *root, const char *source, const char *repo,
                         !strcmp(selected.verification, "unverified") :
                         !strcmp(trust, "require")) { result = 6; goto done; }
     if (source_key[0]) {
-        const char *keyname = public_key ? strrchr(public_key, '/') : NULL;
-        keyname = keyname ? keyname + 1 : public_key;
+        char named[256];
+        const char *keyname = NULL;
+        if (public_key)
+            keyname = holy_keyring_keyname(root, public_key, named, sizeof named) ? named :
+                      (strrchr(public_key, '/') ? strrchr(public_key, '/') + 1 : public_key);
         key_snapshot = public_key ? holy_stage_local(public_key, "holy-apk-key") : NULL;
         if (!key_snapshot || !holy_apk_key_fingerprint(key_snapshot, checked_key) ||
             strcmp(checked_key, source_key)) { result = 6; goto done; }
@@ -1576,8 +1580,9 @@ int holy_apk_sync(const char *root, const char *source, const char *repo,
     if (!downloaded) { result = 1; goto done; }
     sprintf(downloaded, "%s/%s", template, digest);
     if (source_key[0]) {
-        const char *keyname = strrchr(public_key, '/');
-        keyname = keyname ? keyname + 1 : public_key;
+        char named[256];
+        const char *keyname = holy_keyring_keyname(root, public_key, named, sizeof named)
+                              ? named : strrchr(public_key, '/') + 1;
         result = verify_index_key(downloaded, key_snapshot, keyname, algorithm);
         if (result) goto done;
     }

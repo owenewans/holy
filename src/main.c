@@ -248,6 +248,7 @@ static int fetch_source(int argc, char **argv)
     const char *ca_file = NULL, *public_key = NULL;
     const char *required_soname = NULL, *required_file = NULL;
     char source_id[65], *alias = NULL, *bound_catalog = NULL, *family = NULL;
+    char *key = NULL;
     char **repos = NULL;
     size_t repo_count = 0, j;
     int i, extract = 0, import = 0, root_seen = 0, result = 2;
@@ -294,6 +295,13 @@ static int fetch_source(int argc, char **argv)
         else goto done;
     }
     if (!output || !*output || !*root) goto done;
+    /* a --public-key value may name the key enrolled in this root, since the readers
+       take a path and one enrolled key should back every source that pins it by name */
+    if (public_key) {
+        key = holy_keyring_resolve(root, public_key);
+        if (!key) { result = 2; goto done; }
+        public_key = key;
+    }
     result = holy_source_type(root, alias, &family);
     if (result) goto done;
     if (!strcmp(family, "apk")) {
@@ -402,7 +410,7 @@ done:
         fputs("usage: holypkg fetch SOURCE:PACKAGE [--catalog MIRROR] --output DIRECTORY [--extract] [--root DIRECTORY] | holypkg fetch APK_SOURCE:PACKAGE --version VERSION --arch ARCH [--repo REPO] --output NEW_DIRECTORY [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--sha256 HASH] [--import] [--require-soname SONAME] [--require-file /PATH] | holypkg fetch XBPS_SOURCE:PACKAGE --version VERSION --arch ARCH --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--public-key FILE] [--import] [--require-soname SONAME] | holypkg fetch APT_SOURCE:PACKAGE --version VERSION --arch ARCH --suite SUITE --component COMPONENT --index-arch ARCH --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--import] [--require-file /PATH] | holypkg fetch RPM_MD_SOURCE:PACKAGE --version EVR --arch ARCH --output NEW_DIRECTORY [--catalog DIRECTORY] [--root DIRECTORY] [--ca-file FILE] [--import]\n", stderr);
     for (j = 0; j < repo_count; ++j) free(repos[j]);
     free(repos);
-    free(alias); free(bound_catalog); free(family);
+    free(alias); free(bound_catalog); free(family); free(key);
     return result;
 }
 
@@ -1998,7 +2006,7 @@ int main(int argc, char **argv)
             !strcmp(argv[7], "--sha256") && !strcmp(argv[9], "--output")) {
             const char *ca_file = NULL, *public_key = NULL;
             char id[65], registered_key[65], supplied[65];
-            char *base = NULL, *trust = NULL;
+            char *base = NULL, *trust = NULL, *key = NULL;
             int i, result;
             for (i = 11; i < argc; i += 2) {
                 if (!strcmp(argv[i], "--ca-file") && !ca_file) ca_file = argv[i + 1];
@@ -2006,17 +2014,22 @@ int main(int argc, char **argv)
                 else break;
             }
             if (i != argc) return 2;
+            /* an enrolled name resolves to its key path here, since this command names
+               the root the key was enrolled in */
+            key = public_key ? holy_keyring_resolve(argv[6], public_key) : NULL;
+            if (public_key && !key) return 2;
             result = holy_source_xbps(argv[6], argv[3], id, &base, &trust, registered_key);
-            if (result) return result;
+            if (result) { free(key); return result; }
             if ((registered_key[0] &&
-                 (!public_key || !holy_xbps_key_fingerprint(public_key, supplied) ||
+                 (!key || !holy_xbps_key_fingerprint(key, supplied) ||
                   strcmp(supplied, registered_key))) ||
-                (!registered_key[0] && public_key)) result = 6;
+                (!registered_key[0] && key)) result = 6;
             else {
                 result = holy_xbps_sync(base, argv[4], argv[3], argv[10], argv[8],
-                                        ca_file, public_key, id);
+                                        ca_file, key, id);
                 if (!result) result = holy_xbps_bind(argv[6], argv[3], argv[4], argv[10]);
             }
+            free(key);
             free(base); free(trust);
             return result;
         }
@@ -2054,7 +2067,7 @@ int main(int argc, char **argv)
             !strcmp(argv[10], "--root") && !strcmp(argv[12], "--output")) {
             const char *ca_file = NULL, *public_key = NULL, *required_soname = NULL;
             int import = 0;
-            char *catalog = NULL;
+            char *catalog = NULL, *key = NULL;
             int i, result;
             for (i = 14; i < argc;) {
                 if (!strcmp(argv[i], "--import") && !import) { import = 1; ++i; continue; }
@@ -2067,10 +2080,15 @@ int main(int argc, char **argv)
             }
             if (i != argc || (required_soname && !import)) return 2;
             result = holy_xbps_catalog_path(argv[11], argv[7], argv[9], &catalog);
-            if (!result) result = xbps_registered_catalog(argv[11], argv[7], catalog, public_key, 1);
+            /* an enrolled name resolves to its key path here, since this command names
+               the root the key was enrolled in */
+            key = public_key ? holy_keyring_resolve(argv[11], public_key) : NULL;
+            if (public_key && !key) result = 2;
+            if (!result) result = xbps_registered_catalog(argv[11], argv[7], catalog, key, 1);
             if (!result) result = holy_xbps_fetch(catalog, argv[3], argv[4], argv[5],
-                                                  argv[13], ca_file, public_key, 1, import,
+                                                  argv[13], ca_file, key, 1, import,
                                                   required_soname);
+            free(key);
             free(catalog);
             return result;
         }
@@ -2091,10 +2109,16 @@ int main(int argc, char **argv)
                 i += 2;
             }
             if (i == argc && !!source == !!root && (!required_soname || import)) {
-                int result = source ? xbps_registered_catalog(root, source, argv[7], public_key, 1) : 0;
-                if (result) return result;
-                return holy_xbps_fetch(argv[7], argv[3], argv[4], argv[5], argv[9],
-                                       ca_file, public_key, !!source, import, required_soname);
+                char *key = public_key ? holy_keyring_resolve(root, public_key) : NULL;
+                int result = 0;
+                if (public_key && !key) result = 2;
+                if (!result && source)
+                    result = xbps_registered_catalog(root, source, argv[7], key, 1);
+                if (!result)
+                    result = holy_xbps_fetch(argv[7], argv[3], argv[4], argv[5], argv[9],
+                                             ca_file, key, !!source, import, required_soname);
+                free(key);
+                return result;
             }
         }
         fputs("usage: holypkg xbps index FILE --sha256 HASH --source NAME --base HTTPS_BASE/ --output NEW_DIRECTORY [--public-key FILE] | xbps sync HTTPS_BASE/ ARCH --sha256 HASH --source NAME --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE] | xbps sync-source ALIAS ARCH --root ROOT --sha256 HASH --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE] | xbps search|info QUERY --catalog DIRECTORY [--source ALIAS --root ROOT] | xbps search|info QUERY --source ALIAS --index-arch ARCH --root ROOT | xbps providers SONAME --catalog DIRECTORY | xbps providers SONAME --source ALIAS --index-arch ARCH --root ROOT | xbps fetch NAME VERSION ARCH --catalog DIRECTORY --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE] [--source ALIAS --root ROOT] [--import] [--require-soname SONAME] | xbps fetch NAME VERSION ARCH --source ALIAS --index-arch ARCH --root ROOT --output NEW_DIRECTORY [--ca-file FILE] [--public-key FILE] [--import] [--require-soname SONAME]\n", stderr);
@@ -2117,9 +2141,16 @@ int main(int argc, char **argv)
                 else if (!strcmp(argv[i], "--public-key") && !public_key) public_key = argv[i + 1];
                 else break;
             }
-            if (i == argc && root && output && !(sha256 && accepted))
-                return holy_apk_sync(root, argv[3], argv[4], output, sha256,
-                                     accepted, ca_file, public_key);
+            if (i == argc && root && output && !(sha256 && accepted)) {
+                /* an enrolled name resolves to its key path here, since this command
+                   already names the root the key was enrolled in */
+                char *key = public_key ? holy_keyring_resolve(root, public_key) : NULL;
+                int result = public_key && !key ? 2 :
+                    holy_apk_sync(root, argv[3], argv[4], output, sha256,
+                                  accepted, ca_file, key);
+                free(key);
+                return result;
+            }
         }
         if (argc == 10 && !strcmp(argv[2], "index") && !strcmp(argv[4], "--source") &&
             !strcmp(argv[6], "--base") && !strcmp(argv[8], "--output"))
@@ -2133,8 +2164,13 @@ int main(int argc, char **argv)
                 else if (!strcmp(argv[i], "--public-key") && !public_key) public_key = argv[i + 1];
                 else break;
             }
-            if (i == argc) return holy_apk_bind(argv[7], argv[3], argv[4], argv[5],
-                                                  accepted, public_key);
+            if (i == argc) {
+                char *key = public_key ? holy_keyring_resolve(argv[7], public_key) : NULL;
+                int result = public_key && !key ? 2 :
+                    holy_apk_bind(argv[7], argv[3], argv[4], argv[5], accepted, key);
+                free(key);
+                return result;
+            }
         }
         if (argc >= 6 && !(argc & 1) &&
             (!strcmp(argv[2], "search") || !strcmp(argv[2], "info") ||
