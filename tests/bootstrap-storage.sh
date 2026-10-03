@@ -16,7 +16,7 @@ for name in sfdisk mkfs.fat mke2fs limine mkfs.btrfs; do
     grep -qx 'e_type 2' "$tmp/$name.elf"
 done
 sbin="$tmp/extract/DATA/usr/sbin"
-for name in mkswap mkfs.xfs; do
+for name in mkswap mkfs.xfs mkfs.f2fs; do
     test -x "$sbin/$name"
     "$bin" elf "$sbin/$name" > "$tmp/$name.elf"
     grep -qx 'runtime nolibc' "$tmp/$name.elf"
@@ -49,6 +49,11 @@ truncate -s 128M "$swap_disk"
 "$sbin/mkswap" "$swap_disk" > "$tmp/swap" 2>&1
 magic=$(dd if="$swap_disk" bs=1 skip=4086 count=10 2>/dev/null)
 test "$magic" = 'SWAPSPACE2'
+f2fs_disk="$tmp/f2fs.raw"
+truncate -s 256M "$f2fs_disk"
+"$sbin/mkfs.f2fs" -q "$f2fs_disk" > "$tmp/f2fs" 2>&1
+magic=$(od -An -tx1 -j1024 -N4 "$f2fs_disk" | tr -d ' \n')
+test "$magic" = '1020f5f2'
 "$tools/limine" bios-install "$disk" 1 > "$tmp/limine" 2>&1
 "$tools/sfdisk" --verify "$disk" > "$tmp/verify-final"
 grep -q 'installed successfully' "$tmp/limine"

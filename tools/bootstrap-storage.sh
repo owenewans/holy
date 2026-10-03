@@ -1,20 +1,21 @@
 #!/bin/sh
 set -eu
 umask 022
-test "$#" -eq 11 || {
-    echo 'usage: bootstrap-storage.sh HOLYPKG UTIL-LINUX-GIT DOSFSTOOLS-GIT E2FSPROGS-GIT LIMINE-BINARY-TAR BTRFS-PROGS-TAR XFSPROGS-TAR LIBURCU-TAR INIH-TAR STATIC-PREFIX OUTPUT' >&2
+test "$#" -eq 12 || {
+    echo 'usage: bootstrap-storage.sh HOLYPKG UTIL-LINUX-GIT DOSFSTOOLS-GIT E2FSPROGS-GIT F2FS-TOOLS-GIT LIMINE-BINARY-TAR BTRFS-PROGS-TAR XFSPROGS-TAR LIBURCU-TAR INIH-TAR STATIC-PREFIX OUTPUT' >&2
     exit 2
 }
 bin=$(realpath "$1")
 util=$(realpath "$2")
 dos=$(realpath "$3")
 e2=$(realpath "$4")
-limine_archive=$(realpath "$5")
-btrfs_archive=$(realpath "$6")
-xfs_archive=$(realpath "$7")
-urcu_archive=$(realpath "$8")
-inih_archive=$(realpath "$9")
-prefix=$(realpath "${10}")
+f2fs=$(realpath "$5")
+limine_archive=$(realpath "$6")
+btrfs_archive=$(realpath "$7")
+xfs_archive=$(realpath "$8")
+urcu_archive=$(realpath "$9")
+inih_archive=$(realpath "${10}")
+prefix=$(realpath "${11}")
 arch=${ARCH:-x86_64}
 case "$arch" in
     x86_64) package_arch=x86_64 ;;
@@ -28,6 +29,7 @@ test -x "$bin" && test -x "$prefix/bin/holy-musl-gcc" &&
 test "$(git -C "$util" rev-parse HEAD)" = d76cbf8f13e65ff657344f7f6a90042cf755ba59
 test "$(git -C "$dos" rev-parse HEAD)" = 697f7692c951173c1b732901e13f72bd3182d575
 test "$(git -C "$e2" rev-parse HEAD)" = 7ee1d505ef3b37831215f490411f346fe57e9053
+test "$(git -C "$f2fs" rev-parse HEAD)" = 83fd39a184df96db5def895ddc55bf68e720ef76
 printf '%s  %s\n' 9a738586bff5790bd8bfef4a4868a2939cba3f81f22f121306d668c97f1c85d8 \
     "$limine_archive" | sha256sum -c -
 printf '%s  %s\n' b3ba5b06b551831fd5be1fa73496db3f865bb388caccf396e084bd8dc64687a0 \
@@ -41,9 +43,9 @@ printf '%s  %s\n' 062279922805f5e9a369551a08d5ddb506140fe50774183ffdbb7c22bb97e3
 for tool in git tar make autoreconf asciidoctor sha256sum ar; do
     command -v "$tool" >/dev/null || { echo "$tool required" >&2; exit 6; }
 done
-mkdir -p "$(dirname "${11}")"
-mkdir "${11}"
-out=$(realpath "${11}")
+mkdir -p "$(dirname "${12}")"
+mkdir "${12}"
+out=$(realpath "${12}")
 work="$out/work"
 mkdir "$work"
 started=$(date +%s)
@@ -57,13 +59,14 @@ trap finish EXIT
 trap 'exit 1' HUP INT TERM
 exec > "$out/build.log" 2>&1
 printf 'format holy-storage-bootstrap-1\narch %s\n' "$package_arch" > "$out/build.record"
-for name in util-linux dosfstools e2fsprogs; do mkdir "$work/$name"; done
+for name in util-linux dosfstools e2fsprogs f2fs-tools; do mkdir "$work/$name"; done
 git -C "$util" archive HEAD | tar -xf - -C "$work/util-linux"
 git -C "$dos" archive HEAD | tar -xf - -C "$work/dosfstools"
 git -C "$e2" archive HEAD | tar -xf - -C "$work/e2fsprogs"
-printf 'util-linux-commit %s\ndosfstools-commit %s\ne2fsprogs-commit %s\n' \
+git -C "$f2fs" archive HEAD | tar -xf - -C "$work/f2fs-tools"
+printf 'util-linux-commit %s\ndosfstools-commit %s\ne2fsprogs-commit %s\nf2fs-tools-commit %s\n' \
     "$(git -C "$util" rev-parse HEAD)" "$(git -C "$dos" rev-parse HEAD)" \
-    "$(git -C "$e2" rev-parse HEAD)" >> "$out/build.record"
+    "$(git -C "$e2" rev-parse HEAD)" "$(git -C "$f2fs" rev-parse HEAD)" >> "$out/build.record"
 printf 'limine-binary-sha256 %s\n' \
     9a738586bff5790bd8bfef4a4868a2939cba3f81f22f121306d668c97f1c85d8 >> "$out/build.record"
 printf 'btrfs-progs-sha256 %s\n' \
@@ -179,6 +182,24 @@ test -n "$xfs_source"
     rm -f mkfs/mkfs.xfs
     make -j"${JOBS:-2}" -C mkfs LDFLAGS=-all-static mkfs.xfs
 )
+# f2fs-tools publishes no release tarball a mirror serves, so it arrives as a git checkout
+# like util-linux, and its formatter takes the uuid and blkid of the util-linux build above.
+(
+    cd "$work/f2fs-tools"
+    ./autogen.sh
+)
+mkdir "$work/f2fs-build"
+(
+    cd "$work/f2fs-build"
+    CC="$cc" CFLAGS="-O2 -I$deps/include -I$prefix/include" \
+        LDFLAGS="-static -L$deps -L$prefix/lib" \
+        "$work/f2fs-tools/configure" --prefix=/usr --disable-shared --enable-static \
+            --without-lz4 --without-lzo2 --without-selinux
+    make -j"${JOBS:-2}" -C lib
+    make -j"${JOBS:-2}" -C mkfs
+    rm -f mkfs/mkfs.f2fs
+    make -j"${JOBS:-2}" -C mkfs LDFLAGS="-all-static -L$deps -L$prefix/lib" mkfs.f2fs
+)
 tar -xf "$limine_archive" -C "$work"
 make -C "$work/limine-binary" CC="$cc" CFLAGS=-O2 LDFLAGS=-static
 tree="$work/package"
@@ -191,15 +212,16 @@ cp "$work/dosfstools/src/mkfs.fat" "$tree/DATA/usr/bin/mkfs.fat"
 cp "$work/e2-build/misc/mke2fs" "$tree/DATA/usr/bin/mke2fs"
 cp "$work/limine-binary/limine" "$tree/DATA/usr/bin/limine"
 cp "$btrfs_source/mkfs.btrfs" "$tree/DATA/usr/bin/mkfs.btrfs"
-# src/disk.c runs the xfs and swap formatters from sbin, so the package places them there
+# src/disk.c runs the xfs, f2fs and swap formatters from sbin, so the package places them there
 cp "$xfs_source/mkfs/mkfs.xfs" "$tree/DATA/usr/sbin/mkfs.xfs"
+cp "$work/f2fs-build/mkfs/mkfs.f2fs" "$tree/DATA/usr/sbin/mkfs.f2fs"
 for name in sfdisk mkfs.fat mke2fs limine mkfs.btrfs; do
     "$bin" elf "$tree/DATA/usr/bin/$name" > "$out/$name.elf"
     grep -qx 'runtime nolibc' "$out/$name.elf"
     grep -qx 'e_type 2' "$out/$name.elf"
     grep -qx "machine $package_arch" "$out/$name.elf"
 done
-for name in mkswap mkfs.xfs; do
+for name in mkswap mkfs.xfs mkfs.f2fs; do
     "$bin" elf "$tree/DATA/usr/sbin/$name" > "$out/$name.elf"
     grep -qx 'runtime nolibc' "$out/$name.elf"
     grep -qx 'e_type 2' "$out/$name.elf"
@@ -218,6 +240,7 @@ cp "$work/dosfstools/manpages/mkfs.fat.8" "$tree/DATA/usr/share/man/man8/"
 cp "$work/e2-build/misc/mke2fs.8" "$tree/DATA/usr/share/man/man8/"
 sed -e 's|@mkfs_cfg_dir@|/etc/xfs|g' "$xfs_source/man/man8/mkfs.xfs.8.in" \
     > "$tree/DATA/usr/share/man/man8/mkfs.xfs.8"
+cp "$work/f2fs-tools/man/mkfs.f2fs.8" "$tree/DATA/usr/share/man/man8/"
 cp "$work/limine-binary/LICENSE" "$tree/DATA/usr/share/licenses/holy-storage-tools/limine-LICENSE"
 cp "$work/util-linux/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/util-linux-COPYING"
 cp "$work/dosfstools/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/dosfstools-COPYING"
@@ -228,6 +251,7 @@ cp "$xfs_source/LICENSES/GPL-2.0" "$tree/DATA/usr/share/licenses/holy-storage-to
 cp "$xfs_source/LICENSES/LGPL-2.1" "$tree/DATA/usr/share/licenses/holy-storage-tools/xfsprogs-LGPL-2.1"
 cp "$urcu_source/LICENSE.md" "$tree/DATA/usr/share/licenses/holy-storage-tools/liburcu-LICENSE.md"
 cp "$inih_source/LICENSE.txt" "$tree/DATA/usr/share/licenses/holy-storage-tools/inih-LICENSE.txt"
+cp "$work/f2fs-tools/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/f2fs-tools-COPYING"
 cat > "$tree/HOLY/meta" <<EOF
 format holy-package-1
 name holy-storage-tools

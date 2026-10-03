@@ -1745,11 +1745,13 @@
   it creates one and reads the `_BHRfS_M` superblock magic back. That is what
   `src/disk.c` already runs for `gpt-btrfs`, so a btrfs guest can now be prepared
   by the tools this repository builds.
-  xfs and swap now ship too, so four of the five formatters `src/disk.c` runs
-  are in this package. `tools/bootstrap-storage.sh` takes three more pinned
-  inputs, `profiles/bootstrap-sources` names them and
-  `tools/fetch-sources.sh` fetches them: xfsprogs 6.12.0 from kernel.org,
-  liburcu 0.15.7 and inih r59. The two claims that blocked xfs are settled and
+  xfs, f2fs and swap now ship too, so four of the five formatters `src/disk.c`
+  runs are in this package and only cryptsetup is missing.
+  `tools/bootstrap-storage.sh` takes three more pinned tarballs, which
+  `profiles/bootstrap-sources` names and `tools/fetch-sources.sh` fetches:
+  xfsprogs 6.12.0 from kernel.org, liburcu 0.15.7 and inih r59, and one more
+  git checkout, f2fs-tools at 83fd39a1, which is how the other three sources
+  arrive. The two claims that blocked xfs are settled and
   both cost a build flag rather than a patch. liburcu's own upstream publishes
   no tarball this host can fetch, and its Debian repack in the pool is 0.15.2,
   while `sources.debian.org` still lists 0.15.7-1 in forky and sid, so the pin
@@ -1767,28 +1769,31 @@
   `--disable-all-programs`, whose `ul_default_estate` overruling `--enable-mkswap`
   leaves the link without a `main`. The build names every other program
   `--disable-` from the pinned configure.ac instead, which is what decides which
-  programs exist, so mkswap builds and sfdisk stays static. Both xfsprogs and
-  util-linux are libtool projects, so each link is relinked with
-  `LDFLAGS=-all-static`; a single `-static` in LDFLAGS still produced a binary
-  against the musl loader. The fixture reads both back rather than trusting an
-  exit status: `XFSB` from the xfs superblock and `SWAPSPACE2` from the swap
-  header. Both binaries are `runtime nolibc` at the right machine and land in
-  `usr/sbin`, where `src/disk.c` runs them, and each ships its man page and its
-  license, GPL-2.0 and LGPL-2.1 for xfsprogs, LGPL-2.1 for liburcu and BSD for
-  inih. `tools/bootstrap-storage.sh` rebuilt the package here from eight inputs
-  and `tests/bootstrap-storage.sh` passes against it.
-  f2fs-tools publishes no release tarball at a URL a mirror serves, so its
-  source has to arrive as a git checkout the way util-linux does, and
-  cryptsetup needs libdevmapper before anything else. Those two formatters, a
-  LUKS2 install and a btrfs or xfs boot in QEMU are what remains of this item.
-  The disk plan reaches those tools for a btrfs or xfs layout on a block
-  device: with the package's sfdisk, mkfs.fat, mke2fs, mkfs.btrfs and mkfs.xfs
-  installed where `src/disk.c` runs them, `holyinstall disk plan` hashes each
-  tool and records `mkfs-btrfs-sha256` or `mkfs-xfs-sha256`, and then refuses
-  the device this host offers because a loop device carries no serial. That
-  refusal is the documented rule rather than a gap, and it is why the apply and
-  the boot are still open here: neither a device with a serial nor a QEMU disk
-  chain is available to run them against.
+  programs exist, so mkswap builds and sfdisk stays static. xfsprogs,
+  util-linux and f2fs-tools are all libtool projects, so each link is relinked
+  with `LDFLAGS=-all-static`; a single `-static` in LDFLAGS still produced a
+  binary against the musl loader. f2fs-tools wanted three libraries the pinned
+  prefix does not build, and the formatter needs none of them: lz4 and lzo2 are
+  `--without-` and selinux is off, so what remains is the libuuid and libblkid
+  the util-linux build above already produces. The fixture reads each formatter
+  back rather than trusting an exit status: `XFSB` from the xfs superblock,
+  `1020f5f2` from the f2fs one and `SWAPSPACE2` from the swap header. All three
+  are `runtime nolibc` at the right machine, land in `usr/sbin` where
+  `src/disk.c` runs them, and ship their man pages and licenses: GPL-2.0 and
+  LGPL-2.1 for xfsprogs, LGPL-2.1 for liburcu, BSD for inih and GPL-2.0 for
+  f2fs-tools. `tools/bootstrap-storage.sh` rebuilt the package here from nine
+  inputs and `tests/bootstrap-storage.sh` passes against it. cryptsetup needs
+  libdevmapper before anything else; that formatter, a LUKS2 install and a
+  btrfs, xfs or f2fs boot in QEMU are what remains of this item.
+  The disk plan reaches those tools for a btrfs, xfs or f2fs layout on a block
+  device: with the package's sfdisk, mkfs.fat, mke2fs, mkfs.btrfs, mkfs.xfs and
+  mkfs.f2fs installed where `src/disk.c` runs them, `holyinstall disk plan`
+  hashes each tool and records `mkfs-btrfs-sha256`, `mkfs-xfs-sha256` or
+  `mkfs-f2fs-sha256`, and then refuses the device this host offers because a
+  loop device carries no serial. That refusal is the documented rule rather
+  than a gap, and it is why the apply and the boot are still open here: neither
+  a device with a serial nor a QEMU disk chain is available to run them
+  against.
   The kernel already enables BTRFS_FS, XFS_FS and F2FS_FS built in, and a LUKS2
   root needs DM_CRYPT and CRYPTO_XTS added to that fragment before it can boot.
   The implemented blank-disk GPT/ext4/FAT path uses
