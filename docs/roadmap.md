@@ -2037,7 +2037,17 @@
   needs: this session is Wayland, but input for it needs wlrctl, dotool, wtype
   or libei, and none is installed here. The Rust musl row is missing and names the
   directory that is absent, and builds and runs a musl binary the day a target
-  appears. The public HTTPS row is separate from the fixture CA row and reaches
+  appears. Two routes to that target were tried on this host and neither one
+  closed it, so the row stays missing rather than reporting a build that segfaults.
+  The compiler here is a source build carrying the gnu standard library alone, and
+  the release standard library for x86_64-unknown-linux-musl does not fit it: a
+  binary built against it fails with the `sized` lang item missing, which is what
+  an incompatible metadata hash looks like. Building the library from the rust-src
+  this host ships does compile, with the musl toolchain this repository built for
+  its static dependencies as the linker, but the resulting static binary dies on
+  SIGSEGV before main, and the same toolchain has no crt objects for a dynamic
+  link. Closing the row needs a musl toolchain whose crt set, loader and libc
+  match what the compiler's musl target expects. The public HTTPS row is separate from the fixture CA row and reaches
   this project's own repository endpoint over a verified chain; GNU Chess 6.2.9 built
   from its pin for x86_64 and for i686, each driven over the xboard line
   protocol on a pty until the engine answered both scripted moves, which is the
