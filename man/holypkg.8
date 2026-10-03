@@ -3191,7 +3191,9 @@ signal, a trial that could not be built is 1, and a host that refuses the
 namespaces is 6. root is the only mode, since a kernel that has to boot and a
 kernel that has to be recovered are the QEMU gates under make check-qemu rather than
 a mode of this command, so another name for --mode is a usage error, and so are
---shell with a command and a -- with nothing after it.
+--shell with a command and a -- with nothing after it. Those gates read the image's
+own boot-plan and libc-boot-state records, so ARCH and the image path are what a
+caller names, and a failed report names the markers the guest did not print.
 .PP
 A root trial is bubblewrap. The isolation is its flags, so what a trial promises is
 what this manager asks for rather than what a tool's documentation describes for a

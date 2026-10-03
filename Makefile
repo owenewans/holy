@@ -439,8 +439,22 @@ check-install-vm:
 	@test -n "$(ISO)" && test -n "$(BOOT_PLAN)" || { echo 'ISO and BOOT_PLAN required' >&2; exit 6; }
 	ARCH="$(or $(ARCH),x86_64)" ISO="$(ISO)" BOOT_PLAN="$(BOOT_PLAN)" REPORT_DIR="$(or $(REPORT_DIR),/tmp)" INSTALL_FIRMWARE="$(or $(INSTALL_FIRMWARE),$(if $(filter i686,$(ARCH)),bios,both))" UEFI_CODE="$(UEFI_CODE)" UEFI_VARS="$(UEFI_VARS)" python3 tests/install-vm.py
 
+# an image carries the plan it was built with and the libc state it boots, and the gate
+# reads both from the records beside it, so a wrong expectation is not the operator's
+# to remember. a caller who names either still wins. an explicitly empty ISO stays
+# empty, since a disk boot supplies none and the runner refuses one that does.
 check-qemu:
-	ARCH="$(ARCH)" ISO="$(or $(ISO),out/holy-$(ARCH).iso)" BOOT_PLAN="$(BOOT_PLAN)" QEMU_TIMEOUT="$(or $(QEMU_TIMEOUT),120)" sh tests/qemu.sh
+	@iso="$(if $(filter undefined default,$(origin ISO)),out/holy-$(ARCH).iso,$(ISO))"; \
+	dir=""; [ -z "$$iso" ] || dir="$${iso%/*}/"; \
+	[ -n "$$dir" ] || dir="$${ROOT_DISK%/*}/"; \
+	plan="$(BOOT_PLAN)"; state="$(LIBC_BOOT_STATE)"; \
+	test -n "$$plan" || plan="$$(cat "$$dir/boot-plan" 2>/dev/null)"; \
+	test -n "$$state" || state="$$(sed -n 's/^libc-boot-state //p' "$$dir/build.record" 2>/dev/null | head -1)"; \
+	echo ARCH="$(ARCH)" ISO="$$iso" BOOT_PLAN="$$plan" LIBC_BOOT_STATE="$$state" QEMU_TIMEOUT="$(or $(QEMU_TIMEOUT),120)"; \
+	ARCH="$(ARCH)" ISO="$$iso" BOOT_PLAN="$$plan" LIBC_BOOT_STATE="$$state" \
+	QEMU_TIMEOUT="$(or $(QEMU_TIMEOUT),120)" \
+	$(if $(ROOT_DISK), ROOT_DISK="$(ROOT_DISK)")$(if $(IMAGE_PROFILE), IMAGE_PROFILE="$(IMAGE_PROFILE)")$(if $(BOOT_MEDIA), BOOT_MEDIA="$(BOOT_MEDIA)")$(if $(FIRMWARE), FIRMWARE="$(FIRMWARE)")$(if $(NETWORK_RECOVERY), NETWORK_RECOVERY="$(NETWORK_RECOVERY)") \
+	sh tests/qemu.sh
 
 .PHONY: check-qemu-copy
 check-qemu-copy:

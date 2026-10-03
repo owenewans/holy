@@ -169,7 +169,11 @@ def main():
     profile = os.environ.get('IMAGE_PROFILE', 'dual-libc')
     state = os.environ.get('LIBC_BOOT_STATE', 'present')
     if profile not in ('static-core', 'dual-libc') or state not in ('present', 'glibc', 'musl', 'both', 'remove-both'):
-        error('unsupported image profile or libc boot state', 2)
+        # the builder records the state in the same vocabulary, so a state it wrote and
+        # this runner refuses is a name to settle rather than a value to guess at
+        error('unsupported image profile or libc boot state: profile=%s state=%s; '
+              'this runner takes profile static-core or dual-libc and state '
+              'present, glibc, musl, both or remove-both' % (profile, state), 2)
     if profile == 'static-core' and state != 'present':
         error('libc boot state requires dual-libc profile', 2)
     module_probe = os.environ.get('KERNEL_MODULE_PROBE', 'off')
@@ -557,10 +561,17 @@ def main():
                              'retained': keep}
     report['temporary_inputs_retained'] = keep
     (run / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
-    (run / 'report').write_text(
-        f'format holy-qemu-report-2\narch {arch}\nboot-media {media}\niso-sha256 {inputs.get("iso", {}).get("sha256", "none")}\n'
-        f'plan {plan}\naccelerator {accel}\nfirmware {firmware}\nexit {code}\n'
-        f'reason {reason}\nresult {result}\n')
+    # a failing run says which markers it did not see, since a guest that printed its
+    # own result and a wrong expectation look the same as a boot that hung otherwise
+    absent = report['missing_markers']
+    lines = [f'format holy-qemu-report-2\narch {arch}\nboot-media {media}\n'
+             f'iso-sha256 {inputs.get("iso", {}).get("sha256", "none")}\nplan {plan}\n'
+             f'accelerator {accel}\nfirmware {firmware}\nexit {code}\n'
+             f'reason {reason}\nresult {result}']
+    for marker in absent:
+        lines.append('missing ' + marker)
+    lines.append('missing-count %d\n' % len(absent))
+    (run / 'report').write_text('\n'.join(lines))
     if not keep:
         for temporary in ('root.qcow2', 'root-base.raw', 'root-base.qcow2',
                           'uefi_code.fd', 'uefi_vars.fd', 'input.iso'):

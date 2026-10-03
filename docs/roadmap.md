@@ -1745,6 +1745,19 @@
   Missing images return a requirement error; blank ISO fails both architecture
   fixtures via `make check-qemu-gate`. Cancellation reaps the guest and records
   failure. The x86_64 static-core ISO passes BIOS/TCG and UEFI/TCG boot contracts.
+  The target reads the plan and the libc boot state from the records beside the
+  image, `boot-plan` and the `libc-boot-state` line of `build.record`, so a wrong
+  expectation is not the operator's to remember and a caller who names either still
+  wins. A disk boot takes the same records from the directory of ROOT_DISK and an
+  explicitly empty ISO stays empty, since the runner refuses a disk boot that names
+  one. The text report names the markers a failed run did not see, which is what
+  separates a guest that printed its own result from an expectation that was wrong;
+  the JSON report already carried them. An unsupported profile or libc state now
+  names both values and the set the runner takes. Verified here on the dual-libc
+  and static-core x86_64 ISOs over BIOS and TCG, both `result pass` with
+  `reason probes-complete`, plus the qcow2 disk path on `out/image-recovery`,
+  which derives `remove-both` from its own record and then refuses the raw ext4
+  root as a boot input, so the disk contract is still open there.
 - [x] Run `make check-install` against plan/apply/disk fixtures and a separate
   installed-disk VM gate in BIOS and UEFI. The VM gate covers disk preparation,
   installation, boot and account login.

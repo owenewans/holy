@@ -1397,7 +1397,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=9be259185310baaa784d2e54891171951f3724f5da7a44e2ff1bcbe2b02144ed
+holypkg.8 source=holy version=development sha256=fa374882073e2af073cc1353debf90aca2609692fff8dc9e7659914ae3969d1a
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -4567,7 +4567,9 @@ PLAN TEST
      since  a  kernel that has to boot and a kernel that has to be recovered are
      the QEMU gates under make check-qemu rather than a mode of this command, so
      another name for --mode is a usage error, and so are --shell with a command
-     and a -- with nothing after it.
+     and a -- with nothing after it. Those gates read the image's own  boot-plan
+     and  libc-boot-state  records, so ARCH and the image path are what a caller
+     names, and a failed report names the markers the guest did not print.
 
      A root trial is bubblewrap. The isolation is its flags,  so  what	a  trial
      promises is what this manager asks for rather than what a tool's documenta-
