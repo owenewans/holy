@@ -88,6 +88,11 @@ Patch0:         greeting.patch
 BuildArch:      noarch
 BuildRequires:  make
 BuildRequires:  gcc >= 11
+%if %{_is64}
+Requires:       libatomic.so.1()(64bit)
+%else
+Requires:       libatomic.so.1()(32bit)
+%endif
 Requires:       bash >= 5.0
 Requires:       /bin/sh
 Provides:       rpm-demo-extra = %{version}
@@ -188,16 +193,22 @@ test -x bin/rpm-demo
         assert "carried Name 3" in report
         assert "carried Version 4" in report
         assert "carried Release 5" in report
-        assert "carried package devel 24" in report
+        assert "carried package devel 29" in report
         assert "carried rpm-demo-1.4.0.tar.gz 9" in report
         assert "carried greeting.patch 10" in report
         assert "semantic-change local greeting.patch copied next to the recipe" in report
-        assert "preserved the prep section at line 30" in report
-        assert "preserved the build section at line 34" in report
-        assert "preserved the install section at line 37" in report
-        assert "preserved the check section at line 43" in report
-        assert "preserved subpackage devel from its %files list at line 24" in report
+        assert "preserved the prep section at line 35" in report
+        assert "preserved the build section at line 39" in report
+        assert "preserved the install section at line 42" in report
+        assert "preserved the check section at line 48" in report
+        assert "preserved subpackage devel from its %files list at line 29" in report
         assert "unknown requirement /bin/sh names a file" in report
+        # a metadata conditional is named line by line and neither branch is carried, while a
+        # conditional inside a phase keeps both bodies and is reported with its section
+        assert "unknown conditional %if %{_is64} at line 14" in report
+        assert "unknown conditional %else at line 16" in report
+        assert "unknown conditional %endif at line 18" in report
+        assert "libatomic" not in recipe
         assert "semantic-change the distribution suffix on Release is left out" in report
         assert "semantic-change the %files list of devel becomes a copy" in report
         assert "preserved the main %files list is not carried" in report
@@ -255,6 +266,29 @@ mkdir -p $RPM_BUILD_ROOT/usr/share/rpm-demo
             in report
         assert "unknown requirement rpmlib(CompressedFileNames) uses a resolver-specific form" \
             in report
+        # a conditional inside a phase keeps both bodies in the step, and the macro lines are
+        # left as they are, so the build fails on them instead of losing a step quietly
+        write(package / "rpm-demo.spec", """Name: rpm-demo
+Version: 1
+Release: 1
+%build
+make
+%if %{_is64}
+make EXTRA_LDFLAGS="-Wl,-z,relro"
+%endif
+%install
+mkdir -p $RPM_BUILD_ROOT/usr/share/rpm-demo
+""")
+        run("convert", package / "rpm-demo.spec", "--source", "fedora",
+            "--output", root / "conditional", status=3)
+        report = (root / "conditional" / "conversion").read_text()
+        assert ("unknown the build section keeps a conditional, which this converter does not "
+                "choose between") in report
+        recipe = (root / "conditional" / "rpm-demo.recipe").read_text()
+        assert "%if %{_is64}" in recipe and "%endif" in recipe
+        assert 'make EXTRA_LDFLAGS="-Wl,-z,relro"' in recipe
+        run("build", root / "conditional" / "rpm-demo.recipe", "--output", root / "conditional",
+            "--yes", status=1)
         # a macro the vendor set would resolve is the helper environment this converter
         # fixes rather than runs, and the ordered digest reaches the recipe
         write(package / "rpm-demo.spec", """Name: rpm-demo

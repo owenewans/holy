@@ -5666,7 +5666,7 @@ SEE ALSO
      holy.conf(5), holy-package(5)
 
 Holy				 September 2026			      HOLYPKG(8)
-holy-recipe.5 source=holy version=development sha256=8483a2ba74dc50a7e48deaf75baba11c37ee88153394ba55c98fbdff35c5a90c
+holy-recipe.5 source=holy version=development sha256=8bdcd7ab523e7f7bc92cb064a907fc07c2e68cc86df6085e5a0ccdfff7b0455e
 HOLY-RECIPE(5)		       Holy package format		  HOLY-RECIPE(5)
 
 NAME
@@ -6184,7 +6184,11 @@ CONVERSION
      helpers become the shell line they stand for.  Every other rpm section com-
      mand  is  reported	 and left in the body, so the build fails visibly rather
      than losing a step. An rpm	 conditional,  which  this  converter  does  not
-     choose between, is reported with its section.
+     choose  between, is reported with its section: a tag inside a metadata con-
+     ditional is not carried and each of the %if, %else and %endif lines is  re-
+     ported  with its line, while a conditional inside a phase keeps both bodies
+     and the macro lines themselves in the step, so  the  build	 fails	on  them
+     rather than quietly choosing a branch.
 
      A %package block becomes an output, and because an rpm subpackage is a file
      list  rather  than	 a  body, its split step copies the paths its own %files

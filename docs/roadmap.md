@@ -1176,7 +1176,12 @@
   builds the produced recipe through the normal engine and checks the three
   payloads it produced; 387 of the 388 source RPM specs sampled from the Fedora
   archive convert, the one refusal being a spec with no Name at all, and every
-  produced recipe passes the manager's own validation.
+  produced recipe passes the manager's own validation. The fixture now also
+  carries a metadata conditional and a conditional inside %build: the %if, %else
+  and %endif lines are reported one by one and neither branch of the Requires
+  reaches the recipe, while a conditional inside a phase keeps both bodies and
+  the macro lines themselves, so the build of that fixture's recipe fails on
+  `%if: not found` rather than the converter choosing a branch silently.
   The Debian source family converts as well, and needs a parser of its own
   because a source package is a set of files rather than one program text.
   `holypkg convert debian` and `holypkg import --format debian` read

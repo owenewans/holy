@@ -495,7 +495,11 @@ that directory followed by a patch pass over the declared patches, and %make_ins
 %make_build and the __ prefixed helpers become the shell line they stand for.
 Every other rpm section command is reported and left in the body, so the build
 fails visibly rather than losing a step. An rpm conditional, which this
-converter does not choose between, is reported with its section.
+converter does not choose between, is reported with its section: a tag inside a
+metadata conditional is not carried and each of the %if, %else and %endif lines
+is reported with its line, while a conditional inside a phase keeps both bodies
+and the macro lines themselves in the step, so the build fails on them rather
+than quietly choosing a branch.
 .PP
 A %package block becomes an output, and because an rpm subpackage is a file list
 rather than a body, its split step copies the paths its own %files section named
