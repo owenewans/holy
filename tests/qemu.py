@@ -514,6 +514,11 @@ def main():
             reason, result = 'network-fixture-incomplete', 'fail'
     inconsistent = sorted(name for name, item in inputs.items()
                           if item.get('copy_consistency', 'verified') != 'verified')
+    # a guest that printed no marker at all did not start, which is a different fault
+    # from a guest that ran and missed the ones it owed, so the report says which
+    if result == 'fail' and reason == 'boot-timeout' and not any(
+            line.startswith('HOLY-BOOT-1') for line in serial_lines):
+        reason = 'no-serial-output'
     if not base_unchanged:
         reason, result = 'changed-read-only-base', 'fail'
     elif inconsistent:

@@ -1756,8 +1756,14 @@
   names both values and the set the runner takes. Verified here on the dual-libc
   and static-core x86_64 ISOs over BIOS and TCG, both `result pass` with
   `reason probes-complete`, plus the qcow2 disk path on `out/image-recovery`,
-  which derives `remove-both` from its own record and then refuses the raw ext4
-  root as a boot input, so the disk contract is still open there.
+  which derives `remove-both` from its own record, boots and reports
+  `no-serial-output`: a guest that printed no marker at all did not start, which the
+  report now says rather than calling it a boot timeout. Two things are missing there
+  and neither is a guess to close. The runner attaches only the root overlay as one
+  virtio disk, so a Limine install has no ESP to boot from and cannot start at all.
+  And `out/image-recovery/build.record` carries `install-test 0`, so no target here
+  produced a bootable disk pair to attach: the root filesystem was built and the
+  install into it was not run. The disk contract stays open for both.
 - [x] Run `make check-install` against plan/apply/disk fixtures and a separate
   installed-disk VM gate in BIOS and UEFI. The VM gate covers disk preparation,
   installation, boot and account login.
