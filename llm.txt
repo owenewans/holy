@@ -1,4 +1,4 @@
-holy.conf.5 source=holy version=development sha256=f02e8e87bca919a82c7327378f465235aaa91f8a8558b5f79ebd3a44e3e8d9be
+holy.conf.5 source=holy version=development sha256=482b9a6d3e532c5e2b29364446dfacd339da790cc6c6d7918deca261f11cf75d
 HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
 
 NAME
@@ -59,26 +59,30 @@ DESCRIPTION
      dressable accept-arch list can approve placement of selected artifacts with
      a different target architecture. The frozen plan retains each approval.  An
      accept-privileged list confirms the exact artifact hashes whose setuid exe-
-     cutables have been reviewed. holyinstall records  these  decisions	 in  its
-     frozen  plan  and	passes	them  to  holypkg.   The  list key "source ARTI-
-     FACT_SHA256 SOURCE_ID" associates a selected local artifact with an  active
-     registered	 origin.  The installed instance retains the source ID and alias
-     snapshot; metadata inside the archive grants no source authority.
+     cutables have been reviewed. An accept-service list names each  dinit  ser-
+     vice unit the set is allowed to start. A unit name is one path component of
+     up	 to  255  characters  from letters, digits, '-', '_', '.' and '@'. A set
+     that ships a unit without a consent naming	 it  returns  decision-required.
+     holyinstall  records  these decisions in its frozen plan and passes them to
+     holypkg.  The list key "source ARTIFACT_SHA256 SOURCE_ID" associates a  se-
+     lected  local  artifact with an active registered origin. The installed in-
+     stance retains the source	ID  and	 alias	snapshot;  metadata  inside  the
+     archive grants no source authority.
 
-     [disk] accepts one image path and layout gpt-ext4. The  disk  plan	 accepts
-     regular  image  files, not block devices. Its fixed plan schema forbids in-
-     clude.  The installer's text menu can save [disk] alongside  [install]  and
-     prepare  the  disk	 plan  independently  of  package selection. See holyin-
+     [disk]  accepts  one  image path and layout gpt-ext4. The disk plan accepts
+     regular image files, not block devices. Its fixed plan schema  forbids  in-
+     clude.   The  installer's text menu can save [disk] alongside [install] and
+     prepare the disk plan  independently  of  package	selection.  See	 holyin-
      stall(8).
 
    Reference source
      packages.holypkg.eu is the reference source of the Holy base. The name car-
-     ries no authority: it is not compiled into the manager, it has no	built-in
-     source-id,	 and it is never active until a configuration names it. Its pub-
-     lished generation is signed with Ed25519, so a configuration that	uses  it
-     names  the public key and freezes the index digest it reviewed. The private
-     signing key stays on the publishing machine and is not a configuration  in-
-     put.  Verification	 establishes  authenticity only relative to the supplied
+     ries  no authority: it is not compiled into the manager, it has no built-in
+     source-id, and it is never active until a configuration names it. Its  pub-
+     lished  generation	 is signed with Ed25519, so a configuration that uses it
+     names the public key and freezes the index digest it reviewed. The	 private
+     signing  key stays on the publishing machine and is not a configuration in-
+     put. Verification establishes authenticity only relative  to  the	supplied
      key, so freshness comes from a separate digest pin.
 
 EXAMPLE
@@ -93,82 +97,82 @@ EXAMPLE
      url "https://packages.holypkg.eu/"
      public-key-ed25519 9c86f10a96bd9b7016d94b05401d594db11cb66aa70157297cae8046732d1054
 
-     The mirror.example host above is a template and is not a working mirror.  A
-     shipped  configuration carries the commented, release-verified official and
+     The  mirror.example host above is a template and is not a working mirror. A
+     shipped configuration carries the commented, release-verified official  and
      popular sources, and the user enables them.
 
 FILES
-     /etc/holy.conf is the proposed system path. The checker takes  an	explicit
+     /etc/holy.conf  is	 the proposed system path. The checker takes an explicit
      file.
 
 SOURCE IDENTITIES
      The source plan command reads this syntax, including includes, and proposes
      a registry replacement. The source apply command consumes that frozen plan;
-     it	 does  not  reread the configuration. See holypkg(8) for the command se-
+     it does not reread the configuration. See holypkg(8) for  the  command  se-
      quence.
 
-     The current source ID is SHA-256 of a canonical, sorted  representation  of
-     type,  url	 and repo records. Alias, parent, family, priority, trust policy
-     and public key are excluded. Renaming an alias preserves the  ID.	Changing
+     The  current  source ID is SHA-256 of a canonical, sorted representation of
+     type, url and repo records. Alias, parent, family, priority,  trust  policy
+     and  public  key are excluded. Renaming an alias preserves the ID. Changing
      an endpoint, backend type or repository name creates another ID and retains
-     the  previous definition as inactive history.  Readding the same definition
-     reactivates its existing ID. Equivalent URL spellings and mirrors	are  not
+     the previous definition as inactive history.  Readding the same  definition
+     reactivates  its  existing ID. Equivalent URL spellings and mirrors are not
      automatically identified as one source.
 
-     Registration  requires  endpoints with a scheme followed by :// and rejects
-     URL userinfo, queries, fragments and  whitespace.	Plans  therefore  cannot
-     carry  those credential forms. Two aliases with the same definition require
-     a decision.  Registration neither contacts a repository  nor  verifies  its
-     signatures.  Set  installation  can  bind local artifacts to registered IDs
-     through explicit --source associations. The registry  stores  parent  as  a
-     source-id,	 separate  from the endpoint-derived identity. Renaming a parent
+     Registration requires endpoints with a scheme followed by ://  and	 rejects
+     URL  userinfo,  queries,  fragments  and whitespace. Plans therefore cannot
+     carry those credential forms. Two aliases with the same definition	 require
+     a	decision.   Registration  neither contacts a repository nor verifies its
+     signatures. Set installation can bind local  artifacts  to	 registered  IDs
+     through  explicit	--source  associations.	 The registry stores parent as a
+     source-id, separate from the endpoint-derived identity. Renaming  a  parent
      alias retains the relationship.  Parent preference applies when add discov-
      ers a missing native provider; it does not replace the child's URL with the
      parent's URL.
 
-     Optional family NAME groups sources  for  dependency  preference.	Optional
-     priority  SIGNED_INTEGER ranks candidates within the same preference group;
+     Optional  family  NAME  groups  sources for dependency preference. Optional
+     priority SIGNED_INTEGER ranks candidates within the same preference  group;
      a larger number wins. The default priority is zero. Family and priority are
      policy, not part of source identity. A changed policy is recorded by source
      apply.  holypkg source show ALIAS displays the policy after apply.
 
      A registered APK source uses type apk and one or more repo NAME HTTPS_BASE/
-     entries. holypkg apk sync names the repo, obtains its  APKINDEX.tar.gz  and
-     writes  a	source-id-bearing  catalog  and	 target-root binding. public-key
-     points to an RSA PEM public key for APK sources; source  plan  freezes  its
-     SHA-256  fingerprint.   trust  require  needs that key and a valid APKINDEX
-     signature. The matching key file is supplied to  apk  sync	 and  apk  fetch
-     through  --public-key.  Fetch verifies the bound APK package signature with
-     the same registered key. See holypkg(8) for  the  digest  confirmation  and
+     entries.  holypkg	apk sync names the repo, obtains its APKINDEX.tar.gz and
+     writes a source-id-bearing	 catalog  and  target-root  binding.  public-key
+     points  to	 an  RSA PEM public key for APK sources; source plan freezes its
+     SHA-256 fingerprint.  trust require needs that key	 and  a	 valid	APKINDEX
+     signature.	 The  matching	key  file  is supplied to apk sync and apk fetch
+     through --public-key. Fetch verifies the bound APK package	 signature  with
+     the  same	registered  key.  See holypkg(8) for the digest confirmation and
      fetch sequence.
 
-     A	registered  APT source uses type apt and one url HTTPS_BASE/. public-key
-     points to a binary OpenPGP keyring; source plan freezes its SHA-256.  trust
-     require  needs  that key. holypkg apt sync-source requires the same keyring
-     and records the stable source-id in its signed catalog and	 database  bind-
-     ing.  Queries  and	 fetches can select it with source, suite, component and
-     index architecture; they recheck the current registry. The keyring	 is  se-
-     lected  by	 the  user; adding a source does not import public keys from the
-     network.  The --inrelease option selects a clearsigned  InRelease;	 without
+     A registered APT source uses type apt and one url	HTTPS_BASE/.  public-key
+     points  to a binary OpenPGP keyring; source plan freezes its SHA-256. trust
+     require needs that key. holypkg apt sync-source requires the  same	 keyring
+     and  records  the stable source-id in its signed catalog and database bind-
+     ing. Queries and fetches can select it with source,  suite,  component  and
+     index  architecture;  they recheck the current registry. The keyring is se-
+     lected by the user; adding a source does not import public	 keys  from  the
+     network.	The  --inrelease option selects a clearsigned InRelease; without
      it sync-source uses Release and Release.gpg.
 
-     A	registered  RPM-MD source uses type rpm-md and one url HTTPS_BASE/, with
-     no repo entries. The base is the repository root that  serves  repodata/re-
-     pomd.xml.	holypkg sync RPM_MD_SOURCE takes an explicit repomd --sha256 pin
+     A registered RPM-MD source uses type rpm-md and one url  HTTPS_BASE/,  with
+     no	 repo  entries. The base is the repository root that serves repodata/re-
+     pomd.xml. holypkg sync RPM_MD_SOURCE takes an explicit repomd --sha256  pin
      and records the source-id in the catalog it writes. No repository signature
      is checked, so trust require is not available for this backend.  Query, ca-
      pability lookup and fetch select the source by alias and recheck the regis-
      tered url and source-id against the stored catalog.
 
      A registered XBPS source uses type xbps and one url HTTPS_BASE/. public-key
-     points to an RSA PEM public key; source plan freezes  the	SHA-256	 finger-
-     print  of its public-key encoding. trust require needs that key. xbps sync-
+     points  to	 an  RSA PEM public key; source plan freezes the SHA-256 finger-
+     print of its public-key encoding. trust require needs that key. xbps  sync-
      source checks the selected key against the registry and the index metadata.
-     It also requires an explicit repodata  SHA-256  pin.  Source-aware	 queries
-     check  the catalog's source-id, URL and recorded key fingerprint. Fetch re-
-     quires the same key file and verifies the package	.sig2  signature.  sync-
-     source  also  binds  the catalog's conversion digest under the target data-
-     base; later queries can select that binding by source and	index  architec-
+     It	 also  requires	 an  explicit repodata SHA-256 pin. Source-aware queries
+     check the catalog's source-id, URL and recorded key fingerprint. Fetch  re-
+     quires  the  same	key file and verifies the package .sig2 signature. sync-
+     source also binds the catalog's conversion digest under  the  target  data-
+     base;  later  queries can select that binding by source and index architec-
      ture.
 
 Holy				 September 2026			    HOLY.CONF(5)
@@ -842,7 +846,7 @@ SEE ALSO
      holy-image(7), holypkg(8)
 
 Holy				 September 2026			    HOLY-INIT(8)
-holyinstall.8 source=holy version=development sha256=f0e7c25e9b95132272592d2cda5807cd7838fad858c1358ec8fe3703bf23989a
+holyinstall.8 source=holy version=development sha256=e09e32540a0c6e2369d21c9ebefc59a028bbe4c901eb80a9f4ebcd6b52901fa3
 HOLYINSTALL(8)		     System Manager's Manual		  HOLYINSTALL(8)
 
 NAME
@@ -920,6 +924,7 @@ DESCRIPTION
 	    network-profile connman-iwd
 	    network-package SHA256_OF_NETWORK_MANAGER
 	    firmware SHA256_OF_WIRELESS_FIRMWARE
+	    accept-service UNIT
 
      SHA256 values must be lowercase. The root path cannot be /. Config comments
      do	 not change the effective-config hash. Changes to parsed values or arti-
@@ -939,6 +944,16 @@ DESCRIPTION
      proval, planning returns decision-required. The package menu  toggles  this
      decision separately from architecture placement. A changed artifact needs a
      new approval and plan.
+
+     accept-service  names  a  dinit service unit the set may start. The manager
+     reports a set that ships /etc/dinit.d/UNIT	 as  decision-required	until  a
+     consent  names  that unit, so an image that stages its own units has to say
+     which ones it reviewed. Plan format 8  carries  the  consents  after  every
+     other  line,  since  a set names the units it would start only once each of
+     its artifacts is named. A unit name is at most 255 characters  of	letters,
+     digits,  '-',  '_',  '.'  and '@', and is neither '.' nor '..'. A duplicate
+     line, an unknown unit name and a consent in a plan before format 8 are  re-
+     fused before the apply changes the target.
 
      source  associates	 one  selected artifact with an active registered source
      ID.  The target database must already contain that registration. Plan  for-

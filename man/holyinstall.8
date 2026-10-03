@@ -81,6 +81,7 @@ timezone Europe/Berlin
 network-profile connman-iwd
 network-package SHA256_OF_NETWORK_MANAGER
 firmware SHA256_OF_WIRELESS_FIRMWARE
+accept-service UNIT
 .fi
 .RE
 .PP
@@ -100,6 +101,16 @@ payload the caller has reviewed. Plan format 3 records its exact SHA-256 and
 apply passes the same decision to holypkg. Without the approval, planning
 returns decision-required. The package menu toggles this decision separately
 from architecture placement. A changed artifact needs a new approval and plan.
+.PP
+accept-service names a dinit service unit the set may start. The manager
+reports a set that ships /etc/dinit.d/UNIT as decision-required until a
+consent names that unit, so an image that stages its own units has to say
+which ones it reviewed. Plan format 8 carries the consents after every other
+line, since a set names the units it would start only once each of its
+artifacts is named. A unit name is at most 255 characters of letters,
+digits, '-', '_', '.' and '@', and is neither '.' nor '..'. A duplicate line,
+an unknown unit name and a consent in a plan before format 8 are refused
+before the apply changes the target.
 .PP
 source associates one selected artifact with an active registered source ID.
 The target database must already contain that registration. Plan format 4

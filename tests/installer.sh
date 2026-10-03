@@ -385,4 +385,91 @@ test ! -e "$tmp/nolabel.plan.install"
 sed 's/^label HOLYESP$/label HOLY ESP/' "$tmp/reloc.conf" > "$tmp/badlabel.conf"
 if "$installer" disk plan --config "$tmp/badlabel.conf" --output "$tmp/badlabel.plan" \
     > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+# a set that ships a dinit unit needs a consent naming it, so the installer carries one
+service_tree="$tmp/service-tree"
+mkdir -p "$service_tree/HOLY" "$service_tree/DATA/etc/dinit.d"
+printf 'format holy-package-1\nname service-fixture\nversion 1\nrelease 1\nos linux\narch noarch\nlibc nolibc\n' \
+    > "$service_tree/HOLY/meta"
+for field in deps provides hooks origin transform; do : > "$service_tree/HOLY/$field"; done
+printf 'type = process\n' > "$service_tree/DATA/etc/dinit.d/fixture"
+"$holypkg" manifest generate "$service_tree" --output "$tmp/service-files" > /dev/null
+mv "$tmp/service-files" "$service_tree/HOLY/files"
+"$holypkg" pack "$service_tree" --output "$tmp/service.holy" > /dev/null
+service_digest=$(sha256sum "$tmp/service.holy" | cut -d ' ' -f 1)
+service_root="$tmp/service-root"
+mkdir -p "$service_root/usr/share"
+"$holypkg" db init --root "$service_root" > /dev/null
+"$holypkg" cache stage "local:$tmp/service.holy" --root "$service_root" > /dev/null
+printf '[install]\nroot "%s"\nartifact %s\n' "$service_root" "$service_digest" > "$tmp/noconsent.conf"
+if "$installer" --config "$tmp/noconsent.conf" --plan "$tmp/noconsent.plan" \
+    --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
+grep -qx "holypkg: $service_digest ships the service unit /etc/dinit.d/fixture; a set that starts a service needs --accept-service fixture" "$tmp/err"
+test ! -e "$service_root/etc/dinit.d/fixture"
+printf '[install]\nroot "%s"\naccept-service fixture\nartifact %s\n' \
+    "$service_root" "$service_digest" > "$tmp/consent.conf"
+"$installer" --config "$tmp/consent.conf" --plan "$tmp/consent.plan" \
+    --holypkg "$holypkg" > "$tmp/out"
+grep -qx 'format holy-install-plan-8' "$tmp/consent.plan"
+grep -qx 'accept-service fixture' "$tmp/consent.plan"
+"$installer" --apply "$tmp/consent.plan" --holypkg "$holypkg" > "$tmp/out"
+test -f "$service_root/etc/dinit.d/fixture"
+"$holypkg" db check --all --root "$service_root" > /dev/null
+# the plan is the reviewed decision, so a consent added to it afterwards is not the plan
+sed 's/^artifact /accept-service extra\nartifact /' "$tmp/consent.plan" > "$tmp/consent-edited.plan"
+if "$installer" --apply "$tmp/consent-edited.plan" --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then
+    exit 1
+fi
+grep -qx 'holyinstall: plan inputs changed or invalid' "$tmp/err"
+# a unit name the manager would refuse is refused before a plan exists
+printf '[install]\nroot "%s"\naccept-service ../escape\nartifact %s\n' \
+    "$service_root" "$service_digest" > "$tmp/unit-shape.conf"
+if "$installer" --config "$tmp/unit-shape.conf" --plan "$tmp/unit-shape.plan" \
+    --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+grep -qx "holyinstall: invalid service unit at $tmp/unit-shape.conf:3" "$tmp/err"
+test ! -e "$tmp/unit-shape.plan"
+printf '[install]\nroot "%s"\naccept-service fixture\naccept-service fixture\nartifact %s\n' \
+    "$service_root" "$service_digest" > "$tmp/unit-duplicate.conf"
+if "$installer" --config "$tmp/unit-duplicate.conf" --plan "$tmp/unit-duplicate.plan" \
+    --holypkg "$holypkg" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 2; fi
+grep -qx "holyinstall: duplicate accept-service at $tmp/unit-duplicate.conf:4" "$tmp/err"
+test ! -e "$tmp/unit-duplicate.plan"
+# a consent naming a unit the set does not ship is still a decision the plan carries
+extra_root="$tmp/extra-root"
+mkdir -p "$extra_root/usr/share"
+"$holypkg" db init --root "$extra_root" > /dev/null
+"$holypkg" cache stage "local:$tmp/service.holy" --root "$extra_root" > /dev/null
+printf '[install]\nroot "%s"\naccept-service fixture\naccept-service other\nartifact %s\n' \
+    "$extra_root" "$service_digest" > "$tmp/unit-extra.conf"
+"$installer" --config "$tmp/unit-extra.conf" --plan "$tmp/unit-extra.plan" \
+    --holypkg "$holypkg" > "$tmp/out"
+grep -qx 'accept-service fixture' "$tmp/unit-extra.plan"
+grep -qx 'accept-service other' "$tmp/unit-extra.plan"
+# two network packages are the documented shape, so the plan has to carry both
+two_root="$tmp/two-root"
+mkdir -p "$two_root/usr/share" "$two_root/usr/share/zoneinfo/Europe" "$two_root/etc"
+printf 'TZif2identity\n' > "$two_root/usr/share/zoneinfo/Europe/Berlin"
+"$holypkg" db init --root "$two_root" > /dev/null
+"$holypkg" cache stage "local:$tmp/fixture.holy" --root "$two_root" > /dev/null
+"$holypkg" cache stage "local:$tmp/network.holy" --root "$two_root" > /dev/null
+printf '[install]\nroot "%s"\nnetwork-profile connman-iwd\nnetwork-package %s\nnetwork-package %s\nartifact %s\nartifact %s\n' \
+    "$two_root" "$network_digest" "$digest" "$digest" "$network_digest" > "$tmp/two-network.conf"
+"$installer" --config "$tmp/two-network.conf" --plan "$tmp/two-network.plan" \
+    --holypkg "$holypkg" > "$tmp/out"
+grep -qx "network-package $network_digest" "$tmp/two-network.plan"
+grep -qx "network-package $digest" "$tmp/two-network.plan"
+"$installer" --apply "$tmp/two-network.plan" --holypkg "$holypkg" > "$tmp/out"
+grep -qx "network connman-iwd packages 2 firmware 0" "$tmp/out"
+# two firmware lines are the same shape, and the second one has to reach the plan too
+fw_root="$tmp/fw-root"
+mkdir -p "$fw_root/usr/share" "$fw_root/etc"
+"$holypkg" db init --root "$fw_root" > /dev/null
+"$holypkg" cache stage "local:$tmp/fixture.holy" --root "$fw_root" > /dev/null
+"$holypkg" cache stage "local:$tmp/network.holy" --root "$fw_root" > /dev/null
+printf '[install]\nroot "%s"\nnetwork-profile connman-iwd\nnetwork-package %s\nfirmware %s\nfirmware %s\nartifact %s\nartifact %s\n' \
+    "$fw_root" "$network_digest" "$digest" "$network_digest" "$digest" "$network_digest" \
+    > "$tmp/two-firmware.conf"
+"$installer" --config "$tmp/two-firmware.conf" --plan "$tmp/two-firmware.plan" \
+    --holypkg "$holypkg" > "$tmp/out"
+grep -qx "firmware $digest" "$tmp/two-firmware.plan"
+grep -qx "firmware $network_digest" "$tmp/two-firmware.plan"
 printf 'installer plan and apply fixtures passed\n'

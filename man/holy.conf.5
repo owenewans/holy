@@ -53,8 +53,12 @@ duplicate artifacts before planning. See holyinstall(8).
 An addressable accept-arch list can approve placement of selected artifacts
 with a different target architecture. The frozen plan retains each approval.
 An accept-privileged list confirms the exact artifact hashes whose setuid
-executables have been reviewed. holyinstall records these decisions in its
-frozen plan and passes them to holypkg.
+executables have been reviewed. An accept-service list names each dinit
+service unit the set is allowed to start. A unit name is one path component
+of up to 255 characters from letters, digits, '-', '_', '.' and '@'. A set
+that ships a unit without a consent naming it returns decision-required.
+holyinstall records these decisions in its frozen plan and passes them to
+holypkg.
 The list key "source ARTIFACT_SHA256 SOURCE_ID" associates a selected local
 artifact with an active registered origin. The installed instance retains
 the source ID and alias snapshot; metadata inside the archive grants no source

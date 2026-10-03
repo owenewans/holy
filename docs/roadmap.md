@@ -38,8 +38,10 @@
   probes. A second x86_64 ISO with glibc 2.42 and musl 1.2.5 passed QEMU
   boot and in-guest libc-recovery probes after both runtimes were removed.
   A persistent ext4 variant passed two QEMU boots, including removal of both
-  libc packages and recovery across reboot. These local artifacts remain
-  under out/; i686 boot and a published image remain separate gates.
+  libc packages and recovery across reboot. A paired i686 dual-libc ISO built from
+  a kernel this project compiles passed one RAM boot and two ext4 boots with both
+  runtimes removed and recovered. These local artifacts remain under out/; a
+  published image remains a separate gate.
 - [x] Build i686 musl, glibc, BusyBox, dinit, mdevd and the musl-static Holy
   binaries. The i686 static client passed the pentium2 QEMU user-mode target
   test and the libc-free static-core chroot fixture. BusyBox, dinit and mdevd
@@ -1604,7 +1606,8 @@
   includable image config. Fresh namespace resolvers accepted all five
   x86_64 and i686 packages for read-only install plans. The image source
   stage records each i686 placement decision and fetched all five i686 core
-  artifacts. Publication, signatures and i686 boot testing remain open.
+  artifacts. Publication and signatures remain open; the i686 packages are now
+  booted in an image as well.
 - [x] Accept a pinned native linux package as the image kernel input. Check
   its version, target architecture and extracted x86 boot header, install the
   original .holy with its source ID, and use its boot/vmlinuz for the ISO. An
@@ -1900,7 +1903,23 @@
   one kernel in both slots and is reported as having no rollback yet. The guest
   contract that boots the new kernel, fails a probe and returns to the menu on the
   previous one is not built.
-- [ ] Boot both target architectures in QEMU and prove PID 1, shell, package
+- [x] Boot both target architectures in QEMU and prove PID 1, shell, package
   install/removal and recovery after removing either or both dynamic libc runtimes.
+  `tools/bootstrap-linux.sh` builds the kernel an image boots, from the pinned
+  tarball in `profiles/linux-sources`, `i386_defconfig` and the recorded compiler,
+  with every driver the profile names built in, so the image carries no module tree
+  and the kernel reaches its root device before `/usr/lib/modules` is mounted. It
+  reads the boot header and refuses an image whose target is not the one asked for.
+  An i686 dual-libc RAM ISO built from that kernel with the i686 BusyBox, dinit,
+  mdevd, glibc, musl and static-core packages passed one BIOS/TCG boot with every
+  stage marker. A persistent ext4 variant passed two BIOS/TCG boots: boot one ran
+  as `/usr/bin/dinit`, removed both glibc and musl and reported `libc-initial
+  removed-both`; boot two read the broken providers, restored both runtimes from
+  the cache and passed `libc-recovery removed-both`, the packages stage and an
+  installer transaction. The image builder now names the target machine for a host
+  compiler through `GLIBC_CFLAGS`, reads each libc probe back as an ELF and refuses
+  one whose machine is not the image architecture, and consents to the dinit units
+  it staged through `accept-service`, which `holyinstall` carries in config, argv,
+  plan format 8 and preview. i686 kernel modules and i686 UEFI remain separate.
 - [ ] Run compiler/SDK, language, GUI, graphics, gaming, workstation and foreign
   source cases with pinned artifacts, logs, elapsed time and explicit coverage.
