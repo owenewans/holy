@@ -1466,7 +1466,7 @@
   missing install tar, a malformed document, an unplaceable path and an unknown
   architecture.
 - [ ] Implement `holypkg run`, context-specific provider paths, grouped `up --prepare`,
-  isolated root/VM trials and full `check` reports.
+  isolated root trials and full `check` reports.
   `holypkg up` takes several references and prepares them as one document of
   slot blocks with one state-plan, and `holypkg apply` checks every slot it names
   while holding every catalog, so a group is one reviewed decision and one
@@ -1485,7 +1485,7 @@
   too: a --arch or --libc that excludes the slot is named in the report rather
   than left to read as a package the set never held, and a --catalog path that
   cannot be opened names itself and the reason instead of answering 6 in silence.
-  Root/VM trials stay open.
+  Root trials for `up` and `apply` stay open.
   The existing run launcher now derives private PATH directories from the
   selected installed manifest, so a public executable can invoke its own
   private helper by name. Explicit directory views bind package-owned private
@@ -1852,9 +1852,9 @@
   bound report, a usage error for any --mode name but root, and a deleted new
   archive, deleted old archive, drifted payload, removed slot, changed catalog
   generation, changed source id and lost alias. The command holds no image and
-  starts no virtual machine, so a VM trial is the external runner under
-  make check-qemu and a name for it here is refused rather than half
-  implemented. The Holy hardware gate stays open. `-- COMMAND ARGS` now runs one command in a private root
+  starts no virtual machine, so root is the only mode a caller can name. The
+  kernel that has to boot and the kernel that has to be recovered are the gates
+  of make check-qemu. The Holy hardware gate stays open. `-- COMMAND ARGS` now runs one command in a private root
   trial after a set that completed, and --shell runs $SHELL or /bin/sh. the trial
   makes private mount propagation, its own /proc, /run, /tmp and /home, PID, IPC
   and UTS namespaces, a user namespace where the host allows one and a controlled

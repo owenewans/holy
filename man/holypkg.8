@@ -1675,7 +1675,7 @@ exact index, even when a cached artifact would satisfy the embedded database
 plan. It then rebuilds the plan under the writer lock. A changed database, source or payload needs a new plan. Successful
 apply uses the existing journaled cached-update engine; its recovery command
 is db recover --update. up prepares one slot or a group of them as one document, and
-apply runs the group as one transaction. Signed catalogs and root/VM trials
+apply runs the group as one transaction. Signed catalogs and root trials
 remain open.
 .PP
 The db plan command reads the prepared reservation at the current database
@@ -3138,17 +3138,15 @@ test verifies one saved update plan against a target root without changing it. T
 plan is the fixed set up --prepare leaves behind, so the inputs are already decided
 and this command only reports whether they are still what the plan recorded. The
 default root is /. --sha256 is the plan digest to review against, and a plan whose
-digest differs is status 3. --mode root is the only trial mode and is the default. A
-VM trial is the kernel rollback gate under make check-qemu, which owns the image and the
-runner; it is not a mode of this command, so any other --mode name is a usage error.
+digest differs is status 3. --mode root is the only trial mode and is the default, so any
+other --mode name is a usage error.
 .PP
 Every report names the plan, the mode, the source id and alias, the catalog path
 with its index digest, the old and new artifacts and the state plan. The plan
 document digest is the reported plan hash. A live rootfs has no stable whole-tree
 digest, so a root test binds its trial base as the installed generation with a
 digest of the installed artifact set, in artifact order. This command holds no image
-and starts no virtual machine, so a trial bound to a boot image is the runner's work and
-not something a caller can ask for here.
+and starts no virtual machine, so the trial base is the copy named above.
 .PP
 A unit below etc/dinit.d is a service dinit starts without anything else being
 asked, so a set plan states every one its artifacts ship:
@@ -3204,12 +3202,11 @@ a set that completed, and --shell runs $SHELL or /bin/sh instead. argv is passed
 through unchanged, with no hidden shell between the command and this one, and the
 command status is the status of the command: a killed command is 128 plus its
 signal, a trial that could not be built is 1, and a host that refuses the
-namespaces is 6. root is the only mode, since a kernel that has to boot and a
-kernel that has to be recovered are the QEMU gates under make check-qemu rather than
-a mode of this command, so another name for --mode is a usage error, and so are
---shell with a command and a -- with nothing after it. Those gates read the image's
-own boot-plan and libc-boot-state records, so ARCH and the image path are what a
-caller names, and a failed report names the markers the guest did not print.
+namespaces is 6. root is the only mode, so another name for --mode is a usage error, and
+so are --shell with a command and a -- with nothing after it. A kernel that has to boot
+and a kernel that has to be recovered are the gates of make check-qemu, which reads the
+image's own boot-plan and libc-boot-state records, takes ARCH and the image path, and
+names the markers the guest did not print.
 .PP
 A root trial is bubblewrap. The isolation is its flags, so what a trial promises is
 what this manager asks for rather than what a tool's documentation describes for a
