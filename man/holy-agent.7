@@ -1,0 +1,110 @@
+.TH HOLY-AGENT 7 "2026-10-03" "holy" "Holy"
+.SH NAME
+holy-agent \- the build, test and reporting contract for this repository
+.SH DESCRIPTION
+Holy is built, tested and reported with ordinary tools. This page names the targets a
+contributor runs, what each one proves, and what a result is allowed to say. A target that
+returns zero without doing its work is a defect, not a pass.
+.SS Source of truth
+The man pages and llm.txt are the normative documentation. llm.txt is generated from the
+man pages and from the upstream man pages of the packages an image actually installs, so a
+behaviour is documented in one place and the two files cannot drift. readme.md is a short
+entry point: what the project is, how to build it, and where the man pages are.
+.PP
+docs/roadmap.md is the list of what is done and what is not. Its unchecked entries are
+open work, not aspiration, and an entry moves only when a test result is in hand.
+.SS Building
+.TP
+.B make
+Builds holypkg, holy-init, holyinstall and holygetiso with the ordinary CC, CPPFLAGS,
+CFLAGS, LDFLAGS and LDLIBS. make CC=tcc, make CC=gcc and make CC=clang are all supported
+builds, and each is expected to succeed.
+.TP
+.B make static STATIC_DEPS=PREFIX
+Rebuilds the four binaries statically against the musl dependency prefix, which is where
+the official binaries come from.
+.TP
+.B make bootstrap-linux VERSION=7.2.7 OUTPUT=out/linux-i686 [ARCH=i686]
+Builds the kernel an image boots, from the pinned tarball in profiles/linux-sources, the
+distribution defconfig that ARCH names and the recorded compiler. Every driver the profile
+needs is built in, so an image carries no module tree. The tool records the config, the
+tarball digest and the compiler, and refuses a kernel whose boot header names a machine
+other than the one asked for.
+.TP
+.B make bootstrap-image ARCH=i686 KERNEL_IMAGE=... KERNEL_VERSION=... OUTPUT=...
+Builds the target root, plans and applies one reviewed set, builds the initramfs, writes
+the Limine configuration, produces the ISO and runs the boot test. GLIBC_CFLAGS and
+MUSL_CFLAGS tell a host compiler which machine the probes it links for the image have to
+produce, and each probe is read back as an ELF and refused when its machine is not the
+image architecture.
+.TP
+.B make llm.txt
+Regenerates llm.txt from the man pages. A man page edited without this target is a defect,
+and tests/llm-check.sh fails the run.
+.SS Tests
+.TP
+.B make check
+The fixture suite. It needs no root and no network, and it is expected to pass.
+.TP
+.B make check-fixtures
+The same suite, named for what it is.
+.TP
+.B make check-root
+The root-touching fixtures, which need the caller's own privileges and write only inside a
+disposable directory.
+.TP
+.B make check-qemu ARCH=x86_64
+Boots the image that build produced, through BIOS and UEFI under TCG. ARCH=i686 boots the
+32-bit target, where Limine carries BIOS only. The runner accepts a raw or qcow2 disk,
+copies it to a read-only base and boots a separate overlay, gives every guest stage its own
+deadline, and records the report as holy-qemu-report-2. A guest stage that never started is
+reported apart from one that fell behind.
+.TP
+.B make check-install
+The installer fixtures: plans, applies, the text menu, disk layouts, encryption and source
+staging.
+.TP
+.B make check-hardware
+The host graphics gate: a nouveau-bound NVIDIA GPU, a Mesa NVK Vulkan device, and an
+accelerated OpenGL context that renders measured frames. A host without those returns
+missing-requirement, never pass.
+.TP
+.B make check-matrix [ONLY=name,...] [REQUIRE=1]
+Runs the compiler, SDK, language, network, system, GUI, graphics, gaming, workstation and
+foreign source cases. It writes holy-matrix-report-1 to out/matrix.json: one row per case
+with its argv, elapsed seconds, log path, the pinned artifact it used and the license
+beside it, and one of four statuses.
+.PP
+A case is pass when it ran and proved its claim, fail when it ran and did not, missing when
+the host has no tool it names, and unpinned when it needs an artifact that
+profiles/matrix-sources carries no digest for. missing and unpinned are separate, because a
+tool nobody installed and an artifact nobody wrote a digest down are different gaps. Neither
+turns the run green; REQUIRE=1 makes either exit 6. A case whose remaining checks need a
+tool the host lacks names that tool in its own row rather than passing quietly.
+.SH WHAT A REPORT MAY CLAIM
+A tool version proves the tool is present. It does not prove a library loads, a native
+module resolves, a bootloader can read a filesystem, or a kernel can reach its root device.
+Each of those is a separate case with its own evidence, and the report states which one ran.
+.PP
+Unpacking a kernel is not evidence that the kernel boots. The two are recorded as separate
+results, and a boot that is not run is written as not-tested rather than inferred.
+.PP
+A download is not provenance. An artifact a case uses carries the digest a reviewer read at
+its URL and the license beside it, and a URL that serves different bytes is a failure
+rather than a newer version.
+.PP
+A green check suite says the fixtures passed. It says nothing about a case the suite does
+not contain, which is why the roadmap lists the ones it does not.
+.SH SCOPE
+Read-only operations do not need root. A root phase may run hooks the user reviewed; that is
+not a reason to run a compiler or a recipe evaluator as host root by default. Subprocesses
+are launched through argv and never through a shell string, and sizes are checked before
+an allocation or a copy.
+.SH SEE ALSO
+.BR holypkg (8),
+.BR holyinstall (8),
+.BR holygetiso (8),
+.BR holy.conf (5),
+.BR holy-recipe (5),
+.BR holy-image (7),
+.BR holy-init (8)

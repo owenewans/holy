@@ -1,3 +1,133 @@
+holy-agent.7 source=holy version=development sha256=2cc3583b81bdc588bbaa83a953342e46c15079a0f19fd30fd089f1508e57e625
+HOLY-AGENT(7)			      Holy			   HOLY-AGENT(7)
+
+NAME
+     holy-agent - the build, test and reporting contract for this repository
+
+DESCRIPTION
+     Holy is built, tested and reported with ordinary tools. This page names the
+     targets  a contributor runs, what each one proves, and what a result is al-
+     lowed to say. A target that returns zero without doing its work  is  a  de-
+     fect, not a pass.
+
+   Source of truth
+     The  man pages and llm.txt are the normative documentation. llm.txt is gen-
+     erated from the man pages and from the upstream man pages of  the	packages
+     an	 image	actually installs, so a behaviour is documented in one place and
+     the two files cannot drift. readme.md is a	 short	entry  point:  what  the
+     project is, how to build it, and where the man pages are.
+
+     docs/roadmap.md  is the list of what is done and what is not. Its unchecked
+     entries are open work, not aspiration, and an entry moves only when a  test
+     result is in hand.
+
+   Building
+     make   Builds holypkg, holy-init, holyinstall and holygetiso with the ordi-
+	    nary  CC,  CPPFLAGS,  CFLAGS,  LDFLAGS and LDLIBS. make CC=tcc, make
+	    CC=gcc and make CC=clang are all supported builds, and each	 is  ex-
+	    pected to succeed.
+
+     make static STATIC_DEPS=PREFIX
+	    Rebuilds  the  four	 binaries statically against the musl dependency
+	    prefix, which is where the official binaries come from.
+
+     make bootstrap-linux VERSION=7.2.7 OUTPUT=out/linux-i686 [ARCH=i686]
+	    Builds the kernel an image boots, from the pinned  tarball	in  pro-
+	    files/linux-sources,  the distribution defconfig that ARCH names and
+	    the recorded compiler. Every driver the profile needs is  built  in,
+	    so an image carries no module tree. The tool records the config, the
+	    tarball  digest  and  the  compiler, and refuses a kernel whose boot
+	    header names a machine other than the one asked for.
+
+     make bootstrap-image ARCH=i686 KERNEL_IMAGE=... KERNEL_VERSION=... OUT-
+     PUT=...
+	    Builds the target root, plans and applies one reviewed  set,  builds
+	    the initramfs, writes the Limine configuration, produces the ISO and
+	    runs  the  boot  test. GLIBC_CFLAGS and MUSL_CFLAGS tell a host com-
+	    piler which machine the probes it links for the image have	to  pro-
+	    duce, and each probe is read back as an ELF and refused when its ma-
+	    chine is not the image architecture.
+
+     make llm.txt
+	    Regenerates	 llm.txt  from	the man pages. A man page edited without
+	    this target is a defect, and tests/llm-check.sh fails the run.
+
+   Tests
+     make check
+	    The fixture suite. It needs no root and no network, and  it	 is  ex-
+	    pected to pass.
+
+     make check-fixtures
+	    The same suite, named for what it is.
+
+     make check-root
+	    The	 root-touching	fixtures, which need the caller's own privileges
+	    and write only inside a disposable directory.
+
+     make check-qemu ARCH=x86_64
+	    Boots the image that build produced, through  BIOS	and  UEFI  under
+	    TCG.  ARCH=i686  boots  the 32-bit target, where Limine carries BIOS
+	    only. The runner accepts a raw or qcow2 disk, copies it to	a  read-
+	    only  base and boots a separate overlay, gives every guest stage its
+	    own deadline, and records the report as holy-qemu-report-2. A  guest
+	    stage  that	 never	started is reported apart from one that fell be-
+	    hind.
+
+     make check-install
+	    The installer fixtures: plans, applies, the text menu, disk layouts,
+	    encryption and source staging.
+
+     make check-hardware
+	    The host graphics gate: a  nouveau-bound  NVIDIA  GPU,  a  Mesa  NVK
+	    Vulkan  device,  and an accelerated OpenGL context that renders mea-
+	    sured frames. A  host  without  those  returns  missing-requirement,
+	    never pass.
+
+     make check-matrix [ONLY=name,...] [REQUIRE=1]
+	    Runs  the  compiler,  SDK, language, network, system, GUI, graphics,
+	    gaming, workstation and foreign source cases. It writes holy-matrix-
+	    report-1 to out/matrix.json: one row per case with its argv, elapsed
+	    seconds, log path, the pinned artifact it used and the  license  be-
+	    side it, and one of four statuses.
+
+     A	case  is pass when it ran and proved its claim, fail when it ran and did
+     not, missing when the host has no tool it names, and unpinned when it needs
+     an artifact that profiles/matrix-sources carries no digest for. missing and
+     unpinned are separate, because a tool nobody installed and an artifact  no-
+     body  wrote  a digest down are different gaps. Neither turns the run green;
+     REQUIRE=1 makes either exit 6. A case whose remaining checks  need	 a  tool
+     the host lacks names that tool in its own row rather than passing quietly.
+
+WHAT A REPORT MAY CLAIM
+     A	tool  version  proves  the  tool is present. It does not prove a library
+     loads, a native module resolves, a bootloader can read a filesystem,  or  a
+     kernel  can  reach	 its root device.  Each of those is a separate case with
+     its own evidence, and the report states which one ran.
+
+     Unpacking a kernel is not evidence that  the  kernel  boots.  The	two  are
+     recorded as separate results, and a boot that is not run is written as not-
+     tested rather than inferred.
+
+     A	download is not provenance. An artifact a case uses carries the digest a
+     reviewer read at its URL and the license beside it, and a URL  that  serves
+     different bytes is a failure rather than a newer version.
+
+     A	green check suite says the fixtures passed. It says nothing about a case
+     the suite does not contain, which is why the roadmap lists the ones it does
+     not.
+
+SCOPE
+     Read-only operations do not need root. A root phase may run hooks the  user
+     reviewed;	that  is not a reason to run a compiler or a recipe evaluator as
+     host root by default. Subprocesses are  launched  through	argv  and  never
+     through  a	 shell	string,	 and sizes are checked before an allocation or a
+     copy.
+
+SEE ALSO
+     holypkg(8), holyinstall(8),  holygetiso(8),  holy.conf(5),	 holy-recipe(5),
+     holy-image(7), holy-init(8)
+
+holy				   2026-10-03			   HOLY-AGENT(7)
 holy.conf.5 source=holy version=development sha256=482b9a6d3e532c5e2b29364446dfacd339da790cc6c6d7918deca261f11cf75d
 HOLY.CONF(5)			  File Formats			    HOLY.CONF(5)
 

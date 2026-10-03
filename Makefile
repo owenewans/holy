@@ -591,6 +591,17 @@ check-root-trial:
 check-qemu-gate:
 	sh tests/qemu-gate.sh
 
+# the compiler, SDK, language, network, system, graphics, gaming and workstation cases,
+# each against a named tool or a pinned artifact. a case this host cannot run is reported
+# as missing or unpinned and never turns the run green; REQUIRE makes that an error.
+.PHONY: check-matrix
+check-matrix:
+	@command -v python3 >/dev/null || { echo 'python3 required for the matrix cases' >&2; exit 6; }
+	MUSL_CC="$(or $(MUSL_CC),$(firstword $(wildcard out/static-deps/bin/holy-musl-gcc out/static-deps-i686/bin/holy-musl-gcc)))" \
+	python3 tests/matrix.py --work "$(or $(WORK),out/matrix)" \
+		--output "$(or $(REPORT),out/matrix.json)" $(if $(ONLY),--only $(ONLY),) \
+		$(if $(REQUIRE),--require,)
+
 check-hardware:
 	HARDWARE_SCOPE="$(or $(HARDWARE_SCOPE),holy)" REPORT="$(or $(REPORT),out/hardware.json)" python3 tests/hardware.py
 

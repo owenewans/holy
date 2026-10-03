@@ -16,4 +16,25 @@ run glibc, musl, multiple libcs, or no libc
 
 </div>
 
+## build
+
+```sh
+make                    # holypkg, holy-init, holyinstall, holygetiso
+make CC=tcc             # also gcc and clang
+make check              # the fixture suite, no root, no network
+make check-matrix       # the compiler, language, network and graphics cases
+make llm.txt            # regenerate llm.txt from the man pages
+```
+
+## documentation
+
+man pages are normative: `man/holypkg.8` the package manager, `man/holyinstall.8` the
+installer, `man/holy-recipe.5` recipes and foreign sources, `man/holy.conf.5` the config,
+`man/holygetiso.8` the image builder, `man/holy-image.7` the image layout,
+`man/holy-agent.7` the build and test contract.
+
+`llm.txt` in this repository carries all of it in one file. An image rebuilds it from the
+man pages of the packages it actually installed. `docs/roadmap.md` lists what is done and
+what is not.
+
 <!-- contact@holypkg.eu -->

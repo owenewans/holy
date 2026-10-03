@@ -1,0 +1,10 @@
+# artifacts a matrix case installs from the network, one line each:
+#   SHA256  FILE  URL  LICENSE
+# the digest is what a reviewer read at that URL, and the report prints it beside every
+# case that used the artifact. a case whose artifact has no line here is an unpinned
+# requirement with the URL named, never a silent pass, so nothing is downloaded during a
+# report unless a case asks for it and no case depends on a digest nobody wrote down.
+#
+57c6bee2e30bbbee5bd51d6cc343eb992e174b56a2a1d0eab7a7510771c20ea2 node-v24.21.0-headers.tar.gz https://nodejs.org/download/release/v24.21.0/node-v24.21.0-headers.tar.gz MIT
+7dc451968f426e846c04430f7d6d45f1402db8eed1afa902f0631c03f19bc22e rizin-0.8.1.tar.gz https://github.com/rizinorg/rizin/archive/refs/tags/v0.8.1.tar.gz BSD-3-Clause
+aeb82382cf3e885c0b0165a64cff10c423abc118a7e7224981f9340ff509c6a8 llama.cpp-b6100.tar.gz https://github.com/ggml-org/llama.cpp/archive/refs/tags/b6100.tar.gz MIT

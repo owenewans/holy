@@ -1923,3 +1923,30 @@
   plan format 8 and preview. i686 kernel modules and i686 UEFI remain separate.
 - [ ] Run compiler/SDK, language, GUI, graphics, gaming, workstation and foreign
   source cases with pinned artifacts, logs, elapsed time and explicit coverage.
+  `tests/matrix.py` runs them and `make check-matrix` writes
+  `holy-matrix-report-1`: one row per case with its argv, elapsed seconds, log
+  path, the pinned artifact it used with its license, and one of pass, fail,
+  missing or unpinned. A missing tool and an artifact with no digest in
+  `profiles/matrix-sources` are separate statuses, and neither turns the run
+  green, so the report says what the host could not prove. `REQUIRE=1` turns
+  either into exit 6. On this host 33 cases pass: the C headers, crt objects,
+  libc and linker under TCC, GCC and Clang; a C program linked against the
+  project's own musl toolchain, which runs under the i386 loader; GCC and
+  Clang C++ with exceptions, four threads and a shared library; a Cargo bin, a
+  cdylib and `cargo test`; pure Go and cgo with an assigned C compiler; make,
+  CMake and Meson with Ninja; GDB and LLDB stopping in `level_two` with a
+  stack trace; Python importing ssl, sqlite3 and ctypes, a venv interpreter and
+  a C extension it loaded; Node running and a native addon built against the
+  pinned headers, so the ABI is named; git, curl and openssl over a fixture CA
+  with a refused bad CA; a name resolved through the libc; a locale archive
+  loaded, its codeset read and a collation taken from it; an NSS passwd and
+  group answer with `getgrouplist`; a PAM handle opened against a real service;
+  a headless Firefox screenshot and a window that stayed up on the session
+  display; Vulkan under software and hardware rendering and an accelerated
+  OpenGL context; and rizin 0.8.1 fetched at the digest its pin records, built
+  from that source with Meson and Ninja, then opened headlessly to list a
+  fixture function and its .text section. Two cases are missing and three are
+  unpinned: Wine and an installed rizin are absent on this host, and Wine, Zed
+  and the llama.cpp model have no digest written down. A case whose window,
+  input and font checks need a tool the host lacks says so in its own row
+  rather than passing.
