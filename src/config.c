@@ -257,7 +257,7 @@ static int key_arity(const char *section, const char *key)
             !strcmp(key, "serial") || !strcmp(key, "rdev") ||
             !strcmp(key, "sfdisk-sha256") || !strcmp(key, "mkfs-fat-sha256") ||
             !strcmp(key, "mke2fs-sha256") || !strcmp(key, "limine-sha256") ||
-            !strcmp(key, "cryptsetup-sha256") ||
+            !strcmp(key, "cryptsetup-sha256") || !strcmp(key, "mkswap-sha256") ||
             (!strncmp(key, "mkfs-", 5) && strlen(key) > 12 &&
              !strcmp(key + strlen(key) - 7, "-sha256"))) return 1;
     } else if (!strcmp(section, "disk")) {

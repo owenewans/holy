@@ -203,7 +203,8 @@ def main(binary):
                        "cryptsetup-sha256 " + "2" * 64 + "\n" if encryption else "")
                     + "sfdisk-sha256 " + "3" * 64 + "\n"
                     "mkfs-fat-sha256 " + "4" * 64 + "\nlimine-sha256 " + "5" * 64 + "\n"
-                    "mkfs-f2fs-sha256 " + "6" * 64 + "\n")
+                    + ("mkswap-sha256 " + "7" * 64 + "\n" if swap else "")
+                    + "mkfs-f2fs-sha256 " + "6" * 64 + "\n")
         with open(block_plan, "w") as stream:
             stream.write(block_document())
         shown = run(binary, "disk", "show", "--plan", block_plan)
@@ -211,7 +212,13 @@ def main(binary):
         assert f"root 530432+{block_root} f2fs label holyroot\n" in shown
         assert "label HOLYBOOT\nroot-label holyroot\n" in shown
         assert "mkfs-f2fs-sha256 " + "6" * 64 + "\n" in shown
+        assert "mkswap-sha256 " + "7" * 64 + "\n" in shown
         assert "cryptsetup-sha256" not in shown
+        # a swap area runs mkswap, so a plan that does not name its digest never named
+        # the tool the apply would run
+        with open(block_plan + "8", "w") as stream:
+            stream.write(block_document().replace("mkswap-sha256 " + "7" * 64 + "\n", ""))
+        run(binary, "disk", "show", "--plan", block_plan + "8", code=2)
         # a plan that dropped its swap line is not a shorter plan
         with open(block_plan + "2", "w") as stream:
             stream.write(block_document(swap=False))

@@ -71,7 +71,9 @@ struct disk_plan {
     int block;
     uintmax_t rdev;
     char serial[128];
-    char tools[5][65];
+    /* the partitioner, the boot filesystem, the root filesystem, the boot stage, the
+       swap formatter and the luks2 tool: a plan with a swap and a container runs all six */
+    char tools[6][65];
     size_t tool_count;
     const struct fs_profile *profile;
     char *key_file;   /* the luks2 key, read at apply and never recorded */
@@ -87,6 +89,20 @@ static const char *const block_tools[3] = {
 static const char *const block_tool_keys[3] = {
     "sfdisk-sha256", "mkfs-fat-sha256", "limine-sha256"
 };
+
+/* a plan with a swap area runs one more tool, and a review that does not see its digest
+   is not a review of what the apply will run */
+static const char *const swap_tool = "/usr/sbin/mkswap";
+static const char *const swap_tool_key = "mkswap-sha256";
+
+static const char *tool_key_at(const struct disk_plan *p, size_t i)
+{
+    if (i == 2) return p->profile->tool_key;
+    if (i == 3) return block_tool_keys[2];
+    if (i == 4 && p->swap_sectors) return swap_tool_key;
+    if (i == 5) return luks_tool_key;
+    return block_tool_keys[i];
+}
 
 /* the layout word names a profile and whether the root is a luks2 container. the image
    path formats one profile, since mkfs of a region needs the partition device */
@@ -349,8 +365,7 @@ static int write_plan(const char *path, const struct disk_plan *p)
             ok = fputs("encryption luks2\nvolume ", f) >= 0 && quote(f, p->volume) &&
                  fputs("\nkey-file ", f) >= 0 && quote(f, p->key_file) && fputc('\n', f) >= 0;
         for (i = 0; ok && i < p->tool_count; ++i)
-            ok = fprintf(f, "%s %s\n", i == 2 ? p->profile->tool_key :
-                            block_tool_keys[i > 2 ? i - 1 : i], p->tools[i]) >= 0;
+            ok = fprintf(f, "%s %s\n", tool_key_at(p, i), p->tools[i]) >= 0;
     }
     if (fflush(f) || fsync(fd)) ok = 0;
     if (fclose(f)) ok = 0;
@@ -361,19 +376,12 @@ static int write_plan(const char *path, const struct disk_plan *p)
 
 /* the recorded tool order is the partitioner, the boot filesystem, the root filesystem,
    the boot stage and the luks2 tool, so a plan names them in the order apply runs them */
-static const char *tool_key_at(const struct disk_plan *p, size_t i)
-{
-    if (i == 2) return p->profile->tool_key;
-    if (i == 3) return block_tool_keys[2];
-    if (i == 4) return luks_tool_key;
-    return block_tool_keys[i];
-}
-
 static const char *tool_at(const struct disk_plan *p, size_t i)
 {
     if (i == 2) return p->profile->tool;
     if (i == 3) return block_tools[2];
-    if (i == 4) return luks_tool;
+    if (i == 4 && p->swap_sectors) return swap_tool;
+    if (i == 5) return luks_tool;
     return block_tools[i];
 }
 
@@ -479,6 +487,9 @@ static int read_plan(const char *path, struct disk_plan *p)
                     }
                     p->tool_count = 5;
                 }
+                /* a swap area runs mkswap, so a plan with one names that tool's digest
+                   the same way it names the partitioner and the boot stage */
+                if (ok && p->swap_sectors) p->tool_count++;
                 if (ok && profile) p->profile = profile;
             }
         }
@@ -493,7 +504,7 @@ static int read_plan(const char *path, struct disk_plan *p)
         }
     }
     expected = (size_t)(p->block ? 15 : 8) + (p->boot_label[0] ? 2 : 0) +
-               (p->swap_sectors ? 1 : 0) +
+               (p->swap_sectors ? 2 : 0) +
                (p->block && !image_profile(p->profile) ? 1 : 0) + (p->volume ? 4 : 0);
     if (ok) ok = c.count == expected;
     if (ok) ok = p->size >= (1ULL << 30) && p->size % sector == 0 && p->swap_sectors < p->size / sector;
@@ -676,7 +687,7 @@ static int disk_plan(const char *config_path, const char *plan_path)
     }
     if (p.block) {
         size_t i;
-        p.tool_count = encrypted ? 5 : 4;
+        p.tool_count = (encrypted ? 5 : 4) + (p.swap_sectors ? 1 : 0);
         for (i = 0; i < p.tool_count; ++i)
             if (!tool_hash(tool_at(&p, i), p.tools[i])) {
                 fprintf(stderr, "holyinstall: missing tool %s\n", tool_at(&p, i));

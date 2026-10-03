@@ -1759,8 +1759,11 @@
   dirent.h and fcntl.h; a release that also wants `stx_atomic_write_unit` from
   `struct statx` is further out of reach. Swap needs util-linux's mkswap, which
   the pinned commit declares neither as a static program nor under
-  `--disable-all-programs`, and the plan does not yet hash it even though the
-  apply runs it.
+  `--disable-all-programs`, so the package still does not ship it. The plan did
+  not hash that tool even though the apply runs it; it does now, so a plan with a
+  swap area names `mkswap-sha256` beside the partitioner and the boot stage, and
+  a plan that carries a swap area without that digest is refused as invalid
+  rather than read as one running fewer tools.
   The disk plan reaches that tool for a btrfs layout on a block device: with the
   package's sfdisk, mkfs.fat, mke2fs and mkfs.btrfs installed where
   `src/disk.c` runs them, `holyinstall disk plan` hashes each tool and records

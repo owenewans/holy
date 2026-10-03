@@ -263,11 +263,14 @@ label is refused before a plan exists. Apply passes the ESP label to mkfs.fat
 and the root label to the mkfs of the chosen profile.
 .PP
 Each tool is checked before the plan is written: the partitioner, the boot
-filesystem, the mkfs of the chosen profile, the boot stage, and cryptsetup for
-a luks2 root, whose reported major version must be 2. Plan format 3 records
-the filesystem, any swap sectors, the encryption lines and the SHA-256 of
-every one of those tools. Plan format 4 adds the two labels. Apply rechecks
-each hash and refuses a changed tool, a changed device or an existing journal.
+filesystem, the mkfs of the chosen profile, the boot stage, mkswap when the
+plan names a swap area, and cryptsetup for a luks2 root, whose reported major
+version must be 2. Plan format 3 records the filesystem, any swap sectors, the
+encryption lines and the SHA-256 of every one of those tools. Plan format 4
+adds the two labels. Apply rechecks each hash and refuses a changed tool, a
+changed device or an existing journal. A plan with a swap area that does not
+name the mkswap digest is refused as an invalid plan rather than read as one
+that runs fewer tools.
 .PP
 Apply formats the root inside the mapper when the plan names one, so a luks2
 container never receives a raw mkfs, and closes the mapper once the
