@@ -23,6 +23,7 @@
 #include "../backends/deb-version.h"
 #include "../backends/apk-version.h"
 #include "../backends/xbps-version.h"
+#include "../backends/rpm-version.h"
 #include "change.h"
 #include "private.h"
 
@@ -1373,6 +1374,8 @@ static int slot_version_order(const char *family, const char *left, const char *
         return holy_apk_version_compare(left, right, order);
     if (family && !strcmp(family, "xbps"))
         return holy_xbps_version_compare(left, right, order);
+    if (family && !strcmp(family, "rpm"))
+        return holy_rpm_version_compare(left, right, order);
     if (family && *family && strcmp(family, "holy")) return 0;
     return holy_version_compare(left, right, order);
 }

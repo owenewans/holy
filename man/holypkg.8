@@ -850,10 +850,10 @@ version VERSION members N reason newest-in-family
 .RE
 .PP
 The members are one family because a name under two families, or under two
-architectures or libc runtimes, is the slot choice above and is still 3. An rpm
-catalog is not compared here, so a name one rpm source carries twice stays a
-choice. --arch and --libc narrow the candidates before the family is read, so a
-choice of slot and a choice of version compose. In JSON the choice is one
+architectures or libc runtimes, is the slot choice above and is still 3. The
+comparison is the family's own, for pacman, deb, apk, xbps, holy and rpm alike.
+--arch and --libc narrow the candidates before the family is read, so a choice of
+slot and a choice of version compose. In JSON the choice is one
 holy-local-solve-1 family-choice event whose consumer and requirement are null,
 since the catalog resolved a name rather than a requirement, and which carries
 the provider, the slot, the family, the version and the member count.
@@ -1445,11 +1445,10 @@ family pacman version 2 release 1 reason newest-in-family
 .fi
 .RE
 .PP
-The versions are compared with the family's own comparator, and the choice does not
-cross a family, so two families of one slot stay a decision because the data does not
-order them. An rpm catalog is not compared, so a name one rpm source carries twice
-stays a choice there too. Candidates that occupy different slots are different things and stay a
-decision too. An explicit --choose is the operator's and is applied first, so the
+The versions are compared with the family's own comparator, for pacman, deb, apk,
+xbps, holy and rpm alike, and the choice does not cross a family, so two families
+of one slot stay a decision because the data does not order them. Candidates that
+occupy different slots are different things and stay a decision too. An explicit --choose is the operator's and is applied first, so the
 family pass never overrides it and a requirement it already filled is not reported
 again. JSON adds one holy-local-solve-1 family-choice event carrying the consumer, the
 requirement id, the provider, the slot, the family, the version and the reason.
@@ -2099,11 +2098,12 @@ available SHA256 version VERSION
 The digest is the newest member the catalog publishes for that slot, so the family
 is read against the index the source publishes rather than against the installed
 set. The comparison uses the version comparator of the family the installed slot
-declares, since that is the order its versions are written in: the ordinary
-comparator refuses a version that carries an epoch and reads a deb tilde the other
-way, so a pacman or deb family would otherwise report no newer member where one
-is published. A slot whose package declares no family falls back to the ordinary
-comparator, which is the only order its version has. A source with no bound
+declares, for pacman, deb, apk, xbps, holy and rpm alike, since that is the order
+its versions are written in: the ordinary comparator refuses a version that
+carries an epoch and reads a deb tilde the other way, so a pacman or deb family
+would otherwise report no newer member where one is published. A slot whose
+package declares no family falls back to the ordinary comparator, which is the
+only order its version has. A source with no bound
 catalog, a slot delivered locally, and a catalog that offers nothing newer all
 report a dash rather than a guess. A local slot reports the same line whether or
 not a source is named.

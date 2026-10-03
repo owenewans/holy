@@ -462,10 +462,11 @@
   its versions are written in: the ordinary comparator refuses a version carrying
   an epoch and reads a deb tilde the other way, so a pacman family reported no
   newer member where the catalog published one, and a deb family would name the
-  wrong newest. A slot whose package declares no family falls back to the
-  ordinary comparator, which is the only order its version has. The installed
-  side of the report uses the same comparator for its newest member, though a
-  root holds one active version per slot, so its family count is one. Slot selection inside a resolver
+  wrong newest. The chain covers pacman, deb, apk, xbps, holy and rpm. A slot
+  whose package declares no family falls back to the ordinary comparator, which is
+  the only order its version has. The installed side of the report uses the same
+  comparator for its newest member, though a root holds one active version per
+  slot, so its family count is one. Slot selection inside a resolver
   choice now names every candidate: `choice ID consumer=DIGEST candidates=N` is
   followed by one `candidate SHA256 slot NAME OS ARCH LIBC version V release R`
   per artifact that could fill the requirement, so the decision states which slot
@@ -513,9 +514,10 @@
   holy-local-solve-1 family-choice event whose consumer and requirement are null. A
   member of another family under one name, or another architecture or libc runtime, is
   the slot choice and is still 3, and `--arch`/`--libc` narrow the candidates before
-  the family is read so a slot choice and a version choice compose. An rpm catalog is
-  not compared, since the rpm adapter is not linked into the catalog path, so a name
-  one rpm source carries twice stays a choice there.
+  the family is read so a slot choice and a version choice compose. The chain covers
+  pacman, deb, apk, xbps, holy and rpm: `repo.c` left rpm out of both
+  `indexed_version_matches` and the family comparator, so an rpm-backed catalog
+  satisfied no version constraint and a name it carried twice stayed a choice.
 - [ ] Install executable and shared-library payloads with ABI-aware linking,
   private providers, interpreter handling and explicit conflict decisions. The
   private placement of a colliding file, the patchelf rewrite of a consumer's

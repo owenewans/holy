@@ -155,10 +155,11 @@ expect 0 "$bin" db check --all --root "$catalog_root"
 # refuses such a version, so a slot report has to compare with the family it declares
 epoch_version() {
     version=$1
+    epoch_family=${2:-pacman}
     rm -rf "$tree"
     mkdir -p "$tree/HOLY" "$tree/DATA/usr/share"
-    printf 'format holy-package-1\nname epoched\nversion %s\nrelease 1\nos linux\narch noarch\nlibc nolibc\nx-version-family pacman\n' \
-        "$version" > "$tree/HOLY/meta"
+    printf 'format holy-package-1\nname epoched\nversion %s\nrelease 1\nos linux\narch noarch\nlibc nolibc\nx-version-family %s\n' \
+        "$version" "$epoch_family" > "$tree/HOLY/meta"
     for field in deps provides hooks origin transform; do : > "$tree/HOLY/$field"; done
     printf 'epoched %s\n' "$version" > "$tree/DATA/usr/share/epoched"
     "$bin" manifest generate "$tree" --output "$tmp/files" > "$tmp/out"
@@ -201,7 +202,42 @@ expect 0 "$bin" db slots --root "$epoch_root" --source "$epoch_source"
 grep -qx "slot epoched linux noarch nolibc source $epoch_source occupied $epoch_one version 1:2.0-1 versions 1 available $epoch_two version 1:2.0-3" "$tmp/out"
 expect 0 "$bin" db slots --root "$epoch_root" --source "$epoch_source" --json
 grep -q -F "\"available-version\":\"1:2.0-3\"" "$tmp/out"
-expect 0 "$bin" db check --all --root "$epoch_root"
+# a catalog offer under another family is a different thing rather than a newer member,
+# since the family comes from the installed slot, so an rpm offer names nothing for the
+# pacman slot above
+epoch_index=$(epoch_version 4 rpm)
+test "${#epoch_index}" -eq 64
+epoch_four=$(sha256sum "$epoch_repo/epoched.holy" | cut -d ' ' -f 1)
+test "$epoch_four" != "$epoch_two"
+printf 'format holy-mirror-1\nurl "https://fixture.example/epoch/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$epoch_index" "$epoch_source" > "$epoch_repo/mirror-origin"
+expect 0 "$bin" source catalog bind epoched "$epoch_repo" --root "$epoch_root" > "$tmp/out"
+expect 0 "$bin" db slots --root "$epoch_root" --source "$epoch_source"
+grep -qx "slot epoched linux noarch nolibc source $epoch_source occupied $epoch_one version 1:2.0-1 versions 1 available - version -" "$tmp/out"
+# a root whose slot declares the rpm family reads the catalog with the rpm comparator
+rpm_root="$tmp/epoch-rpm-root"
+mkdir "$rpm_root"
+"$bin" db init --root "$rpm_root" > "$tmp/out"
+"$bin" source plan --config "$tmp/epoch.conf" --root "$rpm_root" > "$tmp/rpm.plan" 2> "$tmp/rpm.err"
+rpm_plan=$(sha256sum "$tmp/rpm.plan" | cut -d ' ' -f 1)
+rpm_source=$(sed -n 's/^add-source \([0-9a-f]*\) "epoched"$/\1/p' "$tmp/rpm.err")
+test "${#rpm_source}" -eq 64
+"$bin" source apply "$tmp/rpm.plan" --sha256 "$rpm_plan" --root "$rpm_root" > "$tmp/out"
+expect 0 "$bin" source catalog bind epoched "$epoch_repo" --root "$rpm_root" > "$tmp/out"
+expect 0 "$bin" add epoched:epoched --root "$rpm_root" --yes > "$tmp/out"
+rpm_four=$(sha256sum "$epoch_repo/epoched.holy" | cut -d ' ' -f 1)
+expect 0 "$bin" db slots --root "$rpm_root" --source "$rpm_source"
+grep -qx "slot epoched linux noarch nolibc source $rpm_source occupied $rpm_four version 4 versions 1 available - version -" "$tmp/out"
+epoch_index=$(epoch_version 5 rpm)
+test "${#epoch_index}" -eq 64
+printf 'format holy-mirror-1\nurl "https://fixture.example/epoch/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$epoch_index" "$rpm_source" > "$epoch_repo/mirror-origin"
+expect 0 "$bin" source catalog bind epoched "$epoch_repo" --root "$rpm_root" > "$tmp/out"
+rpm_five=$(sha256sum "$epoch_repo/epoched.holy" | cut -d ' ' -f 1)
+test "$rpm_five" != "$rpm_four"
+expect 0 "$bin" db slots --root "$rpm_root" --source "$rpm_source"
+grep -qx "slot epoched linux noarch nolibc source $rpm_source occupied $rpm_four version 4 versions 1 available $rpm_five version 5" "$tmp/out"
+expect 0 "$bin" db check --all --root "$rpm_root"
 
 # a root with no database is reported as unavailable, the same as db status
 if "$bin" db slots --root "$tmp/absent" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi

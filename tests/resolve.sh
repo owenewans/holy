@@ -476,4 +476,16 @@ cp "$tmp/root-4-rpm.holy" "$tmp/repo-family/"
 "$bin" repo seal "$tmp/repo-family" > "$tmp/out"
 if "$bin" repo solve "$tmp/repo-family" root --json > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 3; fi
 grep -Fqx '{"schema":"holy-local-solve-1","type":"error","code":"decision-required"}' "$tmp/out"
+# an rpm catalog is compared with the rpm comparator too, so a name it carries twice
+# under one family is one thing at two versions there as well
+build_family root 1 rpm
+build_family root 3 rpm
+rm -rf "$tmp/repo-rpm"
+mkdir "$tmp/repo-rpm"
+cp "$tmp/root-1-rpm.holy" "$tmp/root-3-rpm.holy" "$tmp/repo-rpm/"
+"$bin" repo index "$tmp/repo-rpm" > "$tmp/out"
+"$bin" repo seal "$tmp/repo-rpm" > "$tmp/out"
+"$bin" repo solve "$tmp/repo-rpm" root --json > "$tmp/out" 2> "$tmp/err" || true
+grep -Fq "\"type\":\"family-choice\"" "$tmp/out"
+grep -Fq "\"family\":\"rpm\",\"version\":\"3\",\"members\":2,\"reason\":\"newest-in-family\"" "$tmp/out"
 printf 'local resolver fixtures passed\n'

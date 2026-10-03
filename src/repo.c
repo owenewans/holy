@@ -13,6 +13,7 @@
 #include "verify.h"
 #include "sign.h"
 #include "version.h"
+#include "../backends/rpm-version.h"
 #include "../backends/pacman.h"
 #include "../backends/deb-version.h"
 #include "../backends/apk-version.h"
@@ -877,8 +878,7 @@ static int indexed_file(const struct object *object, const char *path)
 }
 
 /* the family's own comparator, since a catalog orders its versions with the same rules
-   a requirement does. an rpm catalog is not compared here: the resolver settles an rpm
-   family through the rpm adapter and a name carried twice by one is a choice here too. */
+   a requirement does */
 static int family_compare(const char *family, const char *left, const char *right, int *order)
 {
     if (!family) return 0;
@@ -886,12 +886,21 @@ static int family_compare(const char *family, const char *left, const char *righ
            !strcmp(family, "deb") ? holy_deb_version_compare(left, right, order) :
            !strcmp(family, "holy") ? holy_version_compare(left, right, order) :
            !strcmp(family, "apk") ? holy_apk_version_compare(left, right, order) :
-           !strcmp(family, "xbps") ? holy_xbps_version_compare(left, right, order) : 0;
+           !strcmp(family, "xbps") ? holy_xbps_version_compare(left, right, order) :
+           !strcmp(family, "rpm") ? holy_rpm_version_compare(left, right, order) : 0;
 }
 
 /* the newest member of the family a name names, or count when the name is a choice:
    artifacts that differ in os, architecture, libc or version family are different
    slots, and nothing in the catalog says which one the name meant */
+static int same_family(const struct holy_package_identity *a,
+                       const struct holy_package_identity *b)
+{
+    return (!a->version_family && !b->version_family) ||
+           (a->version_family && b->version_family &&
+            !strcmp(a->version_family, b->version_family));
+}
+
 static size_t family_root(const struct object *objects, size_t count, const char *name,
                           const char *arch, const char *libc)
 {
@@ -906,7 +915,11 @@ static size_t family_root(const struct object *objects, size_t count, const char
             ++members;
             continue;
         }
+        /* the members have to be one slot under one family: comparing a candidate with
+           its own comparator against a member of another family would order two
+           different things and call it a family */
         if (!same_slot(&objects[best].identity, &objects[i].identity) ||
+            !same_family(&objects[best].identity, &objects[i].identity) ||
             !family_compare(objects[i].identity.version_family,
                             objects[i].identity.version, objects[best].identity.version,
                             &order)) return count;
@@ -968,7 +981,9 @@ static int indexed_version_matches(const struct object *object,
         !strcmp(family, "apk") ?
         holy_apk_version_compare(actual, version, &order) :
         !strcmp(family, "xbps") ?
-        holy_xbps_version_compare(actual, version, &order) : 0;
+        holy_xbps_version_compare(actual, version, &order) :
+        !strcmp(family, "rpm") ?
+        holy_rpm_version_compare(actual, version, &order) : 0;
     free(joined);
     if (!compared) return 0;
     return !strcmp(relation, "eq") ? order == 0 :
