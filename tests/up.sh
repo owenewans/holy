@@ -334,6 +334,26 @@ grep -qx 'signature unsigned' "$tmp/group.plan"
 grep -qx 'replacement 2' "$tmp/group.plan"
 grep -qx 'format holy-update-plan-2' "$tmp/group.plan"
 grep -qxF '[update]' "$tmp/group.plan"
+# --all reaches the same two slots, and a --choose naming one of them settles that slot
+# while the other keeps the version its family orders
+expect 0 "$bin" up --all --prepare --choose "fixture:update-fixture=$newer" \
+    --output "$tmp/family-all.plan" --root "$root"
+# --all has no caller order, so its slots come in the walk's order and the documents are
+# the same set rather than the same bytes
+grep -qx 'replacement 2' "$tmp/family-all.plan"
+for pair in "$third $newer" "$other_old $other_new"; do
+    grep -qx "old ${pair% *}" "$tmp/family-all.plan"
+    grep -qx "new ${pair#* }" "$tmp/family-all.plan"
+done
+grep -qx "prepared $(sha256sum "$tmp/family-all.plan" | cut -d ' ' -f 1) $tmp/family-all.plan slots 2" "$tmp/out"
+# a path a plan already occupies is refused rather than overwritten, and the refusal says
+# which of the two it is instead of leaving status 1 to be guessed at
+expect 1 "$bin" up --all --prepare --choose "fixture:update-fixture=$newer" \
+    --output "$tmp/family-all.plan" --root "$root"
+grep -qx 'holypkg: plan: File exists' "$tmp/err"
+expect 1 "$bin" up --all --prepare --choose "fixture:update-fixture=$newer" \
+    --output "$tmp/no-such-dir/plan" --root "$root"
+grep -qx 'holypkg: plan directory: No such file or directory' "$tmp/err"
 expect 3 "$bin" apply "$tmp/group.plan" --sha256 "$(printf '%064d' 0)" --root "$root"
 grep -qx 'version 3' "$root/usr/share/update-fixture"
 expect 0 "$bin" apply "$tmp/group.plan" --sha256 "$group" --root "$root"

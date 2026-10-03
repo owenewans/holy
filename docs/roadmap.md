@@ -1476,6 +1476,10 @@
   that state again against the same catalog. An unsigned generation is the
   decision the reviewed document is, since its digest is the approval, while
   `sync`, which has no plan document, asks for --accept-unsigned as before.
+  The path --output names must not exist, and a refusal to create it is 1 with
+  the reason on standard error: a path a review already holds and a directory
+  that cannot be opened want different next steps, so the status alone left the
+  operator to guess which one had happened.
   Root/VM trials stay open.
   The existing run launcher now derives private PATH directories from the
   selected installed manifest, so a public executable can invoke its own

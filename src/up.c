@@ -123,16 +123,19 @@ static int write_plan(const char *path, const char *data, size_t size)
         else *slash = 0;
     } else { free(parent); parent = strdup("."); if (!parent) return 0; }
     dir = open(parent, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    if (dir < 0) goto done;
+    if (dir < 0) { perror("holypkg: plan directory"); goto done; }
+    /* a plan a review already holds is never overwritten, so the refusal has to name
+       itself: status 1 alone leaves a caller with no way to tell a path that is taken
+       from a directory it cannot write, and those want different next steps */
     fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
-    if (fd < 0) goto done;
+    if (fd < 0) { perror("holypkg: plan"); goto done; }
     while (used < size) {
         ssize_t n = write(fd, data + used, size - used);
         if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) goto done;
+        if (n <= 0) { perror("holypkg: plan"); goto done; }
         used += (size_t)n;
     }
-    if (fsync(fd) || fsync(dir)) goto done;
+    if (fsync(fd) || fsync(dir)) { perror("holypkg: plan"); goto done; }
     ok = 1;
 done:
     if (fd >= 0) { close(fd); if (!ok) unlink(path); }

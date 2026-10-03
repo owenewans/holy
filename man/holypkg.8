@@ -1621,7 +1621,10 @@ locally has no source and names nothing, and --arch or --libc excludes the
 slots they name. Naming a reference as well is 2, since the narrower list
 would be silently dropped.
 .PP
-Preparation writes a new mode-0600 plan file. It names every reference it
+Preparation writes a new mode-0600 plan file. The path --output names must
+not exist, since a plan under review is never overwritten; a path already
+taken and a directory that cannot be opened are both 1, and the diagnostic
+names which of them happened. It names every reference it
 resolved as a slot block:
 
 slot INDEX
