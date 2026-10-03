@@ -213,7 +213,11 @@ static void report_unknowns(const char *body, size_t length, struct recipe_note 
         { "update-desktop-database", "the desktop cache helper is not carried" },
         { "update-mime-database", "the mime cache helper is not carried" },
         { "gtk-update-icon-cache", "the icon cache helper is not carried" },
-        { "fc-cache", "the font cache helper is not carried" }
+        { "fc-cache", "the font cache helper is not carried" },
+        /* the SlackBuild tool reads a %if block before the script runs and chooses the
+           lines inside it by architecture and by tag, which this converter does not
+           evaluate, so both arms of the block would otherwise be carried at once */
+        { "%if", "the script carries a %if block, which the converter does not evaluate" }
     };
     size_t index;
     for (index = 0; index < sizeof unresolved / sizeof *unresolved; ++index)

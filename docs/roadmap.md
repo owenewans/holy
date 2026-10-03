@@ -1308,7 +1308,13 @@
   beside the recipe, declared as a source and installed into the payload, and a
   Holy hook runs with ACTION unset, so the pre and post bodies arrive in the
   order Pacstall calls them. A conditional block and an assignment inside one
-  are reported, since the converter evaluates neither. A fixture converts a
+  are reported, since the converter evaluates neither. The same rule now closes the
+  two families that had a conditional shape nothing reported: a SlackBuild `%if`
+  block, which the SlackBuild tool reads before the script runs and picks the lines
+  inside it by architecture and by tag, is reported with the helper environment, so
+  both arms are never carried at once, and a flatpak module that states only-arches
+  or skip-arches is reported for the reason the list is not an outcome: it is read
+  against the machine the manifest is built for. A fixture converts a
   pacscript that builds through the normal engine, one that is a split pkgbase,
   one with both hook groups, and one that carries every reported case; 910 of
   the 919 upstream pacscripts from pacstall-programs convert and every produced

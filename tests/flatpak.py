@@ -279,6 +279,29 @@ def main():
         assert 'source "absent.patch"' not in recipe
         assert "the manifest states no summary" not in report
 
+        # a module the manifest limits by architecture is a choice this converter does
+        # not make, since the target it will be installed into is what the limit is read
+        # against
+        limited = root / "limited"
+        limited.mkdir(parents=True)
+        write(limited / "org.example.Limited.json", """{
+  "id": "org.example.Limited",
+  "version": "1.0",
+  "modules": [
+    {
+      "name": "app",
+      "buildsystem": "simple",
+      "only-arches": [ "x86_64" ],
+      "build-commands": [ "true" ]
+    }
+  ]
+}
+""")
+        out, recipe, report = convert(limited, name="Limited", status=3)
+        assert "status review-required" in out
+        assert "the module app limits itself by architecture with only-arches, which the " \
+               "converter does not decide" in report
+
         # a branch names the machine when the manifest states none
         branch = root / "branch"
         branch.mkdir(parents=True)

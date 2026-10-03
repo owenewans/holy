@@ -187,6 +187,22 @@ EMAIL="fixture@example.org"
         assert (root / "conv" / "sb-demo-3.2.1.tar.gz").is_file()
         assert (root / "conv" / "doinst.sh").is_file()
 
+        # a %if block is a choice the SlackBuild tool makes before the script runs, so
+        # carrying both arms would install what the upstream chose against
+        conditional = package / "conditional.SlackBuild"
+        write(conditional, (package / "sb-demo.SlackBuild").read_text().replace(
+            "make install", '%if [ "$ARCH" = "x86_64" ]; then\n'
+            'make install\n'
+            '%else\n'
+            'make install-doc\n'
+            '%endif'))
+        run("convert", conditional, "--source", "slackbuilds", "--output", root / "cond",
+            status=3)
+        conditional_report = (root / "cond" / "conversion").read_text()
+        assert "the script carries a %if block, which the converter does not evaluate" \
+            in conditional_report
+        assert "helper-environment slackbuild-script" in conditional_report
+
         # identity, provenance and the local source are carried
         assert 'name "sb-demo"' in recipe and 'version "3.2.1"' in recipe
         assert 'release "1"' in recipe and 'arch any' in recipe and 'libc any' in recipe

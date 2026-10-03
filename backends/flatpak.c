@@ -534,6 +534,15 @@ static void flatpak_module(struct flatpak_build *build, const struct holy_json_v
     build->name = name;
     build->patch_count = 0;
     build->tree[0] = 0;
+    /* a module the manifest limits to some architectures is a source this converter
+       cannot decide about: the target it will be installed into is what the limit is
+       read against, and the manifest states the list rather than the outcome */
+    if (holy_json_get(module, "only-arches") || holy_json_get(module, "skip-arches")) {
+        flatpak_note(build, "unknown", "the module %s limits itself by architecture with %s, "
+                      "which the converter does not decide", name,
+                      holy_json_get(module, "only-arches") ? "only-arches" : "skip-arches");
+        build->review = 1;
+    }
     for (i = 0; i < (sources ? sources->count : 0); ++i)
         flatpak_source(build, name, i, sources->members[i].value);
     /* the options of a module replace the ones the manifest states for them all */

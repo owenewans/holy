@@ -3867,8 +3867,11 @@ because the engine has already unpacked the recorded archive. Every other file
 the script reads through $CWD travels beside the recipe as a source, a doinst.sh
 becomes one hook, and this format pins an MD5 sum rather than a SHA-256 digest,
 so a remote archive is reported unless a local copy is beside the script. The
-strip pass, the ownership rewrite, the user and group creation and the loader
-and desktop cache helpers are reported as unresolved.
+strip pass, the ownership rewrite, the user and group creation, the loader
+and desktop cache helpers and a %if block are reported as unresolved: the
+SlackBuild tool reads a %if block before the script runs and picks the lines
+inside it by architecture and by tag, which this converter does not evaluate,
+so both arms would otherwise be carried at once.
 .PP
 The RPM spec converter carries Name, Version, Release, Summary, License and
 URL, collects the %global and %define records, and expands the macros it can
@@ -3970,7 +3973,10 @@ the prefix of a module becomes /usr, so a converted build writes into the payloa
 finish-args permissions, cleanup steps, build extensions and a buildsystem with no
 Holy phase are reported as dropped or unresolved, and a manifest with several
 modules is reported, because a Flatpak build shares one prefix across its modules
-while each step here installs into the payload.
+while each step here installs into the payload. A module that states only-arches or
+skip-arches is reported as unresolved for the same reason the list is not an
+outcome: it is read against the machine the manifest is built for, and this
+converter does not decide which side of that list the target root falls on.
 .PP
 The Homebrew converter reads a formula as Ruby text and never evaluates it. The
 class name becomes the package name, the description, homepage and license are
