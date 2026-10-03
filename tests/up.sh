@@ -341,4 +341,61 @@ grep -qx "updated-group slots 2 generation $(cat "$root/var/lib/holypkg/generati
 grep -qx 'version 8' "$root/usr/share/update-fixture"
 grep -qx 'version 12' "$root/usr/share/other"
 expect 0 "$bin" db check --all --root "$root"
+# --all over two installed slots of one source prepares them as one plan and applies it
+# as one transaction, without the caller naming either slot
+variant() {
+    from=$1 to=$2 version=$3
+    rm -rf "$tmp/tree-$to-$version"
+    cp -a "$tmp/tree-$version" "$tmp/tree-$to-$version"
+    sed -i "s/^name $from\$/name $to/" "$tmp/tree-$to-$version/HOLY/meta"
+    mv "$tmp/tree-$to-$version/DATA/usr/share/$from" \
+       "$tmp/tree-$to-$version/DATA/usr/share/$to"
+    expect 0 "$bin" manifest generate "$tmp/tree-$to-$version" \
+        --output "$tmp/$to-$version-files"
+    mv "$tmp/$to-$version-files" "$tmp/tree-$to-$version/HOLY/files"
+    expect 0 "$bin" pack "$tmp/tree-$to-$version" --output "$repo/$to-$version.holy"
+}
+group_root="$tmp/group-root"
+group_repo="$tmp/group-repo"
+mkdir -p "$group_root/usr/share" "$group_repo"
+root="$group_root"; repo="$group_repo"
+expect 0 "$bin" db init --root "$root"
+expect 0 "$bin" source plan --config "$tmp/source.conf" --root "$root"
+cp "$tmp/out" "$tmp/group-source.plan"
+group_source_plan=$(sha256sum "$tmp/group-source.plan" | cut -d ' ' -f 1)
+expect 0 "$bin" source apply "$tmp/group-source.plan" --sha256 "$group_source_plan" --root "$root"
+expect 0 "$bin" source list --root "$root"
+group_source=$(awk '$1 == "source" && $4 == "active" {print $2}' "$tmp/out")
+# the shared helper appends to a tree it does not clear, so the two versions this block
+# reuses are removed first
+rm -rf "$tmp/tree-1" "$tmp/tree-2"
+package 1 pacman '' alpha
+variant alpha beta 1
+seal
+expect 0 "$bin" source catalog bind fixture "$repo" --root "$root"
+expect 0 "$bin" add fixture:alpha --root "$root" --yes
+expect 0 "$bin" add fixture:beta --root "$root" --yes
+grep -qx 'version 1' "$root/usr/share/alpha"
+grep -qx 'version 1' "$root/usr/share/beta"
+package 2 pacman '' alpha
+variant alpha beta 2
+seal
+expect 0 "$bin" source catalog bind fixture "$repo" --root "$root"
+expect 0 "$bin" up --all --prepare --output "$tmp/group-all.plan" --root "$root"
+group_all=$(sha256sum "$tmp/group-all.plan" | cut -d ' ' -f 1)
+grep -qx "prepared $group_all $tmp/group-all.plan slots 2" "$tmp/out"
+grep -qx 'slot 0' "$tmp/group-all.plan"
+grep -qx 'slot 1' "$tmp/group-all.plan"
+grep -qx 'replacement 2' "$tmp/group-all.plan"
+grep -qx "source-id $group_source" "$tmp/group-all.plan"
+# one --yes applies the group, and both payloads moved under one generation
+expect 0 "$bin" up --all --yes --root "$root"
+grep -qx 'version 2' "$root/usr/share/alpha"
+grep -qx 'version 2' "$root/usr/share/beta"
+expect 0 "$bin" db check --all --root "$root"
+# a second run has nothing newer anywhere, so no plan is written
+expect 0 "$bin" up --all --prepare --output "$tmp/group-none.plan" --root "$root"
+test ! -e "$tmp/group-none.plan"
+grep -c '^up-to-date ' "$tmp/out"
+test "$(grep -c '^up-to-date ' "$tmp/out")" -eq 2
 printf 'source update preparation and apply fixtures passed\n'
