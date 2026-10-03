@@ -56,14 +56,29 @@ with tempfile.TemporaryDirectory(prefix="holy-hardlink-updates-") as scratch:
     mode_changed = package("8", new[2], mode=0o600)
     versions = [old, new, added, moved, split, merged, linked, mode_changed]
 
+    seeds = {}
+
+    def seed(installed):
+        # a scenario only ever starts from an installed version, and staging the eight
+        # artifacts and applying one of them is the same work for every scenario that
+        # starts from it, so the state is built once per version and copied after that.
+        # the copy is cp -a because a shared inode is what the fixture is about: a copy
+        # that gave each path its own inode would prove nothing.
+        root = seeds.get(installed[1])
+        if root is None:
+            root = tmp / ("seed-" + installed[1][:8])
+            root.mkdir()
+            run("db", "init", "--root", root)
+            for artifact, _, _, _ in versions:
+                run("cache", "stage", "local:" + str(artifact), "--root", root)
+            plan = run("db", "plan-set", installed[1], "--root", root).split(" sha256 ")[1].split()[0]
+            run("db", "apply-set", plan, installed[1], "--root", root)
+            seeds[installed[1]] = root
+        return root
+
     def prepare(label, installed=old):
         root = tmp / label
-        root.mkdir()
-        run("db", "init", "--root", root)
-        for artifact, _, _, _ in versions:
-            run("cache", "stage", "local:" + str(artifact), "--root", root)
-        plan = run("db", "plan-set", installed[1], "--root", root).split(" sha256 ")[1].split()[0]
-        run("db", "apply-set", plan, installed[1], "--root", root)
+        subprocess.run(["cp", "-a", str(seed(installed)), str(root)], check=True)
         return root
 
     def check(root, current, previous=None):

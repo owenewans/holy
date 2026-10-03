@@ -329,46 +329,153 @@ check-init: holy-init
 check-hooks: holypkg
 	CC="$(CC)" sh tests/hooks.sh ./holypkg
 
-check: check-llm check-pacman check-deb check-apt check-slackware check-apk check-xbps-import check-xbps-version check-xbps-index check-appimage check-snap check-run check-recipe check-evaluate check-command-version check-split check-debug check-pkgbuild check-void check-aports check-slackbuild check-rpmspec check-debsrc check-gentoo check-pacstall check-flatpak check-brew check-guix check-scoop check-winget check-nix check-eopkg check-conflict check-index check-closure check-loader-search check-slot-choice check-packages-page check-update-group check-qemu-copy check-plan-test check-override check-cc check-hooks check-apk-version check-apk-index check-apk-fetch check-native-version $(if $(RPM_LIBS),check-rpm) holypkg tests/resolution check-init check-solver check-private check-rewrite check-install-payload check-install check-https check-git-source check-repo-closure
+# one entry of the suite is a target of its own, so a script can be run on its own, a
+# failure names the script that failed and the whole set can run at once. the entries
+# share nothing but the manager they exercise: each builds its fixtures in its own
+# temporary directory, so the order they finish in is not part of what they prove.
+# a caller who named JOBS, or asked make for a serial run, is not overruled.
+CHECK_JOBS ?= $(or $(JOBS),$(if $(filter -j1,$(MAKEFLAGS)),1,$(shell nproc 2>/dev/null || echo 4)))
+
+CHECK_TARGETS = check-llm check-pacman check-deb check-apt check-slackware check-apk \
+	check-xbps-import check-xbps-version check-xbps-index check-appimage check-snap \
+	check-run check-recipe check-evaluate check-command-version check-split check-debug \
+	check-pkgbuild check-void check-aports check-slackbuild check-rpmspec check-debsrc \
+	check-gentoo check-pacstall check-flatpak check-brew check-guix check-scoop \
+	check-winget check-nix check-eopkg check-conflict check-index check-closure \
+	check-loader-search check-slot-choice check-packages-page check-update-group \
+	check-qemu-copy check-plan-test check-override check-cc check-hooks \
+	check-apk-version check-apk-index check-apk-fetch check-native-version \
+	$(if $(RPM_LIBS),check-rpm) \
+	check-resolution check-init check-solver check-private check-rewrite \
+	check-install-payload check-install check-https check-git-source check-repo-closure \
+	check-config check-source check-source-instances check-package \
+	check-installed-scripts check-docs check-installed-docs check-elf check-repo \
+	check-state check-sets check-add check-update check-up check-update-privileged \
+	check-directories check-hardlinks check-hardlink-updates check-architecture \
+	check-orphan check-dynamic check-resolve check-elf-resolve check-static
+
+check:
+	$(MAKE) --output-sync=target -j$(CHECK_JOBS) check-all
+
+.PHONY: check-all
+check-all: $(CHECK_TARGETS)
+
+.PHONY: check-resolution
+check-resolution: tests/resolution
 	./tests/resolution
+
+.PHONY: check-config
+check-config: holypkg
 	sh tests/config.sh ./holypkg
+
+.PHONY: check-source
+check-source: holypkg
 	sh tests/source.sh ./holypkg
+
+.PHONY: check-source-instances
+check-source-instances: holypkg
 	sh tests/source-instances.sh ./holypkg
+
+.PHONY: check-package
+check-package: holypkg
 	sh tests/package.sh ./holypkg
+
+.PHONY: check-installed-scripts
+check-installed-scripts: holypkg
 	sh tests/installed-scripts.sh ./holypkg
+
+.PHONY: check-docs
+check-docs:
 	sh tests/docs.sh
+
+.PHONY: check-installed-docs
+check-installed-docs: holypkg
 	sh tests/installed-docs.sh ./holypkg
+
+.PHONY: check-elf
+check-elf: holypkg
 	CC="$(CC)" sh tests/elf.sh ./holypkg
+
+.PHONY: check-repo
+check-repo: holypkg
 	sh tests/repo.sh ./holypkg
+
+.PHONY: check-state
+check-state: holypkg
 	sh tests/state.sh ./holypkg
+
+.PHONY: check-sets
+check-sets: holypkg
 	sh tests/sets.sh ./holypkg
+
+.PHONY: check-add
+check-add: holypkg
 	sh tests/add.sh ./holypkg
+
+.PHONY: check-update
+check-update: holypkg
 	sh tests/update.sh ./holypkg
+
+.PHONY: check-up
+check-up: holypkg
 	sh tests/up.sh ./holypkg
+
+.PHONY: check-update-privileged
+check-update-privileged: holypkg
 	sh tests/update-privileged.sh ./holypkg
-	sh tests/update-group.sh ./holypkg
+
+.PHONY: check-directories
+check-directories: holypkg
 	sh tests/directories.sh ./holypkg
+
+.PHONY: check-hardlinks
+check-hardlinks: holypkg tests/install-helper
 	python3 tests/hardlinks.py ./holypkg ./tests/install-helper
+
+.PHONY: check-hardlink-updates
+check-hardlink-updates: holypkg
 	python3 tests/hardlink-updates.py ./holypkg
+
+.PHONY: check-architecture
+check-architecture: holypkg
 	python3 tests/architecture.py ./holypkg
+
+.PHONY: check-orphan
+check-orphan: holypkg
 	sh tests/orphan.sh ./holypkg
+
+.PHONY: check-dynamic
+check-dynamic: holypkg
 	sh tests/dynamic.sh ./holypkg
+
+.PHONY: check-resolve
+check-resolve: holypkg tests/resolution
 	sh tests/resolve.sh ./holypkg ./tests/resolution
+
+.PHONY: check-elf-resolve
+check-elf-resolve: holypkg tests/resolution
 	sh tests/elf-resolve.sh ./holypkg ./tests/resolution
+
+.PHONY: check-static
+check-static: holypkg
 	sh tests/static.sh ./holypkg
 
 .PHONY: check-pacman
-check-pacman: holypkg
-	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o tests/pacman-helper tests/pacman.c backends/pacman.c backends/pacman-version.c
+check-pacman: holypkg tests/pacman-helper
 	./tests/pacman-helper
 	python3 tests/import.py ./holypkg
 	python3 tests/versions.py ./holypkg
 
+tests/pacman-helper: tests/pacman.c backends/pacman.c backends/pacman-version.c $(wildcard backends/*.h) .build-config
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o $@ tests/pacman.c backends/pacman.c backends/pacman-version.c
+
 .PHONY: check-deb
-check-deb: holypkg
-	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o tests/deb-version-helper tests/deb-version.c backends/deb-version.c
+check-deb: holypkg tests/deb-version-helper
 	./tests/deb-version-helper
 	python3 tests/import-deb.py ./holypkg
+
+tests/deb-version-helper: tests/deb-version.c backends/deb-version.c $(wildcard backends/*.h) .build-config
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic $(LDFLAGS) -o $@ tests/deb-version.c backends/deb-version.c
 
 .PHONY: check-slackware
 check-slackware: holypkg
@@ -510,23 +617,31 @@ check-https: holypkg
 	@command -v python3 >/dev/null && command -v openssl >/dev/null || { echo 'python3 and openssl required for HTTPS fixture' >&2; exit 6; }
 	sh tests/https.sh ./holypkg
 
-check-install-payload: holypkg
-	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o tests/install-helper tests/install.c src/install.c src/script.o src/elf.o src/change.c src/verify.c src/package.c src/stage.c src/config.c src/version.c src/private.o backends/rpm-version.o $(LDFLAGS) -larchive -lcrypto -lelf $(SOLV_LIBS)
+check-install-payload: holypkg tests/install-helper
 	sh tests/install.sh ./tests/install-helper ./holypkg
 	sh tests/symlinks.sh ./holypkg
 	sh tests/change.sh ./tests/install-helper ./holypkg
 	sh tests/private-install.sh ./tests/install-helper ./holypkg
 
-check-solver:
-	@pkg-config --exists libsolv || { echo 'libsolv development files required' >&2; exit 6; }
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOLV_CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o tests/solver tests/solver.c src/solve.c $(LDFLAGS) $(SOLV_LIBS)
+tests/install-helper: tests/install.c src/install.c src/change.c src/verify.c \
+	src/package.c src/stage.c src/config.c src/version.c src/script.o src/elf.o \
+	src/private.o backends/rpm-version.o $(wildcard src/*.h) $(wildcard backends/*.h) .build-config
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o $@ tests/install.c src/install.c src/script.o src/elf.o src/change.c src/verify.c src/package.c src/stage.c src/config.c src/version.c src/private.o backends/rpm-version.o $(LDFLAGS) -larchive -lcrypto -lelf $(SOLV_LIBS)
+
+check-solver: tests/solver
 	./tests/solver
 
+tests/solver: tests/solver.c src/solve.c $(wildcard src/*.h) .build-config
+	@pkg-config --exists libsolv || { echo 'libsolv development files required' >&2; exit 6; }
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOLV_CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o $@ tests/solver.c src/solve.c $(LDFLAGS) $(SOLV_LIBS)
+
 .PHONY: check-private
-check-private:
-	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o tests/private-helper tests/private.c $(filter-out src/main.o,$(HOLY_OBJECTS)) $(LDFLAGS) $(LDLIBS) $(SOLV_LIBS)
+check-private: holypkg tests/private-helper
 	./tests/private-helper
 	sh tests/private-consumer.sh ./holypkg ./tests/private-helper
+
+tests/private-helper: tests/private.c $(filter-out src/main.o,$(HOLY_OBJECTS)) .build-config
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c99 -Wall -Wextra -Werror -pedantic -Isrc -o $@ tests/private.c $(filter-out src/main.o,$(HOLY_OBJECTS)) $(LDFLAGS) $(LDLIBS) $(SOLV_LIBS)
 
 .PHONY: check-rewrite
 check-rewrite: holypkg
