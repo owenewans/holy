@@ -69,6 +69,17 @@ The host graphics gate: a nouveau-bound NVIDIA GPU, a Mesa NVK Vulkan device, an
 accelerated OpenGL context that renders measured frames. A host without those returns
 missing-requirement, never pass.
 .TP
+.B make check-rollback-vm DISK=PATH OTHER_KERNEL=PATH
+Boots a two-slot disk under QEMU and proves the rollback contract on the machine
+rather than in a config checker. Three things happen in order: the current slot stops
+matching the blake2b digest its limine entry carries, so the loader warns and waits and
+any key but Y returns to the menu; the replacement kernel boots, fails a guest probe and
+dinit asks what to do; and after the reboot the menu comes up on the failing slot, the
+highlight moves to the previous one and that slot boots with the guest probes passing,
+naming the kernel release that answered. The second kernel is required input, since a
+rollback between two identical kernels proves nothing. The serial line is a unix socket
+because choosing a slot means pressing keys.
+.TP
 .B make check-matrix [ONLY=name,...] [REQUIRE=1]
 Runs the compiler, SDK, language, network, system, GUI, graphics, gaming, workstation and
 foreign source cases. It writes holy-matrix-report-1 to out/matrix.json: one row per case

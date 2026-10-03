@@ -10,6 +10,13 @@ inputs=$(realpath "$1")
 version=$2
 output=$3
 case "$version" in ''|*[!a-zA-Z0-9._+-]*) exit 2 ;; esac
+# a rollback needs two kernels the guest can tell apart, so the release string carries a
+# localversion when the caller names one
+localversion=${LOCALVERSION:-}
+case "$localversion" in
+    ''|*[!a-zA-Z0-9._+-]*) echo 'LOCALVERSION must be empty or a kernel release suffix' >&2; exit 2 ;;
+esac
+release=$version$localversion
 case "${ARCH:-x86_64}" in
     x86_64) arch=x86_64; defconfig=x86_64_defconfig; machine=x86-64; bits=64 ;;
     i686|x86) arch=i686; defconfig=i386_defconfig; machine=80386; bits=32 ;;
@@ -35,7 +42,8 @@ trap 'exit 1' HUP INT TERM
 exec > "$out/build.log" 2>&1
 {
     printf 'format holy-linux-bootstrap-1\n'
-    printf 'arch %s\nversion %s\nlibc nolibc\nconfig %s\n' "$arch" "$version" "$defconfig"
+    printf 'arch %s\nversion %s\nlocalversion %s\nrelease %s\nlibc nolibc\nconfig %s\n' \
+        "$arch" "$version" "${localversion:-none}" "$release" "$defconfig"
     printf 'source https://cdn.kernel.org/pub/linux/kernel/v7.x/%s\n' "$tarball"
     printf 'source-sha256 %s\n' "$digest"
 } > "$out/build.record"
@@ -74,6 +82,13 @@ fragment() {
         -e FUTEX -e EPOLL -e SIGNALFD -e EVENTFD -e TIMERFD -e AIO
     make -s ARCH=x86 olddefconfig
     grep -qx '# CONFIG_MODULES is not set' .config
+    # a release suffix starts with a dash, which scripts/config reads as its own option,
+    # so the line is written directly and olddefconfig keeps it
+    if test -n "$localversion"; then
+        sed -i -e "/^CONFIG_LOCALVERSION=/d" \
+            -e "/^# CONFIG_LOCALVERSION is not set$/d" \
+            -e "1i CONFIG_LOCALVERSION=\"$localversion\"" .config
+    fi
     cp .config "$out/config-$arch"
     make -j"${JOBS:-2}" ARCH=x86 bzImage
 )

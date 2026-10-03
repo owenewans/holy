@@ -1905,7 +1905,7 @@
   once an index exists. check-packages-page covers the derived rows, a row whose file
   the directory lacks, an absent index, an unsigned generation and the absence of
   template syntax the server would render.
-- [ ] Make a kernel rollback a configuration rather than a reinstall, and prove it by
+- [x] Make a kernel rollback a configuration rather than a reinstall, and prove it by
   rebooting into the previous kernel. The installed profile now carries two kernel
   slots on the boot partition, each with its own vmlinuz, initramfs and blake2b
   digest in the Limine config, a menu with a reachable timeout, default_entry naming
@@ -1915,8 +1915,21 @@
   generator, the checker and every shape that cannot roll back, and the image builder
   verifies each slot's digest against the file it wrote. A fresh install starts with
   one kernel in both slots and is reported as having no rollback yet. The guest
-  contract that boots the new kernel, fails a probe and returns to the menu on the
-  previous one is not built.
+  contract is built and passed on an i686 standalone GPT disk under QEMU/TCG, and it
+  found two defects the config checker could not see. `default_entry: /Holy a` named
+  nothing: limine reads a leading slash as the start of a new menu entry, so every boot
+  fell into the menu instead of the current slot, and `check-limine-rollback.sh` required
+  that broken shape. The boot partition also carried only `vmlinuz-a` and `vmlinuz-b`
+  while the guest probe reads `/boot/vmlinuz`. `make check-rollback-vm DISK=... 
+  OTHER_KERNEL=...` now drives the machine: the current slot stops matching its digest,
+  limine warns and waits, a key that is not Y returns to the menu, and the other slot
+  boots with its probes passing; the replacement kernel boots, fails a guest probe and
+  dinit asks what to do; after the reboot the menu comes up on the failing slot, the
+  arrow moves the highlight to the previous one, and that slot boots, runs the witness
+  check and reports `kernel 7.2.7`. The second kernel is built with
+  `LOCALVERSION=-holyb` so the two slots are tellable apart, and it is required input:
+  a rollback between identical kernels proves nothing. A console-attached rollback is
+  still untested.
 - [x] Boot both target architectures in QEMU and prove PID 1, shell, package
   install/removal and recovery after removing either or both dynamic libc runtimes.
   `tools/bootstrap-linux.sh` builds the kernel an image boots, from the pinned

@@ -54,8 +54,10 @@ verbose: yes
 hash_mismatch_panic: no
 # the path names the slot rather than its position, so reordering the entries cannot
 # repoint the default. remember_last_entry is deliberately absent: on UEFI it would
-# override default_entry and make the switch invisible
-default_entry: /Holy $current
+# override default_entry and make the switch invisible. an entry path carries no leading
+# slash: limine reads one as the start of a new menu entry, so a default of /Holy a
+# names nothing, disables autoboot and drops every boot into the menu
+default_entry: Holy $current
 \${holy_cmdline}=$cmdline
 
 /Holy a

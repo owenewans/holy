@@ -850,6 +850,12 @@ PY
         mcopy -i "$work/esp.fat" "$root/usr/share/limine/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
     fi
     mcopy -i "$work/esp.fat" "$root/usr/share/limine/limine-bios.sys" ::/limine-bios.sys
+    # the boot partition carries the unsuffixed names as well as the two slots, so a
+    # filesystem that is handed to a loader without a menu still finds a kernel and an
+    # initramfs, and the guest probe can read the boot filesystem the same way on an
+    # installed disk and on a standalone one
+    mcopy -i "$work/esp.fat" "$root/boot/vmlinuz" ::/vmlinuz
+    mcopy -i "$work/esp.fat" "$out/initramfs.img" ::/initramfs.img
     # an installed system carries two kernel slots, so a kernel that does not boot is
     # recoverable from the menu rather than only by reinstalling. both slots start with
     # the same kernel, and a later update writes the inactive one and flips the default.

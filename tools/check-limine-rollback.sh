@@ -37,11 +37,16 @@ fi
 entries=$(grep -cE '^/' "$config" || true)
 test "${entries:-0}" -ge 2 || refuse "one entry is not a rollback, the config has ${entries:-0}"
 
-# default_entry names a path, so reordering the entries cannot repoint it at another slot
+# default_entry names a slot path so reordering the entries cannot repoint it at another
+# slot. an entry path carries no leading slash: limine reads one as the start of a new
+# menu entry, so "/Holy a" as a value names nothing, disables autoboot and leaves every
+# boot sitting in the menu waiting for a keypress
 default=$(sed -n 's/^default_entry:[[:space:]]*//p' "$config")
-case $default in
-    /*) ;;
-    *) refuse "default_entry is ${default:-unset}, which is a position rather than a slot path" ;;
+case ${default:-} in
+    '') refuse 'default_entry is unset, so the first entry boots whatever order the file has' ;;
+    /*) refuse "default_entry is $default, a leading slash makes limine read it as a new entry" ;;
+    *[!0-9]*) ;;
+    *) refuse "default_entry is $default, a position rather than a slot path" ;;
 esac
 if test -n "$current"; then
     case $default in
@@ -49,9 +54,9 @@ if test -n "$current"; then
         *) refuse "default_entry is $default, not the current slot $current" ;;
     esac
 fi
-# the path has to name an entry the file has. the default_entry line itself carries the
-# same text, so the search is for the entry heading rather than for the string
-if test -n "$default" && ! grep -qxF "$default" "$config"; then
+# the value has to name an entry the file has. an entry heading is the path with a
+# leading slash, so the comparison adds the slash the value must not carry itself
+if test -n "$default" && ! grep -qxF "/$default" "$config"; then
     refuse "default_entry $default names no entry in the file"
 fi
 

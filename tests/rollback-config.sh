@@ -57,7 +57,7 @@ expect 4 sh "$check" "$tmp/good.conf" b
 grep -q 'not the current slot b' "$tmp/err"
 
 # a slot switch is one token in the file, and it is the whole rollback
-sed 's|^default_entry: /Holy a$|default_entry: /Holy b|' "$tmp/good.conf" > "$tmp/flipped.conf"
+sed 's|^default_entry: Holy a$|default_entry: Holy b|' "$tmp/good.conf" > "$tmp/flipped.conf"
 expect 0 sh "$check" "$tmp/flipped.conf" b
 expect 4 sh "$check" "$tmp/flipped.conf" a
 
@@ -78,12 +78,19 @@ grep -q 'panics instead of returning' "$tmp/err"
 expect 4 sh "$check" "$tmp/remember.conf" a
 grep -q 'remember_last_entry' "$tmp/err"
 
-sed 's|^default_entry: /Holy a$|default_entry: 1|' "$tmp/good.conf" > "$tmp/index.conf"
+sed 's|^default_entry: Holy a$|default_entry: 1|' "$tmp/good.conf" > "$tmp/index.conf"
 expect 4 sh "$check" "$tmp/index.conf" a
-grep -q 'rather than a slot path' "$tmp/err"
+grep -q 'a position rather than a slot path' "$tmp/err"
 
-sed 's|^default_entry: /Holy a$|default_entry: /Holy c|' "$tmp/good.conf" > "$tmp/absent.conf"
+sed 's|^default_entry: Holy a$|default_entry: Holy c|' "$tmp/good.conf" > "$tmp/absent.conf"
 expect 4 sh "$check" "$tmp/absent.conf"
+
+# a leading slash is how limine reads the start of a new entry, so a default written
+# that way names nothing and every boot stops in the menu. this is the shape the old
+# generator wrote, and the checker required, so it is refused by name
+sed 's|^default_entry: Holy a$|default_entry: /Holy a|' "$tmp/good.conf" > "$tmp/slash.conf"
+expect 4 sh "$check" "$tmp/slash.conf" a
+grep -q 'a leading slash makes limine read it as a new entry' "$tmp/err"
 
 # one entry is not a rollback
 sed '/^\/Holy b$/,$d' "$tmp/good.conf" > "$tmp/one.conf"

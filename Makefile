@@ -591,6 +591,17 @@ check-root-trial:
 check-qemu-gate:
 	sh tests/qemu-gate.sh
 
+# the rollback contract on a real disk: a slot whose bytes stop matching its digest is
+# refused by the loader, and the other slot boots with the guest probes passing. the second
+# kernel is what makes the two slots tellable apart, so a run needs both.
+.PHONY: check-rollback-vm
+check-rollback-vm:
+	@test -n "$(DISK)" && test -n "$(OTHER_KERNEL)" || { echo 'DISK and OTHER_KERNEL are required' >&2; exit 6; }
+	@test -f "$(DISK)" && test -f "$(OTHER_KERNEL)" || { echo 'DISK and OTHER_KERNEL must be files' >&2; exit 6; }
+	python3 tests/rollback-vm.py --disk "$(DISK)" --other-kernel "$(OTHER_KERNEL)" \
+		--qemu "$(or $(QEMU),qemu-system-i386)" --output "$(or $(REPORT),out/rollback.json)" \
+		$(if $(SECONDS),--seconds $(SECONDS),)
+
 # the compiler, SDK, language, network, system, graphics, gaming and workstation cases,
 # each against a named tool or a pinned artifact. a case this host cannot run is reported
 # as missing or unpinned and never turns the run green; REQUIRE makes that an error.
