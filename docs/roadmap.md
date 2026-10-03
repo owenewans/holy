@@ -1754,8 +1754,13 @@
   source has to arrive as a git checkout the way util-linux does. cryptsetup
   needs libdevmapper before anything else, and mkswap still wants util-linux's
   swapon binary, which this bootstrap does not build yet.
-  What is not done is the boot itself: a btrfs, xfs or f2fs guest has still not
-  been started in QEMU from an image this repository built.
+  The disk plan reaches that tool for a btrfs layout on a block device: with the
+  package's sfdisk, mkfs.fat, mke2fs and mkfs.btrfs installed where
+  `src/disk.c` runs them, `holyinstall disk plan` hashes each tool and records
+  `mkfs-btrfs-sha256`, and then refuses the device this host offers because a
+  loop device carries no serial. That refusal is the documented rule rather than
+  a gap, and it is why the apply and the boot are still open here: neither a
+  device with a serial nor a QEMU disk chain is available to run them against.
   The kernel already enables BTRFS_FS, XFS_FS and F2FS_FS built in, and a LUKS2
   root needs DM_CRYPT and CRYPTO_XTS added to that fragment before it can boot.
   The implemented blank-disk GPT/ext4/FAT path uses
