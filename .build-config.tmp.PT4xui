@@ -1,8 +1,0 @@
-CC=cc
-CPPFLAGS=-DHOLY_HAVE_RPM -D_FILE_OFFSET_BITS=64 -DHOLY_HAVE_RPMMD -I/usr/include/libxml2
-CFLAGS=-O2
-LDFLAGS=
-LDLIBS=-larchive -lcrypto -lelf -lcurl -lplist-2.0 -lz -lrpm -lrpmio -lpopt -lxml2
-RPMMD_LIBS=-lxml2
-SOLV_CFLAGS=-isystem /usr/local/include 
-SOLV_LIBS=-L/usr/local/lib64 -lsolv -lz

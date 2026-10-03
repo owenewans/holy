@@ -27,4 +27,7 @@ int holy_lex(const char *text, size_t length, char ***tokens, size_t *count,
              const char *file, size_t line, char **error);
 void holy_tokens_free(char **tokens, size_t count);
 
+/* one rule for a dinit service unit name, shared by the manager and the installer. */
+int holy_unit_name_valid(const char *name);
+
 #endif

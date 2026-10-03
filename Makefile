@@ -73,7 +73,12 @@ check-bootstrap-glibc:
 
 .PHONY: bootstrap-image
 bootstrap-image: holypkg llm.txt
-	ARCH="$(or $(ARCH),x86_64)" ROOT_STORAGE="$(or $(ROOT_STORAGE),ram)" IMAGE_PROFILE="$(or $(IMAGE_PROFILE),dual-libc)" LIBC_BOOT_STATE="$(or $(LIBC_BOOT_STATE),present)" INSTALL_TEST="$(or $(INSTALL_TEST),0)" INSTALL_FIRMWARE="$(or $(INSTALL_FIRMWARE),$(if $(filter i686,$(ARCH)),bios,both))" STORAGE_TOOLS_PACKAGE="$(STORAGE_TOOLS_PACKAGE)" DOAS_PACKAGE="$(DOAS_PACKAGE)" UEFI_CODE="$(UEFI_CODE)" UEFI_VARS="$(UEFI_VARS)" NETWORK_RECOVERY="$(or $(NETWORK_RECOVERY),off)" GLIBC_PACKAGE="$(GLIBC_PACKAGE)" MUSL_PACKAGE="$(MUSL_PACKAGE)" GLIBC_CC="$(or $(GLIBC_CC),gcc)" MUSL_CC="$(MUSL_CC)" STATIC_HOLYINSTALL="$(STATIC_HOLYINSTALL)" sh tools/bootstrap-image.sh ./holypkg "$(STATIC_HOLYPKG)" "$(STATIC_CC)" "$(BUSYBOX_PACKAGE)" "$(DINIT_PACKAGE)" "$(MDEVD_PACKAGE)" "$(KERNEL_IMAGE)" "$(KERNEL_VERSION)" "$(LIMINE_DIR)" "$(OUTPUT)"
+	ARCH="$(or $(ARCH),x86_64)" ROOT_STORAGE="$(or $(ROOT_STORAGE),ram)" IMAGE_PROFILE="$(or $(IMAGE_PROFILE),dual-libc)" LIBC_BOOT_STATE="$(or $(LIBC_BOOT_STATE),present)" INSTALL_TEST="$(or $(INSTALL_TEST),0)" INSTALL_FIRMWARE="$(or $(INSTALL_FIRMWARE),$(if $(filter i686,$(ARCH)),bios,both))" STORAGE_TOOLS_PACKAGE="$(STORAGE_TOOLS_PACKAGE)" DOAS_PACKAGE="$(DOAS_PACKAGE)" UEFI_CODE="$(UEFI_CODE)" UEFI_VARS="$(UEFI_VARS)" NETWORK_RECOVERY="$(or $(NETWORK_RECOVERY),off)" GLIBC_PACKAGE="$(GLIBC_PACKAGE)" MUSL_PACKAGE="$(MUSL_PACKAGE)" GLIBC_CC="$(or $(GLIBC_CC),gcc)" GLIBC_CFLAGS="$(GLIBC_CFLAGS)" MUSL_CC="$(MUSL_CC)" MUSL_CFLAGS="$(MUSL_CFLAGS)" STATIC_HOLYINSTALL="$(STATIC_HOLYINSTALL)" sh tools/bootstrap-image.sh ./holypkg "$(STATIC_HOLYPKG)" "$(STATIC_CC)" "$(BUSYBOX_PACKAGE)" "$(DINIT_PACKAGE)" "$(MDEVD_PACKAGE)" "$(KERNEL_IMAGE)" "$(KERNEL_VERSION)" "$(LIMINE_DIR)" "$(OUTPUT)"
+
+.PHONY: bootstrap-linux
+bootstrap-linux:
+	@test -n "$(VERSION)" && test -n "$(OUTPUT)" || { echo 'bootstrap-linux requires VERSION and OUTPUT' >&2; exit 2; }
+	sh tools/bootstrap-linux.sh "$(INPUTS)" "$(VERSION)" "$(OUTPUT)"
 
 .PHONY: bootstrap-kernel
 bootstrap-kernel: holypkg

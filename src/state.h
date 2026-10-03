@@ -1,6 +1,8 @@
 #ifndef HOLY_STATE_H
 #define HOLY_STATE_H
 
+#include "config.h"
+
 #include <stddef.h>
 
 /* initializes an empty database under an explicit target root. */
@@ -168,7 +170,6 @@ int state_visit_locked(int root, int dir, holy_instance_visit visit, void *conte
 int holy_state_instance_field(int instance, const char *key, char *out, size_t size);
 /* a consented service unit is named, not a path: letters, digits, dot, dash,
    underscore and at. */
-int holy_unit_name_valid(const char *name);
 /* the source an installed instance came from, or 0 when it states none. */
 int holy_state_instance_source(int instance, char source[65]);
 /* returns a locked database fd, caller closes it; status uses CLI codes. */

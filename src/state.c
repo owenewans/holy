@@ -5808,21 +5808,6 @@ static void free_set_journal(struct set_journal *journal)
 }
 
 /* a consented unit is named, not a path: the consent names what dinit would start */
-int holy_unit_name_valid(const char *name)
-{
-    size_t i, length;
-    if (!name || !*name) return 0;
-    length = strlen(name);
-    if (length > 255 || !strcmp(name, ".") || !strcmp(name, "..")) return 0;
-    for (i = 0; i < length; ++i)
-        if (!((name[i] >= 'a' && name[i] <= 'z') ||
-              (name[i] >= 'A' && name[i] <= 'Z') ||
-              (name[i] >= '0' && name[i] <= '9') ||
-              name[i] == '-' || name[i] == '_' || name[i] == '.' || name[i] == '@'))
-            return 0;
-    return 1;
-}
-
 static int set_choice_valid(const char *choice)
 {
     const char *equal;

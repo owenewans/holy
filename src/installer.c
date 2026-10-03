@@ -44,6 +44,8 @@ struct install_input {
     size_t accept_count;
     char **accepted_privileged;
     size_t privileged_count;
+    char **accepted_service;   /* the service units the set is allowed to start */
+    size_t service_count;
     char **sources;
     size_t source_count;
     struct stat root_stat;
@@ -441,6 +443,26 @@ static int load_input(const char *path, struct holy_config *config,
         }
         input->sources[input->source_count++] = binding;
     }
+    input->accepted_service = calloc(config->count ? config->count : 1,
+                                     sizeof *input->accepted_service);
+    if (!input->accepted_service) return 1;
+    for (i = 0; i < config->count; ++i) {
+        const struct holy_entry *e = &config->entries[i];
+        if (strcmp(e->section, "install") || strcmp(e->key, "accept-service")) continue;
+        if (!holy_unit_name_valid(e->values[0])) {
+            fprintf(stderr, "holyinstall: invalid service unit at %s:%zu\n", e->file, e->line);
+            return 2;
+        }
+        for (j = 0; j < input->service_count; ++j)
+            if (!strcmp(input->accepted_service[j], e->values[0])) {
+                fprintf(stderr, "holyinstall: duplicate accept-service at %s:%zu\n",
+                        e->file, e->line);
+                return 2;
+            }
+        input->accepted_service[input->service_count] = strdup(e->values[0]);
+        if (!input->accepted_service[input->service_count]) return 1;
+        ++input->service_count;
+    }
     if (!config_hash(config, input->hash)) return 1;
     return 0;
 }
@@ -449,7 +471,8 @@ static int run_package_manager(const char *binary, const struct install_input *i
                                const char *approved, char **output)
 {
     char **args;
-    size_t i, count = input->count + (input->accept_count + input->privileged_count + input->source_count) * 2 +
+    size_t i, count = input->count + (input->accept_count + input->privileged_count +
+                                      input->source_count + input->service_count) * 2 +
                       (approved ? 7 : 6), used = 0, capacity = 0;
     char *buffer = NULL;
     int pipefd[2] = {-1, -1}, status, rc = 1;
@@ -473,6 +496,10 @@ static int run_package_manager(const char *binary, const struct install_input *i
     for (size_t j = 0; j < input->source_count; ++j) {
         args[i++] = "--source";
         args[i++] = input->sources[j];
+    }
+    for (size_t j = 0; j < input->service_count; ++j) {
+        args[i++] = "--accept-service";
+        args[i++] = input->accepted_service[j];
     }
     args[i++] = "--root";
     args[i++] = input->root;
@@ -580,7 +607,8 @@ static int write_plan(const char *path, const struct install_input *input,
     stream = fdopen(fd, "w");
     if (!stream) { close(fd); unlink(path); return 1; }
     if (fprintf(stream, "[install-plan]\nformat holy-install-plan-%d\nroot ",
-                input->disk_plan ? 7 : input->locale || input->timezone || input->network ? 6 :
+                input->service_count ? 8 : input->disk_plan ? 7 :
+                input->locale || input->timezone || input->network ? 6 :
                 input->account_count ? 5 : input->source_count ? 4 :
                 input->privileged_count ? 3 : input->accept_count ? 2 : 1) < 0 ||
         !quote(stream, input->root) ||
@@ -617,6 +645,10 @@ static int write_plan(const char *path, const struct install_input *input,
         if (fprintf(stream, "network-package %s\n", input->network_packages[i]) < 0) ok = 0;
     for (i = 0; i < input->firmware_count && ok; ++i)
         if (fprintf(stream, "firmware %s\n", input->firmware[i]) < 0) ok = 0;
+    /* the service consents come last: they name what the set would start, which is only
+       known once every artifact of the set has been named above */
+    for (i = 0; i < input->service_count && ok; ++i)
+        if (fprintf(stream, "accept-service %s\n", input->accepted_service[i]) < 0) ok = 0;
     if (fflush(stream) || fsync(fd)) ok = 0;
     if (fclose(stream)) ok = 0;
     if (ok) ok = sync_parent(path);
@@ -1088,10 +1120,12 @@ static int check_plan(const char *path, struct install_input *input,
                  strcmp(v[1], "holy-install-plan-4") &&
                  strcmp(v[1], "holy-install-plan-5") &&
                  strcmp(v[1], "holy-install-plan-6") &&
-                 strcmp(v[1], "holy-install-plan-7"))) {
+                 strcmp(v[1], "holy-install-plan-7") &&
+                  strcmp(v[1], "holy-install-plan-8"))) {
                 holy_tokens_free(v, count); goto done;
             }
-            version = !strcmp(v[1], "holy-install-plan-7") ? 7 :
+            version = !strcmp(v[1], "holy-install-plan-8") ? 8 :
+                      !strcmp(v[1], "holy-install-plan-7") ? 7 :
                       !strcmp(v[1], "holy-install-plan-6") ? 6 :
                       !strcmp(v[1], "holy-install-plan-5") ? 5 :
                       !strcmp(v[1], "holy-install-plan-4") ? 4 :
@@ -1250,7 +1284,7 @@ static int check_plan(const char *path, struct install_input *input,
                         (!strcmp(v[0], "locale") ? locale_valid(v[1]) :
                          !strcmp(v[0], "timezone") ? timezone_valid(v[1]) :
                          !strcmp(v[1], "connman-iwd"));
-            if (!valid || *target) { holy_tokens_free(v, count); goto done; }
+            if (!valid || *target || phase > 13) { holy_tokens_free(v, count); goto done; }
             phase = 13;
             *target = strdup(v[1]);
             if (!*target) { holy_tokens_free(v, count); goto done; }
@@ -1264,7 +1298,7 @@ static int check_plan(const char *path, struct install_input *input,
             /* the network packages come before the firmware, which is the order the
                writer names them */
             int wanted = !strcmp(v[0], "network-package") ? 14 : 15;
-            if (version < 6 || phase >= wanted || phase + 1 < wanted ||
+            if (version < 6 || phase > wanted || phase + 1 < wanted ||
                 count != 2 || !digest_valid(v[1]) || *total >= input->count + 64) {
                 holy_tokens_free(v, count); goto done;
             }
@@ -1281,6 +1315,29 @@ static int check_plan(const char *path, struct install_input *input,
             (*list)[*total] = strdup(v[1]);
             if (!(*list)[*total]) { holy_tokens_free(v, count); goto done; }
             ++*total;
+        } else if (!strcmp(v[0], "accept-service")) {
+            char **next;
+            size_t i;
+            /* the consents are the last lines a plan carries, so a plan that names one
+               before the network block is not this writer's plan */
+            if (version < 8 || phase > 16 || count != 2 ||
+                !holy_unit_name_valid(v[1]) || input->service_count >= input->count + 64) {
+                holy_tokens_free(v, count); goto done;
+            }
+            phase = 16;
+            for (i = 0; i < input->service_count; ++i)
+                if (!strcmp(input->accepted_service[i], v[1])) {
+                    holy_tokens_free(v, count); goto done;
+                }
+            next = realloc(input->accepted_service,
+                           (input->service_count + 1) * sizeof *next);
+            if (!next) { holy_tokens_free(v, count); goto done; }
+            input->accepted_service = next;
+            input->accepted_service[input->service_count] = strdup(v[1]);
+            if (!input->accepted_service[input->service_count]) {
+                holy_tokens_free(v, count); goto done;
+            }
+            ++input->service_count;
         } else {
             char **next;
             size_t i;
@@ -1307,7 +1364,7 @@ static int check_plan(const char *path, struct install_input *input,
                                 input->account_count + (input->password_file ? 1u : 0u) +
                                 (input->locale ? 1u : 0u) + (input->timezone ? 1u : 0u) +
                                 (input->network ? 1u : 0u) + input->network_count +
-                                input->firmware_count ||
+                                input->firmware_count + input->service_count ||
         (input->password_file && !input->account_count) ||
         (input->network && (!input->network_count || version < 6)) ||
         ((input->network_count || input->firmware_count) && !input->network) ||
@@ -1315,7 +1372,8 @@ static int check_plan(const char *path, struct install_input *input,
         !input->count || (version == 1 && input->accept_count) ||
         (version == 2 && (!input->accept_count || input->privileged_count)) ||
         (version == 3 && !input->privileged_count) ||
-        (version == 4 && !input->source_count)) goto done;
+        (version == 4 && !input->source_count) ||
+        (version < 8 && input->service_count)) goto done;
     rc = 0;
 done:
     free(line);
@@ -1372,6 +1430,8 @@ static void free_input(struct install_input *input)
     free(input->accepted_arch);
     for (i = 0; i < input->privileged_count; ++i) free(input->accepted_privileged[i]);
     free(input->accepted_privileged);
+    for (i = 0; i < input->service_count; ++i) free(input->accepted_service[i]);
+    free(input->accepted_service);
     for (i = 0; i < input->source_count; ++i) free(input->sources[i]);
     free(input->sources);
     free(input->root);

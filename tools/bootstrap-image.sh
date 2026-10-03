@@ -129,6 +129,10 @@ case "$profile:$boot_state" in
         musl=$(core_input "${MUSL_PACKAGE:?MUSL_PACKAGE required}")
         glibc_cc=$(command -v "${GLIBC_CC:-gcc}")
         musl_cc=$(realpath "${MUSL_CC:?MUSL_CC required}")
+        # a host compiler that targets the build machine still has to be told the image
+        # machine, so the probe flags are the builder's input rather than a fixed choice
+        glibc_cflags=${GLIBC_CFLAGS:-}
+        musl_cflags=${MUSL_CFLAGS:-}
         test -x "$musl_cc" || exit 6
         command -v patchelf >/dev/null || exit 6
         extra_packages='glibc musl probe-glibc probe-musl'
@@ -310,7 +314,7 @@ if test "$profile" = dual-libc; then
     for abi in glibc musl; do
         case "$abi" in
             glibc)
-                compiler=$glibc_cc; needed=libc.so.6
+                compiler=$glibc_cc; needed=libc.so.6; probe_cflags=$glibc_cflags
                 if test "$arch" = i686; then
                     loader=/usr/lib/holy/i686-linux-gnu/ld-linux.so.2
                     provider=/usr/lib/holy/i686-linux-gnu/libc.so.6
@@ -319,7 +323,7 @@ if test "$profile" = dual-libc; then
                     provider=/usr/lib/holy/x86_64-linux-gnu/libc.so.6
                 fi ;;
             musl)
-                compiler=$musl_cc; needed=libc.so
+                compiler=$musl_cc; needed=libc.so; probe_cflags=$musl_cflags
                 if test "$arch" = i686; then
                     loader=/usr/lib/holy/i686-linux-musl/ld-musl-i386.so.1
                 else
@@ -332,8 +336,13 @@ if test "$profile" = dual-libc; then
         mv "$work/meta" "$tree/HOLY/meta"
         mkdir -p "$tree/DATA/usr/bin"
         probe="$tree/DATA/usr/bin/holy-probe-$abi"
-        "$compiler" -std=c99 -Wall -Wextra -Werror -pedantic -O2 -pthread \
+        "$compiler" -std=c99 -Wall -Wextra -Werror -pedantic -O2 -pthread $probe_cflags \
             "-DHOLY_LIBC=\"$abi\"" "$project/tests/libc-probe.c" -o "$probe"
+        "$bin" elf "$probe" > "$work/probe-$abi.elf"
+        grep -qx "machine $package_arch" "$work/probe-$abi.elf" || {
+            echo "probe-$abi is not $package_arch" >&2
+            exit 6
+        }
         sha256sum "$project/tests/libc-probe.c" "$probe" >> "$tree/HOLY/origin"
         patchelf --set-interpreter "$loader" --replace-needed "$needed" "$provider" "$probe"
         printf 'bootstrap-patchelf interpreter %s\nbootstrap-patchelf needed %s %s\n' "$loader" "$needed" "$provider" >> "$tree/HOLY/origin"
@@ -444,7 +453,10 @@ if test "$profile" = dual-libc; then
     for name in $extra_packages; do
         hash=$(sha256sum "$out/packages/$name.holy")
         printf '%s\n' "${hash%% *}" > "$tree/DATA/etc/holy/$name.sha256"
-        source_id=$(awk -v label="$name" '$1 == label {print $2}' "$work/add-sources")
+        source_id=
+        if test -f "$work/add-sources"; then
+            source_id=$(awk -v label="$name" '$1 == label {print $2}' "$work/add-sources")
+        fi
         if test -n "$source_id"; then
             printf '%s\n' "$source_id" > "$tree/DATA/etc/holy/$name.source-id"
         fi
@@ -550,6 +562,13 @@ fi
 for digest in $accepted_arch; do
     printf 'architecture-placement host x86_64 target x86 artifact %s accepted-unverified\n' "$digest" >> "$record"
     printf 'accept-arch %s\n' "$digest" >> "$work/install.conf"
+done
+# the image stages a service unit per file under profiles/dinit, and a set that ships one
+# needs a consent naming it, so the builder consents to exactly what it staged
+for unit in "$project/profiles/dinit/"*; do
+    name=${unit##*/}
+    printf 'service-consent %s\n' "$name" >> "$record"
+    printf 'accept-service %s\n' "$name" >> "$work/install.conf"
 done
 "$installer" --config "$work/install.conf" --plan "$out/install.plan" --holypkg "$bin" > "$out/install.preview"
 cat "$out/install.preview"

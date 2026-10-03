@@ -50,6 +50,23 @@ void holy_tokens_free(char **v, size_t n)
     free(v);
 }
 
+/* a service unit name is a single path component the manager will look up under
+   /etc/dinit.d, so the installer and the manager have to agree on what one may be */
+int holy_unit_name_valid(const char *name)
+{
+    size_t i, length;
+    if (!name || !*name) return 0;
+    length = strlen(name);
+    if (length > 255 || !strcmp(name, ".") || !strcmp(name, "..")) return 0;
+    for (i = 0; i < length; ++i)
+        if (!((name[i] >= 'a' && name[i] <= 'z') ||
+              (name[i] >= 'A' && name[i] <= 'Z') ||
+              (name[i] >= '0' && name[i] <= '9') ||
+              name[i] == '-' || name[i] == '_' || name[i] == '.' || name[i] == '@'))
+            return 0;
+    return 1;
+}
+
 static int append(char **buf, size_t *len, size_t *cap, char c)
 {
     char *next;
@@ -201,14 +218,16 @@ static int list_key(const char *section, const char *key)
                                             !strcmp(key, "network-package") ||
                                             !strcmp(key, "firmware") ||
                                             !strcmp(key, "accept-arch") ||
-                                            !strcmp(key, "accept-privileged"))) ||
+                                            !strcmp(key, "accept-privileged") ||
+                                            !strcmp(key, "accept-service"))) ||
            (!strcmp(section, "install-plan") && (!strcmp(key, "artifact") ||
                                                  !strcmp(key, "source") ||
                                                  !strcmp(key, "account") ||
                                                  !strcmp(key, "network-package") ||
                                                  !strcmp(key, "firmware") ||
                                                  !strcmp(key, "accept-arch") ||
-                                                 !strcmp(key, "accept-privileged"))) ||
+                                                 !strcmp(key, "accept-privileged") ||
+                                                 !strcmp(key, "accept-service"))) ||
            (!strcmp(section, "resolver") && !strcmp(key, "prefer"));
 }
 
@@ -251,6 +270,7 @@ static int key_arity(const char *section, const char *key)
         if (!strcmp(key, "account")) return 5;
         if (!strcmp(key, "root") || !strcmp(key, "artifact") ||
             !strcmp(key, "accept-arch") || !strcmp(key, "accept-privileged") ||
+            !strcmp(key, "accept-service") ||
             !strcmp(key, "password-file") || !strcmp(key, "locale") ||
             !strcmp(key, "timezone") || !strcmp(key, "network-profile") ||
             !strcmp(key, "disk-plan") || !strcmp(key, "network-package") ||
@@ -262,7 +282,7 @@ static int key_arity(const char *section, const char *key)
             !strcmp(key, "device") || !strcmp(key, "inode") ||
             !strcmp(key, "config-sha256") || !strcmp(key, "set-sha256") ||
             !strcmp(key, "artifact") || !strcmp(key, "accept-arch") ||
-            !strcmp(key, "accept-privileged") ||
+            !strcmp(key, "accept-privileged") || !strcmp(key, "accept-service") ||
             !strcmp(key, "password-file") || !strcmp(key, "locale") ||
             !strcmp(key, "timezone") || !strcmp(key, "network-profile") ||
             !strcmp(key, "disk-plan") || !strcmp(key, "network-package") ||
