@@ -1,4 +1,4 @@
-holy-agent.7 source=holy version=development sha256=10fdd8747b4d31d8df98d5a6538b9f2411e79ad4f4c6d1898eb42251f878cd07
+holy-agent.7 source=holy version=development sha256=ee6ede722ff9dd8b3c5181659a5ebfe75128bdad8a36d520c78b84d970d8b457
 HOLY-AGENT(7)			      Holy			   HOLY-AGENT(7)
 
 NAME
@@ -123,6 +123,17 @@ DESCRIPTION
      model  and	 ask  it  one  question,  the second naming the Vulkan device it
      loaded the model on.
 
+     The graphics rows draw rather than enumerate, since a device  that	 appears
+     in	 a  loader list has proven nothing about drawing.  graphics-vulkan-soft-
+     ware and graphics-vulkan-hardware run a compute shader that writes a  known
+     pattern  into a storage buffer, read it back and compare every element; the
+     row names the device and the driver the loader reported, so a software ren-
+     derer and a real GPU stay separate rows  and  neither  stands  in	for  the
+     other.   graphics-opengl  makes  a core profile context on the session dis-
+     play, renders a triangle into a framebuffer object and checks the	gradient
+     the  readback holds.  A host without the Vulkan or GL headers names them as
+     missing instead of skipping the row.
+
 WHAT A REPORT MAY CLAIM
      A tool version proves the tool is present. It  does  not  prove  a	 library
      loads,  a	native module resolves, a bootloader can read a filesystem, or a
@@ -132,6 +143,10 @@ WHAT A REPORT MAY CLAIM
      Unpacking	a  kernel  is  not  evidence  that the kernel boots. The two are
      recorded as separate results, and a boot that is not run is written as not-
      tested rather than inferred.
+
+     A device in a loader list is not evidence that it drew. The graphics  cases
+     read  pixels back and compare them with what the shader computes, so a dri-
+     ver that enumerates and then fails to render fails its row.
 
      A download is not provenance. An artifact a case uses carries the digest  a
      reviewer  read  at its URL and the license beside it, and a URL that serves

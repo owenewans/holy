@@ -1686,7 +1686,19 @@
   closes it after, and journals formatting-luks, opening-luks and
   closing-luks. An image file keeps ext4, since a mapper needs a partition
   device. Btrfs, XFS and F2FS boots in QEMU and an encrypted install remain
-  open. The implemented blank-disk GPT/ext4/FAT path uses
+  open. What the plan needs and the image does not carry is named now:
+  `src/disk.c` runs `/usr/bin/mkfs.btrfs`, `/usr/sbin/mkfs.xfs`,
+  `/usr/sbin/mkfs.f2fs`, `/usr/sbin/mkswap` and `/usr/sbin/cryptsetup`, and
+  the storage package that ships sfdisk, mkfs.fat, mke2fs and limine ships
+  none of them, so a guest can only prepare ext4 today. Closing the gap needs
+  btrfs-progs, xfsprogs, f2fs-tools and cryptsetup in that package, which needs
+  its own pinned sources in `profiles`, and it needs the operator inputs the
+  storage bootstrap takes: this host holds no util-linux, dosfstools or
+  e2fsprogs checkout at the pinned commits and no limine binary tarball matching
+  the digest the script records, so the package cannot be rebuilt here at all.
+  The kernel already enables BTRFS_FS, XFS_FS and F2FS_FS built in, and a LUKS2
+  root needs DM_CRYPT and CRYPTO_XTS added to that fragment before it can boot.
+  The implemented blank-disk GPT/ext4/FAT path uses
   reviewed plans and `holypkg --root`; account login has a VM fixture.
   Config and text menu now bind selected artifacts to registered source IDs
   through frozen plan format 4 and retain that provenance at install. The live
@@ -1972,8 +1984,11 @@
   resolved through the libc; a locale archive loaded, its codeset read and a
   collation taken from it; an NSS passwd and group answer with `getgrouplist`;
   a PAM handle opened against a real service; a headless Firefox screenshot and
-  a window that stayed up on the session display; Vulkan under software and
-  hardware rendering and an accelerated OpenGL context; GNU Chess 6.2.9 built
+  a window that stayed up on the session display; a compute shader that wrote
+  4096 values through llvmpipe and again through NVK, both read back and
+  compared, and an OpenGL triangle whose gradient came back from the readback
+  under zink, so the graphics rows name the driver that drew rather than a
+  device that appeared in a loader list; GNU Chess 6.2.9 built
   from its pin for x86_64 and for i686, each driven over the xboard line
   protocol on a pty until the engine answered both scripted moves, which is the
   fix for a fixture that only piped a move list into a program that buffers it

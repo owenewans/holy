@@ -14,6 +14,7 @@ import os
 import pty
 import re
 import select
+import shlex
 import shutil
 import ssl
 import subprocess
@@ -1038,45 +1039,115 @@ def firefox_case(case, work, headless):
                       "; input and font checks need a window tool this host lacks"))
 
 
-def vulkan_case(case, work, software):
-    nodes = sorted(Path("/dev/dri").glob("renderD*"))
-    if software:
-        if not shutil.which("vulkaninfo"):
-            case.missing("vulkaninfo not installed")
+def pkg_config(package, *keys):
+    """what pkg-config says about one package, as a list, so a package this host lacks is an
+    empty answer rather than an error the harness has to catch"""
+    if not shutil.which("pkg-config"):
+        return []
+    done = subprocess.run(["pkg-config", *keys, package], capture_output=True, text=True)
+    return done.stdout.split() if done.returncode == 0 else []
+
+
+def have_package(package):
+    if not shutil.which("pkg-config"):
+        return False
+    return subprocess.run(["pkg-config", "--exists", package]).returncode == 0
+
+
+def named_fields(line):
+    """the key=value pairs a fixture printed on one line, with the quoting shlex understands,
+    so a device or renderer name carrying spaces stays one value"""
+    return dict(part.split("=", 1) for part in shlex.split(line) if "=" in part)
+
+
+GRAPHICS = PROJECT / "tests" / "graphics"
+# a software renderer and a real GPU are separate facts, so the two cases name the drivers
+# they ask for and neither falls back to the other
+VULKAN_DEVICES = {"software": ("llvmpipe", "lavapipe", "SwiftShader"),
+                  "hardware": ("NVK", "RADV", "Intel", "nouveau")}
+
+
+def vulkan_draw_case(case, work, kind):
+    """a compute shader fills a buffer with a known pattern and the fixture reads it back, so
+    the row says an ICD drew rather than that a device was enumerated. the device and the
+    driver name it prints are the loader's answer to who answered."""
+    if not need(case, "cc") or not need(case, "glslc"):
+        return
+    if not have_package("vulkan"):
+        case.missing("no pkg-config entry for vulkan; the Vulkan headers are not installed")
+        return
+    directory = work / "graphics"
+    directory.mkdir(parents=True, exist_ok=True)
+    binary = directory / "vulkan-draw"
+    module = directory / "vulkan-draw.spv"
+    if not binary.is_file():
+        code, out, err, _ = run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-o", str(binary),
+                                 str(GRAPHICS / "vulkan-draw.c"),
+                                 *pkg_config("vulkan", "--cflags", "--libs")],
+                                log=work / "logs" / f"{case.name}.build.log")
+        if code:
+            case.fail(f"the Vulkan fixture did not build: {rc_text(err)}")
             return
-        code, out, err, _ = run(["vulkaninfo", "--summary"], timeout=120,
+    if not module.is_file():
+        code, out, err, _ = run(["glslc", "-fshader-stage=compute",
+                                 str(GRAPHICS / "vulkan-draw.comp"), "-o", str(module)],
+                                log=work / "logs" / f"{case.name}.shader.log")
+        if code or not module.is_file():
+            case.fail(f"glslc produced no module: {rc_text(err)}")
+            return
+    offered = ""
+    for driver in VULKAN_DEVICES[kind]:
+        code, out, err, _ = run([str(binary), str(module), driver], timeout=900,
                                 log=work / "logs" / f"{case.name}.log")
-        if code or "GPU id" not in out and "deviceName" not in out:
-            case.fail(f"no Vulkan loader device was reported: rc={code}")
+        combined = out + err
+        if code == 0 and "mismatches=0" in combined:
+            fields = named_fields(combined.splitlines()[0])
+            case.reason = (f"{fields.get('device', 'a device')} through driver "
+                           f"{fields.get('driver', 'unknown')} wrote "
+                           f"{fields.get('elements', '?')} values, none of them wrong")
             return
-        case.reason = "the loader enumerated a device under software rendering"
-        return
-    if not nodes:
-        case.missing("no /dev/dri render node")
-        return
-    if not shutil.which("vulkaninfo"):
-        case.missing("vulkaninfo not installed")
-        return
-    code, out, err, _ = run(["vulkaninfo", "--summary"], timeout=120,
-                            log=work / "logs" / f"{case.name}.log")
-    if code:
-        case.fail(f"the Vulkan loader reported no device: rc={code}")
-        return
-    case.reason = f"loader enumerated a device on {nodes[0]}"
+        if "no device carries the requested name" not in combined:
+            case.fail(f"the Vulkan fixture did not verify its draw: rc={code}: {rc_text(err)}")
+            return
+        offered = combined.strip()
+    case.missing(f"no {kind} Vulkan device; the loader offered {offered}")
 
 
-def opengl_case(case, work):
+def opengl_draw_case(case, work):
+    """a triangle is rendered into an FBO the fixture owns and read back, so a row cannot pass
+    on the strength of a context existing. the renderer string says which driver drew."""
     if not os.environ.get("DISPLAY"):
         case.missing("DISPLAY required for an OpenGL presentation probe")
         return
-    if not shutil.which("glxinfo"):
-        case.missing("glxinfo not installed")
+    if not need(case, "cc"):
         return
-    code, out, err, _ = run(["glxinfo", "-B"], timeout=60, log=work / "logs" / f"{case.name}.log")
-    if code or "direct rendering: Yes" not in out:
-        case.fail(f"no accelerated OpenGL context: rc={code}")
+    directory = work / "graphics"
+    directory.mkdir(parents=True, exist_ok=True)
+    binary = directory / "opengl-draw"
+    if not binary.is_file():
+        libraries = pkg_config("gl", "--libs") + pkg_config("x11", "--libs") or ["-lGL", "-lX11"]
+        code, out, err, _ = run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-o", str(binary),
+                                 str(GRAPHICS / "opengl-draw.c"),
+                                 *pkg_config("gl", "--cflags"), *pkg_config("x11", "--cflags"),
+                                 *libraries],
+                                log=work / "logs" / f"{case.name}.build.log")
+        if code:
+            case.fail(f"the OpenGL fixture did not build: {rc_text(err)}")
+            return
+    code, out, err, _ = run([str(binary)], timeout=600, log=work / "logs" / f"{case.name}.log")
+    combined = out + err
+    if code or "failures=0" not in combined:
+        case.fail(f"the OpenGL readback did not match the shader: rc={code}: {rc_text(err)}")
         return
-    case.reason = "an accelerated OpenGL context in the session"
+    fields = {}
+    pixels = ""
+    for line in combined.splitlines():
+        if line.startswith("opengl-draw vendor="):
+            fields = named_fields(line)
+        elif line.startswith("opengl-draw pixels="):
+            pixels = named_fields(line).get("pixels", "")
+    case.reason = (f"{fields.get('renderer', 'an unnamed renderer')} drew a {pixels} frame "
+                   f"and the readback matched the shader")
 
 
 def fetch_pin(case, work, pin):
@@ -1551,9 +1622,9 @@ CASES = [
     ("system-pam", "system", pam_case),
     ("gui-firefox-headless", "gui", lambda c, w: firefox_case(c, w, True)),
     ("gui-firefox-session", "gui", lambda c, w: firefox_case(c, w, False)),
-    ("graphics-vulkan-software", "graphics", lambda c, w: vulkan_case(c, w, True)),
-    ("graphics-vulkan-hardware", "graphics", lambda c, w: vulkan_case(c, w, False)),
-    ("graphics-opengl", "graphics", opengl_case),
+    ("graphics-vulkan-software", "graphics", lambda c, w: vulkan_draw_case(c, w, "software")),
+    ("graphics-vulkan-hardware", "graphics", lambda c, w: vulkan_draw_case(c, w, "hardware")),
+    ("graphics-opengl", "graphics", opengl_draw_case),
     ("gaming-game-x86_64", "gaming", lambda c, w: chess_case(c, w, "x86_64")),
     ("gaming-game-i686", "gaming", lambda c, w: chess_case(c, w, "i686")),
     ("gaming-wine-x86_64", "gaming", lambda c, w: wine_case(c, w, "x86_64")),

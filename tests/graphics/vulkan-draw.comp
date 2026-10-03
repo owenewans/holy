@@ -1,0 +1,9 @@
+#version 450
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std430) buffer values { uint data[]; };
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index < 4096u)
+        data[index] = index * 7u + 3u;
+}
