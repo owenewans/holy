@@ -1727,12 +1727,23 @@
   `src/disk.c` runs `/usr/bin/mkfs.btrfs`, `/usr/sbin/mkfs.xfs`,
   `/usr/sbin/mkfs.f2fs`, `/usr/sbin/mkswap` and `/usr/sbin/cryptsetup`, and
   the storage package that ships sfdisk, mkfs.fat, mke2fs and limine ships
-  none of them, so a guest can only prepare ext4 today. Closing the gap needs
-  btrfs-progs, xfsprogs, f2fs-tools and cryptsetup in that package, which needs
-  its own pinned sources in `profiles`, and it needs the operator inputs the
-  storage bootstrap takes: this host holds no util-linux, dosfstools or
-  e2fsprogs checkout at the pinned commits and no limine binary tarball matching
-  the digest the script records, so the package cannot be rebuilt here at all.
+  none of them, so a guest can only prepare ext4 today.
+  The inputs that were missing here are no longer missing. All three git sources
+  were fetched at the commits the bootstrap asserts, and the limine tarball it
+  names is release 12.9.0's `limine-binary.tar.xz`: its digest matches the one
+  the script records and the digest GitHub publishes for that asset, so the pin
+  added to `profiles/bootstrap-sources` has two sources and tools/fetch-sources.sh
+  can fetch it. `tools/bootstrap-storage.sh` then built `holy-storage-tools.holy`
+  here from those four inputs, and `tests/bootstrap-storage.sh` passes against
+  it, so the statement that this package cannot be rebuilt on this host is gone.
+  The three filesystems and the encrypted root still need their own tools, and
+  building btrfs-progs here showed what that costs: the current release includes
+  `uuid/uuid.h`, `blkid/blkid.h` and `libudev.h` unconditionally, so a musl
+  static build needs util-linux's libuuid, libblkid and libsmartcols from the
+  same bootstrap plus a libudev header, and this repository has pinned none of
+  them yet. f2fs-tools publishes no release tarball at a URL a mirror serves, so
+  its source has to arrive as a git checkout the way util-linux does, and
+  cryptsetup needs libdevmapper before anything else.
   The kernel already enables BTRFS_FS, XFS_FS and F2FS_FS built in, and a LUKS2
   root needs DM_CRYPT and CRYPTO_XTS added to that fragment before it can boot.
   The implemented blank-disk GPT/ext4/FAT path uses
