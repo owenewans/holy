@@ -92,6 +92,16 @@ profiles/matrix-sources carries no digest for. missing and unpinned are separate
 tool nobody installed and an artifact nobody wrote a digest down are different gaps. Neither
 turns the run green; REQUIRE=1 makes either exit 6. A case whose remaining checks need a
 tool the host lacks names that tool in its own row rather than passing quietly.
+.PP
+The gaming and workstation rows are per machine class, since a 32-bit run proves nothing
+about a 64-bit one and a software device nothing about a real one:
+gaming-game-x86_64 and gaming-game-i686 build GNU Chess from their pin, each for its own ABI,
+and drive it over the xboard line protocol on a pty until the engine answers each move;
+gaming-wine-x86_64 and gaming-wine-i686 run a pinned Windows console program of that
+architecture under wine, and a wine built without a 32-bit side reports the absent syswow64
+ntdll.dll instead of running the 64-bit program twice;
+workstation-llama and workstation-llama-vulkan build llama.cpp from its pin, load the pinned
+model and ask it one question, the second naming the Vulkan device it loaded the model on.
 .SH WHAT A REPORT MAY CLAIM
 A tool version proves the tool is present. It does not prove a library loads, a native
 module resolves, a bootloader can read a filesystem, or a kernel can reach its root device.

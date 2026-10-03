@@ -11,6 +11,9 @@ host could not prove instead of hiding it.
 import argparse
 import json
 import os
+import pty
+import re
+import select
 import shutil
 import ssl
 import subprocess
@@ -63,14 +66,18 @@ class Case:
         self.reason = reason
 
 
-def run(argv, cwd=None, timeout=300, env=None, log=None, pipe=True):
+def run(argv, cwd=None, timeout=300, env=None, log=None, pipe=True, stdin=None):
     """run one command. pipe=False sends its output to the log file, because a process
-    that forks a helper of its own holds a pipe open long after the work is done."""
+    that forks a helper of its own holds a pipe open long after the work is done. stdin
+    feeds a program that reads commands from its input, and then the output is captured
+    either way since there is nothing to stream it into."""
     start = time.monotonic()
     merged = dict(os.environ)
     merged.setdefault("TERM", "dumb")
     if env:
         merged.update(env)
+    if stdin is not None:
+        pipe = True
     stream = None
     shape = {"capture_output": True, "text": True, "errors": "replace"} if pipe else {}
     if not pipe:
@@ -80,7 +87,8 @@ def run(argv, cwd=None, timeout=300, env=None, log=None, pipe=True):
         shape["stdout"] = stream or subprocess.DEVNULL
         shape["stderr"] = subprocess.STDOUT if stream else subprocess.DEVNULL
     try:
-        done = subprocess.run(argv, cwd=cwd, timeout=timeout, env=merged, **shape)
+        done = subprocess.run(argv, cwd=cwd, timeout=timeout, env=merged,
+                              input=stdin, **shape)
         code, out, err = done.returncode, done.stdout or "", done.stderr or ""
     except subprocess.TimeoutExpired:
         code, out, err = 124, "", f"timeout after {timeout}s"
@@ -758,6 +766,10 @@ def git_fixture_case(case, work):
             case.fail(f"openssl did not verify the fixture certificate: rc={code}")
             return
         bare = serve / "fixture-repo.git"
+        # the seed and both clones are disposable, and a work directory kept across runs
+        # would otherwise hand git a destination that is already there
+        for name in ("seed", "cloned", "cloned-badsha"):
+            shutil.rmtree(work / name, ignore_errors=True)
         run(["git", "init", "--quiet", "--bare", "-b", "main", str(bare)], timeout=60)
         seed = work / "seed"
         run(["git", "init", "--quiet", "-b", "main", str(seed)], timeout=60)
@@ -1091,6 +1103,27 @@ def fetch_pin(case, work, pin):
     return archive
 
 
+def unpack_root(case, work, archive, name):
+    """the tree a release archive unpacks into, under a name the caller picks, since a github
+    tarball unpacks into a directory named after its tag rather than after the file the URL
+    ended with. an existing tree is kept, so a build that is already there is not redone."""
+    target = work / name
+    if target.is_dir():
+        return target
+    code, out, err, _ = run(["tar", "-tf", str(archive)], timeout=600)
+    roots = {line.split("/", 1)[0] for line in out.splitlines() if "/" in line}
+    if code or len(roots) != 1 or not roots.pop():
+        case.fail(f"{archive.name} has no single top directory: rc={code}")
+        return None
+    root = out.split("/", 1)[0]
+    code, out, err, _ = run(["tar", "-xf", str(archive), "-C", str(work)], timeout=1800)
+    if code:
+        case.fail(f"{archive.name} did not unpack: rc={code}")
+        return None
+    (work / root).rename(target)
+    return target
+
+
 def pinned_source_case(case, work, name, url, license_id):
     """a foreign source case proves two things: the pin exists, and the URL still serves
     the bytes the pin names. what is built from them is a separate case."""
@@ -1120,19 +1153,9 @@ def rizin_build_case(case, work):
         return
     source = work / "rizin"
     if not (source / "meson.build").is_file():
-        # the directory a release archive unpacks into is its own, not the file name the
-        # URL ended with, so the listing names it
-        code, out, err, _ = run(["tar", "-tf", str(archive)], timeout=300)
-        roots = {line.split("/", 1)[0] for line in out.splitlines() if "/" in line}
-        if code or len(roots) != 1 or not roots.pop():
-            case.fail(f"the rizin archive has no single top directory: rc={code}")
+        source = unpack_root(case, work, archive, "rizin")
+        if not source:
             return
-        root = out.split("/", 1)[0]
-        code, out, err, _ = run(["tar", "-xf", str(archive), "-C", str(work)], timeout=600)
-        if code:
-            case.fail(f"the rizin source did not unpack: rc={code}")
-            return
-        (work / root).rename(source)
     # rizin installs one directory per tool, so the executable is found in the build tree
     # rather than assumed at a fixed place inside it
     def rizin_binary():
@@ -1181,36 +1204,317 @@ def rc_text(err):
     return lines[-1] if lines else ""
 
 
-def gaming_case(case, work):
-    missing = []
-    if not shutil.which("wine"):
-        missing.append("wine")
-    if not any(Path("/dev/dri").glob("renderD*")):
-        missing.append("a DRM render node")
-    if not shutil.which("vulkaninfo"):
-        missing.append("vulkaninfo")
-    if missing:
-        case.missing(", ".join(missing) + " missing for the gaming profile")
+CHESS_MOVES = ["e2e4", "g1f3"]
+BOARD_RANKS = "rnbqkpnr"
+
+
+def xboard_game(engine, moves, timeout=300):
+    """drive the engine through its xboard line protocol on a pty and return its lines. its
+    stdout is block buffered to a pipe, so a driver that waits for an answer before sending
+    the next command would wait forever without one."""
+    master, slave = pty.openpty()
+    process = subprocess.Popen([str(engine), "-x"], stdin=slave, stdout=slave, stderr=slave,
+                               close_fds=True, env={"TERM": "dumb", "PATH": "/usr/bin:/bin"})
+    os.close(slave)
+    lines = []
+    pending = ""
+
+    def collect(seconds):
+        nonlocal pending
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([master], [], [], 0.2)
+            if not ready:
+                continue
+            try:
+                chunk = os.read(master, 4096).decode("utf-8", "replace")
+            except OSError:
+                return
+            pending += chunk
+            while "\n" in pending:
+                line, pending = pending.split("\n", 1)
+                lines.append(line.rstrip("\r"))
+
+    def wait_for(pattern, limit, start=0):
+        expression = re.compile(pattern)
+        deadline = time.monotonic() + limit
+        while True:
+            for line in lines[start:]:
+                if expression.search(line):
+                    return True
+            if time.monotonic() >= deadline:
+                return False
+            collect(0.3)
+
+    try:
+        os.write(master, b"protover 2\n")
+        wait_for(r"feature done=1", 60)
+        for move in moves:
+            # the engine answers a move with its own reply in the ply count form, and each
+            # answer is looked for past the lines that were already read for the last one
+            start = len(lines)
+            os.write(master, f"usermove {move}\n".encode())
+            if not wait_for(r"^\d+\. \.\.\. ", 120, start):
+                break
+        os.write(master, b"quit\n")
+        try:
+            process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            process.kill()
+    finally:
+        os.close(master)
+    return lines, process.returncode
+
+
+def chess_case(case, work, bits):
+    """an open-source game built for one ABI and played over its own line protocol. the two
+    ABIs are separate ids because a 32-bit run on an x86_64 host says nothing about the
+    64-bit binary."""
+    pin = PINS.get("gnuchess-6.2.9.tar.gz")
+    if not pin:
+        case.unpinned("https://ftp.gnu.org/gnu/chess/gnuchess-6.2.9.tar.gz")
         return
-    case.reason = "a 32-bit game, a wine fixture and a Vulkan frame were not run"
+    if not need(case, "gcc"):
+        return
+    case.artifact = pin
+    archive = fetch_pin(case, work, pin)
+    if not archive:
+        return
+    # each ABI configures its own tree, since one tree holds one answer to what -m32 means
+    source = unpack_root(case, work, archive, f"chess-{bits}")
+    if not source:
+        return
+    engine = source / "src" / "gnuchess"
+    if not engine.is_file():
+        env = None
+        if bits == "i686":
+            # the gnuchess frontend is C++, so a 32-bit build needs g++ emitting i386 as
+            # much as it needs gcc, and configure reads every one of these variables
+            if not need(case, "g++"):
+                return
+            env = {"CFLAGS": "-m32", "CXXFLAGS": "-m32", "LDFLAGS": "-m32"}
+        code, out, err, _ = run(["./configure"], cwd=source, env=env, timeout=900,
+                                log=work / "logs" / f"{case.name}.configure.log")
+        if code:
+            case.fail(f"gnuchess configure failed: {rc_text(err)}")
+            return
+        code, out, err, _ = run(["make", "-j4"], cwd=source, timeout=1800,
+                                log=work / "logs" / f"{case.name}.build.log")
+        if code:
+            case.fail(f"gnuchess did not build: {rc_text(err)}")
+            return
+    if not engine.is_file():
+        case.missing("the gnuchess build produced no engine")
+        return
+    code, out, _, _ = run(["file", "-b", str(engine)])
+    machine = "Intel i386" if bits == "i686" else "x86-64"
+    if machine not in out:
+        case.fail(f"the engine is not a {bits} object: {out.strip()[:80]}")
+        return
+    try:
+        lines, status = xboard_game(engine, CHESS_MOVES)
+    except Exception as error:
+        case.fail(f"the engine session failed: {type(error).__name__}: {error}")
+        return
+    write(work / "logs" / f"{case.name}.log", "\n".join(lines) + "\n")
+    plies = [line for line in lines if re.match(r"^\d+\. ", line)]
+    replies = [line for line in lines if re.match(r"^\d+\. \.\.\. ", line)]
+    refused = [line for line in lines if "Illegal" in line or "Error" in line]
+    if refused:
+        case.fail(f"the engine refused a move: {refused[:1]}")
+        return
+    if len(replies) != len(CHESS_MOVES):
+        case.fail(f"the engine answered {len(replies)} of {len(CHESS_MOVES)} moves: {plies[:4]}")
+        return
+    if status not in (0, None):
+        case.fail(f"the engine exited with {status} after the game")
+        return
+    interpreter = ""
+    code, out, _, _ = run(["file", "-b", str(engine)])
+    if "interpreter" in out:
+        interpreter = out.split("interpreter ")[1].split(",")[0].strip()
+    case.reason = (f"{len(replies)} engine replies to {' and '.join(CHESS_MOVES)} on {bits}"
+                   f" ({replies[-1].split('... ')[-1]}); "
+                   f"interpreter {interpreter or 'none (static)'}")
 
 
-def workstation_case(case, work):
-    """llama.cpp is built from its pin and asked to load the pinned model. both artifacts
-    are named here rather than fetched at random during a report."""
+def wine_tool():
+    """the loader a host calls wine. a build made for one architecture installs only that
+    name, so asking for wine64 after wine is not a second preference but the same tool."""
+    return shutil.which("wine") or shutil.which("wine64")
+
+
+def wine_prefix(case, work, wine):
+    """a prefix of this work directory, booted once. WINEPREFIX is set per command, so two
+    cases sharing a work directory share a prefix and a report says which one it used."""
+    prefix = work / "wineprefix"
+    env = {"WINEPREFIX": str(prefix), "WINEDEBUG": "-all",
+           "WINEDLLOVERRIDES": "mscoree,mshtml="}
+    if (prefix / "drive_c" / "windows" / "system32").is_dir():
+        return env
+    code, out, err, _ = run([wine, "wineboot", "-u"], timeout=1800, env=env,
+                            log=work / "logs" / f"{case.name}.boot.log")
+    if code or not (prefix / "drive_c" / "windows" / "system32").is_dir():
+        case.fail(f"the wine prefix did not come up: rc={code}")
+        return None
+    return env
+
+
+def wine_case(case, work, bits):
+    """a pinned Windows console program under wine. the two PE architectures are separate
+    ids, since a 64-bit program running says nothing about the 32-bit side."""
+    pin_name = f"ripgrep-14.1.1-{bits}-pc-windows-msvc.zip"
+    pin = PINS.get(pin_name)
+    if not pin:
+        case.unpinned(f"https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/{pin_name}")
+        return
+    wine = wine_tool()
+    if not wine:
+        case.missing("wine not installed")
+        return
+    case.artifact = pin
+    archive = fetch_pin(case, work, pin)
+    if not archive:
+        return
+    env = wine_prefix(case, work, wine)
+    if not env:
+        return
+    directory = work / f"wine-{bits}"
+    directory.mkdir(parents=True, exist_ok=True)
+    program = directory / f"ripgrep-14.1.1-{bits}-pc-windows-msvc" / "rg.exe"
+    if not program.is_file():
+        code, out, err, _ = run([sys.executable, "-c", "import zipfile,sys;zipfile.ZipFile(sys.argv[1])"
+                                 ".extractall(sys.argv[2])", str(archive), str(directory)],
+                                timeout=300, log=work / "logs" / f"{case.name}.unpack.log")
+        if code or not program.is_file():
+            case.fail(f"the pinned zip did not yield rg.exe: rc={code}")
+            return
+    if bits == "i686" and not (work / "wineprefix" / "drive_c" / "windows" / "syswow64"
+                               / "ntdll.dll").is_file():
+        # a wine built with --disable-win32 has no 32-bit side at all, and the loader says so
+        # by name, so the case reports the absence instead of running the 64-bit one twice
+        case.missing("this wine has no syswow64 ntdll.dll, so no 32-bit Windows program can "
+                     "start; build it with both architectures")
+        return
+    fixture = write(program.parent / "holy-matrix.txt", "the answer is 42\nholy matrix\n")
+    code, out, err, _ = run([wine, program.name, "--version"], cwd=program.parent, env=env,
+                            timeout=600, log=work / "logs" / f"{case.name}.version.log")
+    combined = out + err
+    if code or "ripgrep 14.1.1" not in combined:
+        case.fail(f"the {bits} Windows program did not report its version: rc={code}")
+        return
+    code, out, err, _ = run([wine, program.name, "-n", "answer", fixture.name],
+                            cwd=program.parent, env=env, timeout=600,
+                            log=work / "logs" / f"{case.name}.search.log")
+    combined = out + err
+    if code or "the answer is 42" not in combined:
+        case.fail(f"the {bits} Windows program did not search its fixture: rc={code}")
+        return
+    case.reason = f"a {bits} Windows console program searched the fixture under {Path(wine).name}"
+
+
+LLAMA_PROMPT = "The capital of France is"
+LLAMA_ANSWER = "Paris"
+
+
+def llama_case(case, work, vulkan):
+    """llama.cpp built from its pin, asked the pinned model one question and made to answer
+    it. the CPU run and the Vulkan run are separate ids, because a software device and a
+    real one are different facts."""
     engine = PINS.get("llama.cpp-b6100.tar.gz")
     model = PINS.get("tinyllama-q4.gguf")
+    if not engine:
+        case.unpinned("https://github.com/ggml-org/llama.cpp/archive/refs/tags/b6100.tar.gz")
+        return
     if not model:
         case.unpinned("https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/"
                       "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf")
         return
-    if not engine:
-        case.unpinned("https://github.com/ggml-org/llama.cpp/archive/refs/tags/b6100.tar.gz")
+    if not need(case, "cmake"):
+        return
+    if vulkan and not any(Path("/dev/dri").glob("renderD*")):
+        case.missing("no /dev/dri render node for a Vulkan run")
         return
     case.artifact = {"sha256": engine["sha256"], "url": engine["url"],
-                     "license": f"{engine['license']} engine, {model['license']} model"}
-    case.reason = (f"engine and model both pinned; {model['url']} is "
-                   f"{model['sha256'][:16]}, not fetched during the report")
+                     "license": f"{engine['license']} engine, {model['license']} model",
+                     "model_sha256": model["sha256"], "model_url": model["url"]}
+    engine_archive = fetch_pin(case, work, engine)
+    if not engine_archive:
+        return
+    model_file = fetch_pin(case, work, model)
+    if not model_file:
+        return
+    source = unpack_root(case, work, engine_archive, "llama")
+    if not source:
+        return
+    build = source / ("build-vulkan" if vulkan else "build-cpu")
+    cli = build / "bin" / "llama-cli"
+    if not cli.is_file():
+        flags = ["-DCMAKE_BUILD_TYPE=Release", "-DLLAMA_CURL=OFF", "-DGGML_NATIVE=OFF",
+                 "-DLLAMA_BUILD_TESTS=OFF"]
+        if vulkan:
+            flags.append("-DGGML_VULKAN=ON")
+        code, out, err, _ = run(["cmake", "-S", str(source), "-B", str(build), *flags],
+                                timeout=900, log=work / "logs" / f"{case.name}.configure.log")
+        if code:
+            case.fail(f"cmake configure failed: {rc_text(err)}")
+            return
+        code, out, err, _ = run(["cmake", "--build", str(build), "-j4", "--target", "llama-cli"],
+                                timeout=7200, log=work / "logs" / f"{case.name}.build.log")
+        if code:
+            case.fail(f"the llama.cpp build failed: {rc_text(err)}")
+            return
+    if not cli.is_file():
+        case.missing("the llama.cpp build produced no llama-cli")
+        return
+    device = None
+    if vulkan:
+        code, out, err, _ = run([str(cli), "--list-devices"], timeout=300,
+                                log=work / "logs" / f"{case.name}.devices.log")
+        # the listing names each device as VulkanN: description, and the model load line
+        # repeats the name it used, so the case takes the name from the listing and reads the
+        # description back off the run that answered the question
+        for line in out.splitlines():
+            if line.strip().startswith("Vulkan") and ":" in line:
+                device = line.split(":", 1)[0].strip()
+                break
+        if not device:
+            case.fail("this llama.cpp build reported no Vulkan device")
+            return
+    argv = [str(cli), "-m", str(model_file), "-p", LLAMA_PROMPT, "-n", "16", "-t", "4",
+            "--seed", "1", "--temp", "0", "--no-warmup", "-no-cnv"]
+    if vulkan:
+        argv += ["-dev", device]
+    code, out, err, _ = run(argv, timeout=1800, log=work / "logs" / f"{case.name}.log")
+    combined = out + err
+    if code:
+        case.fail(f"llama-cli returned {code}: {rc_text(err)}")
+        return
+    answer = ""
+    for line in combined.splitlines():
+        # the prompt is echoed with a space in front of it, so the line is stripped before
+        # the continuation is read off the end of it
+        if line.strip().startswith(LLAMA_PROMPT):
+            answer = line.strip()[len(LLAMA_PROMPT):].strip()
+    if LLAMA_ANSWER not in answer:
+        case.fail(f"the model answered {answer[:60]!r}, not {LLAMA_ANSWER!r}")
+        return
+    rate = ""
+    for line in combined.splitlines():
+        if "eval time" in line and "per token" in line:
+            rate = line.split("per token,")[1].split("tokens per second")[0].strip()
+    if not rate:
+        case.fail("llama-cli printed no token rate, so nothing was generated")
+        return
+    if vulkan:
+        loaded = [line for line in combined.splitlines() if "using device" in line]
+        if not loaded or f"using device {device}" not in loaded[0]:
+            case.fail(f"the model was not loaded on the Vulkan device: {loaded[:1]}")
+            return
+        name = loaded[0].split(f"using device {device}", 1)[1].split(" - ")[0].strip()
+        case.reason = f"{LLAMA_ANSWER} through {name} at {rate} tokens per second"
+        return
+    case.reason = f"{LLAMA_ANSWER} on the CPU at {rate} tokens per second"
 
 
 CASES = [
@@ -1250,8 +1554,12 @@ CASES = [
     ("graphics-vulkan-software", "graphics", lambda c, w: vulkan_case(c, w, True)),
     ("graphics-vulkan-hardware", "graphics", lambda c, w: vulkan_case(c, w, False)),
     ("graphics-opengl", "graphics", opengl_case),
-    ("gaming-profile", "gaming", gaming_case),
-    ("workstation-llama", "workstation", workstation_case),
+    ("gaming-game-x86_64", "gaming", lambda c, w: chess_case(c, w, "x86_64")),
+    ("gaming-game-i686", "gaming", lambda c, w: chess_case(c, w, "i686")),
+    ("gaming-wine-x86_64", "gaming", lambda c, w: wine_case(c, w, "x86_64")),
+    ("gaming-wine-i686", "gaming", lambda c, w: wine_case(c, w, "i686")),
+    ("workstation-llama", "workstation", lambda c, w: llama_case(c, w, False)),
+    ("workstation-llama-vulkan", "workstation", lambda c, w: llama_case(c, w, True)),
     ("foreign-rizin-source", "foreign",
      lambda c, w: pinned_source_case(c, w, "rizin-0.8.1.tar.gz",
                                     "https://github.com/rizinorg/rizin/archive/refs/tags/v0.8.1.tar.gz",
@@ -1261,8 +1569,8 @@ CASES = [
                                     "https://dl.winehq.org/wine/source/10.0/wine-10.0.tar.xz",
                                     "LGPL-2.1")),
     ("foreign-zed-source", "foreign",
-     lambda c, w: pinned_source_case(c, w, "zed-0.220.0.tar.gz",
-                                    "https://github.com/zed-industries/zed/archive/refs/tags/v0.220.0.tar.gz",
+     lambda c, w: pinned_source_case(c, w, "zed-1.22.0.tar.gz",
+                                    "https://github.com/zed-industries/zed/archive/refs/tags/v1.22.0.tar.gz",
                                     "GPL-3.0-or-later")),
     ("debug-rizin-built", "debug", rizin_build_case),
 ]

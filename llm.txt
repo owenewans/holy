@@ -1,4 +1,4 @@
-holy-agent.7 source=holy version=development sha256=730eb1453f0490aaf0f0dbe6482bcb87e3140a8864ed29ad6d44d23f790c930c
+holy-agent.7 source=holy version=development sha256=10fdd8747b4d31d8df98d5a6538b9f2411e79ad4f4c6d1898eb42251f878cd07
 HOLY-AGENT(7)			      Holy			   HOLY-AGENT(7)
 
 NAME
@@ -110,6 +110,18 @@ DESCRIPTION
      body wrote a digest down are different gaps. Neither turns the  run  green;
      REQUIRE=1	makes  either  exit 6. A case whose remaining checks need a tool
      the host lacks names that tool in its own row rather than passing quietly.
+
+     The gaming and workstation rows are per machine class, since a  32-bit  run
+     proves  nothing  about  a	64-bit one and a software device nothing about a
+     real one: gaming-game-x86_64 and  gaming-game-i686	 build	GNU  Chess  from
+     their pin, each for its own ABI, and drive it over the xboard line protocol
+     on a pty until the engine answers each move; gaming-wine-x86_64 and gaming-
+     wine-i686	run  a pinned Windows console program of that architecture under
+     wine, and a wine built without a 32-bit side reports  the	absent	syswow64
+     ntdll.dll	instead	 of  running the 64-bit program twice; workstation-llama
+     and workstation-llama-vulkan build llama.cpp from its pin, load the  pinned
+     model  and	 ask  it  one  question,  the second naming the Vulkan device it
+     loaded the model on.
 
 WHAT A REPORT MAY CLAIM
      A tool version proves the tool is present. It  does  not  prove  a	 library
