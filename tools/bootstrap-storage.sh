@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 umask 022
-test "$#" -eq 8 || {
-    echo 'usage: bootstrap-storage.sh HOLYPKG UTIL-LINUX-GIT DOSFSTOOLS-GIT E2FSPROGS-GIT LIMINE-BINARY-TAR BTRFS-PROGS-TAR STATIC-PREFIX OUTPUT' >&2
+test "$#" -eq 11 || {
+    echo 'usage: bootstrap-storage.sh HOLYPKG UTIL-LINUX-GIT DOSFSTOOLS-GIT E2FSPROGS-GIT LIMINE-BINARY-TAR BTRFS-PROGS-TAR XFSPROGS-TAR LIBURCU-TAR INIH-TAR STATIC-PREFIX OUTPUT' >&2
     exit 2
 }
 bin=$(realpath "$1")
@@ -11,7 +11,10 @@ dos=$(realpath "$3")
 e2=$(realpath "$4")
 limine_archive=$(realpath "$5")
 btrfs_archive=$(realpath "$6")
-prefix=$(realpath "$7")
+xfs_archive=$(realpath "$7")
+urcu_archive=$(realpath "$8")
+inih_archive=$(realpath "$9")
+prefix=$(realpath "${10}")
 arch=${ARCH:-x86_64}
 case "$arch" in
     x86_64) package_arch=x86_64 ;;
@@ -29,12 +32,18 @@ printf '%s  %s\n' 9a738586bff5790bd8bfef4a4868a2939cba3f81f22f121306d668c97f1c85
     "$limine_archive" | sha256sum -c -
 printf '%s  %s\n' b3ba5b06b551831fd5be1fa73496db3f865bb388caccf396e084bd8dc64687a0 \
     "$btrfs_archive" | sha256sum -c -
-for tool in git tar make autoreconf asciidoctor sha256sum; do
+printf '%s  %s\n' 68b46fa0371e1c0810092a8b7139d2612d5bdad34edea699a80e399f8f75a87e \
+    "$xfs_archive" | sha256sum -c -
+printf '%s  %s\n' 2556b83adc0f9b3ac8024e613e17d014d04c4c49110604ce55fcb14eae32edd3 \
+    "$urcu_archive" | sha256sum -c -
+printf '%s  %s\n' 062279922805f5e9a369551a08d5ddb506140fe50774183ffdbb7c22bb97e3f4 \
+    "$inih_archive" | sha256sum -c -
+for tool in git tar make autoreconf asciidoctor sha256sum ar; do
     command -v "$tool" >/dev/null || { echo "$tool required" >&2; exit 6; }
 done
-mkdir -p "$(dirname "$8")"
-mkdir "$8"
-out=$(realpath "$8")
+mkdir -p "$(dirname "${11}")"
+mkdir "${11}"
+out=$(realpath "${11}")
 work="$out/work"
 mkdir "$work"
 started=$(date +%s)
@@ -59,6 +68,10 @@ printf 'limine-binary-sha256 %s\n' \
     9a738586bff5790bd8bfef4a4868a2939cba3f81f22f121306d668c97f1c85d8 >> "$out/build.record"
 printf 'btrfs-progs-sha256 %s\n' \
     b3ba5b06b551831fd5be1fa73496db3f865bb388caccf396e084bd8dc64687a0 >> "$out/build.record"
+printf 'xfsprogs-sha256 %s\nliburcu-sha256 %s\ninih-sha256 %s\n' \
+    68b46fa0371e1c0810092a8b7139d2612d5bdad34edea699a80e399f8f75a87e \
+    2556b83adc0f9b3ac8024e613e17d014d04c4c49110604ce55fcb14eae32edd3 \
+    062279922805f5e9a369551a08d5ddb506140fe50774183ffdbb7c22bb97e3f4 >> "$out/build.record"
 sha256sum "$prefix/build.record" "$0" >> "$out/build.record"
 cc="$prefix/bin/holy-musl-gcc"
 (
@@ -66,14 +79,26 @@ cc="$prefix/bin/holy-musl-gcc"
     ./autogen.sh
 )
 mkdir "$work/util-build"
+# --disable-all-programs also overrules an explicit --enable-mkswap, so mkswap is reached by
+# naming every other program disabled instead. the list comes from the pinned configure.ac,
+# which is what decides which programs exist at all.
 (
     cd "$work/util-build"
+    disabled=$(sed -n 's/^UL_\(DEFAULT_ENABLE\|BUILD_INIT\|ENABLE_ALIAS\)\(\[\([a-z0-9._-]*\)\].*\)$/\3/p' \
+        "$work/util-linux/configure.ac" | sort -u |
+        grep -vE '^(asciidoc|libblkid|libuuid|libfdisk|libsmartcols|mkswap|swaplabel)$' |
+        sed 's/^/--disable-/')
     CC="$cc" CFLAGS=-O2 LDFLAGS=-static "$work/util-linux/configure" \
-        --prefix=/usr --disable-shared --enable-static --disable-all-programs \
+        --prefix=/usr --disable-shared --enable-static \
         --enable-libuuid --enable-libblkid --enable-libsmartcols --enable-libfdisk \
         --enable-fdisks=check --enable-static-programs=sfdisk \
-        --without-readline --without-ncursesw --without-tinfo --disable-nls
+        --without-readline --without-ncursesw --without-tinfo --disable-nls \
+        $disabled
     make -j"${JOBS:-2}" sfdisk.static
+    make -j"${JOBS:-2}" mkswap
+    # libtool links against the musl loader unless the static mode is asked for twice
+    rm -f mkswap
+    make -j"${JOBS:-2}" LDFLAGS=-all-static mkswap
 )
 (
     cd "$work/dosfstools"
@@ -116,18 +141,66 @@ test -n "$btrfs_source"
             --disable-libudev
     make -j"${JOBS:-2}" mkfs.btrfs
 )
+# xfsprogs takes its atomics from liburcu and its option parsing from inih, so both are built
+# for this toolchain and staged where xfs's own configure looks for them.
+tar -xf "$urcu_archive" -C "$work"
+urcu_source=$(find "$work" -maxdepth 1 -type d -name 'userspace-rcu-*' | head -1)
+test -n "$urcu_source"
+(
+    cd "$urcu_source"
+    autoreconf -fi
+    CC="$cc" CFLAGS=-O2 LDFLAGS=-static ./configure --prefix=/usr --disable-shared \
+        --enable-static --disable-percpu-prefix --with-urcu-prefix=
+    make -j"${JOBS:-2}"
+)
+cp "$urcu_source/include/urcu.h" "$deps/include/urcu.h"
+cp -r "$urcu_source/include/urcu" "$deps/include/urcu"
+for flavour in '' -bp -cds -common -mb -memb -qsbr; do
+    cp "$urcu_source/src/.libs/liburcu$flavour.a" "$deps/"
+done
+tar -xf "$inih_archive" -C "$work"
+inih_source=$(find "$work" -maxdepth 1 -type d -name 'inih-r59' | head -1)
+test -n "$inih_source"
+"$cc" -O2 -I"$inih_source" -c "$inih_source/ini.c" -o "$deps/ini.o"
+ar rcs "$deps/libinih.a" "$deps/ini.o"
+cp "$inih_source/ini.h" "$deps/include/ini.h"
+tar -xf "$xfs_archive" -C "$work"
+xfs_source=$(find "$work" -maxdepth 1 -type d -name 'xfsprogs-dev-*' | head -1)
+test -n "$xfs_source"
+(
+    cd "$xfs_source"
+    autoreconf -fi
+    # musl declares off64_t only under _LARGEFILE64_SOURCE, which libxfs uses for a disk offset
+    CC="$cc" CFLAGS="-O2 -I$deps/include -I$prefix/include" \
+        CPPFLAGS=-D_LARGEFILE64_SOURCE LDFLAGS="-static -L$deps -L$prefix/lib" \
+        ./configure --prefix=/usr --disable-shared --enable-static
+    make -j"${JOBS:-2}" headers
+    make -j"${JOBS:-2}" mkfs
+    rm -f mkfs/mkfs.xfs
+    make -j"${JOBS:-2}" -C mkfs LDFLAGS=-all-static mkfs.xfs
+)
 tar -xf "$limine_archive" -C "$work"
 make -C "$work/limine-binary" CC="$cc" CFLAGS=-O2 LDFLAGS=-static
 tree="$work/package"
-mkdir -p "$tree/HOLY" "$tree/DATA/usr/bin" "$tree/DATA/usr/share/man/man8" \
-    "$tree/DATA/usr/share/man/man1" "$tree/DATA/usr/share/licenses/holy-storage-tools"
+mkdir -p "$tree/HOLY" "$tree/DATA/usr/bin" "$tree/DATA/usr/sbin" \
+    "$tree/DATA/usr/share/man/man8" "$tree/DATA/usr/share/man/man1" \
+    "$tree/DATA/usr/share/licenses/holy-storage-tools"
 cp "$work/util-build/sfdisk.static" "$tree/DATA/usr/bin/sfdisk"
+cp "$work/util-build/mkswap" "$tree/DATA/usr/sbin/mkswap"
 cp "$work/dosfstools/src/mkfs.fat" "$tree/DATA/usr/bin/mkfs.fat"
 cp "$work/e2-build/misc/mke2fs" "$tree/DATA/usr/bin/mke2fs"
 cp "$work/limine-binary/limine" "$tree/DATA/usr/bin/limine"
 cp "$btrfs_source/mkfs.btrfs" "$tree/DATA/usr/bin/mkfs.btrfs"
+# src/disk.c runs the xfs and swap formatters from sbin, so the package places them there
+cp "$xfs_source/mkfs/mkfs.xfs" "$tree/DATA/usr/sbin/mkfs.xfs"
 for name in sfdisk mkfs.fat mke2fs limine mkfs.btrfs; do
     "$bin" elf "$tree/DATA/usr/bin/$name" > "$out/$name.elf"
+    grep -qx 'runtime nolibc' "$out/$name.elf"
+    grep -qx 'e_type 2' "$out/$name.elf"
+    grep -qx "machine $package_arch" "$out/$name.elf"
+done
+for name in mkswap mkfs.xfs; do
+    "$bin" elf "$tree/DATA/usr/sbin/$name" > "$out/$name.elf"
     grep -qx 'runtime nolibc' "$out/$name.elf"
     grep -qx 'e_type 2' "$out/$name.elf"
     grep -qx "machine $package_arch" "$out/$name.elf"
@@ -137,14 +210,24 @@ asciidoctor -a release-version=2.42.4 -b manpage \
     -o "$tree/DATA/usr/share/man/man8/sfdisk.8" \
     "$work/util-linux/disk-utils/sfdisk.8.adoc" 2> "$out/sfdisk-man.log"
 test ! -s "$out/sfdisk-man.log"
+asciidoctor -a release-version=2.42.4 -b manpage \
+    -o "$tree/DATA/usr/share/man/man8/mkswap.8" \
+    "$work/util-linux/disk-utils/mkswap.8.adoc" 2> "$out/mkswap-man.log"
+test ! -s "$out/mkswap-man.log"
 cp "$work/dosfstools/manpages/mkfs.fat.8" "$tree/DATA/usr/share/man/man8/"
 cp "$work/e2-build/misc/mke2fs.8" "$tree/DATA/usr/share/man/man8/"
+sed -e 's|@mkfs_cfg_dir@|/etc/xfs|g' "$xfs_source/man/man8/mkfs.xfs.8.in" \
+    > "$tree/DATA/usr/share/man/man8/mkfs.xfs.8"
 cp "$work/limine-binary/LICENSE" "$tree/DATA/usr/share/licenses/holy-storage-tools/limine-LICENSE"
 cp "$work/util-linux/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/util-linux-COPYING"
 cp "$work/dosfstools/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/dosfstools-COPYING"
 cp "$work/e2fsprogs/NOTICE" "$tree/DATA/usr/share/licenses/holy-storage-tools/e2fsprogs-NOTICE"
 cp "$work/e2fsprogs/lib/uuid/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/e2fsprogs-uuid-COPYING"
 cp "$btrfs_source/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/btrfs-progs-COPYING"
+cp "$xfs_source/LICENSES/GPL-2.0" "$tree/DATA/usr/share/licenses/holy-storage-tools/xfsprogs-GPL-2.0"
+cp "$xfs_source/LICENSES/LGPL-2.1" "$tree/DATA/usr/share/licenses/holy-storage-tools/xfsprogs-LGPL-2.1"
+cp "$urcu_source/LICENSE.md" "$tree/DATA/usr/share/licenses/holy-storage-tools/liburcu-LICENSE.md"
+cp "$inih_source/LICENSE.txt" "$tree/DATA/usr/share/licenses/holy-storage-tools/inih-LICENSE.txt"
 cat > "$tree/HOLY/meta" <<EOF
 format holy-package-1
 name holy-storage-tools
@@ -161,4 +244,5 @@ cp "$out/build.record" "$tree/HOLY/origin"
 cp "$work/files" "$tree/HOLY/files"
 "$bin" pack "$tree" --output "$out/holy-storage-tools.holy"
 "$bin" info "local:$out/holy-storage-tools.holy" > "$out/package.record"
-sha256sum "$out/holy-storage-tools.holy" "$tree/DATA/usr/bin/"* >> "$out/build.record"
+sha256sum "$out/holy-storage-tools.holy" "$tree/DATA/usr/bin/"* "$tree/DATA/usr/sbin/"* \
+    >> "$out/build.record"

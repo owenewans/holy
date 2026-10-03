@@ -118,7 +118,7 @@ check-git-source: holypkg holygetiso
 
 .PHONY: bootstrap-storage
 bootstrap-storage: holypkg
-	ARCH="$(or $(ARCH),x86_64)" sh tools/bootstrap-storage.sh ./holypkg "$(UTIL_LINUX_SOURCE)" "$(DOSFSTOOLS_SOURCE)" "$(E2FSPROGS_SOURCE)" "$(LIMINE_BINARY)" "$(BTRFSPROGS_SOURCE)" "$(STATIC_PREFIX)" "$(or $(OUTPUT),out/storage-bootstrap)"
+	ARCH="$(or $(ARCH),x86_64)" sh tools/bootstrap-storage.sh ./holypkg "$(UTIL_LINUX_SOURCE)" "$(DOSFSTOOLS_SOURCE)" "$(E2FSPROGS_SOURCE)" "$(LIMINE_BINARY)" "$(BTRFSPROGS_SOURCE)" "$(XFSPROGS_SOURCE)" "$(LIBURCU_SOURCE)" "$(INIH_SOURCE)" "$(STATIC_PREFIX)" "$(or $(OUTPUT),out/storage-bootstrap)"
 
 .PHONY: check-bootstrap-storage
 check-bootstrap-storage: holypkg

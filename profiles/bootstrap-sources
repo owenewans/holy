@@ -7,3 +7,6 @@ c5d410d9f82a4f24c549fe5d24f988f85b2679b452413a9f7e5f7b956f2fe7ea x86_64-linux-mu
 d1775e32e4628e64ef930f435b67bb63af7599acb6be2b335b9f19f16509f17f glibc-2.42.tar.xz https://ftp.gnu.org/gnu/glibc/glibc-2.42.tar.xz
 9a738586bff5790bd8bfef4a4868a2939cba3f81f22f121306d668c97f1c85d8 limine-binary-12.9.0.tar.xz https://github.com/Limine-Bootloader/Limine/releases/download/v12.9.0/limine-binary.tar.xz
 b3ba5b06b551831fd5be1fa73496db3f865bb388caccf396e084bd8dc64687a0 btrfs-progs-7.1.tar.gz https://github.com/kdave/btrfs-progs/archive/refs/tags/v7.1.tar.gz
+68b46fa0371e1c0810092a8b7139d2612d5bdad34edea699a80e399f8f75a87e xfsprogs-6.12.0.tar.gz https://git.kernel.org/pub/scm/fs/xfs/xfsprogs-dev.git/snapshot/xfsprogs-dev-6.12.0.tar.gz
+2556b83adc0f9b3ac8024e613e17d014d04c4c49110604ce55fcb14eae32edd3 liburcu-0.15.7.tar.bz2 https://deb.debian.org/debian/pool/main/libu/liburcu/liburcu_0.15.7.orig.tar.bz2
+062279922805f5e9a369551a08d5ddb506140fe50774183ffdbb7c22bb97e3f4 inih-r59.tar.gz https://github.com/benhoyt/inih/archive/refs/tags/r59.tar.gz
