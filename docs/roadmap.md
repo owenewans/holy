@@ -1758,12 +1758,19 @@
   `reason probes-complete`, plus the qcow2 disk path on `out/image-recovery`,
   which derives `remove-both` from its own record, boots and reports
   `no-serial-output`: a guest that printed no marker at all did not start, which the
-  report now says rather than calling it a boot timeout. Two things are missing there
-  and neither is a guess to close. The runner attaches only the root overlay as one
-  virtio disk, so a Limine install has no ESP to boot from and cannot start at all.
-  And `out/image-recovery/build.record` carries `install-test 0`, so no target here
-  produced a bootable disk pair to attach: the root filesystem was built and the
-  install into it was not run. The disk contract stays open for both.
+  report now says rather than calling it a boot timeout. The gap there is one input,
+  not two. The runner attaches a single virtio disk, which is enough: the gpt-ext4
+  profile puts the ESP in partition 2 of that same disk and puts
+  `holy.root=/dev/vda3 holy.esp=/dev/vda2` on the kernel command line, so no second
+  device is wanted. What is missing is that no target here built a gpt-ext4
+  `disk.raw`: `out/image-recovery/build.record` carries `install-test 0` and its
+  root is a bare `root.ext4` with no partition table. Building one needs
+  `ROOT_STORAGE=gpt-ext4` and the host tools `dracut`, `mkfs.fat`, `mmd`, `mcopy`,
+  `sfdisk` and a host `limine`, all of which this host has, plus a static musl
+  toolchain for the image probes; `out/static-deps/toolchain` here has the specs
+  directory but no compiler, and `out/static-deps/sources` is empty, so the toolchain
+  cannot be rebuilt without fetching musl. The disk contract stays open until one
+  gpt-ext4 image exists.
 - [x] Run `make check-install` against plan/apply/disk fixtures and a separate
   installed-disk VM gate in BIOS and UEFI. The VM gate covers disk preparation,
   installation, boot and account login.
