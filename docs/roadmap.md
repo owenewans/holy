@@ -1509,6 +1509,15 @@
   kernel. i686 BIOS boot and dinit's static C++ runtime are covered by separate
   gates below; compiler SDK packaging remains unfinished.
 
+- [x] Keep the repository llm.txt equal to what the man sources generate.
+  `make check-llm` renders every `man/*.[578]` page the way `tools/docs.sh` does
+  into a temporary file and compares it with the committed `llm.txt`, naming the
+  first difference and the page whose hash moved. The specification makes the man
+  sources normative and llm.txt generated from them, and nothing caught a page
+  edited without regenerating it: the file has a make target with the pages as
+  prerequisites, so a stale copy shipped silently. `make check` runs it first.
+  A page edited without regenerating gives `llm.txt does not match the man sources`
+  and a diff naming the page; reverting the edit passes again.
 - [x] Generate an attributed installed-man source bundle with `holypkg docs`:
   verify source hashes, decode supported compressed pages, preserve aliases
   and same-name providers, report missing/omitted pages, and refuse changed

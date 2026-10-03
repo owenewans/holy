@@ -374,6 +374,11 @@ is recorded in the frozen image plan and /etc/holy/docs.sha256. The output
 directory retains llm.txt and docs.record with the coverage summary. Packages
 without man pages and unsupported page encodings appear in that bundle.
 .PP
+The repository llm.txt is generated from the same man sources by
+make llm.txt, and make check-llm regenerates it and compares, so a page
+edited without regenerating it is a failing gate rather than a shipped
+document that contradicts the source it claims to carry.
+.PP
 On each boot, the guest verifies the shipped bundle's digest and regenerates
 it with static holypkg after any libc recovery. It compares the complete contents,
 normalizing only the final summary's database generation because package

@@ -347,7 +347,7 @@ SEE ALSO
      holy-image(7), holypkg(8), holyinstall(8), holy.conf(5)
 
 Holy				 September 2026			   HOLYGETISO(8)
-holy-image.7 source=holy version=development sha256=266ecf7662b8b79bc58fd264b11401b041c64dd0a4bc8bf055672116ff30cd42
+holy-image.7 source=holy version=development sha256=ca7b915cfc7630894a0b0c9767b808c2aee9eb9b1b5053ec388d4ec7bc680650
 HOLY-IMAGE(7)			 System Overview		   HOLY-IMAGE(7)
 
 NAME
@@ -743,46 +743,51 @@ COVERAGE
      mary. Packages without man pages and unsupported page encodings  appear  in
      that bundle.
 
-     On	 each  boot, the guest verifies the shipped bundle's digest and regener-
-     ates it with static holypkg after any libc recovery. It compares  the  com-
-     plete  contents,  normalizing  only the final summary's database generation
+     The  repository  llm.txt  is  generated  from  the same man sources by make
+     llm.txt, and make check-llm regenerates it and compares, so a  page  edited
+     without  regenerating  it	is a failing gate rather than a shipped document
+     that contradicts the source it claims to carry.
+
+     On each boot, the guest verifies the shipped bundle's digest  and	regener-
+     ates  it  with static holypkg after any libc recovery. It compares the com-
+     plete contents, normalizing only the final	 summary's  database  generation
      because package transactions between boots advance that counter. A documen-
      tation failure fails the boot contract. The bundle contains attributed roff
      sources rather than rendered upstream text. QEMU virtual devices do not es-
      tablish physical GPU support.
 
-     make  check-image-docs  IMAGE_DIRECTORY=DIRECTORY	 tests	 an   ext4/dual-
+     make   check-image-docs   IMAGE_DIRECTORY=DIRECTORY   tests  an  ext4/dual-
      libc/both build's documentation failures. It copies root.ext4 into two dis-
-     posable  disks,  changes  the  generated  bundle  in  one and the installed
-     holypkg man source in the other, then boots each through the  original  ISO
-     under  BIOS/TCG.  Both guests must stop the boot contract at the documenta-
-     tion stage. The original root image's hash must remain unchanged. The  fix-
+     posable disks, changes the	 generated  bundle  in	one  and  the  installed
+     holypkg  man  source in the other, then boots each through the original ISO
+     under BIOS/TCG. Both guests must stop the boot contract at	 the  documenta-
+     tion  stage. The original root image's hash must remain unchanged. The fix-
      ture requires debugfs and the QEMU tools; it never edits the original image
      or mounts a host disk.
 
 HARDWARE
-     make  check-hardware  runs outside QEMU against a physical NVIDIA GPU using
-     Nouveau and Mesa NVK. It checks the kernel driver and DRM render node,  se-
-     lects  the	 NVK Vulkan device, presents 30 frames with vkcube, and measures
+     make check-hardware runs outside QEMU against a physical NVIDIA  GPU  using
+     Nouveau  and Mesa NVK. It checks the kernel driver and DRM render node, se-
+     lects the NVK Vulkan device, presents 30 frames with vkcube,  and	measures
      OpenGL frames with glxgears. glxinfo must report an accelerated NVIDIA ren-
-     derer. lspci, vulkaninfo, vkcube, glxinfo,	 glxgears,  timeout,  a	 display
+     derer.  lspci,  vulkaninfo,  vkcube,  glxinfo, glxgears, timeout, a display
      session and a writable render node are required.
 
      The default HARDWARE_SCOPE=holy requires a valid installed Holy database on
-     the  running  system. Missing inputs return 6. REPORT defaults to out/hard-
+     the running system. Missing inputs return 6. REPORT defaults  to  out/hard-
      ware.json; the holy-hardware-1 JSON records probe commands, output, elapsed
-     times, driver selection and frame	counts.	 A  failure  returns  1.   HARD-
-     WARE_SCOPE=host  permits  a  diagnostic  probe  on another distribution and
-     marks release_gate=false. A host result cannot certify Holy's  packages  or
-     boot  image.  The frame probes establish presentation and an FPS count, not
+     times,  driver  selection	and  frame  counts.  A failure returns 1.  HARD-
+     WARE_SCOPE=host permits a diagnostic  probe  on  another  distribution  and
+     marks  release_gate=false.	 A host result cannot certify Holy's packages or
+     boot image. The frame probes establish presentation and an FPS  count,  not
      pixel-correct rendering or broader game compatibility.
 
 SOURCES
-     Limine  configuration  and	 ISO   layout:	 https://github.com/limine-boot-
-     loader/limine/blob/v12.x/CONFIG.md	   and	 https://github.com/limine-boot-
+     Limine   configuration   and  ISO	layout:	 https://github.com/limine-boot-
+     loader/limine/blob/v12.x/CONFIG.md	  and	 https://github.com/limine-boot-
      loader/limine/blob/v12.x/USAGE.md.	      dracut	  module      interface:
      https://github.com/dracut-ng/dracut-ng/blob/main/man/dracut.modules.7.adoc.
-     QEMU  block device and backing-file options: https://www.qemu.org/docs/mas-
+     QEMU block device and backing-file options:  https://www.qemu.org/docs/mas-
      ter/system/invocation.html.
 
 SEE ALSO

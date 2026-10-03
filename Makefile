@@ -41,7 +41,7 @@ fetch-bootstrap-sources:
 	@test -n "$(INPUTS)" || { echo 'INPUTS directory required' >&2; exit 2; }
 	sh tools/fetch-sources.sh "$(INPUTS)" profiles/bootstrap-sources $(SOURCES)
 
-.PHONY: all check check-fixtures check-root check-qemu check-qemu-gate check-hardware check-https check-solver check-install-payload check-install bootstrap-busybox check-bootstrap-busybox check-static-core check-private check-rewrite man
+.PHONY: all check check-llm check-fixtures check-root check-qemu check-qemu-gate check-hardware check-https check-solver check-install-payload check-install bootstrap-busybox check-bootstrap-busybox check-static-core check-private check-rewrite man
 all: holypkg holy-init holyinstall holygetiso
 
 holygetiso: src/getiso.o src/config.o src/sign.o
@@ -329,7 +329,7 @@ check-init: holy-init
 check-hooks: holypkg
 	CC="$(CC)" sh tests/hooks.sh ./holypkg
 
-check: check-pacman check-deb check-apt check-slackware check-apk check-xbps-import check-xbps-version check-xbps-index check-appimage check-snap check-run check-recipe check-evaluate check-command-version check-split check-debug check-pkgbuild check-void check-aports check-slackbuild check-rpmspec check-debsrc check-gentoo check-pacstall check-flatpak check-brew check-guix check-scoop check-winget check-nix check-eopkg check-conflict check-index check-closure check-loader-search check-slot-choice check-packages-page check-update-group check-qemu-copy check-plan-test check-override check-cc check-hooks check-apk-version check-apk-index check-apk-fetch check-native-version $(if $(RPM_LIBS),check-rpm) holypkg tests/resolution check-init check-solver check-private check-rewrite check-install-payload check-install check-https check-git-source check-repo-closure
+check: check-llm check-pacman check-deb check-apt check-slackware check-apk check-xbps-import check-xbps-version check-xbps-index check-appimage check-snap check-run check-recipe check-evaluate check-command-version check-split check-debug check-pkgbuild check-void check-aports check-slackbuild check-rpmspec check-debsrc check-gentoo check-pacstall check-flatpak check-brew check-guix check-scoop check-winget check-nix check-eopkg check-conflict check-index check-closure check-loader-search check-slot-choice check-packages-page check-update-group check-qemu-copy check-plan-test check-override check-cc check-hooks check-apk-version check-apk-index check-apk-fetch check-native-version $(if $(RPM_LIBS),check-rpm) holypkg tests/resolution check-init check-solver check-private check-rewrite check-install-payload check-install check-https check-git-source check-repo-closure
 	./tests/resolution
 	sh tests/config.sh ./holypkg
 	sh tests/source.sh ./holypkg
@@ -535,6 +535,10 @@ check-rewrite: holypkg
 
 man:
 	@for page in $(MANPAGES); do groff -Tascii -man "$$page" > /dev/null || exit; done
+
+.PHONY: check-llm
+check-llm:
+	sh tests/llm-check.sh
 
 llm.txt: $(MANPAGES) tools/docs.sh
 	sh tools/docs.sh "$@" $(MANPAGES)
