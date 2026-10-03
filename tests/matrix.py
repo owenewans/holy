@@ -1060,7 +1060,164 @@ def named_fields(line):
     return dict(part.split("=", 1) for part in shlex.split(line) if "=" in part)
 
 
+# ---------------------------------------------------------------- sessions and audio
+
+WAYLAND_INPUT_TOOLS = ("wlrctl", "dotool", "wtype", "libei")
+
+
+def x11_session_case(case, work):
+    """a session of this case's own: Xvfb on a free display, one client that paints and
+    waits for a key the server generates, so the row covers a created session, a GUI client
+    that drew and an input event that came back rather than the host compositor's session."""
+    if not need(case, "Xvfb") or not need(case, "cc"):
+        return
+    directory = work / "session"
+    directory.mkdir(parents=True, exist_ok=True)
+    binary = directory / "x11-session"
+    if not binary.is_file():
+        libraries = pkg_config("xtst", "--libs") + pkg_config("x11", "--libs") or ["-lXtst", "-lX11"]
+        code, out, err, _ = run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-o", str(binary),
+                                 str(SESSIONS / "x11-session.c"),
+                                 *pkg_config("x11", "--cflags"), *pkg_config("xtst", "--cflags"),
+                                 *libraries],
+                                log=work / "logs" / f"{case.name}.build.log")
+        if code:
+            case.fail(f"the X11 client did not build: {rc_text(err)}")
+            return
+    # -displayfd makes the server pick a display nothing else holds and say which one it took
+    read_fd, write_fd = os.pipe()
+    log = (work / "logs" / f"{case.name}.xvfb").open("w")
+    server = subprocess.Popen(["Xvfb", "-displayfd", str(write_fd), "-screen", "0", "640x480x24",
+                               "-nolisten", "tcp"], pass_fds=[write_fd], stdout=log,
+                              stderr=subprocess.STDOUT)
+    os.close(write_fd)
+    try:
+        chosen = os.read(read_fd, 32).decode("ascii", "replace").strip()
+    finally:
+        os.close(read_fd)
+    if not chosen.isdigit():
+        server.terminate()
+        log.close()
+        case.missing("Xvfb reported no display number")
+        return
+    try:
+        deadline = time.monotonic() + 20
+        socket = Path(f"/tmp/.X11-unix/X{chosen}")
+        while not socket.exists() and time.monotonic() < deadline:
+            if server.poll() is not None:
+                break
+            time.sleep(0.2)
+        if server.poll() is not None or not socket.exists():
+            case.fail(f"the display :{chosen} never came up")
+            return
+        code, out, err, _ = run([str(binary), "a", "8000"], env={"DISPLAY": f":{chosen}"},
+                                timeout=180, log=work / "logs" / f"{case.name}.log")
+        combined = out + err
+        fields = {}
+        for line in combined.splitlines():
+            if line.startswith("x11-session "):
+                fields.update(named_fields(line))
+        if code or fields.get("delivered") != "1":
+            case.fail(f"the client did not receive the key it generated: rc={code}")
+            return
+        if "pixel" not in fields:
+            case.fail("the client printed no readback pixel")
+            return
+        case.reason = (f"a client painted a {fields.get('size')} window on display :{chosen} "
+                       f"and got key {fields.get('key')} (keycode {fields.get('keycode')}) "
+                       f"back through XTEST")
+    finally:
+        server.terminate()
+        try:
+            server.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            server.kill()
+        log.close()
+
+
+def wayland_session_case(case, work):
+    """a Wayland session has to be created by a compositor, and input for one arrives through
+    a virtual keyboard protocol rather than XTEST. this row says which of the two is absent
+    instead of borrowing the X11 result."""
+    if os.environ.get("XDG_SESSION_TYPE", "").lower() != "wayland" and not any(
+            Path(f"/usr/bin/{name}").is_file() for name in ("weston", "sway", "cage")):
+        case.missing(f"no Wayland session here and no compositor to create one; a Wayland input "
+                     f"path needs one of {' '.join(WAYLAND_INPUT_TOOLS)}")
+        return
+    found = [name for name in WAYLAND_INPUT_TOOLS if shutil.which(name)]
+    if not found:
+        case.missing(f"the session is Wayland, but synthesising input for it needs one of "
+                     f"{' '.join(WAYLAND_INPUT_TOOLS)}")
+        return
+    case.fail(f"this row does not yet drive {found[0]}; the X11 row covers the X11 path")
+
+
+def audio_case(case, work):
+    """a short tone through the audio stack the session runs, with the server's own
+    sink-input list as the evidence, since a client that wrote to a stream nothing consumed
+    would still exit cleanly."""
+    if not need(case, "cc"):
+        return
+    if not need(case, "pactl"):
+        case.missing("pactl not installed; the audio stack cannot be watched")
+        return
+    code, out, err, _ = run(["pactl", "info"], timeout=60, log=work / "logs" / f"{case.name}.info.log")
+    if code:
+        case.missing(f"no audio server answered: {rc_text(err) or rc_text(out)}")
+        return
+    server = ""
+    for line in out.splitlines():
+        if line.startswith("Server String:"):
+            server = line.split(":", 1)[1].strip()
+    directory = work / "session"
+    directory.mkdir(parents=True, exist_ok=True)
+    binary = directory / "audio-tone"
+    if not binary.is_file():
+        libraries = pkg_config("libpulse-simple", "--libs") or ["-lpulse-simple"]
+        code, out, err, _ = run(["cc", "-std=c11", "-Wall", "-Wextra", "-Werror", "-o", str(binary),
+                                 str(SESSIONS / "audio-tone.c"),
+                                 *pkg_config("libpulse-simple", "--cflags"), *libraries, "-lm"],
+                                log=work / "logs" / f"{case.name}.build.log")
+        if code:
+            case.fail(f"the audio fixture did not build: {rc_text(err)}")
+            return
+    log = (work / "logs" / f"{case.name}.log").open("w")
+    player = subprocess.Popen([str(binary), "holy-matrix-tone", "1.5"], stdout=log,
+                              stderr=subprocess.STDOUT)
+    listed = False
+    try:
+        # the short listing carries no name, so the long one is what proves the server took
+        # this stream rather than one that was already there
+        deadline = time.monotonic() + 20
+        while player.poll() is None and time.monotonic() < deadline:
+            code, out, err, _ = run(["pactl", "list", "sink-inputs"], timeout=30)
+            if "holy-matrix-tone" in out:
+                listed = True
+                break
+            time.sleep(0.1)
+        player.wait(timeout=60)
+    finally:
+        if player.poll() is None:
+            player.kill()
+            player.wait(timeout=15)
+        log.close()
+    if player.returncode != 0:
+        case.fail(f"the tone player exited {player.returncode}")
+        return
+    fields = named_fields((work / "logs" / f"{case.name}.log").read_text().splitlines()[-1])
+    if not listed:
+        case.fail(f"the server never listed the stream; it answered on {server or 'no server'}")
+        return
+    sink = ""
+    code, out, _, _ = run(["pactl", "list", "short", "sinks"], timeout=60)
+    if out.splitlines():
+        sink = out.splitlines()[0].split()[0]
+    case.reason = (f"{fields.get('frames')} frames at {fields.get('rate')} Hz listed by "
+                   f"{server or 'the server'} on sink {sink or 'a default sink'}")
+
+
 GRAPHICS = PROJECT / "tests" / "graphics"
+SESSIONS = PROJECT / "tests" / "session"
 # a software renderer and a real GPU are separate facts, so the two cases name the drivers
 # they ask for and neither falls back to the other
 VULKAN_DEVICES = {"software": ("llvmpipe", "lavapipe", "SwiftShader"),
@@ -1622,6 +1779,9 @@ CASES = [
     ("system-pam", "system", pam_case),
     ("gui-firefox-headless", "gui", lambda c, w: firefox_case(c, w, True)),
     ("gui-firefox-session", "gui", lambda c, w: firefox_case(c, w, False)),
+    ("session-x11", "session", x11_session_case),
+    ("session-wayland", "session", wayland_session_case),
+    ("session-audio", "session", audio_case),
     ("graphics-vulkan-software", "graphics", lambda c, w: vulkan_draw_case(c, w, "software")),
     ("graphics-vulkan-hardware", "graphics", lambda c, w: vulkan_draw_case(c, w, "hardware")),
     ("graphics-opengl", "graphics", opengl_draw_case),

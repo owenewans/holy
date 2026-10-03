@@ -1,4 +1,4 @@
-holy-agent.7 source=holy version=development sha256=ee6ede722ff9dd8b3c5181659a5ebfe75128bdad8a36d520c78b84d970d8b457
+holy-agent.7 source=holy version=development sha256=0a5815412f265b300e694253ff1c7e20808cdaa7e49d463c7ac50c2a23a2ac6f
 HOLY-AGENT(7)			      Holy			   HOLY-AGENT(7)
 
 NAME
@@ -133,6 +133,17 @@ DESCRIPTION
      play, renders a triangle into a framebuffer object and checks the	gradient
      the  readback holds.  A host without the Vulkan or GL headers names them as
      missing instead of skipping the row.
+
+     The session rows are per session type and are not satisfied by one another:
+     session-x11 starts Xvfb on a display the server picks, runs one client that
+     paints a window, reads a pixel back, asks the server to focus it and  waits
+     for  the  key  the	 server generates through XTEST, so a created session, a
+     client that drew and an input event that arrived are  three  facts	 in  one
+     row; session-wayland says which of a compositor and a virtual keyboard pro-
+     tocol  is absent, since synthesising input for a Wayland session is not the
+     XTEST path; session-audio plays  a	 short	low-level  tone	 and  reads  the
+     server's  own  sink-input list while it runs, because a client that wrote a
+     stream nothing consumed still exits cleanly.
 
 WHAT A REPORT MAY CLAIM
      A tool version proves the tool is present. It  does  not  prove  a	 library

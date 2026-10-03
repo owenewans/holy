@@ -112,6 +112,16 @@ rows and neither stands in for the other.
 graphics-opengl makes a core profile context on the session display, renders a triangle into a
 framebuffer object and checks the gradient the readback holds.
 A host without the Vulkan or GL headers names them as missing instead of skipping the row.
+.PP
+The session rows are per session type and are not satisfied by one another:
+session-x11 starts Xvfb on a display the server picks, runs one client that paints a window,
+reads a pixel back, asks the server to focus it and waits for the key the server generates
+through XTEST, so a created session, a client that drew and an input event that arrived are
+three facts in one row;
+session-wayland says which of a compositor and a virtual keyboard protocol is absent, since
+synthesising input for a Wayland session is not the XTEST path;
+session-audio plays a short low-level tone and reads the server's own sink-input list while it
+runs, because a client that wrote a stream nothing consumed still exits cleanly.
 .SH WHAT A REPORT MAY CLAIM
 A tool version proves the tool is present. It does not prove a library loads, a native
 module resolves, a bootloader can read a filesystem, or a kernel can reach its root device.

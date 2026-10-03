@@ -1969,7 +1969,8 @@
   missing or unpinned. A missing tool and an artifact with no digest in
   `profiles/matrix-sources` are separate statuses, and neither turns the run
   green, so the report says what the host could not prove. `REQUIRE=1` turns
-  either into exit 6. On this host 42 cases pass and none is missing or unpinned:
+  either into exit 6. On this host 44 cases pass, one is missing and none is
+  unpinned:
   the C headers, crt objects, libc and linker under TCC, GCC and Clang; a C
   program linked against the project's own musl toolchain, which runs under the
   i386 loader; GCC and Clang C++ with exceptions, four threads and a shared
@@ -1988,7 +1989,13 @@
   4096 values through llvmpipe and again through NVK, both read back and
   compared, and an OpenGL triangle whose gradient came back from the readback
   under zink, so the graphics rows name the driver that drew rather than a
-  device that appeared in a loader list; GNU Chess 6.2.9 built
+  device that appeared in a loader list; an X11 session created by Xvfb on a
+  display the server picked, where one client painted a 64x64 window, read the
+  pixel back and received the key the server generated through XTEST; and a tone
+  the audio server listed as a sink input while it played, rather than a tone a
+  client claimed it sent. The Wayland session row is missing and names what it
+  needs: this session is Wayland, but input for it needs wlrctl, dotool, wtype
+  or libei, and none is installed here; GNU Chess 6.2.9 built
   from its pin for x86_64 and for i686, each driven over the xboard line
   protocol on a pty until the engine answered both scripted moves, which is the
   fix for a fixture that only piped a move list into a program that buffers it
