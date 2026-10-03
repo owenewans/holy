@@ -417,6 +417,12 @@ static void map_arch(const char *value, char *arch, size_t size, struct recipe_n
 static int emit_one_dependency(FILE *out, const char *raw, const char *kind,
                                struct recipe_note *note, int *review, const char *where)
 {
+    /* an append writes the list's own value back into itself, so the atom is the variable
+       rather than a package, and no resolver could ever satisfy it */
+    if ((!strcmp(raw, where)) || (!strncmp(raw, "$", 1) && !strcmp(raw + 1, where))) {
+        holy_note_add(note, "unknown", "dependency %s is the list appending to itself", raw);
+        return 1;
+    }
     if (raw[0] == '!') {
         fputs("x-conflicts ", out);
         holy_token(out, raw + 1);

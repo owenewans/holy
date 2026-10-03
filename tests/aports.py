@@ -95,6 +95,11 @@ makedepends="
 \tmake
 \t"
 checkdepends="tar"
+if [ "$CARCH" = "x86_64" ]; then
+\tdepends="$depends
+\tzlib>=1.3
+\t"
+fi
 subpackages="
 \t$pkgname-dev
 \t$pkgname-doc
@@ -193,6 +198,14 @@ extras() {{
         assert "preserved build APKBUILD:" in report
         assert "preserved package APKBUILD:" in report
         assert "preserved subpackage aports-demo-extras from extras APKBUILD:" in report
+        # a conditional block and the append inside it are named with their lines, and nothing
+        # the block adds reaches the dependency list
+        assert 'unknown conditional block APKBUILD:16 if [ "$CARCH" = "x86_64" ]; then' in report
+        assert "unknown conditional assignment depends APKBUILD:19" in report
+        assert 'depend "zlib" "ge" "1.3"' in recipe
+        # an append writes the list into itself, and no resolver could satisfy that name
+        assert "unknown dependency $depends is the list appending to itself" in report
+        assert '"$depends"' not in recipe
         assert "preserved hook aports-demo.post-install" in report
         assert "preserved conflict musl" in report
         assert "unknown helper default_doc is not carried in aports-demo-doc" in report

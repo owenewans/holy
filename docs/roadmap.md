@@ -1124,7 +1124,10 @@
   with four declared subpackages, builds the produced recipe through the normal
   engine and checks the resulting split payloads and hook; all 1668 upstream
   APKBUILDs from aports convert and every produced recipe passes the manager's
-  own validation.
+  own validation. The fixture now also carries an architecture conditional that
+  appends to depends, which is reported with its line and whose atoms are still
+  carried, and the atom that names the list itself is reported and dropped
+  instead of becoming a dependency called $depends.
   The SlackBuilds family converts as well, and needs a different shape because a
   SlackBuild script is one linear shell program rather than a set of phase
   functions. `holypkg convert NAME.SlackBuild` and

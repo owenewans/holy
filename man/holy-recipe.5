@@ -379,6 +379,13 @@ conflict becomes x-conflicts, a so: or cmd: prefix is reported, and the
 per subpackage depends_NAME lists are preserved with their lines because a Holy
 recipe has one depend list.
 .PP
+A conditional block is reported with its line and an assignment inside one is reported as a
+conditional assignment with its line, since the converter evaluates neither. The atoms of such
+an assignment are still carried, so a depends the block adds reaches the recipe with the report
+beside it. An append such as depends="$depends zlib" writes the list into itself: the atom that
+names the list is reported and dropped, since no resolver could satisfy a package called
+$depends.
+.PP
 source is read as a list and $pkgname, $pkgver and $pkgrel are expanded, with
 $pkgver giving the bare upstream version there and version-rrelease in a
 dependency; a filename::url target name is preserved. A local source is copied
