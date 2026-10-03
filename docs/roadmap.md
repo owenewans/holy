@@ -1878,6 +1878,14 @@
   an installed system, while `HARDWARE_SCOPE=host make check-hardware` passes the
   nouveau, NVK and OpenGL presentation probes on the real GPU. Nothing above is a stub:
   a target with a missing tool returns a requirement error rather than zero.
+  `make CC=tcc` builds all four binaries with tcc and `make CC=tcc check`
+  fails two recipe fixtures here, brew and guix, because the ambient `CC`
+  reaches the recipe's own makefile and this host's tcc cannot link that
+  fixture's static C program without the libgcc unwind and soft-float helpers.
+  That is a property of this tcc rather than of the manager: `make check-cc`
+  compiles the core with tcc, gcc and clang in turn, packs a package from each
+  result and passes, and `make check` with the default compiler passes both
+  fixtures.
 - [x] Run current prototype fixtures under GCC, TCC and Clang ASan/UBSan.
 - [x] Boot the i686 static core with kernel 7.2.7, BusyBox, dinit, mdevd and
   static holypkg from a BIOS optical ISO under QEMU/TCG. The guest checks PID 1,
