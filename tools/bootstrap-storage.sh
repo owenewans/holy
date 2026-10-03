@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 umask 022
-test "$#" -eq 12 || {
-    echo 'usage: bootstrap-storage.sh HOLYPKG UTIL-LINUX-GIT DOSFSTOOLS-GIT E2FSPROGS-GIT F2FS-TOOLS-GIT LIMINE-BINARY-TAR BTRFS-PROGS-TAR XFSPROGS-TAR LIBURCU-TAR INIH-TAR STATIC-PREFIX OUTPUT' >&2
+test "$#" -eq 16 || {
+    echo 'usage: bootstrap-storage.sh HOLYPKG UTIL-LINUX-GIT DOSFSTOOLS-GIT E2FSPROGS-GIT F2FS-TOOLS-GIT LVM2-GIT LIMINE-BINARY-TAR BTRFS-PROGS-TAR XFSPROGS-TAR CRYPTSETUP-TAR LIBURCU-TAR INIH-TAR POPT-TAR JSONC-TAR STATIC-PREFIX OUTPUT' >&2
     exit 2
 }
 bin=$(realpath "$1")
@@ -10,12 +10,16 @@ util=$(realpath "$2")
 dos=$(realpath "$3")
 e2=$(realpath "$4")
 f2fs=$(realpath "$5")
-limine_archive=$(realpath "$6")
-btrfs_archive=$(realpath "$7")
-xfs_archive=$(realpath "$8")
-urcu_archive=$(realpath "$9")
-inih_archive=$(realpath "${10}")
-prefix=$(realpath "${11}")
+lvm2=$(realpath "$6")
+limine_archive=$(realpath "$7")
+btrfs_archive=$(realpath "$8")
+xfs_archive=$(realpath "$9")
+cryptsetup_archive=$(realpath "${10}")
+urcu_archive=$(realpath "${11}")
+inih_archive=$(realpath "${12}")
+popt_archive=$(realpath "${13}")
+jsonc_archive=$(realpath "${14}")
+prefix=$(realpath "${15}")
 arch=${ARCH:-x86_64}
 case "$arch" in
     x86_64) package_arch=x86_64 ;;
@@ -30,22 +34,29 @@ test "$(git -C "$util" rev-parse HEAD)" = d76cbf8f13e65ff657344f7f6a90042cf755ba
 test "$(git -C "$dos" rev-parse HEAD)" = 697f7692c951173c1b732901e13f72bd3182d575
 test "$(git -C "$e2" rev-parse HEAD)" = 7ee1d505ef3b37831215f490411f346fe57e9053
 test "$(git -C "$f2fs" rev-parse HEAD)" = 83fd39a184df96db5def895ddc55bf68e720ef76
+test "$(git -C "$lvm2" rev-parse HEAD)" = 7b0bce6909611966bdc1e17c2408e1ec3b0f8c17
 printf '%s  %s\n' 9a738586bff5790bd8bfef4a4868a2939cba3f81f22f121306d668c97f1c85d8 \
     "$limine_archive" | sha256sum -c -
 printf '%s  %s\n' b3ba5b06b551831fd5be1fa73496db3f865bb388caccf396e084bd8dc64687a0 \
     "$btrfs_archive" | sha256sum -c -
 printf '%s  %s\n' 68b46fa0371e1c0810092a8b7139d2612d5bdad34edea699a80e399f8f75a87e \
     "$xfs_archive" | sha256sum -c -
+printf '%s  %s\n' d2be4395b8f503b0ebf4b2d81db90c35a97050a358ee21fe62a0dfb66e5d5522 \
+    "$cryptsetup_archive" | sha256sum -c -
 printf '%s  %s\n' 2556b83adc0f9b3ac8024e613e17d014d04c4c49110604ce55fcb14eae32edd3 \
     "$urcu_archive" | sha256sum -c -
 printf '%s  %s\n' 062279922805f5e9a369551a08d5ddb506140fe50774183ffdbb7c22bb97e3f4 \
     "$inih_archive" | sha256sum -c -
-for tool in git tar make autoreconf asciidoctor sha256sum ar; do
+printf '%s  %s\n' c25a4838fc8e4c1c8aacb8bd620edb3084a3d63bf8987fdad3ca2758c63240f9 \
+    "$popt_archive" | sha256sum -c -
+printf '%s  %s\n' f17a6d7d265cf840dfd8f0f46a606d98c6b5b26dc7cfe27275d1546a213086c8 \
+    "$jsonc_archive" | sha256sum -c -
+for tool in git tar make autoreconf asciidoctor sha256sum ar cmake; do
     command -v "$tool" >/dev/null || { echo "$tool required" >&2; exit 6; }
 done
-mkdir -p "$(dirname "${12}")"
-mkdir "${12}"
-out=$(realpath "${12}")
+mkdir -p "$(dirname "${16}")"
+mkdir "${16}"
+out=$(realpath "${16}")
 work="$out/work"
 mkdir "$work"
 started=$(date +%s)
@@ -59,14 +70,16 @@ trap finish EXIT
 trap 'exit 1' HUP INT TERM
 exec > "$out/build.log" 2>&1
 printf 'format holy-storage-bootstrap-1\narch %s\n' "$package_arch" > "$out/build.record"
-for name in util-linux dosfstools e2fsprogs f2fs-tools; do mkdir "$work/$name"; done
+for name in util-linux dosfstools e2fsprogs f2fs-tools lvm2; do mkdir "$work/$name"; done
 git -C "$util" archive HEAD | tar -xf - -C "$work/util-linux"
 git -C "$dos" archive HEAD | tar -xf - -C "$work/dosfstools"
 git -C "$e2" archive HEAD | tar -xf - -C "$work/e2fsprogs"
 git -C "$f2fs" archive HEAD | tar -xf - -C "$work/f2fs-tools"
-printf 'util-linux-commit %s\ndosfstools-commit %s\ne2fsprogs-commit %s\nf2fs-tools-commit %s\n' \
+git -C "$lvm2" archive HEAD | tar -xf - -C "$work/lvm2"
+printf 'util-linux-commit %s\ndosfstools-commit %s\ne2fsprogs-commit %s\nf2fs-tools-commit %s\nlvm2-commit %s\n' \
     "$(git -C "$util" rev-parse HEAD)" "$(git -C "$dos" rev-parse HEAD)" \
-    "$(git -C "$e2" rev-parse HEAD)" "$(git -C "$f2fs" rev-parse HEAD)" >> "$out/build.record"
+    "$(git -C "$e2" rev-parse HEAD)" "$(git -C "$f2fs" rev-parse HEAD)" \
+    "$(git -C "$lvm2" rev-parse HEAD)" >> "$out/build.record"
 printf 'limine-binary-sha256 %s\n' \
     9a738586bff5790bd8bfef4a4868a2939cba3f81f22f121306d668c97f1c85d8 >> "$out/build.record"
 printf 'btrfs-progs-sha256 %s\n' \
@@ -75,6 +88,10 @@ printf 'xfsprogs-sha256 %s\nliburcu-sha256 %s\ninih-sha256 %s\n' \
     68b46fa0371e1c0810092a8b7139d2612d5bdad34edea699a80e399f8f75a87e \
     2556b83adc0f9b3ac8024e613e17d014d04c4c49110604ce55fcb14eae32edd3 \
     062279922805f5e9a369551a08d5ddb506140fe50774183ffdbb7c22bb97e3f4 >> "$out/build.record"
+printf 'cryptsetup-sha256 %s\npopt-sha256 %s\njson-c-sha256 %s\n' \
+    d2be4395b8f503b0ebf4b2d81db90c35a97050a358ee21fe62a0dfb66e5d5522 \
+    c25a4838fc8e4c1c8aacb8bd620edb3084a3d63bf8987fdad3ca2758c63240f9 \
+    f17a6d7d265cf840dfd8f0f46a606d98c6b5b26dc7cfe27275d1546a213086c8 >> "$out/build.record"
 sha256sum "$prefix/build.record" "$0" >> "$out/build.record"
 cc="$prefix/bin/holy-musl-gcc"
 (
@@ -202,6 +219,68 @@ mkdir "$work/f2fs-build"
 )
 tar -xf "$limine_archive" -C "$work"
 make -C "$work/limine-binary" CC="$cc" CFLAGS=-O2 LDFLAGS=-static
+# cryptsetup compiles its own lib/libdevmapper.c against LVM2's public header and links the
+# static libdevmapper LVM2's build produces, so LVM2 is a pinned source here rather than a
+# host library. popt parses its arguments and json-c carries its LUKS2 metadata.
+tar -xf "$popt_archive" -C "$work"
+popt_source=$(find "$work" -maxdepth 1 -type d -name 'popt-*' | head -1)
+test -n "$popt_source"
+mkdir "$work/popt-build"
+(
+    cd "$work/popt-build"
+    CC="$cc" CFLAGS=-O2 LDFLAGS=-static "$popt_source/configure" --prefix=/usr \
+        --disable-shared --enable-static
+    make -j"${JOBS:-2}"
+)
+cp "$popt_source/src/popt.h" "$deps/include/popt.h"
+cp "$work/popt-build/src/.libs/libpopt.a" "$deps/"
+tar -xf "$jsonc_archive" -C "$work"
+jsonc_source=$(find "$work" -maxdepth 1 -type d -name 'json-c-*' | head -1)
+test -n "$jsonc_source"
+mkdir "$work/jsonc-build"
+(
+    cd "$work/jsonc-build"
+    CC="$cc" CFLAGS=-O2 cmake -DCMAKE_INSTALL_PREFIX=/usr -DBUILD_SHARED_LIBS=OFF \
+        -DBUILD_STATIC_LIBS=ON -DBUILD_TESTING=OFF "$jsonc_source"
+    make -j"${JOBS:-2}" json-c
+)
+mkdir -p "$deps/include/json-c"
+cp "$jsonc_source"/*.h "$deps/include/json-c/"
+cp "$work/jsonc-build/json.h" "$work/jsonc-build/json_config.h" "$deps/include/json-c/"
+cp "$work/jsonc-build/libjson-c.a" "$deps/"
+mkdir "$work/lvm2-build"
+(
+    cd "$work/lvm2-build"
+    CC="$cc" CFLAGS="-O2 -I$deps/include -I$prefix/include" \
+        LDFLAGS="-static -L$deps -L$prefix/lib" \
+        "$work/lvm2/configure" --prefix=/usr --disable-shared --enable-static_link \
+            --disable-nl --disable-readline --disable-selinux --disable-udev \
+            --disable-udev_sync --disable-udev_rules --disable-pkgconfig --disable-man \
+            --disable-debug --with-libnvme=no --enable-nvme-wwid=no
+    make -j"${JOBS:-2}" -C libdm
+)
+cp "$work/lvm2-build/libdm/ioctl/libdevmapper.a" "$deps/"
+cp "$work/lvm2/libdm/libdevmapper.h" "$deps/include/"
+tar -xf "$cryptsetup_archive" -C "$work"
+cryptsetup_source=$(find "$work" -maxdepth 1 -type d -name 'cryptsetup-*' | head -1)
+test -n "$cryptsetup_source"
+mkdir "$work/cryptsetup-build"
+(
+    cd "$work/cryptsetup-build"
+    JSON_C_CFLAGS="-I$deps/include" JSON_C_LIBS="$deps/libjson-c.a" \
+        CC="$cc" CFLAGS="-O2 -I$deps/include -I$prefix/include" \
+        CPPFLAGS=-D_LARGEFILE64_SOURCE LDFLAGS="-static -L$deps -L$prefix/lib" \
+        "$cryptsetup_source/configure" --prefix=/usr --disable-shared --enable-static \
+            --disable-nls --disable-udev --disable-ssh-token --disable-external-tokens \
+            --disable-keyring --disable-selinux --disable-luks2-reencryption \
+            --disable-hw-opal
+    # json-c sits in the library's own link line, before the objects that call it, so the
+    # archive is named once more at the end and libtool is asked for a static link
+    make -j"${JOBS:-2}" LIBS="$deps/libjson-c.a" cryptsetup
+    rm -f cryptsetup
+    make LIBS="$deps/libjson-c.a" \
+        LDFLAGS="-all-static -L$deps -L$prefix/lib" cryptsetup
+)
 tree="$work/package"
 mkdir -p "$tree/HOLY" "$tree/DATA/usr/bin" "$tree/DATA/usr/sbin" \
     "$tree/DATA/usr/share/man/man8" "$tree/DATA/usr/share/man/man1" \
@@ -212,16 +291,18 @@ cp "$work/dosfstools/src/mkfs.fat" "$tree/DATA/usr/bin/mkfs.fat"
 cp "$work/e2-build/misc/mke2fs" "$tree/DATA/usr/bin/mke2fs"
 cp "$work/limine-binary/limine" "$tree/DATA/usr/bin/limine"
 cp "$btrfs_source/mkfs.btrfs" "$tree/DATA/usr/bin/mkfs.btrfs"
-# src/disk.c runs the xfs, f2fs and swap formatters from sbin, so the package places them there
+# src/disk.c runs the xfs, f2fs and swap formatters and cryptsetup from sbin, so the package
+# places them there
 cp "$xfs_source/mkfs/mkfs.xfs" "$tree/DATA/usr/sbin/mkfs.xfs"
 cp "$work/f2fs-build/mkfs/mkfs.f2fs" "$tree/DATA/usr/sbin/mkfs.f2fs"
+cp "$work/cryptsetup-build/cryptsetup" "$tree/DATA/usr/sbin/cryptsetup"
 for name in sfdisk mkfs.fat mke2fs limine mkfs.btrfs; do
     "$bin" elf "$tree/DATA/usr/bin/$name" > "$out/$name.elf"
     grep -qx 'runtime nolibc' "$out/$name.elf"
     grep -qx 'e_type 2' "$out/$name.elf"
     grep -qx "machine $package_arch" "$out/$name.elf"
 done
-for name in mkswap mkfs.xfs mkfs.f2fs; do
+for name in mkswap mkfs.xfs mkfs.f2fs cryptsetup; do
     "$bin" elf "$tree/DATA/usr/sbin/$name" > "$out/$name.elf"
     grep -qx 'runtime nolibc' "$out/$name.elf"
     grep -qx 'e_type 2' "$out/$name.elf"
@@ -241,6 +322,7 @@ cp "$work/e2-build/misc/mke2fs.8" "$tree/DATA/usr/share/man/man8/"
 sed -e 's|@mkfs_cfg_dir@|/etc/xfs|g' "$xfs_source/man/man8/mkfs.xfs.8.in" \
     > "$tree/DATA/usr/share/man/man8/mkfs.xfs.8"
 cp "$work/f2fs-tools/man/mkfs.f2fs.8" "$tree/DATA/usr/share/man/man8/"
+cp "$cryptsetup_source/man/cryptsetup.8" "$tree/DATA/usr/share/man/man8/"
 cp "$work/limine-binary/LICENSE" "$tree/DATA/usr/share/licenses/holy-storage-tools/limine-LICENSE"
 cp "$work/util-linux/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/util-linux-COPYING"
 cp "$work/dosfstools/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/dosfstools-COPYING"
@@ -252,6 +334,11 @@ cp "$xfs_source/LICENSES/LGPL-2.1" "$tree/DATA/usr/share/licenses/holy-storage-t
 cp "$urcu_source/LICENSE.md" "$tree/DATA/usr/share/licenses/holy-storage-tools/liburcu-LICENSE.md"
 cp "$inih_source/LICENSE.txt" "$tree/DATA/usr/share/licenses/holy-storage-tools/inih-LICENSE.txt"
 cp "$work/f2fs-tools/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/f2fs-tools-COPYING"
+cp "$cryptsetup_source/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/cryptsetup-COPYING"
+cp "$cryptsetup_source/COPYING.LGPL" "$tree/DATA/usr/share/licenses/holy-storage-tools/cryptsetup-COPYING.LGPL"
+cp "$work/lvm2/COPYING.LIB" "$tree/DATA/usr/share/licenses/holy-storage-tools/lvm2-COPYING.LIB"
+cp "$popt_source/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/popt-COPYING"
+cp "$jsonc_source/COPYING" "$tree/DATA/usr/share/licenses/holy-storage-tools/json-c-COPYING"
 cat > "$tree/HOLY/meta" <<EOF
 format holy-package-1
 name holy-storage-tools

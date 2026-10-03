@@ -16,7 +16,7 @@ for name in sfdisk mkfs.fat mke2fs limine mkfs.btrfs; do
     grep -qx 'e_type 2' "$tmp/$name.elf"
 done
 sbin="$tmp/extract/DATA/usr/sbin"
-for name in mkswap mkfs.xfs mkfs.f2fs; do
+for name in mkswap mkfs.xfs mkfs.f2fs cryptsetup; do
     test -x "$sbin/$name"
     "$bin" elf "$sbin/$name" > "$tmp/$name.elf"
     grep -qx 'runtime nolibc' "$tmp/$name.elf"
@@ -54,6 +54,13 @@ truncate -s 256M "$f2fs_disk"
 "$sbin/mkfs.f2fs" -q "$f2fs_disk" > "$tmp/f2fs" 2>&1
 magic=$(od -An -tx1 -j1024 -N4 "$f2fs_disk" | tr -d ' \n')
 test "$magic" = '1020f5f2'
+# cryptsetup writes a LUKS2 header into a plain file, so this needs no mapper and no root
+luks="$tmp/luks.img"
+truncate -s 64M "$luks"
+printf 'fixturepass\n' | "$sbin/cryptsetup" luksFormat --type luks2 --batch-mode \
+    "$luks" > "$tmp/luks" 2>&1
+magic=$(od -An -tx1 -N6 "$luks" | tr -d ' \n')
+test "$magic" = '4c554b53babe'
 "$tools/limine" bios-install "$disk" 1 > "$tmp/limine" 2>&1
 "$tools/sfdisk" --verify "$disk" > "$tmp/verify-final"
 grep -q 'installed successfully' "$tmp/limine"

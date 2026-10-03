@@ -10,3 +10,6 @@ b3ba5b06b551831fd5be1fa73496db3f865bb388caccf396e084bd8dc64687a0 btrfs-progs-7.1
 68b46fa0371e1c0810092a8b7139d2612d5bdad34edea699a80e399f8f75a87e xfsprogs-6.12.0.tar.gz https://git.kernel.org/pub/scm/fs/xfs/xfsprogs-dev.git/snapshot/xfsprogs-dev-6.12.0.tar.gz
 2556b83adc0f9b3ac8024e613e17d014d04c4c49110604ce55fcb14eae32edd3 liburcu-0.15.7.tar.bz2 https://deb.debian.org/debian/pool/main/libu/liburcu/liburcu_0.15.7.orig.tar.bz2
 062279922805f5e9a369551a08d5ddb506140fe50774183ffdbb7c22bb97e3f4 inih-r59.tar.gz https://github.com/benhoyt/inih/archive/refs/tags/r59.tar.gz
+d2be4395b8f503b0ebf4b2d81db90c35a97050a358ee21fe62a0dfb66e5d5522 cryptsetup-2.7.5.tar.xz https://mirrors.edge.kernel.org/pub/linux/utils/cryptsetup/v2.7/cryptsetup-2.7.5.tar.xz
+c25a4838fc8e4c1c8aacb8bd620edb3084a3d63bf8987fdad3ca2758c63240f9 popt-1.19.tar.gz https://sources.buildroot.net/popt/popt-1.19.tar.gz
+f17a6d7d265cf840dfd8f0f46a606d98c6b5b26dc7cfe27275d1546a213086c8 json-c-0.19-20260627.tar.gz https://github.com/json-c/json-c/archive/refs/tags/json-c-0.19-20260627.tar.gz

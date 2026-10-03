@@ -1745,13 +1745,14 @@
   it creates one and reads the `_BHRfS_M` superblock magic back. That is what
   `src/disk.c` already runs for `gpt-btrfs`, so a btrfs guest can now be prepared
   by the tools this repository builds.
-  xfs, f2fs and swap now ship too, so four of the five formatters `src/disk.c`
-  runs are in this package and only cryptsetup is missing.
-  `tools/bootstrap-storage.sh` takes three more pinned tarballs, which
-  `profiles/bootstrap-sources` names and `tools/fetch-sources.sh` fetches:
-  xfsprogs 6.12.0 from kernel.org, liburcu 0.15.7 and inih r59, and one more
-  git checkout, f2fs-tools at 83fd39a1, which is how the other three sources
-  arrive. The two claims that blocked xfs are settled and
+  xfs, f2fs, swap and cryptsetup now ship too, so every tool `src/disk.c`
+  runs is in this package. `tools/bootstrap-storage.sh` takes six more pinned
+  tarballs, which `profiles/bootstrap-sources` names and
+  `tools/fetch-sources.sh` fetches: xfsprogs 6.12.0 from kernel.org,
+  cryptsetup 2.7.5 from the kernel.org cryptsetup mirror, liburcu 0.15.7,
+  inih r59, popt 1.19 and json-c 0.19, plus two more git checkouts,
+  f2fs-tools at 83fd39a1 and LVM2 at v2.03.43, which is how the other three
+  sources arrive. The two claims that blocked xfs are settled and
   both cost a build flag rather than a patch. liburcu's own upstream publishes
   no tarball this host can fetch, and its Debian repack in the pool is 0.15.2,
   while `sources.debian.org` still lists 0.15.7-1 in forky and sid, so the pin
@@ -1781,10 +1782,21 @@
   are `runtime nolibc` at the right machine, land in `usr/sbin` where
   `src/disk.c` runs them, and ship their man pages and licenses: GPL-2.0 and
   LGPL-2.1 for xfsprogs, LGPL-2.1 for liburcu, BSD for inih and GPL-2.0 for
-  f2fs-tools. `tools/bootstrap-storage.sh` rebuilt the package here from nine
-  inputs and `tests/bootstrap-storage.sh` passes against it. cryptsetup needs
-  libdevmapper before anything else; that formatter, a LUKS2 install and a
-  btrfs, xfs or f2fs boot in QEMU are what remains of this item.
+  f2fs-tools. cryptsetup names LVM2 as its device-mapper library and ships no
+  `libdevmapper.h` of its own, so the pinned LVM2 checkout supplies that header
+  and the `libdevmapper.a` its `libdm` build produces, with `--enable-static_link`
+  and the nvme, selinux, readline and udev parts off. Its arguments come from
+  popt and its LUKS2 metadata from json-c, both built here for this toolchain;
+  json-c is named twice in the final link because the library's own link line
+  puts the archive before the objects that call it. The fixture formats a plain
+  file and reads the `4c554b53babe` LUKS2 magic back, which needs no mapper and
+  no root, so the claim is that the tool wrote a header rather than that it
+  exited zero. All four new binaries are `runtime nolibc`, land in `usr/sbin`
+  where `src/disk.c` runs them and ship their man pages and licenses.
+  `tools/bootstrap-storage.sh` rebuilt the package here from fifteen inputs and
+  `tests/bootstrap-storage.sh` passes against it. What remains of this item is a
+  LUKS2 install and a btrfs, xfs or f2fs boot in QEMU, neither of which a device
+  with a serial can be borrowed for on this host.
   The disk plan reaches those tools for a btrfs, xfs or f2fs layout on a block
   device: with the package's sfdisk, mkfs.fat, mke2fs, mkfs.btrfs, mkfs.xfs and
   mkfs.f2fs installed where `src/disk.c` runs them, `holyinstall disk plan`
@@ -1794,8 +1806,10 @@
   than a gap, and it is why the apply and the boot are still open here: neither
   a device with a serial nor a QEMU disk chain is available to run them
   against.
-  The kernel already enables BTRFS_FS, XFS_FS and F2FS_FS built in, and a LUKS2
-  root needs DM_CRYPT and CRYPTO_XTS added to that fragment before it can boot.
+  The kernel now enables MD, BLK_DEV_DM, DM_CRYPT and the crypto XTS, NULL, ECB,
+  HMAC, SHA256 and SHA512 a LUKS2 root needs, beside BTRFS_FS, XFS_FS and
+  F2FS_FS, and `olddefconfig` keeps every one of them `=y` in the pinned
+  7.2.7 tree rather than dropping the ones whose dependencies are unset.
   The implemented blank-disk GPT/ext4/FAT path uses
   reviewed plans and `holypkg --root`; account login has a VM fixture.
   Config and text menu now bind selected artifacts to registered source IDs
