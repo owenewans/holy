@@ -2081,7 +2081,8 @@ slot NAME OS ARCH LIBC source SOURCE_ID occupied SHA256 version VERSION versions
 A slot is the package name, os, architecture and libc from one source, so the same
 name from two sources and two architectures of one name are two slots, while two
 versions of one name from one source are one version family. occupied and
-version name the newest member of the family, versions counts the members and
+version name the newest member of the family under the family's own comparator,
+versions counts the members and
 db check --all stays the authority on what those instances own. The command is
 read-only: it opens no transaction and writes nothing. --json prints
 holy-db-slots-1 with one object per slot. A root with no database is the same
@@ -2095,9 +2096,14 @@ available SHA256 version VERSION
 .fi
 .RE
 .PP
-The digest is the newest member the catalog publishes for that slot, compared with
-the ordinary version comparator, so the family is read against the index the
-source publishes rather than against the installed set. A source with no bound
+The digest is the newest member the catalog publishes for that slot, so the family
+is read against the index the source publishes rather than against the installed
+set. The comparison uses the version comparator of the family the installed slot
+declares, since that is the order its versions are written in: the ordinary
+comparator refuses a version that carries an epoch and reads a deb tilde the other
+way, so a pacman or deb family would otherwise report no newer member where one
+is published. A slot whose package declares no family falls back to the ordinary
+comparator, which is the only order its version has. A source with no bound
 catalog, a slot delivered locally, and a catalog that offers nothing newer all
 report a dash rather than a guess. A local slot reports the same line whether or
 not a source is named.

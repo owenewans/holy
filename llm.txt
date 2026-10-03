@@ -1397,7 +1397,7 @@ SEE ALSO
      holypkg(8), holy.conf(5)
 
 Holy				 September 2026			 HOLY-PACKAGE(5)
-holypkg.8 source=holy version=development sha256=2c50ca7f457db3c0b8dd447408695cc388274bb933edcdbc359afc2dfad792a4
+holypkg.8 source=holy version=development sha256=359200a16cdb66e3abf1318cd0fbfe298cf4d13c97ab7c8a880c0bd16eed6f8c
 HOLYPKG(8)		      System Administration		      HOLYPKG(8)
 
 NAME
@@ -3437,22 +3437,29 @@ DESCRIPTION
      A slot is the package name, os, architecture and libc from one  source,  so
      the  same	name  from two sources and two architectures of one name are two
      slots, while two versions of one name from one source are one version  fam-
-     ily.  occupied  and  version name the newest member of the family, versions
-     counts the members and db check --all stays the authority on what those in-
-     stances own. The command is read-only: it opens no transaction  and  writes
-     nothing.  --json  prints  holy-db-slots-1	with one object per slot. A root
-     with no database is the same unavailable status db status reports.
+     ily.  occupied  and  version name the newest member of the family under the
+     family's own comparator, versions counts the members  and	db  check  --all
+     stays  the authority on what those instances own. The command is read-only:
+     it opens no transaction and writes nothing. --json	 prints	 holy-db-slots-1
+     with  one	object per slot. A root with no database is the same unavailable
+     status db status reports.
 
      Repeated --source SOURCE_ID reads each named  source's  bound  catalog  and
      adds what the source offers for the slots that source occupies:
 	    available SHA256 version VERSION
 
-     The  digest  is the newest member the catalog publishes for that slot, com-
-     pared with the ordinary version comparator, so the family is  read	 against
-     the  index	 the  source  publishes rather than against the installed set. A
-     source with no bound catalog, a slot delivered locally, and a catalog  that
-     offers  nothing  newer  all report a dash rather than a guess. A local slot
-     reports the same line whether or not a source is named.
+     The digest is the newest member the catalog publishes for that slot, so the
+     family  is	 read against the index the source publishes rather than against
+     the installed set. The comparison uses the version comparator of the family
+     the installed slot declares, since that is the order its versions are writ-
+     ten in: the ordinary comparator refuses a version that carries an epoch and
+     reads a deb tilde the other way, so a pacman or deb family would  otherwise
+     report  no	 newer	member	where one is published. A slot whose package de-
+     clares no family falls back to the ordinary comparator, which is  the  only
+     order its version has. A source with no bound catalog, a slot delivered lo-
+     cally,  and  a  catalog  that offers nothing newer all report a dash rather
+     than a guess. A local slot reports the same line whether or not a source is
+     named.
 
      Repair records stage repairing before writing files, verifies restored con-
      tents and increments the generation once. An interrupted operation	 remains

@@ -19,6 +19,10 @@
 #include "source.h"
 #include "repo.h"
 #include "version.h"
+#include "../backends/pacman.h"
+#include "../backends/deb-version.h"
+#include "../backends/apk-version.h"
+#include "../backends/xbps-version.h"
 #include "change.h"
 #include "private.h"
 
@@ -1351,7 +1355,27 @@ static int instance_meta_field(int item, const char *key, char *out, size_t size
 /* one installed instance as a version family member */
 struct slot_member {
     char digest[65], name[128], version[96], arch[32], libc[32], source[65], os[16];
+    char family[32];
 };
+
+/* a slot's members are ordered the way the family that wrote them orders its versions.
+   the generic comparator refuses a version the family states, an epoch for one, so
+   using it here left the newest member whichever the walk reached first. a package that
+   states no family falls back to it, which is the only order its version has. */
+static int slot_version_order(const char *family, const char *left, const char *right,
+                              int *order)
+{
+    if (family && !strcmp(family, "pacman"))
+        return holy_pacman_version_compare(left, right, order);
+    if (family && !strcmp(family, "deb"))
+        return holy_deb_version_compare(left, right, order);
+    if (family && !strcmp(family, "apk"))
+        return holy_apk_version_compare(left, right, order);
+    if (family && !strcmp(family, "xbps"))
+        return holy_xbps_version_compare(left, right, order);
+    if (family && *family && strcmp(family, "holy")) return 0;
+    return holy_version_compare(left, right, order);
+}
 
 /* two installed instances share a slot when they are the same package name, os, arch
    and libc from one source */
@@ -1394,9 +1418,10 @@ static void slot_available_member(const char *root_path, const struct slot_membe
     for (i = 0; i < candidates.count; ++i) {
         const struct holy_package_identity *item = &candidates.items[i];
         if (!strcmp(item->digest, occupied->digest)) continue;
-        if (!holy_version_compare(item->version, occupied->version, &order) || order <= 0)
+        if (!slot_version_order(occupied->family, item->version, occupied->version, &order) ||
+            order <= 0) continue;
+        if (best && !slot_version_order(occupied->family, item->version, version, &order))
             continue;
-        if (best && !holy_version_compare(item->version, version, &order)) continue;
         strcpy(digest, item->digest);
         snprintf(version, 96, "%s", item->version);
         best = 1;
@@ -1442,6 +1467,10 @@ int holy_state_slots(const char *root_path, int json,
              instance_meta_field(item, "libc", member.libc, sizeof member.libc) &&
              instance_meta_field(item, "os", member.os, sizeof member.os) &&
              installed_source_id(item, member.source);
+        /* a meta record states no family for a package that does not declare one, and
+           the empty family falls back to the generic comparator */
+        if (ok && !instance_meta_field(item, "x-version-family", member.family,
+                                       sizeof member.family)) member.family[0] = '\0';
         close(item);
         if (!ok) { result = 1; goto done; }
         if (count == capacity) {
@@ -1468,7 +1497,8 @@ int holy_state_slots(const char *root_path, int json,
             int order = 0;
             if (!same_slot_fields(&members[i], &members[j])) continue;
             ++family;
-            if (holy_version_compare(members[j].version, newest->version, &order) && order > 0)
+            if (slot_version_order(members[i].family, members[j].version,
+                                   newest->version, &order) && order > 0)
                 newest = &members[j];
         }
         /* a named source reports what its catalog offers for the slot, so the family is

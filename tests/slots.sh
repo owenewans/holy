@@ -151,6 +151,58 @@ if grep -q available "$tmp/out"; then exit 1; fi
 # the installed set is untouched by the report
 expect 0 "$bin" db check --all --root "$catalog_root"
 
+# a family that writes an epoch orders its own members, and the generic comparator
+# refuses such a version, so a slot report has to compare with the family it declares
+epoch_version() {
+    version=$1
+    rm -rf "$tree"
+    mkdir -p "$tree/HOLY" "$tree/DATA/usr/share"
+    printf 'format holy-package-1\nname epoched\nversion %s\nrelease 1\nos linux\narch noarch\nlibc nolibc\nx-version-family pacman\n' \
+        "$version" > "$tree/HOLY/meta"
+    for field in deps provides hooks origin transform; do : > "$tree/HOLY/$field"; done
+    printf 'epoched %s\n' "$version" > "$tree/DATA/usr/share/epoched"
+    "$bin" manifest generate "$tree" --output "$tmp/files" > "$tmp/out"
+    mv "$tmp/files" "$tree/HOLY/files"
+    rm -f "$epoch_repo/epoched.holy"
+    "$bin" pack "$tree" --output "$epoch_repo/epoched.holy" > "$tmp/out"
+    "$bin" repo index "$epoch_repo" > "$tmp/out"
+    "$bin" repo seal "$epoch_repo" > "$tmp/out"
+    sed -n 's/^sha256 //p' "$epoch_repo/current"
+}
+epoch_repo="$tmp/epoch-repo"
+mkdir -p "$epoch_repo"
+epoch_root="$tmp/epoch-root"
+mkdir "$epoch_root"
+"$bin" db init --root "$epoch_root" > "$tmp/out"
+printf '[source epoched]\ntype holy-http\nurl "https://fixture.example/epoch/"\n' > "$tmp/epoch.conf"
+"$bin" source plan --config "$tmp/epoch.conf" --root "$epoch_root" > "$tmp/epoch.plan" 2> "$tmp/epoch.err"
+epoch_plan=$(sha256sum "$tmp/epoch.plan" | cut -d ' ' -f 1)
+epoch_source=$(sed -n 's/^add-source \([0-9a-f]*\) "epoched"$/\1/p' "$tmp/epoch.err")
+test "${#epoch_source}" -eq 64
+"$bin" source apply "$tmp/epoch.plan" --sha256 "$epoch_plan" --root "$epoch_root" > "$tmp/out"
+epoch_index=$(epoch_version 1:2.0-1)
+test "${#epoch_index}" -eq 64
+epoch_one=$(sha256sum "$epoch_repo/epoched.holy" | cut -d ' ' -f 1)
+printf 'format holy-mirror-1\nurl "https://fixture.example/epoch/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$epoch_index" "$epoch_source" > "$epoch_repo/mirror-origin"
+"$bin" source catalog bind epoched "$epoch_repo" --root "$epoch_root" > "$tmp/out"
+expect 0 "$bin" add epoched:epoched --root "$epoch_root" --yes > "$tmp/out"
+# the catalog offers nothing newer yet, and an epoch version does not confuse that
+expect 0 "$bin" db slots --root "$epoch_root" --source "$epoch_source"
+grep -qx "slot epoched linux noarch nolibc source $epoch_source occupied $epoch_one version 1:2.0-1 versions 1 available - version -" "$tmp/out"
+epoch_index=$(epoch_version 1:2.0-3)
+test "${#epoch_index}" -eq 64
+printf 'format holy-mirror-1\nurl "https://fixture.example/epoch/"\nindex-sha256 %s\nverification digest-pinned-unsigned\nsource-id %s\n' \
+    "$epoch_index" "$epoch_source" > "$epoch_repo/mirror-origin"
+expect 0 "$bin" source catalog bind epoched "$epoch_repo" --root "$epoch_root" > "$tmp/out"
+epoch_two=$(sha256sum "$epoch_repo/epoched.holy" | cut -d ' ' -f 1)
+test "$epoch_two" != "$epoch_one"
+expect 0 "$bin" db slots --root "$epoch_root" --source "$epoch_source"
+grep -qx "slot epoched linux noarch nolibc source $epoch_source occupied $epoch_one version 1:2.0-1 versions 1 available $epoch_two version 1:2.0-3" "$tmp/out"
+expect 0 "$bin" db slots --root "$epoch_root" --source "$epoch_source" --json
+grep -q -F "\"available-version\":\"1:2.0-3\"" "$tmp/out"
+expect 0 "$bin" db check --all --root "$epoch_root"
+
 # a root with no database is reported as unavailable, the same as db status
 if "$bin" db slots --root "$tmp/absent" > "$tmp/out" 2> "$tmp/err"; then exit 1; else test "$?" -eq 1; fi
 grep -qx 'holypkg: database status unavailable' "$tmp/err"

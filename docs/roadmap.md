@@ -457,7 +457,15 @@
   Repeated `--source SOURCE_ID` reads the named sources' bound catalogs and adds
   `available SHA256 version VERSION` per slot, so a family is read against the
   index the source publishes; a source with no bound catalog, a local slot or a
-  catalog with nothing newer reports a dash. Slot selection inside a resolver
+  catalog with nothing newer reports a dash. The comparison uses the version
+  comparator of the family the installed slot declares, since that is the order
+  its versions are written in: the ordinary comparator refuses a version carrying
+  an epoch and reads a deb tilde the other way, so a pacman family reported no
+  newer member where the catalog published one, and a deb family would name the
+  wrong newest. A slot whose package declares no family falls back to the
+  ordinary comparator, which is the only order its version has. The installed
+  side of the report uses the same comparator for its newest member, though a
+  root holds one active version per slot, so its family count is one. Slot selection inside a resolver
   choice now names every candidate: `choice ID consumer=DIGEST candidates=N` is
   followed by one `candidate SHA256 slot NAME OS ARCH LIBC version V release R`
   per artifact that could fill the requirement, so the decision states which slot
@@ -466,7 +474,10 @@
   artifact fills names no candidate. The set planner prints the report and the
   apply prints it again when its own re-derivation reaches the same decision, and
   `solve` and `repo solve` print it in both the line and the JSON form, the latter
-  as one holy-local-solve-1 choice event. A set plan now also states the capabilities the
+  as one holy-local-solve-1 choice event. The specification resolves a file
+  conflict on a confirmed one, so the manager does not pick a placement on its own
+  and the roadmap item below is where a change of that stance would be recorded. A
+  set plan now also states the capabilities the
   selection and the installed set it joins offer twice, read from the selected
   artifacts and from every instance the target root already has, so a capability two
   artifacts across the two sets both offer is named by the review instead of waiting for
